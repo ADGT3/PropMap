@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sydney Property Map — Domain + Sydney Water Planning</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+
+  <header>
+    <div class="logo">property<span>map</span></div>
+    <div class="header-controls">
+
+      <!-- Zone selector (controls which overlay maps are shown) -->
+      <div class="zone-selector">
+        <label for="zoneSelect">Overlay Zone</label>
+        <select id="zoneSelect"></select>
+      </div>
+
+      <!-- Overlay panel toggle -->
+      <button class="panel-btn" id="overlayPanelBtn">
+        🗺 Overlays
+        <span class="badge" id="overlayBadge">0</span>
+      </button>
+
+      <!-- Listings toggle -->
+      <button class="toggle-btn active" id="listingsToggle">
+        <span class="dot"></span> Listings
+      </button>
+
+      <!-- Upload manager toggle -->
+      <button class="panel-btn" id="uploadPanelBtn">⬆ Upload Map</button>
+
+    </div>
+  </header>
+
+  <!-- Overlay panel (dropdown) -->
+  <div class="overlay-panel" id="overlayPanel">
+    <div class="panel-header">
+      <span>Map Overlays</span>
+      <button class="panel-close" id="overlayPanelClose">✕</button>
+    </div>
+    <div id="overlayList"></div>
+  </div>
+
+  <!-- Upload manager panel -->
+  <div class="overlay-panel upload-panel" id="uploadPanel">
+    <div class="panel-header">
+      <span>Upload GeoTIFF Overlay</span>
+      <button class="panel-close" id="uploadPanelClose">✕</button>
+    </div>
+    <div class="upload-body">
+
+      <div class="form-row">
+        <label>Label</label>
+        <input type="text" id="upLabel" placeholder="e.g. Wastewater — North West Sydney"/>
+      </div>
+
+      <div class="form-row">
+        <label>Type</label>
+        <select id="upType">
+          <option value="wastewater">Wastewater</option>
+          <option value="potable">Potable Water</option>
+          <option value="ilp">ILP</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label>Zone</label>
+        <input type="text" id="upZone" placeholder="e.g. south-west-sydney"/>
+        <small>Must match a zone id in overlays.js</small>
+      </div>
+
+      <div class="form-row">
+        <label>GeoTIFF file</label>
+        <input type="file" id="upFile" accept=".tif,.tiff,image/tiff"/>
+        <small id="upBoundsPreview" class="bounds-preview"></small>
+      </div>
+
+      <div class="form-row">
+        <label>Default opacity</label>
+        <div class="opacity-row">
+          <input type="range" id="upOpacity" min="0" max="100" value="40"/>
+          <span id="upOpacityVal">40%</span>
+        </div>
+      </div>
+
+      <div class="upload-actions">
+        <button class="btn-primary" id="upAddLive">Add to map (this session)</button>
+        <button class="btn-secondary" id="upDownload">Download updated overlays.js</button>
+      </div>
+      <div id="upStatus" class="up-status"></div>
+
+      <div class="panel-header" style="margin-top:16px">
+        <span>Manage Overlays</span>
+      </div>
+      <div id="manageList"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div id="map"></div>
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h2>Listings in view</h2>
+        <p><span id="listingCount">0</span> properties found</p>
+      </div>
+      <div class="filters">
+        <button class="filter-chip active" data-filter="all">All</button>
+        <button class="filter-chip" data-filter="house">House</button>
+        <button class="filter-chip" data-filter="apartment">Apartment</button>
+        <button class="filter-chip" data-filter="land">Land</button>
+      </div>
+      <div class="listings" id="listingsList"></div>
+
+      <!-- Sydney Water legend -->
+      <div class="legend">
+        <div class="legend-title">Sydney Water Planning</div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#e74c3c"></span>
+          Strategic Planning
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#f1c40f"></span>
+          Option Planning
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#2980b9"></span>
+          Concept Planning
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#27ae60"></span>
+          Design and Deliver
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="overlays.js"></script>
+  <script src="data.js"></script>
+  <script src="map.js"></script>
+
+</body>
+</html>
