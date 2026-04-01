@@ -366,7 +366,7 @@ function renderBoard() {
         <div class="kb-card-price">${p.price}</div>
         <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address}</div>
         <div class="kb-card-suburb">${p.suburb} NSW</div>
-        <div class="kb-card-stats">${statsHtml}</div>
+
         <select class="kb-stage-select">${stageOptions}</select>
 
         <div class="kb-section-label">Vendor Terms</div>
