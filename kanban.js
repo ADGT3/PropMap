@@ -29,19 +29,75 @@ const STAGES = [
 // ─── State ────────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'propertyPipeline';
+const API_BASE    = '/api/pipeline';
 
-function loadPipeline() {
+// In-memory pipeline — loaded from DB on init, localStorage used as fallback cache
+let pipeline = {};
+let dbAvailable = false;
+
+// ── localStorage helpers (cache / offline fallback) ──────────────────────────
+function cacheLoad() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (_) { return {}; }
+}
+function cacheSave(p) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(p)); } catch (_) {}
+}
+
+// ── DB helpers ────────────────────────────────────────────────────────────────
+async function dbLoad() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-  } catch (_) { return {}; }
+    const res = await fetch(API_BASE);
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    dbAvailable = true;
+    return data;
+  } catch (_) {
+    dbAvailable = false;
+    return null;
+  }
 }
 
-function savePipeline(pipeline) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(pipeline));
+async function dbSave(id, data) {
+  if (!dbAvailable) return;
+  try {
+    await fetch(API_BASE, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ id, data })
+    });
+  } catch (_) {}
 }
 
-// pipeline: { [propertyId]: { stage, note, addedAt, property, terms: { price, settlement, deposits[] } } }
-let pipeline = loadPipeline();
+async function dbDelete(id) {
+  if (!dbAvailable) return;
+  try {
+    await fetch(`${API_BASE}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+  } catch (_) {}
+}
+
+// ── savePipeline — write to both cache and DB ─────────────────────────────────
+// Called after every mutation. id = the specific entry that changed (or null = full sync).
+function savePipeline(changedId) {
+  cacheSave(pipeline);
+  if (changedId && pipeline[changedId]) dbSave(changedId, pipeline[changedId]);
+}
+
+// ── Init — load from DB, fall back to localStorage ───────────────────────────
+async function initPipeline() {
+  showKanbanToast('Loading pipeline…');
+  const remote = await dbLoad();
+  if (remote && Object.keys(remote).length >= 0) {
+    pipeline = remote;
+    cacheSave(pipeline);
+  } else {
+    pipeline = cacheLoad();
+  }
+  updateAddButtons();
+  const statusMsg = dbAvailable ? 'Pipeline loaded' : 'Offline — using local data';
+  showKanbanToast(statusMsg);
+}
+
+// pipeline: { [propertyId]: { stage, note, addedAt, property, terms, offers, dd } }
 
 // ─── View toggle ──────────────────────────────────────────────────────────────
 
@@ -80,15 +136,17 @@ function addToPipeline(listing) {
       cars:    listing.cars,
     }
   };
-  savePipeline(pipeline);
+  savePipeline(id);
   updateAddButtons();
   if (kanbanVisible) renderBoard();
   showKanbanToast(`${listing.address} added to pipeline`);
 }
 
 function removeFromPipeline(id) {
-  delete pipeline[String(id)];
-  savePipeline(pipeline);
+  const sid = String(id);
+  delete pipeline[sid];
+  cacheSave(pipeline);
+  dbDelete(sid);
   updateAddButtons();
   renderBoard();
 }
@@ -96,14 +154,14 @@ function removeFromPipeline(id) {
 function moveToStage(id, stageId) {
   if (pipeline[id]) {
     pipeline[id].stage = stageId;
-    savePipeline(pipeline);
+    savePipeline(id);
   }
 }
 
 function saveNote(id, note) {
   if (pipeline[id]) {
     pipeline[id].note = note;
-    savePipeline(pipeline);
+    savePipeline(id);
   }
 }
 
@@ -112,7 +170,7 @@ function saveNote(id, note) {
 function saveTerms(id, terms) {
   if (pipeline[id]) {
     pipeline[id].terms = terms;
-    savePipeline(pipeline);
+    savePipeline(id);
   }
 }
 
@@ -147,13 +205,13 @@ function addOffer(id, offer) {
     date: new Date().toISOString(),
     id:   Date.now(),
   });
-  savePipeline(pipeline);
+  savePipeline(id);
 }
 
 function deleteOffer(propertyId, offerId) {
   if (!pipeline[propertyId]) return;
   pipeline[propertyId].offers = (pipeline[propertyId].offers || []).filter(o => o.id !== offerId);
-  savePipeline(pipeline);
+  savePipeline(propertyId);
 }
 
 function formatOfferDate(iso) {
@@ -183,7 +241,7 @@ function getDd(id) {
 function saveDd(id, dd) {
   if (pipeline[id]) {
     pipeline[id].dd = dd;
-    savePipeline(pipeline);
+    savePipeline(id);
   }
 }
 
@@ -628,5 +686,6 @@ window.renderListings = function () {
   _origRenderListings();
   setTimeout(updateAddButtons, 0);
 };
-// Initial render
-setTimeout(updateAddButtons, 200);
+
+// Load pipeline from DB (falls back to localStorage if offline)
+initPipeline();
