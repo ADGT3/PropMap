@@ -84,17 +84,18 @@ function savePipeline(changedId) {
 
 // ── Init — load from DB, fall back to localStorage ───────────────────────────
 async function initPipeline() {
-  showKanbanToast('Loading pipeline…');
+  // Load from localStorage immediately so board is usable at once
+  pipeline = cacheLoad();
+  updateAddButtons();
+
+  // Then try to sync from DB in background
   const remote = await dbLoad();
-  if (remote && Object.keys(remote).length >= 0) {
+  if (remote !== null) {
     pipeline = remote;
     cacheSave(pipeline);
-  } else {
-    pipeline = cacheLoad();
+    updateAddButtons();
+    if (kanbanVisible) renderBoard();
   }
-  updateAddButtons();
-  const statusMsg = dbAvailable ? 'Pipeline loaded' : 'Offline — using local data';
-  showKanbanToast(statusMsg);
 }
 
 // pipeline: { [propertyId]: { stage, note, addedAt, property, terms, offers, dd } }
@@ -300,7 +301,7 @@ function renderBoard() {
 
     cards.forEach(([id, item]) => {
       const p = item.property;
-      const card = document.createElement('div');
+      if (!p) return; // skip malformed entries
       card.className = 'kb-card';
       card.draggable = true;
       card.dataset.id = id;
