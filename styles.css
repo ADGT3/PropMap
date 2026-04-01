@@ -1489,3 +1489,90 @@ header {
   padding: 3px 6px;
   min-width: 0;
 }
+
+/* ─── Kanban summary card indicators ─────────────────────────────────────── */
+.kb-card-indicators {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.kb-ind {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--surface2);
+}
+.kb-ind-terms  { border-color: #c4841a; color: #c4841a; background: rgba(196,132,26,0.07); }
+.kb-ind-offers { border-color: #2980b9; color: #2980b9; background: rgba(41,128,185,0.07); }
+.kb-ind-dd     { border-color: #8e44ad; color: #8e44ad; background: rgba(142,68,173,0.07); }
+.kb-ind-note   { border-color: #27ae60; color: #27ae60; background: rgba(39,174,96,0.07);  }
+
+/* ─── Card detail modal ───────────────────────────────────────────────────── */
+.kb-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(2px);
+}
+
+.kb-modal {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  width: 100%;
+  max-width: 580px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.kb-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.kb-modal-price {
+  font-family: 'DM Serif Display', serif;
+  font-size: 22px;
+  color: var(--accent);
+  margin-bottom: 3px;
+}
+.kb-modal-address {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+}
+.kb-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--muted);
+  padding: 4px 6px;
+  border-radius: 5px;
+  line-height: 1;
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+.kb-modal-close:hover { background: var(--surface2); color: var(--text); }
+
+.kb-modal-body {
+  overflow-y: auto;
+  padding: 20px;
+  flex: 1;
+}
+.kb-modal-body::-webkit-scrollbar { width: 4px; }
+.kb-modal-body::-webkit-scrollbar-thumb { background: #ddd; border-radius: 2px; }
