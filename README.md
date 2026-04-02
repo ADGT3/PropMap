@@ -51,6 +51,7 @@ Available overlay types:
 | `ilp` | Purple | NSW Indicative Layout Plans (GeoTIFF upload) |
 | `srlup` | Orange | NSW Strategic Regional Land Use Policy — live from NSW Environment |
 | `zoning` | Dark red | NSW Land Zoning (LEP) — live from NSW Planning Portal |
+| `flood` | Blue | NSW Flood Planning (EPI) — live from NSW Planning Portal Hazard layer |
 | `other` | Grey | Any other overlay type |
 
 Live ArcGIS overlays (SRLUP and Land Zoning) refresh automatically whenever the map is panned or zoomed, using a double-buffer image swap to avoid flickering.
@@ -218,6 +219,7 @@ The application logic layer. Handles:
 |---|---|---|
 | NSW SRLUP | NSW Dept of Environment | `mapprod3.environment.nsw.gov.au/…/EDP/SRLUP/MapServer` |
 | NSW Land Zoning (LEP) | NSW Planning Portal | `mapprod3.environment.nsw.gov.au/…/Planning/EPI_Primary_Planning_Layers/MapServer` |
+| NSW Flood Planning (EPI) | NSW Planning Portal | `mapprod3.environment.nsw.gov.au/…/Planning/Hazard/MapServer` |
 | Address geocoding | ArcGIS World Geocoder | `geocode.arcgis.com/…/GeocodeServer` |
 | Reverse geocoding | ArcGIS World Geocoder | `geocode.arcgis.com/…/GeocodeServer/reverseGeocode` |
 | Lot/DP cadastre | NSW Spatial Services (SIX Maps) | `maps.six.nsw.gov.au/…/sixmaps/Cadastre/MapServer` |
