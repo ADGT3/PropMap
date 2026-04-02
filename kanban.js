@@ -302,6 +302,7 @@ function renderBoard() {
     cards.forEach(([id, item]) => {
       const p = item.property;
       if (!p) return; // skip malformed entries
+      const card = document.createElement('div');
       card.className = 'kb-card';
       card.draggable = true;
       card.dataset.id = id;
