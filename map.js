@@ -1761,8 +1761,9 @@ renderListings();
   const toggle = document.getElementById('legendToggle');
   if (!legend || !toggle) return;
 
-  // Restore saved state
-  if (localStorage.getItem('legendCollapsed') === 'true') {
+  // Default collapsed unless user has explicitly expanded it before
+  const saved = localStorage.getItem('legendCollapsed');
+  if (saved !== 'false') {
     legend.classList.add('collapsed');
   }
 
