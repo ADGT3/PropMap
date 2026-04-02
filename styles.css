@@ -1585,3 +1585,25 @@ header {
 }
 .kb-modal-body::-webkit-scrollbar { width: 4px; }
 .kb-modal-body::-webkit-scrollbar-thumb { background: #ddd; border-radius: 2px; }
+
+/* ─── Electricity legend ──────────────────────────────────────────────────── */
+.elec-legend-item {
+  align-items: center;
+}
+.legend-line {
+  display: inline-block;
+  width: 28px;
+  height: 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.elec-kv {
+  font-weight: 600;
+  font-size: 12px;
+  min-width: 52px;
+}
+.elec-ease {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}

@@ -573,6 +573,16 @@ async function renderTiffToB64(file, buf, tags, width, height) {
 // ─── Overlay helpers ──────────────────────────────────────────────────────────
 
 function buildLeafletLayer(def) {
+  // Tiled cache layer — uses L.tileLayer (e.g. Biodiversity Values)
+  if (def.wms && def.wms.tiled) {
+    return L.tileLayer(def.wms.url, {
+      opacity:     def.opacity ?? 0.65,
+      attribution: '© NSW Government',
+      maxZoom:     19,
+      tileSize:    256
+    });
+  }
+
   // ArcGIS MapServer dynamic layer (uses /export endpoint per tile bbox)
   if (def.wms) {
     return buildArcGISDynamicLayer(def);
@@ -709,7 +719,8 @@ function buildArcGISDynamicLayer(def) {
 
 function registerOverlay(def) {
   const layer = buildLeafletLayer(def);
-  overlayRegistry[def.id] = { def, layer, isWms: !!def.wms };
+  const isWms = !!(def.wms && !def.wms.tiled);
+  overlayRegistry[def.id] = { def, layer, isWms };
   if (layer && def.enabled) layer.addTo(map);
 }
 
@@ -745,13 +756,16 @@ function renderOverlayPanel() {
   entries.forEach(e => {
     // Resolve group: explicit field > type default > 'other'
     const TYPE_GROUP = {
-      zoning:     'zoning',
-      srlup:      'zoning',
-      ilp:        'zoning',
-      wastewater: 'services',
-      potable:    'services',
-      flood:      'environmental',
-      other:      'other',
+      zoning:       'zoning',
+      srlup:        'zoning',
+      ilp:          'zoning',
+      electricity:  'services',
+      wastewater:   'services',
+      potable:      'services',
+      flood:        'environmental',
+      biodiversity: 'environmental',
+      bushfire:     'environmental',
+      other:        'other',
     };
     const g = e.def.group || TYPE_GROUP[e.def.type] || 'other';
     if (!byGroup[g]) byGroup[g] = [];
@@ -793,6 +807,11 @@ function renderOverlayPanel() {
       }
       document.getElementById('overlayBadge').textContent =
         Object.values(overlayRegistry).filter(e => e.def.enabled && e.layer).length;
+      // Redraw easement buffers if electricity overlay toggled
+      if (def.id === 'electricity-transmission') {
+        if (def.enabled) drawEasementBuffers();
+        else if (easementLayer) { map.removeLayer(easementLayer); easementLayer = null; }
+      }
     });
 
     row.querySelector(`input[type=range][data-id="${def.id}"]`).addEventListener('input', function () {
@@ -985,6 +1004,117 @@ function renderListings() {
   });
 
   if (!showListings) Object.values(markers).forEach(m => map.removeLayer(m));
+}
+
+// ─── Electricity easement buffers ────────────────────────────────────────────
+// Draws semi-transparent corridor polygons around transmission lines when the
+// electricity overlay is enabled. Buffer widths from TransGrid Easement Guidelines.
+
+const EASEMENT_WIDTHS = {
+  500: 80,
+  330: 60,
+  220: 50,
+  132: 45,
+  66:  20,
+  0:   30  // unknown / default
+};
+
+const EASEMENT_COLOURS = {
+  500: '#ff0000',
+  330: '#ff6600',
+  220: '#ffaa00',
+  132: '#00aa00',
+  66:  '#0088cc',
+  0:   '#aaaaaa'
+};
+
+let easementLayer = null;
+
+function metresToDeg(metres, lat) {
+  // Approximate: 1 degree lat ≈ 111,320m; 1 degree lng varies with cos(lat)
+  return metres / 111320;
+}
+
+function bufferLinestring(coords, halfWidthDeg) {
+  // Simple perpendicular offset buffer for a polyline
+  // Returns a closed polygon ring [lng, lat] pairs
+  if (coords.length < 2) return null;
+  const left = [], right = [];
+  for (let i = 0; i < coords.length; i++) {
+    const p = coords[i];
+    let dx, dy;
+    if (i < coords.length - 1) {
+      dx = coords[i+1][0] - p[0];
+      dy = coords[i+1][1] - p[1];
+    } else {
+      dx = p[0] - coords[i-1][0];
+      dy = p[1] - coords[i-1][1];
+    }
+    const len = Math.sqrt(dx*dx + dy*dy);
+    if (len === 0) continue;
+    const nx = -dy / len * halfWidthDeg;
+    const ny =  dx / len * halfWidthDeg;
+    left.push([p[0] + nx, p[1] + ny]);
+    right.push([p[0] - nx, p[1] - ny]);
+  }
+  return [...left, ...right.reverse(), left[0]];
+}
+
+async function drawEasementBuffers() {
+  if (easementLayer) { map.removeLayer(easementLayer); easementLayer = null; }
+
+  const entry = overlayRegistry['electricity-transmission'];
+  if (!entry || !entry.def.enabled) return;
+
+  const b = map.getBounds();
+  const params = new URLSearchParams({
+    f:              'json',
+    geometry:       `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`,
+    geometryType:   'esriGeometryEnvelope',
+    inSR:           '4326',
+    spatialRel:     'esriSpatialRelIntersects',
+    outFields:      'CAPACITYKV',
+    returnGeometry: 'true',
+    outSR:          '4326',
+    resultRecordCount: '100'
+  });
+
+  try {
+    const res  = await fetch(
+      `https://services.ga.gov.au/gis/rest/services/National_Electricity_Infrastructure/MapServer/2/query?${params}`
+    );
+    const json = await res.json();
+    const features = json.features || [];
+    if (!features.length) return;
+
+    const polygons = [];
+    features.forEach(feat => {
+      const kv = feat.attributes?.CAPACITYKV || 0;
+      const paths = feat.geometry?.paths || [];
+      const widthKey = [500, 330, 220, 132, 66].find(v => v === kv) || 0;
+      const halfDeg = metresToDeg(EASEMENT_WIDTHS[widthKey] / 2, b.getCenter().lat);
+      const colour  = EASEMENT_COLOURS[widthKey];
+
+      paths.forEach(path => {
+        const ring = bufferLinestring(path, halfDeg);
+        if (!ring) return;
+        const leafletRing = ring.map(([lng, lat]) => [lat, lng]);
+        polygons.push(L.polygon(leafletRing, {
+          color:       colour,
+          weight:      0,
+          fillColor:   colour,
+          fillOpacity: 0.15,
+          interactive: false,
+        }));
+      });
+    });
+
+    if (polygons.length) {
+      easementLayer = L.layerGroup(polygons).addTo(map);
+    }
+  } catch (err) {
+    console.warn('Easement buffer error:', err);
+  }
 }
 
 // ─── Fetch parcel boundary and draw it ───────────────────────────────────────
@@ -1296,6 +1426,9 @@ function _injectSearchCard() {
 map.on('moveend zoomend', () => {
   renderListings();
   _injectSearchCard();
+  // Refresh easement buffers if electricity overlay is active
+  const elecEntry = overlayRegistry['electricity-transmission'];
+  if (elecEntry && elecEntry.def.enabled) drawEasementBuffers();
 });
 
 // Move overlay panel inside its anchor for relative positioning
@@ -1628,8 +1761,9 @@ renderListings();
   const toggle = document.getElementById('legendToggle');
   if (!legend || !toggle) return;
 
-  // Restore saved state
-  if (localStorage.getItem('legendCollapsed') === 'true') {
+  // Default collapsed unless user has explicitly expanded it before
+  const saved = localStorage.getItem('legendCollapsed');
+  if (saved !== 'false') {
     legend.classList.add('collapsed');
   }
 
