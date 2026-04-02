@@ -56,6 +56,7 @@ Click **🗺 Overlays** in the header. Overlays are grouped into three categorie
 #### Services
 | Overlay | Source |
 |---|---|
+| Electricity Transmission Lines | Geoscience Australia — National Electricity Infrastructure MapServer (with easement buffer polygons) |
 | Wastewater — South West Sydney | GeoTIFF upload |
 | Potable Water | GeoTIFF upload |
 
