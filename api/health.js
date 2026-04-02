@@ -1,7 +1,4 @@
-/**
- * api/health.js
- * DB connection health check using Neon HTTP API.
- */
+import { neon } from '@neondatabase/serverless';
 
 export default async function handler(req, res) {
   const dbUrl = process.env.pipeline_POSTGRES_URL
@@ -21,23 +18,25 @@ export default async function handler(req, res) {
   };
 
   if (!dbUrl) {
-    checks.error = 'No database URL found';
+    checks.error = 'No database URL found in environment variables';
     return res.status(500).json(checks);
   }
 
   try {
-    const result = await neonQuery(dbUrl, 'SELECT 1 as ok');
+    const sql = neon(dbUrl);
+    await sql`SELECT 1`;
     checks.db = 'connected';
 
-    const tableResult = await neonQuery(dbUrl,
-      `SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = 'pipeline'`
-    );
-    const tableExists = parseInt(tableResult.rows[0].count) > 0;
+    const tableCheck = await sql`
+      SELECT COUNT(*) as count FROM information_schema.tables
+      WHERE table_name = 'pipeline'
+    `;
+    const tableExists = parseInt(tableCheck[0].count) > 0;
     checks.table = tableExists ? 'exists' : 'not created yet';
 
     if (tableExists) {
-      const countResult = await neonQuery(dbUrl, 'SELECT COUNT(*) as count FROM pipeline');
-      checks.rowCount = parseInt(countResult.rows[0].count);
+      const countResult = await sql`SELECT COUNT(*) as count FROM pipeline`;
+      checks.rowCount = parseInt(countResult[0].count);
     }
   } catch (err) {
     checks.db = 'FAILED';
@@ -45,31 +44,4 @@ export default async function handler(req, res) {
   }
 
   return res.status(checks.db === 'connected' ? 200 : 500).json(checks);
-}
-
-async function neonQuery(connectionString, query, params = []) {
-  // Parse the connection string: postgres://user:password@host/dbname
-  const url = new URL(connectionString);
-  const host = url.hostname;
-  const user = decodeURIComponent(url.username);
-  const password = decodeURIComponent(url.password);
-
-  // Neon HTTP API endpoint
-  const endpoint = `https://${host}/sql`;
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Basic ${btoa(user + ':' + password)}`,
-      'Neon-Pool-Opt-In': 'true',
-    },
-    body: JSON.stringify({ query, params }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Neon HTTP ${response.status}: ${text}`);
-  }
-  return response.json();
 }
