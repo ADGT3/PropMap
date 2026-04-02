@@ -59,6 +59,39 @@ const OVERLAYS = [
     }
   },
   {
+    // NSW Biodiversity Values Map — tiled cache from LMBC
+    id: "nsw-biodiversity",
+    label: "Biodiversity Values Map",
+    type: "biodiversity",
+    group: "environmental",
+    zone: "all",
+    enabled: false,
+    opacity: 0.65,
+    bounds: null,
+    b64: null,
+    wms: {
+      url: "https://www.lmbc.nsw.gov.au/arcgis/rest/services/BV/BiodiversityValues/MapServer/tile/{z}/{y}/{x}",
+      layers: null,
+      tiled: true
+    }
+  },
+  {
+    // NSW Bushfire Prone Land — live from NSW Planning Portal
+    id: "nsw-bushfire",
+    label: "Bushfire Prone Land",
+    type: "bushfire",
+    group: "environmental",
+    zone: "all",
+    enabled: false,
+    opacity: 0.55,
+    bounds: null,
+    b64: null,
+    wms: {
+      url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/ePlanning/Planning_Portal_Hazard/MapServer/export",
+      layers: "show:229"
+    }
+  },
+  {
     // NSW Strategic Regional Land Use Policy — live WMS from NSW Environment
     id: "nsw-srlup",
     label: "NSW Strategic Regional Land Use Policy",
@@ -144,8 +177,10 @@ const OVERLAY_TYPE_META = {
   potable:    { label: "Potable Water", color: "#27ae60" },
   ilp:        { label: "ILP",           color: "#8e44ad" },
   srlup:      { label: "NSW Planning",  color: "#e67e22" },
-  flood:      { label: "Flood Planning", color: "#2471a3" },
-  zoning:     { label: "Land Zoning",   color: "#8B0000" },
+  flood:       { label: "Flood Planning",   color: "#2471a3" },
+  biodiversity:{ label: "Biodiversity",     color: "#1a7a3a" },
+  bushfire:    { label: "Bushfire Prone",   color: "#c0392b" },
+  zoning:      { label: "Land Zoning",     color: "#8B0000" },
   flood:      { label: "Flood",         color: "#1a5fa8" },
   other:      { label: "Other",         color: "#666"    }
 };

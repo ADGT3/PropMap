@@ -573,6 +573,16 @@ async function renderTiffToB64(file, buf, tags, width, height) {
 // ─── Overlay helpers ──────────────────────────────────────────────────────────
 
 function buildLeafletLayer(def) {
+  // Tiled cache layer — uses L.tileLayer (e.g. Biodiversity Values)
+  if (def.wms && def.wms.tiled) {
+    return L.tileLayer(def.wms.url, {
+      opacity:     def.opacity ?? 0.65,
+      attribution: '© NSW Government',
+      maxZoom:     19,
+      tileSize:    256
+    });
+  }
+
   // ArcGIS MapServer dynamic layer (uses /export endpoint per tile bbox)
   if (def.wms) {
     return buildArcGISDynamicLayer(def);
@@ -709,7 +719,8 @@ function buildArcGISDynamicLayer(def) {
 
 function registerOverlay(def) {
   const layer = buildLeafletLayer(def);
-  overlayRegistry[def.id] = { def, layer, isWms: !!def.wms };
+  const isWms = !!(def.wms && !def.wms.tiled);
+  overlayRegistry[def.id] = { def, layer, isWms };
   if (layer && def.enabled) layer.addTo(map);
 }
 
@@ -745,13 +756,15 @@ function renderOverlayPanel() {
   entries.forEach(e => {
     // Resolve group: explicit field > type default > 'other'
     const TYPE_GROUP = {
-      zoning:     'zoning',
-      srlup:      'zoning',
-      ilp:        'zoning',
-      wastewater: 'services',
-      potable:    'services',
-      flood:      'environmental',
-      other:      'other',
+      zoning:       'zoning',
+      srlup:        'zoning',
+      ilp:          'zoning',
+      wastewater:   'services',
+      potable:      'services',
+      flood:        'environmental',
+      biodiversity: 'environmental',
+      bushfire:     'environmental',
+      other:        'other',
     };
     const g = e.def.group || TYPE_GROUP[e.def.type] || 'other';
     if (!byGroup[g]) byGroup[g] = [];

@@ -1,6 +1,6 @@
 # Sydney Property Map
 
-A browser-based interactive property map overlaying property listings with Sydney Water planning maps, NSW Indicative Layout Plans (ILPs), and live NSW Government planning layers across Sydney's growth corridors.
+A browser-based interactive property map overlaying listings with planning, environmental and infrastructure data across Sydney's growth corridors. Deployed on Vercel with a Neon Postgres database for persistent pipeline storage.
 
 ---
 
@@ -8,12 +8,20 @@ A browser-based interactive property map overlaying property listings with Sydne
 
 ```
 sydney-property-map/
-├── index.html      — Page structure and UI layout
-├── styles.css      — All visual styling
-├── overlays.js     — Map overlay images and zone definitions
-├── data.js         — Property listings data
-├── map.js          — Map logic, interactivity, and upload manager
-└── README.md       — This file
+├── api/
+│   ├── pipeline.js     — Vercel serverless API: pipeline CRUD (Neon Postgres)
+│   └── health.js       — Vercel serverless API: DB connection health check
+├── index.html          — Page structure and UI layout
+├── styles.css          — All visual styling
+├── overlays.js         — Map overlay definitions and zone configurations
+├── data.js             — Property listings data (49 listings, South West Sydney)
+├── domain-api.js       — Mock Domain API (swap to live when API key arrives)
+├── map.js              — Map logic, overlays, search, parcel boundary, listings
+├── kanban.js           — Pipeline Kanban board with DB persistence
+├── package.json        — Node dependencies (@neondatabase/serverless)
+├── vercel.json         — Vercel deployment configuration
+├── DEPLOY.md           — Vercel + Neon setup guide
+└── README.md           — This file
 ```
 
 ---
@@ -22,241 +30,158 @@ sydney-property-map/
 
 ### Map & Navigation
 - **Interactive Leaflet map** centred on Greater Sydney
-- **Basemap toggle** — switch between CartoDB Light (street map) and Esri World Imagery (satellite) using the Map / Satellite pill in the bottom-left corner
-- **Address search** — type any NSW address or suburb in the header search bar; autocomplete suggestions appear as you type using the ArcGIS geocoder. Supports full street addresses including house numbers (e.g. `109 Deepfields Road Camden`). Select a result to drop a pin and fly to the location
-- **Click to select property** — click anywhere on the map to drop a green pin and load property information for that location. A parcel boundary outline is drawn on the map
+- **Basemap toggle** — Map (CartoDB Light) / Satellite (Esri) / Topo (NSW Spatial Services 1:25k–1:100k)
+- **Address search** — ArcGIS geocoder with autocomplete, supports full street addresses. Drops a pin, flies to location, draws parcel boundary
+- **Map click** — Click anywhere to identify a property: shows address, LGA, Lot/DP, and active overlay data (zoning, SRLUP, flood). Draws parcel boundary polygon
+- **Parcel boundary** — Green outline drawn on map when a listing card or address search result is selected, fetched from NSW Cadastre
 
 ### Property Information Popup
-Clicking the map or selecting an address search result shows a popup containing:
-- **Street address** — reverse geocoded from the clicked point
-- **LGA** — Local Government Area
-- **Lot/DP** — cadastral lot and deposited plan number, fetched from NSW Spatial Services
-- **Land Zoning** — zone code (e.g. R2, RU1, B4), land use class, and the LEP name — shown when the Land Zoning overlay is enabled
-- **NSW Planning Zone** — SRLUP growth area details — shown when the SRLUP overlay is enabled
+- Street address (reverse geocoded)
+- LGA — Local Government Area
+- Lot/DP — fetched from NSW Spatial Services cadastre
+- Land Zoning — zone code, land use class, LEP name (when overlay active)
+- NSW Planning Zone — SRLUP growth area details (when overlay active)
+- Flood Planning — classification and EPI name (when overlay active)
 
 ### Overlays Panel
-Click **🗺 Overlays** in the header to open the overlays panel. Each overlay has:
-- A checkbox to show/hide it
-- An opacity slider
-- A type pill (colour-coded by overlay type)
+Click **🗺 Overlays** in the header. Overlays are grouped into three categories:
 
-**Hide all / Show all** — toggle all overlays off or on in one click using the button in the panel header.
+#### Zoning
+| Overlay | Source |
+|---|---|
+| NSW Land Zoning (LEP) | NSW Planning Portal — EPI Primary Planning Layers |
+| NSW Strategic Regional Land Use Policy | NSW Environment — SRLUP MapServer |
+| ILP (Indicative Layout Plans) | GeoTIFF upload |
 
-Available overlay types:
+#### Services
+| Overlay | Source |
+|---|---|
+| Wastewater — South West Sydney | GeoTIFF upload |
+| Potable Water | GeoTIFF upload |
 
-| Type | Colour | Description |
-|---|---|---|
-| `wastewater` | Blue | Sydney Water wastewater/sewerage planning maps (GeoTIFF upload) |
-| `potable` | Green | Sydney Water potable (drinking) water planning maps (GeoTIFF upload) |
-| `ilp` | Purple | NSW Indicative Layout Plans (GeoTIFF upload) |
-| `srlup` | Orange | NSW Strategic Regional Land Use Policy — live from NSW Environment |
-| `zoning` | Dark red | NSW Land Zoning (LEP) — live from NSW Planning Portal |
-| `flood` | Blue | NSW Flood Planning (EPI) — live from NSW Planning Portal Hazard layer |
-| `other` | Grey | Any other overlay type |
+#### Environmental
+| Overlay | Source |
+|---|---|
+| NSW Flood Planning (EPI) | NSW Planning Portal — Hazard MapServer |
+| Biodiversity Values Map | NSW LMBC — BiodiversityValues MapServer (tiled) |
+| Bushfire Prone Land | NSW Planning Portal — Planning_Portal_Hazard MapServer |
 
-Live ArcGIS overlays (SRLUP and Land Zoning) refresh automatically whenever the map is panned or zoomed, using a double-buffer image swap to avoid flickering.
+Each overlay has a checkbox, opacity slider, and **Hide all / Show all** toggle. Live ArcGIS overlays refresh automatically on map pan/zoom.
+
+### Legend
+- Collapsible — click the **Legend** header bar to hide/show
+- State saved to localStorage across page refreshes
+- Covers: Sydney Water Planning, NSW Strategic Land Use, Flood Planning, Biodiversity & Bushfire, NSW Land Zoning
 
 ### Listings Sidebar
 - Shows all property listings visible in the current map view
-- Filter by property type: All / House / Apartment / Land
-- Click a listing card or map marker to select it and fly to the location
-- Listing count updates dynamically as you pan and zoom
+- Filter by type: All / House / Apartment / Land
+- Each card shows price, address, suburb, property type, and agent info (mock Domain data)
+- **⊕ button** on each card to add to the pipeline
+- Click a card to select it, fly to location, and draw parcel boundary
+- **Search result card** persists at top of sidebar when address search is used
+
+### Domain API (Mock)
+- Enriches all listings with realistic mock data: agency, agent name/avatar, days on market, photos, description
+- Deterministic — same listing always gets same mock data
+- Switch to live: set DOMAIN_API_MOCK = false and add your key in domain-api.js
+
+### Address Search
+- ArcGIS World Geocoder with autocomplete
+- Supports full street addresses including house numbers
+- Search result shown in sidebar with Lot/DP, LGA, and links to Domain/REA/Pricefinder
+- **+ Add to Pipeline** button on search result card
+- Clear button removes pin, parcel boundary, and sidebar card
 
 ### Upload Manager
-Click **⬆ Upload Map** in the header to add your own GeoTIFF overlay maps:
-1. Enter a label, select the overlay type, and enter the zone id
-2. Select a **GeoTIFF file** (`.tif` / `.tiff`) — bounds are extracted automatically
-3. Click **Add to map (this session)** to preview immediately
-4. Click **Download updated overlays.js** to embed the image permanently — replace your existing file with the downloaded one
-
-> **GeoTIFF requirement:** The file must use **WGS84 (EPSG:4326)** coordinates. Re-export from QGIS in WGS84 if your file uses MGA2020 / GDA94 / UTM.
+Click **⬆ Upload Map** to add custom GeoTIFF overlays:
+1. Enter label, type, and zone id
+2. Select a WGS84 GeoTIFF — bounds extracted automatically
+3. **Add to map** for live preview, or **Download updated overlays.js** to save permanently
 
 ---
 
-## File Descriptions
+## Property Pipeline (Kanban)
 
-### `index.html`
-The main HTML file. Defines the page structure including the header controls (address search, zone selector, overlays panel, listings toggle, upload manager), the Leaflet map container, and the listings sidebar with legend.
+Click **⬢ Pipeline** in the header to open the full-screen pipeline board.
 
-**When to edit:** Adding new UI elements to the header or sidebar, or changing the overall page layout.
+### Stages
+Shortlisted → Under DD → Offer → Acquired | Not Suitable | Lost
 
----
+### Board Cards (Summary View)
+Each card shows price, address, stage selector, and indicator pills:
+- **Terms** — vendor terms have been recorded
+- **N Offers** — number of offers submitted
+- **DD N/17** — due diligence progress
+- **Note** — card has a note
 
-### `styles.css`
-All CSS for the application — layout, header, sidebar, listing cards, overlay panel, upload manager form, address search, basemap toggle, and Leaflet popup overrides. Uses CSS custom properties (variables) defined in `:root` for colours.
+### Card Detail Modal
+Click a card to open the full detail modal:
 
-**When to edit:** Any visual or layout changes — colours, spacing, typography, panel sizing, etc.
+**Vendor Terms**
+- Price, Settlement, Deposit Structure (multiple tranches)
 
----
+**Terms Offered**
+- Price, Settlement, Deposit Structure
+- **+ Submit Offer** records offer with timestamp
+- Full offer history shown newest-first with delete option
 
-### `overlays.js`
-**The main file you will edit most often.** Contains two key data structures:
+**Due Diligence**
+17 risk items each with Low / Possible / High dropdown and note:
+Zoning, Yield, Access, Sewer, Water, Easements, Electricity, Flooding, Riparian, Vegetation, Contamination, Salinity, Heritage, Aboriginal, Bushfire, Odor, Commercial
 
-**`OVERLAYS` array** — each entry defines one map overlay. Fields:
+**Notes** — freetext, autosaves as you type
 
-| Field | Description |
-|---|---|
-| `id` | Unique identifier string (e.g. `"sw-wastewater"`) |
-| `label` | Display name shown in the Overlays panel |
-| `type` | One of: `"wastewater"`, `"potable"`, `"ilp"`, `"srlup"`, `"zoning"`, `"other"` |
-| `zone` | Must match a zone `id` in the `ZONES` array below |
-| `enabled` | `true` = visible by default, `false` = hidden by default |
-| `opacity` | Default opacity between `0` (invisible) and `1` (fully opaque) |
-| `bounds` | Geographic bounds `{ latMin, latMax, lonMin, lonMax }` — for GeoTIFF overlays. Set to `null` for live WMS overlays. |
-| `b64` | Base64-encoded PNG — for GeoTIFF overlays. Set to `null` for live WMS overlays. |
-| `wms` | `{ url, layers }` — for live ArcGIS overlays. Omit for GeoTIFF overlays. |
+### Pipeline Actions
+- Drag and drop cards between columns
+- Stage dropdown on each card
+- **📍 Address link** — populates search, closes pipeline, runs geocode
+- **✕ Remove** — removes from pipeline
 
-**`ZONES` array** — each entry defines a named geographic zone:
-
-| Field | Description |
-|---|---|
-| `id` | Unique identifier string (e.g. `"south-west-sydney"`) |
-| `label` | Display name in the zone dropdown |
-| `bounds` | Map bounds the view pans/zooms to when this zone is selected. Set to `null` for "All Zones". |
-
-**`OVERLAY_TYPE_META`** — display colour for each overlay type pill in the UI.
-
-**When to edit:** Adding new zones, changing which overlays are on by default, or adding new live ArcGIS layers.
+### Data Persistence
+Pipeline data saved to **Neon Postgres** via Vercel serverless API:
+- Loads from DB on startup; falls back to localStorage if offline
+- Every change saves to DB immediately
+- Data survives code deployments
 
 ---
 
-### `data.js`
-Contains the `listings` array with all property data, and the `waterLabels` lookup object.
+## Deployment (Vercel + Neon)
 
-Each listing has these fields:
+See DEPLOY.md for full setup. Summary:
 
-| Field | Description |
-|---|---|
-| `id` | Unique number |
-| `address` | Street address |
-| `suburb` | Suburb name |
-| `price` | Display price string |
-| `type` | One of: `"house"`, `"apartment"`, `"land"` |
-| `beds` / `baths` / `cars` | Counts (set to `0` for land) |
-| `lat` / `lng` | Map coordinates |
-| `waterStatus` | One of: `"serviced"`, `"planned"`, `"unserviced"`, `"outside"` |
-| `zone` | Must match a zone `id` in `overlays.js` — controls which zone filter shows this listing |
-
-**When to edit:** Adding, removing, or updating property listings.
-
----
-
-### `map.js`
-The application logic layer. Handles:
-
-- **Leaflet map initialisation** — tile layers, zoom, starting position, basemap toggle
-- **Address search** — ArcGIS geocoder with autocomplete, debounced suggestions, keyboard navigation, and pin drop
-- **Property selection** — map click handler that reverse geocodes the point, fetches Lot/DP from NSW Spatial Services cadastre, queries Land Zoning from NSW Planning Portal, and draws the parcel boundary polygon
-- **GeoTIFF parsing** — reads uploaded `.tif` files, extracts geographic bounds, rasterises to PNG for Leaflet display
-- **Live ArcGIS overlays** — double-buffered `ImageOverlay` that refreshes on map move/zoom with a 150ms debounce; uses Web Mercator projection for pixel-perfect alignment
-- **Overlay panel UI** — show/hide/opacity controls, hide-all/show-all toggle, overlay badge count
-- **Zone selector** — populates dropdown from `ZONES`, filters listings, pans map to zone bounds
-- **Listings rendering** — sidebar cards and map markers, zone + type filtering, selected marker highlight
-- **Upload Manager** — GeoTIFF upload, bounds extraction, live preview, and `overlays.js` download
-
-**When to edit:** Changes to map behaviour, filtering logic, marker appearance, or upload/download workflow.
-
----
-
-## How To: Add a New GeoTIFF Overlay
-
-### Option A — Upload via browser (recommended)
-1. Click **⬆ Upload Map** in the header
-2. Enter a label, select the overlay type, and enter the zone id
-3. Select your **GeoTIFF file** — bounds are extracted automatically
-4. Click **Add to map (this session)** to preview
-5. Click **Download updated overlays.js** — replace your existing file to make it permanent
-
-### Option B — Edit overlays.js directly
-1. Open `overlays.js`
-2. Copy an existing GeoTIFF entry in the `OVERLAYS` array
-3. Set a unique `id`, `label`, `type`, `zone`, and `opacity`
-4. Fill in `bounds`: `{ latMin, latMax, lonMin, lonMax }`
-5. Paste a base64-encoded PNG string into `b64`
-6. Save and reload
-
----
-
-## How To: Add a New Live ArcGIS Overlay
-
-1. Open `overlays.js`
-2. Add a new entry to the `OVERLAYS` array with a `wms` field:
-
-```javascript
-{
-  id:      "my-layer",
-  label:   "My Layer Label",
-  type:    "other",
-  zone:    "all",
-  enabled: false,
-  opacity: 0.5,
-  bounds:  null,
-  b64:     null,
-  wms: {
-    url:    "https://example.arcgis.com/arcgis/rest/services/MyService/MapServer/export",
-    layers: "show:0"
-  }
-}
-```
-
-3. Save and reload — the layer will appear in the Overlays panel and refresh automatically on map move/zoom
-
----
-
-## How To: Add a New Zone
-
-1. Open `overlays.js`
-2. Add a new entry to the `ZONES` array with a unique `id`, a display `label`, and the geographic `bounds`
-3. Add overlay entries for that zone using the same zone `id`
-4. In `data.js`, add listings with the matching `zone` field value
-5. Save both files and reload
+1. Push repo to GitHub
+2. Import to Vercel → connect GitHub repo
+3. Vercel dashboard → **Storage** → create **Postgres (Neon)** database
+4. Connect to project — DATABASE_URL injected automatically
+5. Push to deploy
+6. Visit /api/health to verify DB connection
 
 ---
 
 ## Live Data Sources
 
-| Layer | Source | Endpoint |
-|---|---|---|
-| NSW SRLUP | NSW Dept of Environment | `mapprod3.environment.nsw.gov.au/…/EDP/SRLUP/MapServer` |
-| NSW Land Zoning (LEP) | NSW Planning Portal | `mapprod3.environment.nsw.gov.au/…/Planning/EPI_Primary_Planning_Layers/MapServer` |
-| NSW Flood Planning (EPI) | NSW Planning Portal | `mapprod3.environment.nsw.gov.au/…/Planning/Hazard/MapServer` |
-| Address geocoding | ArcGIS World Geocoder | `geocode.arcgis.com/…/GeocodeServer` |
-| Reverse geocoding | ArcGIS World Geocoder | `geocode.arcgis.com/…/GeocodeServer/reverseGeocode` |
-| Lot/DP cadastre | NSW Spatial Services (SIX Maps) | `maps.six.nsw.gov.au/…/sixmaps/Cadastre/MapServer` |
-| Parcel geometry | NSW Spatial Services (SIX Maps) | `maps.six.nsw.gov.au/…/sixmaps/Cadastre/MapServer/0/query` |
-| Satellite imagery | Esri World Imagery | `server.arcgisonline.com/…/World_Imagery/MapServer` |
-
-All live data sources are publicly accessible with no API key required.
-
----
-
-## Current Zones
-
-| Zone ID | Label | Status |
-|---|---|---|
-| `all` | All Zones | Always available — shows all listings |
-| `south-west-sydney` | South West Sydney | Active — awaiting GeoTIFF uploads |
+| Layer | Endpoint |
+|---|---|
+| NSW Land Zoning (LEP) | mapprod3.environment.nsw.gov.au/…/EPI_Primary_Planning_Layers/MapServer |
+| NSW SRLUP | mapprod3.environment.nsw.gov.au/…/EDP/SRLUP/MapServer |
+| NSW Flood Planning | mapprod3.environment.nsw.gov.au/…/Planning/Hazard/MapServer |
+| Bushfire Prone Land | mapprod3.environment.nsw.gov.au/…/ePlanning/Planning_Portal_Hazard/MapServer |
+| Biodiversity Values | www.lmbc.nsw.gov.au/arcgis/rest/services/BV/BiodiversityValues/MapServer |
+| Address geocoding | geocode.arcgis.com/…/GeocodeServer |
+| Lot/DP + parcel boundary | maps.six.nsw.gov.au/…/public/NSW_Cadastre/MapServer/9 |
+| Satellite imagery | server.arcgisonline.com/…/World_Imagery/MapServer |
+| NSW Topo Map | maps.six.nsw.gov.au/…/public/NSW_Topo_Map/MapServer/tile/{z}/{y}/{x} |
 
 ---
 
 ## Dependencies
 
-All loaded via CDN — no build step or package manager required.
-
 | Library | Version | Purpose |
 |---|---|---|
-| [Leaflet](https://leafletjs.com/) | 1.9.4 | Interactive map |
-| [geotiff.js](https://geotiffjs.github.io/) | 2.1.3 | GeoTIFF parsing and bounds extraction |
-| [CartoDB Light](https://carto.com/basemaps/) | — | Street map base tiles |
-| [Esri World Imagery](https://www.arcgis.com/) | — | Satellite base tiles |
-| [DM Sans + DM Serif Display](https://fonts.google.com/) | — | Typography |
-
----
-
-## Potential Next Steps
-
-- **Height of Buildings / Floor Space Ratio overlays** — available on the same NSW Planning Portal MapServer (`EPI_Primary_Planning_Layers`, layers 4 and 5)
-- **Heritage overlay** — also on the same MapServer (layer 3)
-- **Export property details** — save popup information to PDF or clipboard
-- **Live listing data** — connect `data.js` to a Google Sheet or headless CMS instead of hardcoded entries
-- **Valuer General land values** — available via NSW spatial data APIs
+| Leaflet | 1.9.4 | Interactive map |
+| @neondatabase/serverless | ^0.10.4 | Neon Postgres client |
+| CartoDB Light | — | Street map tiles |
+| Esri World Imagery | — | Satellite tiles |
+| NSW Topo Map | — | Topographic tiles |
+| DM Sans + DM Serif Display | — | Typography |
