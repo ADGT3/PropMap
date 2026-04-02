@@ -1,5 +1,11 @@
 {
   "name": "sydney-property-map",
   "version": "1.0.0",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
 }
