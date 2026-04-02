@@ -1441,6 +1441,15 @@ header {
   overflow: hidden;
 }
 
+/* Two-column layout inside the modal */
+.kb-modal .kb-dd {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.kb-modal .kb-dd-row:nth-child(odd)  { border-right: 1px solid var(--border); }
+.kb-modal .kb-dd-row:last-child      { border-bottom: none; }
+.kb-modal .kb-dd-row:nth-last-child(-n+2) { border-bottom: none; }
+
 .kb-dd-row {
   display: grid;
   grid-template-columns: 1fr 90px;
