@@ -49,6 +49,9 @@
       <!-- Kanban pipeline toggle -->
       <button class="panel-btn kanban-toggle-btn" id="kanbanToggleBtn">⬡ Pipeline</button>
 
+      <!-- Measurement tool toggle -->
+      <button class="panel-btn" id="measureBtn">📐 Measure</button>
+
     </div>
   </header>
 
@@ -109,7 +112,7 @@
 
       <div class="upload-actions">
         <button class="btn-primary" id="upAddLive">Add to map (this session)</button>
-        <button class="btn-secondary" id="upDownload">Download updated overlays.js</button>
+        <button class="btn-secondary" id="upDownload">Download overlay files</button>
       </div>
       <div id="upStatus" class="up-status"></div>
 
@@ -250,7 +253,10 @@
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-  <script src="overlays.js"></script>
+  <script src="overlays-meta.js"></script>
+  <script src="overlays-b64-sw-wastewater.js"></script>
+  <script src="overlays-b64-sw-potable.js"></script>
+  <script src="overlays-b64-sw-ilp.js"></script>
   <script src="data.js"></script>
   <script src="domain-api.js"></script>
   <script src="map.js"></script>

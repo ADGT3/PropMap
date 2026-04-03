@@ -2,8 +2,11 @@
  * map.js
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
- * Depends on: overlays.js, data.js
+ * Depends on: overlays-meta.js, overlays-b64-*.js, data.js
  */
+
+// Merge b64 image data from split overlay files into OVERLAYS
+OVERLAYS.forEach(o => { if (window.OVERLAY_B64?.[o.id]) o.b64 = window.OVERLAY_B64[o.id]; });
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let activeFilter = 'all';
@@ -165,6 +168,7 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
 
 const ZONING_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/EPI_Primary_Planning_Layers/MapServer';
 const FLOOD_BASE  = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/Hazard/MapServer';
+const ROADS_BASE  = 'https://mapprod.environment.nsw.gov.au/arcgis/rest/services/Planning/EPI_Additional_Layers/MapServer';
 
 // ─── Fetch Lot/DP + parcel boundary from NSW Cadastre ────────────────────────
 // Defined at module scope so selectPropertyAtPoint can call it directly.
@@ -256,7 +260,7 @@ function clearParcelSelection() {
 
 // listing — optional enriched listing object (from data.js + DomainAPI) so the
 // popup and sidebar card can show price/agent info when a known property is clicked.
-async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includeFlood, listing = null, addToSelection = false) {
+async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includeFlood, includeRoads, listing = null, addToSelection = false) {
   const { lat, lng } = latlng;
   const myGeneration = _selectionGeneration; // snapshot — if this changes we've been superseded
 
@@ -383,7 +387,25 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
     slowFetches.push(Promise.resolve(null));
   }
 
-  const [cadastre, srlupJson, zoningJson, floodJson] = await Promise.all(slowFetches);
+  if (includeRoads) {
+    const roadsParams = new URLSearchParams({
+      f:              'json',
+      geometry:       `${lng},${lat}`,
+      geometryType:   'esriGeometryPoint',
+      inSR:           '4326',
+      spatialRel:     'esriSpatialRelIntersects',
+      outFields:      '*',
+      returnGeometry: 'false',
+      resultRecordCount: '1'
+    });
+    slowFetches.push(
+      fetch(`${ROADS_BASE}/10/query?${roadsParams}`).then(r => r.json()).catch(() => null)
+    );
+  } else {
+    slowFetches.push(Promise.resolve(null));
+  }
+
+  const [cadastre, srlupJson, zoningJson, floodJson, roadsJson] = await Promise.all(slowFetches);
   const lotDP   = cadastre ? cadastre.lotid   : null;
   const areaSqm = cadastre ? cadastre.areaSqm : null;
 
@@ -458,6 +480,31 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
       </div>`;
   }
 
+  // Build Future Road Reservations section
+  let roadsBlock = '';
+  const roadsFeature = roadsJson && ((roadsJson.features || [])[0]);
+  if (includeRoads && roadsFeature) {
+    const attrs = roadsFeature.attributes || {};
+    const SKIP  = ['OBJECTID','Shape','Shape_Area','Shape_Length','FID'];
+    const rows  = Object.entries(attrs)
+      .filter(([k, v]) => !SKIP.includes(k) && v !== null && v !== '' && v !== ' ')
+      .map(([k, v]) => `<tr>
+        <td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">${k.replace(/_/g,' ')}</td>
+        <td style="font-size:12px;padding:3px 0">${v}</td>
+      </tr>`).join('');
+    roadsBlock = `
+      <div style="border-top:2px solid #922b21;margin-top:8px;padding-top:6px">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#922b21;margin-bottom:4px">⚠ Future Road Reservation</div>
+        <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">${rows || '<tr><td colspan="2" style="font-size:12px;color:#666">Reservation details unavailable</td></tr>'}</table>
+      </div>`;
+  } else if (includeRoads && roadsJson && (roadsJson.features || []).length === 0) {
+    roadsBlock = `
+      <div style="border-top:2px solid #922b21;margin-top:8px;padding-top:6px">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#922b21;margin-bottom:4px">Future Road Reservations</div>
+        <div style="font-size:12px;color:#666">No road reservation on this parcel</div>
+      </div>`;
+  }
+
   // Update sidebar card with final Lot/DP
   if (useSearchCard) {
     showSearchCard({ label, lga, lotDP: lotDP || null, lat, lng, listing });
@@ -501,12 +548,15 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
 
   // Final popup update
   if (activeMarker) {
-    activeMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, lotDP || 'Not found', areaSqm, zoneCode, srlupBlock + zoningBlock + floodBlock, listing)));
+    activeMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, lotDP || 'Not found', areaSqm, zoneCode, srlupBlock + zoningBlock + floodBlock + roadsBlock, listing)));
     activeMarker.openPopup();
   }
 }
 
 map.on('click', function (e) {
+  // Ignore clicks when measurement tool is active
+  if (window._measureActive) return;
+
   // Ignore clicks on existing markers and popups
   if (e.originalEvent.target.closest('.leaflet-marker-icon') ||
       e.originalEvent.target.closest('.leaflet-popup')       ||
@@ -532,12 +582,14 @@ map.on('click', function (e) {
   const srlupEntry   = overlayRegistry['nsw-srlup'];
   const zoningEntry  = overlayRegistry['nsw-land-zoning'];
   const floodEntry   = overlayRegistry['nsw-flood'];
+  const roadsEntry   = overlayRegistry['nsw-future-roads'];
 
   selectPropertyAtPoint(
     e.latlng,
     !!(srlupEntry  && srlupEntry.def.enabled),
     !!(zoningEntry && zoningEntry.def.enabled),
     !!(floodEntry  && floodEntry.def.enabled),
+    !!(roadsEntry  && roadsEntry.def.enabled),
     null,
     isMeta  // addToSelection flag
   );
@@ -919,10 +971,12 @@ function renderOverlayPanel() {
   }
 
   const GROUPS = [
-    { key: 'zoning',        label: 'Zoning' },
-    { key: 'services',      label: 'Services' },
-    { key: 'environmental', label: 'Environmental' },
-    { key: 'other',         label: 'Other' },
+    { key: 'zoning',                label: 'Zoning' },
+    { key: 'services',              label: 'Services' },
+    { key: 'environmental',         label: 'Environmental' },
+    { key: 'transport',             label: 'Transport' },
+    { key: 'western-parkland-city', label: 'SEPP — Western Parkland City 2021' },
+    { key: 'other',                 label: 'Other' },
   ];
 
   // Group entries, skip groups with no entries
@@ -939,6 +993,11 @@ function renderOverlayPanel() {
       flood:        'environmental',
       biodiversity: 'environmental',
       bushfire:     'environmental',
+      'airport-noise':       'environmental',
+      'future-roads':        'transport',
+      'transport-corridors': 'transport',
+      'rail-corridors':      'transport',
+      'wpc':                 'western-parkland-city',
       other:        'other',
     };
     const g = e.def.group || TYPE_GROUP[e.def.type] || 'other';
@@ -1452,11 +1511,13 @@ function selectListing(id, clickLatLng = null) {
   const srlupEntry   = overlayRegistry['nsw-srlup'];
   const zoningEntry  = overlayRegistry['nsw-land-zoning'];
   const floodEntry   = overlayRegistry['nsw-flood'];
+  const roadsEntry   = overlayRegistry['nsw-future-roads'];
   selectPropertyAtPoint(
     queryLatLng,
     !!(srlupEntry  && srlupEntry.def.enabled),
     !!(zoningEntry && zoningEntry.def.enabled),
     !!(floodEntry  && floodEntry.def.enabled),
+    !!(roadsEntry  && roadsEntry.def.enabled),
     listing
   );
 }
@@ -1480,6 +1541,14 @@ document.getElementById('listingsToggle').addEventListener('click', function () 
   Object.values(markers).forEach(m => {
     if (showListings) m.addTo(map); else map.removeLayer(m);
   });
+  if (showListings) {
+    renderListings();
+  } else {
+    const list = document.getElementById('listingsList');
+    if (list) list.innerHTML = '';
+    const count = document.getElementById('listingCount');
+    if (count) count.textContent = '0';
+  }
 });
 
 // ─── Panel open/close ─────────────────────────────────────────────────────────
@@ -1590,7 +1659,7 @@ document.getElementById('upAddLive').addEventListener('click', () => {
   setStatus('✓ Overlay added to map for this session.');
 });
 
-// ─── Download updated overlays.js ─────────────────────────────────────────────
+// ─── Download updated overlay files ──────────────────────────────────────────
 
 document.getElementById('upDownload').addEventListener('click', () => {
   const form = getFormValues();
@@ -1598,38 +1667,53 @@ document.getElementById('upDownload').addEventListener('click', () => {
 
   const def = buildDef(form);
 
-  // Merge into existing defs
+  // 1. Download overlays-meta.js (all defs with b64 stripped to null)
   const allDefs = Object.values(overlayRegistry).map(e => e.def);
   const existingIdx = allDefs.findIndex(d => d.id === def.id);
   if (existingIdx >= 0) allDefs[existingIdx] = def;
   else allDefs.push(def);
 
-  const content = generateOverlaysJs(allDefs);
+  const metaContent = generateOverlaysMetaJs(allDefs);
+  triggerDownload(metaContent, 'overlays-meta.js');
+
+  // 2. Download overlays-b64-{id}.js for the new overlay only
+  if (def.b64) {
+    const b64Content = generateOverlayB64Js(def);
+    triggerDownload(b64Content, `overlays-b64-${def.id}.js`);
+  }
+
+  setStatus(`✓ Downloaded overlays-meta.js${def.b64 ? ` and overlays-b64-${def.id}.js` : ''}. Add the new <script> tag to index.html.`);
+});
+
+function triggerDownload(content, filename) {
   const blob = new Blob([content], { type: 'text/javascript' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
-  a.href = url; a.download = 'overlays.js'; a.click();
+  a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
-  setStatus('✓ overlays.js downloaded — replace your existing file with this one.');
-});
+}
 
-// ─── Generate overlays.js content ────────────────────────────────────────────
+// ─── Generate overlays-meta.js content (no b64 data) ─────────────────────────
 
-function generateOverlaysJs(defs) {
+function generateOverlaysMetaJs(defs) {
   const overlaysStr = defs.map(def => {
     const b = def.bounds;
     const boundsStr = b
       ? `{ latMin: ${b.latMin}, latMax: ${b.latMax}, lonMin: ${b.lonMin}, lonMax: ${b.lonMax} }`
       : 'null';
+    const wmsStr = def.wms
+      ? `,\n    wms: ${JSON.stringify(def.wms, null, 2).replace(/\n/g, '\n    ')}`
+      : '';
     return `  {
     id: ${JSON.stringify(def.id)},
     label: ${JSON.stringify(def.label)},
     type: ${JSON.stringify(def.type)},
+    group: ${JSON.stringify(def.group || 'services')},
     zone: ${JSON.stringify(def.zone)},
     enabled: ${def.enabled},
     opacity: ${def.opacity},
     bounds: ${boundsStr},
-    b64: ${def.b64 ? `"${def.b64}"` : 'null'}
+    b64: null${wmsStr}
   }`;
   }).join(',\n');
 
@@ -1644,7 +1728,8 @@ function generateOverlaysJs(defs) {
   const typeMetaStr = JSON.stringify(OVERLAY_TYPE_META, null, 2);
 
   return `/**
- * overlays.js — generated by Sydney Property Map upload manager.
+ * overlays-meta.js — generated by Sydney Property Map upload manager.
+ * b64 image data is stored separately in overlays-b64-{id}.js files.
  * See original file comments for manual editing instructions.
  */
 
@@ -1657,6 +1742,21 @@ ${zonesStr}
 ];
 
 const OVERLAY_TYPE_META = ${typeMetaStr};
+`;
+}
+
+// ─── Generate overlays-b64-{id}.js content ───────────────────────────────────
+
+function generateOverlayB64Js(def) {
+  return `// Auto-generated by Sydney Property Map upload manager.
+// b64 image data for overlay: "${def.id}"
+// Include this file after overlays-meta.js in index.html:
+//   <script src="overlays-b64-${def.id}.js"></script>
+
+(function () {
+  if (typeof window.OVERLAY_B64 === 'undefined') window.OVERLAY_B64 = {};
+  window.OVERLAY_B64[${JSON.stringify(def.id)}] = "${def.b64}";
+})();
 `;
 }
 
@@ -1707,7 +1807,7 @@ function _injectSearchCard() {
 
 // Re-filter sidebar whenever the map moves or zooms
 map.on('moveend zoomend', () => {
-  renderListings();
+  if (showListings) renderListings();
   _injectSearchCard();
   // Refresh easement buffers if electricity overlay is active
   const elecEntry = overlayRegistry['electricity-transmission'];
@@ -1863,11 +1963,13 @@ renderListings();
     const srlupEntry   = overlayRegistry['nsw-srlup'];
     const zoningEntry  = overlayRegistry['nsw-land-zoning'];
     const floodEntry   = overlayRegistry['nsw-flood'];
+    const roadsEntry   = overlayRegistry['nsw-future-roads'];
     selectPropertyAtPoint(
       { lat, lng },
       !!(srlupEntry  && srlupEntry.def.enabled),
       !!(zoningEntry && zoningEntry.def.enabled),
       !!(floodEntry  && floodEntry.def.enabled),
+      !!(roadsEntry  && roadsEntry.def.enabled),
       nearbyListing || null
     );
   }
@@ -1964,6 +2066,7 @@ window.reSelectParcels = function(parcels) {
   const srlupEntry  = overlayRegistry['nsw-srlup'];
   const zoningEntry = overlayRegistry['nsw-land-zoning'];
   const floodEntry  = overlayRegistry['nsw-flood'];
+  const roadsEntry  = overlayRegistry['nsw-future-roads'];
 
   const avgLat = parcels.reduce((s, p) => s + p.lat, 0) / parcels.length;
   const avgLng = parcels.reduce((s, p) => s + p.lng, 0) / parcels.length;
@@ -1976,6 +2079,7 @@ window.reSelectParcels = function(parcels) {
       !!(srlupEntry  && srlupEntry.def.enabled),
       !!(zoningEntry && zoningEntry.def.enabled),
       !!(floodEntry  && floodEntry.def.enabled),
+      !!(roadsEntry  && roadsEntry.def.enabled),
       null,
       false
     );
@@ -1987,6 +2091,7 @@ window.reSelectParcels = function(parcels) {
         !!(srlupEntry  && srlupEntry.def.enabled),
         !!(zoningEntry && zoningEntry.def.enabled),
         !!(floodEntry  && floodEntry.def.enabled),
+        !!(roadsEntry  && roadsEntry.def.enabled),
         null,
         true
       );
@@ -2008,4 +2113,243 @@ window.reSelectParcels = function(parcels) {
     legend.classList.toggle('collapsed');
     localStorage.setItem('legendCollapsed', legend.classList.contains('collapsed'));
   });
+})();
+
+// ─── Measurement Tool ─────────────────────────────────────────────────────────
+
+(function () {
+  let measureActive = false;
+  let measureMode   = null; // 'distance' | 'area'
+  let points        = [];
+  let polyline      = null;
+  let polygon       = null;
+  let markers       = [];
+  let tooltip       = null;
+  let segmentLabels = [];
+
+  const btn = document.getElementById('measureBtn');
+
+  // ── Haversine distance between two latlngs (metres) ──
+  function haversine(a, b) {
+    const R  = 6371000;
+    const φ1 = a.lat * Math.PI / 180;
+    const φ2 = b.lat * Math.PI / 180;
+    const dφ = (b.lat - a.lat) * Math.PI / 180;
+    const dλ = (b.lng - a.lng) * Math.PI / 180;
+    const s  = Math.sin(dφ/2) * Math.sin(dφ/2) +
+               Math.cos(φ1) * Math.cos(φ2) *
+               Math.sin(dλ/2) * Math.sin(dλ/2);
+    return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+  }
+
+  // ── Shoelace area (m²) ──
+  function polygonArea(pts) {
+    let area = 0;
+    const n = pts.length;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      // Convert to approximate metres using mean lat
+      const lat = (pts[i].lat + pts[j].lat) / 2;
+      const mPerLng = Math.cos(lat * Math.PI / 180) * 111320;
+      const mPerLat = 111320;
+      area += (pts[i].lng * mPerLng) * (pts[j].lat * mPerLat);
+      area -= (pts[j].lng * mPerLng) * (pts[i].lat * mPerLat);
+    }
+    return Math.abs(area / 2);
+  }
+
+  function formatDist(m) {
+    return m >= 1000 ? (m / 1000).toFixed(2) + ' km' : Math.round(m) + ' m';
+  }
+
+  function formatArea(m2) {
+    if (m2 >= 1e6)  return (m2 / 1e6).toFixed(2) + ' km²';
+    if (m2 >= 10000) return (m2 / 10000).toFixed(2) + ' ha';
+    return Math.round(m2) + ' m²';
+  }
+
+  // ── Show mode picker popup ──
+  function showModePicker() {
+    const existing = document.getElementById('measurePicker');
+    if (existing) { existing.remove(); return; }
+
+    const picker = document.createElement('div');
+    picker.id = 'measurePicker';
+    picker.style.cssText = `
+      position:absolute;top:calc(100% + 6px);right:0;
+      background:var(--surface);border:1px solid var(--border);
+      border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);
+      z-index:3000;padding:8px;display:flex;flex-direction:column;gap:6px;
+      min-width:160px;font-family:'DM Sans',sans-serif;
+    `;
+    picker.innerHTML = `
+      <button id="modeDistance" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;font-size:13px;text-align:left;">📏 Measure Distance</button>
+      <button id="modeArea"     style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;font-size:13px;text-align:left;">⬡ Measure Area</button>
+      ${measureActive ? '<button id="modeClear" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;font-size:13px;text-align:left;color:#c0392b;">✕ Clear</button>' : ''}
+    `;
+
+    btn.parentElement.style.position = 'relative';
+    btn.parentElement.appendChild(picker);
+
+    picker.querySelector('#modeDistance').onclick = () => { picker.remove(); startMeasure('distance'); };
+    picker.querySelector('#modeArea').onclick     = () => { picker.remove(); startMeasure('area'); };
+    if (measureActive) picker.querySelector('#modeClear').onclick = () => { picker.remove(); clearMeasure(); };
+
+    // Close on outside click
+    setTimeout(() => {
+      document.addEventListener('click', function handler(e) {
+        if (!picker.contains(e.target) && e.target !== btn) {
+          picker.remove();
+          document.removeEventListener('click', handler);
+        }
+      });
+    }, 10);
+  }
+
+  function startMeasure(mode) {
+    clearMeasure();
+    measureMode   = mode;
+    measureActive = true;
+    window._measureActive = true;
+    btn.classList.add('active');
+    map.getContainer().style.cursor = 'crosshair';
+
+    // Tooltip
+    tooltip = L.tooltip({ permanent: true, direction: 'top', className: 'measure-tooltip' })
+      .setContent(mode === 'distance' ? 'Click to start measuring' : 'Click to start drawing area')
+      .setLatLng(map.getCenter())
+      .addTo(map);
+
+    map.on('mousemove', onMouseMove);
+    map.on('click',     onMapClick);
+    map.on('dblclick',  onDblClick);
+  }
+
+  function onMouseMove(e) {
+    if (!measureActive || points.length === 0) return;
+    const allPts = [...points, e.latlng];
+
+    if (measureMode === 'distance') {
+      let total = 0;
+      for (let i = 1; i < allPts.length; i++) total += haversine(allPts[i-1], allPts[i]);
+      polyline.setLatLngs(allPts);
+      tooltip.setLatLng(e.latlng).setContent(formatDist(total));
+    } else {
+      if (polygon) polygon.setLatLngs(allPts);
+      else polyline.setLatLngs(allPts);
+      if (allPts.length >= 3) {
+        const area = polygonArea(allPts);
+        tooltip.setLatLng(e.latlng).setContent(formatArea(area));
+      } else {
+        tooltip.setLatLng(e.latlng).setContent('Click to add points');
+      }
+    }
+  }
+
+  function onMapClick(e) {
+    if (!measureActive) return;
+    L.DomEvent.stopPropagation(e);
+
+    points.push(e.latlng);
+
+    // Place a small dot marker
+    const dot = L.circleMarker(e.latlng, {
+      radius: 4, color: '#e74c3c', fillColor: '#e74c3c',
+      fillOpacity: 1, weight: 2, interactive: false
+    }).addTo(map);
+    markers.push(dot);
+
+    if (points.length === 1) {
+      // First point — create line/polygon
+      if (measureMode === 'distance') {
+        polyline = L.polyline([e.latlng], {
+          color: '#e74c3c', weight: 2.5, dashArray: '6,4', interactive: false
+        }).addTo(map);
+      } else {
+        polyline = L.polyline([e.latlng], {
+          color: '#e74c3c', weight: 2, dashArray: '4,3', interactive: false
+        }).addTo(map);
+      }
+      tooltip.setLatLng(e.latlng).setContent('Click to continue, double-click to finish');
+    }
+  }
+
+  function onDblClick(e) {
+    if (!measureActive || points.length < 2) return;
+    L.DomEvent.stopPropagation(e);
+    L.DomEvent.preventDefault(e);
+
+    // Remove the last point added by the click that fired before dblclick
+    points.pop();
+    markers[markers.length - 1].remove();
+    markers.pop();
+
+    if (measureMode === 'distance') {
+      let total = 0;
+      for (let i = 1; i < points.length; i++) total += haversine(points[i-1], points[i]);
+      polyline.setLatLngs(points);
+      tooltip.setLatLng(points[points.length - 1])
+        .setContent('Total: ' + formatDist(total));
+    } else {
+      if (points.length >= 3) {
+        if (polyline) { map.removeLayer(polyline); polyline = null; }
+        polygon = L.polygon(points, {
+          color: '#e74c3c', weight: 2, fillColor: '#e74c3c',
+          fillOpacity: 0.15, interactive: false
+        }).addTo(map);
+        const area = polygonArea(points);
+        tooltip.setLatLng(polygon.getBounds().getCenter())
+          .setContent('Area: ' + formatArea(area));
+
+        // Add segment length labels on each side (including closing side)
+        const closed = [...points, points[0]];
+        for (let i = 0; i < closed.length - 1; i++) {
+          const a = closed[i];
+          const b = closed[i + 1];
+          const midLat = (a.lat + b.lat) / 2;
+          const midLng = (a.lng + b.lng) / 2;
+          const dist = haversine(a, b);
+          const lbl = L.tooltip({
+            permanent: true, direction: 'center',
+            className: 'measure-tooltip measure-seg-label',
+            interactive: false
+          })
+            .setContent(formatDist(dist))
+            .setLatLng([midLat, midLng])
+            .addTo(map);
+          segmentLabels.push(lbl);
+        }
+      }
+    }
+
+    // Stop capturing — leave result on map
+    map.off('mousemove', onMouseMove);
+    map.off('click',     onMapClick);
+    map.off('dblclick',  onDblClick);
+    map.getContainer().style.cursor = '';
+    measureActive = false;
+    window._measureActive = false;
+    btn.classList.remove('active');
+  }
+
+  function clearMeasure() {
+    map.off('mousemove', onMouseMove);
+    map.off('click',     onMapClick);
+    map.off('dblclick',  onDblClick);
+    map.getContainer().style.cursor = '';
+    if (polyline) { map.removeLayer(polyline); polyline = null; }
+    if (polygon)  { map.removeLayer(polygon);  polygon  = null; }
+    if (tooltip)  { map.removeLayer(tooltip);  tooltip  = null; }
+    segmentLabels.forEach(l => map.removeLayer(l));
+    segmentLabels = [];
+    markers.forEach(m => map.removeLayer(m));
+    markers = [];
+    points  = [];
+    measureActive = false;
+    measureMode   = null;
+    window._measureActive = false;
+    btn.classList.remove('active');
+  }
+
+  btn.addEventListener('click', showModePicker);
 })();
