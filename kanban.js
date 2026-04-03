@@ -118,23 +118,32 @@ function toggleKanban(show) {
 function addToPipeline(listing) {
   const id = String(listing.id);
   if (pipeline[id]) {
-    // Already exists — flash the card
     highlightCard(id);
     return;
   }
+
+  // Build _parcels array — multi-parcel entries already have it, single entries get one from lat/lng
+  const parcels = listing._parcels && listing._parcels.length > 0
+    ? listing._parcels
+    : [{ lat: listing.lat, lng: listing.lng, label: `${listing.address}, ${listing.suburb}` }];
+
   pipeline[id] = {
     stage:   'shortlisted',
     note:    '',
     addedAt: Date.now(),
     property: {
-      id:      listing.id,
-      address: listing.address,
-      suburb:  listing.suburb,
-      price:   listing.price,
-      type:    listing.type,
-      beds:    listing.beds,
-      baths:   listing.baths,
-      cars:    listing.cars,
+      id:          listing.id,
+      address:     listing.address,
+      suburb:      listing.suburb,
+      price:       listing.price,
+      type:        listing.type,
+      beds:        listing.beds,
+      baths:       listing.baths,
+      cars:        listing.cars,
+      _parcels:    parcels,
+      _lotDPs:        listing._lotDPs         || null,
+      _areaSqm:       listing._areaSqm        || null,
+      _propertyCount: listing._propertyCount  || 1,
     }
   };
   savePipeline(id);
@@ -358,16 +367,10 @@ function renderBoard() {
       // Address — show on map
       card.querySelector('.kb-card-address-link').addEventListener('click', e => {
         e.stopPropagation();
-        const prop = pipeline[id] && pipeline[id].property;
-        const addressText = prop ? `${prop.address}, ${prop.suburb}` : p.address;
         toggleKanban(false);
-        const input    = document.getElementById('addressInput');
-        const clearBtn = document.getElementById('searchClear');
-        if (input) {
-          input.value = addressText;
-          if (clearBtn) clearBtn.classList.add('visible');
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          setTimeout(() => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })), 700);
+        const parcels = p._parcels && p._parcels.length > 0 ? p._parcels : null;
+        if (parcels && typeof window.reSelectParcels === 'function') {
+          window.reSelectParcels(parcels);
         }
       });
 
@@ -467,6 +470,7 @@ function openCardModal(id) {
         <div>
           <div class="kb-modal-price">${p.price}</div>
           <div class="kb-modal-address">📍 ${p.address}, ${p.suburb} NSW</div>
+          ${p._lotDPs ? `<div class="kb-modal-lotdp" style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${p._lotDPs}</div>` : ''}
         </div>
         <button class="kb-modal-close" title="Close">✕</button>
       </div>
