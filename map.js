@@ -14,6 +14,12 @@ let markers      = {};
 // Live overlay registry: id → { def, layer }
 const overlayRegistry = {};
 
+// Single-select: tracks the most recently focused listing for popup/parcel display
+let _activeListingId = null;
+
+// Marker colour
+const MARKER_COLOR = '#c4841a';
+
 // Parsed GeoTIFF result cached from the current file input
 let parsedGeoTiff = null;
 
@@ -107,8 +113,12 @@ const rowStyle    = `display:flex;justify-content:space-between;gap:16px;border-
 const lblStyle    = `color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;flex-shrink:0`;
 
 // Place a click-selected property marker
-let clickMarker  = null;
-let parcelLayer  = null;
+let clickMarker     = null;
+let clickMarkerData = null;
+let parcelLayer     = null;
+
+// Multi-select: array of selected parcels { lat, lng, label, lotDP, areaSqm, zoneCode, listing, marker, parcelLayer }
+const _selectedParcels = [];
 
 function drawParcel(rings) {
   if (parcelLayer) { map.removeLayer(parcelLayer); parcelLayer = null; }
@@ -124,12 +134,33 @@ function drawParcel(rings) {
   }).addTo(map);
 }
 
-function buildPopupInner(label, lga, lotDP, srlupBlock) {
+function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null) {
+  const dl = listing && window.DomainAPI ? DomainAPI.getEnrichedListing(listing.id) : null;
+
+  // Price only — no house type line, no agent line
+  const priceSection = listing ? `
+    <div style="font-size:16px;font-weight:700;color:#c4841a;margin-bottom:6px">${listing.price}</div>` : '';
+
+  // Split lotidstring into Lot and DP if possible (format: "1//DP12345" or "1/DP12345")
+  let lotDisplay = lotDP;
+  if (lotDP && lotDP !== 'Loading…' && lotDP !== 'Not found') {
+    const match = lotDP.match(/^([^/]+)\/{1,2}(DP\d+)$/i);
+    if (match) lotDisplay = `Lot ${match[1]} &nbsp;${match[2]}`;
+  }
+
+  const domainLink = dl
+    ? `<a href="${dl.listingUrl}" target="_blank" style="color:#c4841a;font-size:12px;text-decoration:none;display:block;margin-top:8px">View on Domain →</a>`
+    : '';
+
   return `
-    <div style="font-weight:600;margin-bottom:4px">${label}</div>
-    ${lga ? `<div style="${rowStyle}"><span style="${lblStyle}">LGA</span><span>${lga}</span></div>` : ''}
-    <div style="${rowStyle}"><span style="${lblStyle}">Lot/DP</span><span id="lotdp-cell">${lotDP}</span></div>
-    ${srlupBlock}`;
+    ${priceSection}
+    <div style="font-weight:600;margin-bottom:6px;font-size:13px">${label}</div>
+    ${lga      ? `<div style="${rowStyle}"><span style="${lblStyle}">LGA</span><span>${lga}</span></div>` : ''}
+    <div style="${rowStyle}"><span style="${lblStyle}">Lot/DP</span><span id="lotdp-cell">${lotDisplay}</span></div>
+    ${areaSqm  ? `<div style="${rowStyle}"><span style="${lblStyle}">Lot Size</span><span>${areaSqm.toLocaleString()} m²</span></div>` : ''}
+    ${zoneCode ? `<div style="${rowStyle}"><span style="${lblStyle}">Zoning</span><span style="font-weight:600">${zoneCode}</span></div>` : ''}
+    ${overlayBlock}
+    ${domainLink}`;
 }
 
 const ZONING_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/EPI_Primary_Planning_Layers/MapServer';
@@ -140,15 +171,14 @@ const FLOOD_BASE  = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/service
 
 async function fetchLotDP(lat, lng) {
   const params = new URLSearchParams({
-    f:              'json',
-    geometry:       `${lng},${lat}`,
-    geometryType:   'esriGeometryPoint',
-    inSR:           '4326',
-    spatialRel:     'esriSpatialRelIntersects',
-    outFields:      'lotidstring',
+    f:            'json',
+    geometry:     `${lng},${lat}`,
+    geometryType: 'esriGeometryPoint',
+    inSR:         '4326',
+    spatialRel:   'esriSpatialRelIntersects',
+    outFields:    'lotidstring',
     returnGeometry: 'true',
-    outSR:          '4326',
-    resultRecordCount: '1'
+    outSR:        '4326'
   });
 
   const controller = new AbortController();
@@ -163,22 +193,77 @@ async function fetchLotDP(lat, lng) {
     const json = await res.json();
     const feat = (json.features || [])[0];
     if (feat) {
-      const lotid = (feat.attributes || {}).lotidstring || null;
-      let rings = null;
+      const attrs = feat.attributes || {};
+      const lotid = attrs.lotidstring || null;
+      let rings   = null;
+      let areaSqm = null;
       if (feat.geometry && feat.geometry.rings) {
         rings = feat.geometry.rings.map(ring => ring.map(([x, y]) => [y, x]));
+        // Calculate area from rings using shoelace formula, converted to m² at Sydney's latitude
+        const metersPerDegLat = 111320;
+        const metersPerDegLng = 111320 * Math.cos(-33.87 * Math.PI / 180);
+        let area = 0;
+        for (const ring of feat.geometry.rings) {
+          let ringArea = 0;
+          for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            ringArea += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+          }
+          area += Math.abs(ringArea) / 2;
+        }
+        areaSqm = Math.round(area * metersPerDegLng * metersPerDegLat);
       }
-      return { lotid, rings };
+      return { lotid, areaSqm, rings };
     }
-  } catch (_) { clearTimeout(tid); }
+  } catch (err) { clearTimeout(tid); }
 
-  return { lotid: null, rings: null };
+  return { lotid: null, areaSqm: null, rings: null };
 }
 
-async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includeFlood) {
-  const { lat, lng } = latlng;
+// ─── Sidebar property card ────────────────────────────────────────────────────
+// Hoisted to module scope so selectPropertyAtPoint (map clicks) can call it,
+// not just the address search IIFE.
 
-  if (clickMarker) { map.removeLayer(clickMarker); clickMarker = null; }
+function showSearchCard({ label, lga, lotDP, lat, lng, listing = null }) {
+  const container = document.getElementById('listingsList');
+  const existing = document.getElementById('search-result-card');
+  if (existing) existing.remove();
+
+  if (!listing) return; // no listing match — popup has the info, nothing to add to panel
+
+  const card = makeListingCard(listing, { pinToTop: true });
+  card.id = 'search-result-card';
+  card.classList.add('active');
+  container.insertBefore(card, container.firstChild);
+  _lastSearchCardData = { label, lga, lotDP, lat, lng, listing };
+}
+
+// Incremented on every clearParcelSelection so stale async calls know to abort
+let _selectionGeneration = 0;
+
+function clearParcelSelection() {
+  _selectionGeneration++;
+  console.log('[clear] generation now', _selectionGeneration, '_selectedParcels:', _selectedParcels.length);
+  _selectedParcels.forEach(p => {
+    console.log('[clear] removing entry parcelLayer:', !!p.parcelLayer);
+    if (p.marker)      map.removeLayer(p.marker);
+    if (p.parcelLayer) map.removeLayer(p.parcelLayer);
+  });
+  _selectedParcels.length = 0;
+  if (clickMarker)  { console.log('[clear] removing clickMarker'); map.removeLayer(clickMarker);  clickMarker  = null; clickMarkerData = null; }
+  if (parcelLayer)  { console.log('[clear] removing parcelLayer'); map.removeLayer(parcelLayer);  parcelLayer  = null; }
+  renderMultiSelectBar();
+}
+
+// listing — optional enriched listing object (from data.js + DomainAPI) so the
+// popup and sidebar card can show price/agent info when a known property is clicked.
+async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includeFlood, listing = null, addToSelection = false) {
+  const { lat, lng } = latlng;
+  const myGeneration = _selectionGeneration; // snapshot — if this changes we've been superseded
+
+  // Clear previous single-select parcel boundary and marker in all cases.
+  // When addToSelection, we keep _selectedParcels entries but still remove
+  // the single-select parcelLayer so it doesn't linger under the new pins.
+  if (clickMarker && !addToSelection) { map.removeLayer(clickMarker); clickMarker = null; }
   if (parcelLayer) { map.removeLayer(parcelLayer); parcelLayer = null; }
 
   // Helper: wrap inner content in the outer popup shell
@@ -186,10 +271,16 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
     return `<div style="${popupStyle}">${inner}</div>`;
   }
 
-  clickMarker = L.marker([lat, lng], {
+  const pinNum   = addToSelection ? _selectedParcels.length + 1 : null;
+  const pinColor = addToSelection ? '#1a4a8a' : '#1a6b3a';
+  const pinHtml  = addToSelection
+    ? `<div class="search-pin" style="background:${pinColor};display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">${pinNum}</span></div>`
+    : `<div class="search-pin" style="background:${pinColor}"></div>`;
+
+  const newMarker = L.marker([lat, lng], {
     icon: L.divIcon({
       className: '',
-      html: '<div class="search-pin" style="background:#1a6b3a"></div>',
+      html: pinHtml,
       iconSize: [22, 22],
       iconAnchor: [11, 22],
       popupAnchor: [0, -24]
@@ -199,19 +290,38 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   .addTo(map)
   .openPopup();
 
-  // Stage 1 — reverse geocode (fast ~300ms), update popup immediately
-  const geo   = await reverseGeocode(lat, lng);
-  const label = geo ? geo.label : `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-  const lga   = geo ? geo.lga   : '';
-
-  if (clickMarker) {
-    clickMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, 'Loading…', '')));
-    clickMarker.openPopup();
+  if (addToSelection) {
+    const entry = { lat, lng, label: '', lotDP: null, areaSqm: null, zoneCode: null, listing, marker: newMarker, parcelLayer: null };
+    _selectedParcels.push(entry);
+  } else {
+    clickMarker = newMarker;
   }
 
-  // Show in sidebar immediately with address (Lot/DP updates below)
-  if (typeof showSearchCard === 'function') {
-    showSearchCard({ label, lga, lotDP: null, lat, lng });
+  const activeMarker = addToSelection ? newMarker : clickMarker;
+
+  // Stage 1 — if we have a known listing use its address directly; otherwise reverse geocode
+  let label, lga;
+  if (listing) {
+    label = `${listing.address}, ${listing.suburb}`;
+    lga   = '';
+  } else {
+    const geo = await reverseGeocode(lat, lng);
+    label = geo ? geo.label : `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    lga   = geo ? geo.lga   : '';
+  }
+
+  // Reference to whichever marker we just placed
+  
+  if (activeMarker) {
+    activeMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, 'Loading…', null, null, '', listing)));
+    activeMarker.openPopup();
+  }
+
+  // Show in sidebar immediately with address (Lot/DP updates below).
+  // Skip the search card when the listing card itself is the selection point.
+  const useSearchCard = !_activeListingId && !addToSelection;
+  if (useSearchCard) {
+    showSearchCard({ label, lga, lotDP: null, lat, lng, listing });
   }
 
   // Stage 2 — Lot/DP + SRLUP in parallel (slower)
@@ -238,9 +348,8 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
     slowFetches.push(Promise.resolve(null));
   }
 
-  if (includeZoning) {
-    // Query the zoning layer directly via /query (not /identify) to avoid
-    // minScale restrictions — identify won't return results when zoomed out past 1:100,000
+  // Always fetch zoning so zone code appears in popup even when overlay is off
+  {
     const zoningParams = new URLSearchParams({
       f:              'json',
       geometry:       `${lng},${lat}`,
@@ -254,8 +363,6 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
     slowFetches.push(
       fetch(`${ZONING_BASE}/2/query?${zoningParams}`).then(r => r.json()).catch(() => null)
     );
-  } else {
-    slowFetches.push(Promise.resolve(null));
   }
 
   if (includeFlood) {
@@ -277,10 +384,20 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   }
 
   const [cadastre, srlupJson, zoningJson, floodJson] = await Promise.all(slowFetches);
-  const lotDP = cadastre ? cadastre.lotid : null;
+  const lotDP   = cadastre ? cadastre.lotid   : null;
+  const areaSqm = cadastre ? cadastre.areaSqm : null;
 
-  // Draw parcel boundary on map
-  drawParcel(cadastre ? cadastre.rings : null);
+  if (!listing && lotDP) {
+    const hasStreetNumber = /^\d/.test(label);
+    if (!hasStreetNumber) {
+      const lotMatch = lotDP.match(/^([^/]+)/);
+      if (lotMatch) label = `Lot ${lotMatch[1].trim()} ${label}`;
+    }
+  }
+
+  // Extract zone code directly for inline popup display (works even if overlay is off)
+  const zoningFeature = zoningJson && ((zoningJson.features || [])[0] || (zoningJson.results || [])[0]);
+  const zoneCode = zoningFeature ? (zoningFeature.attributes || zoningFeature).SYM_CODE || null : null;
 
   // Build SRLUP section
   let srlupBlock = '';
@@ -300,9 +417,8 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
       </div>`;
   }
 
-  // Build Land Zoning section
+  // Build Land Zoning overlay block (only when overlay is enabled — full detail)
   let zoningBlock = '';
-  const zoningFeature = zoningJson && ((zoningJson.features || [])[0] || (zoningJson.results || [])[0]);
   if (includeZoning && zoningFeature) {
     const attrs = zoningFeature.attributes || zoningFeature;
     const zone  = attrs.SYM_CODE  || '';
@@ -343,30 +459,88 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   }
 
   // Update sidebar card with final Lot/DP
-  if (typeof showSearchCard === 'function') {
-    showSearchCard({ label, lga, lotDP: lotDP || null, lat, lng });
+  if (useSearchCard) {
+    showSearchCard({ label, lga, lotDP: lotDP || null, lat, lng, listing });
   }
 
-  // Final popup update via setPopupContent — reliable after async gaps
-  if (clickMarker) {
-    clickMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, lotDP || 'Not found', srlupBlock + zoningBlock + floodBlock)));
-    clickMarker.openPopup();
+  if (_selectionGeneration !== myGeneration) {
+    console.log('[bail] myGen:', myGeneration, 'current:', _selectionGeneration);
+    return;
+  }
+  console.log('[draw] gen:', myGeneration, 'addToSelection:', addToSelection, 'hasRings:', !!(cadastre && cadastre.rings));
+
+  if (addToSelection) {
+    const entry = _selectedParcels.find(p => p.marker === newMarker);
+    if (entry) {
+      entry.label      = label;
+      entry.lga        = lga;
+      entry.lotDP      = lotDP;
+      entry.areaSqm    = areaSqm;
+      entry.zoneCode   = zoneCode;
+      if (cadastre && cadastre.rings) {
+        entry.parcelLayer = L.polygon(cadastre.rings, {
+          color: '#1a6b3a', weight: 2.5, opacity: 1,
+          fillColor: '#1a4a8a', fillOpacity: 0.08,
+          dashArray: null, interactive: false
+        }).addTo(map);
+      }
+      renderMultiSelectBar();
+    }
+  } else {
+    if (parcelLayer) { map.removeLayer(parcelLayer); parcelLayer = null; }
+    if (cadastre && cadastre.rings) {
+      parcelLayer = L.polygon(cadastre.rings, {
+        color: '#1a6b3a', weight: 2.5, opacity: 1,
+        fillColor: '#1a6b3a', fillOpacity: 0.08,
+        dashArray: null, interactive: false
+      }).addTo(map);
+    }
+    clickMarkerData = { lat, lng, label, lga, lotDP, areaSqm, zoneCode, listing, parcelLayer };
+    renderMultiSelectBar();
+  }
+
+  // Final popup update
+  if (activeMarker) {
+    activeMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, lotDP || 'Not found', areaSqm, zoneCode, srlupBlock + zoningBlock + floodBlock, listing)));
+    activeMarker.openPopup();
   }
 }
 
 map.on('click', function (e) {
   // Ignore clicks on existing markers and popups
   if (e.originalEvent.target.closest('.leaflet-marker-icon') ||
-      e.originalEvent.target.closest('.leaflet-popup')) return;
+      e.originalEvent.target.closest('.leaflet-popup')       ||
+      e.originalEvent.target.classList.contains('search-pin')) return;
+
+  const isMeta = e.originalEvent.metaKey || e.originalEvent.ctrlKey;
+
+  if (!isMeta) {
+    clearParcelSelection();
+    _activeListingId = null;
+    document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
+  } else if (clickMarker) {
+    const d = clickMarkerData || { lat: clickMarker.getLatLng().lat, lng: clickMarker.getLatLng().lng, label: '', lga: '', lotDP: null, areaSqm: null, zoneCode: null, listing: null, parcelLayer: null };
+    const pinHtml1 = `<div class="search-pin" style="background:#1a4a8a;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">1</span></div>`;
+    clickMarker.setIcon(L.divIcon({ className: '', html: pinHtml1, iconSize: [22, 22], iconAnchor: [11, 22], popupAnchor: [0, -24] }));
+    if (d.parcelLayer) { parcelLayer = null; }
+    _selectedParcels.push({ lat: d.lat, lng: d.lng, label: d.label, lga: d.lga, lotDP: d.lotDP, areaSqm: d.areaSqm, zoneCode: d.zoneCode, listing: d.listing, marker: clickMarker, parcelLayer: d.parcelLayer });
+    clickMarker = null;
+    clickMarkerData = null;
+    renderMultiSelectBar();
+  }
 
   const srlupEntry   = overlayRegistry['nsw-srlup'];
   const zoningEntry  = overlayRegistry['nsw-land-zoning'];
   const floodEntry   = overlayRegistry['nsw-flood'];
-  const srlupEnabled  = !!(srlupEntry  && srlupEntry.def.enabled);
-  const zoningEnabled = !!(zoningEntry && zoningEntry.def.enabled);
-  const floodEnabled  = !!(floodEntry  && floodEntry.def.enabled);
 
-  selectPropertyAtPoint(e.latlng, srlupEnabled, zoningEnabled, floodEnabled);
+  selectPropertyAtPoint(
+    e.latlng,
+    !!(srlupEntry  && srlupEntry.def.enabled),
+    !!(zoningEntry && zoningEntry.def.enabled),
+    !!(floodEntry  && floodEntry.def.enabled),
+    null,
+    isMeta  // addToSelection flag
+  );
 });
 
 // ─── GeoTIFF parser (no external library — works from file:// URLs) ───────────
@@ -906,7 +1080,55 @@ function makeIcon(color) {
   });
 }
 
-const MARKER_COLOR = '#c4841a';
+// ─── Shared listing card builder ─────────────────────────────────────────────
+// Used by both renderListings() and showSearchCard() so the card format is identical.
+
+function makeListingCard(l, { pinToTop = false } = {}) {
+  const dl = window.DomainAPI ? DomainAPI.getEnrichedListing(l.id) : null;
+
+  const statsHtml = l.type !== 'land'
+    ? `<div class="stat">🛏 ${l.beds}</div><div class="stat">🚿 ${l.baths}</div><div class="stat">🚗 ${l.cars}</div>`
+    : `<div class="stat">Land</div>`;
+
+  const domBadge = dl
+    ? `<div class="domain-badge ${DomainAPI.isMock() ? 'mock' : ''}">
+         ${DomainAPI.isMock() ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=e31837&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
+         <span class="dom-days">${dl.daysOnMarket}d</span>
+       </div>`
+    : '';
+
+  const agentHtml = dl
+    ? `<div class="listing-agent">
+         <img src="${dl.advertiser.agents[0].photoUrl}" class="agent-avatar" alt="">
+         <span>${dl.advertiser.agents[0].firstName} ${dl.advertiser.agents[0].lastName}</span>
+         <span class="agent-agency">${dl.advertiser.name}</span>
+       </div>`
+    : '';
+
+  const pinBadge = pinToTop
+    ? `<div class="src-badge" style="margin-bottom:6px">Search Result</div>`
+    : '';
+
+  const card = document.createElement('div');
+  card.className = 'listing-card';
+  card.dataset.id = l.id;
+  card.innerHTML = `
+    ${pinBadge}
+    <div class="listing-top">
+      <div class="listing-price">${l.price}</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div class="listing-type">${l.type}</div>
+        ${domBadge}
+      </div>
+    </div>
+    <div class="listing-address">${l.address}</div>
+    <div class="listing-suburb">${l.suburb} NSW</div>
+    <div class="listing-stats">${statsHtml}</div>
+    ${agentHtml}
+  `;
+  card.addEventListener('click', () => selectListing(l.id));
+  return card;
+}
 
 // ─── Listings ─────────────────────────────────────────────────────────────────
 
@@ -926,84 +1148,29 @@ function renderListings() {
   document.getElementById('listingCount').textContent = filtered.length;
 
   filtered.forEach(l => {
-    // Enrich with Domain API data if available
-    const dl = window.DomainAPI ? DomainAPI.getEnrichedListing(l.id) : null;
-
-    const card = document.createElement('div');
-    card.className = 'listing-card';
-    card.dataset.id = l.id;
-
-    const statsHtml = l.type !== 'land'
-      ? `<div class="stat">🛏 ${l.beds}</div><div class="stat">🚿 ${l.baths}</div><div class="stat">🚗 ${l.cars}</div>`
-      : `<div class="stat">Land</div>`;
-
-    const domBadge = dl
-      ? `<div class="domain-badge ${DomainAPI.isMock() ? 'mock' : ''}">
-           ${DomainAPI.isMock() ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=e31837&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
-           <span class="dom-days">${dl.daysOnMarket}d</span>
-         </div>`
-      : '';
-
-    const agentHtml = dl
-      ? `<div class="listing-agent">
-           <img src="${dl.advertiser.agents[0].photoUrl}" class="agent-avatar" alt="">
-           <span>${dl.advertiser.agents[0].firstName} ${dl.advertiser.agents[0].lastName}</span>
-           <span class="agent-agency">${dl.advertiser.name}</span>
-         </div>`
-      : '';
-
-    card.innerHTML = `
-      <div class="listing-top">
-        <div class="listing-price">${l.price}</div>
-        <div style="display:flex;align-items:center;gap:6px">
-          <div class="listing-type">${l.type}</div>
-          ${domBadge}
-        </div>
-      </div>
-      <div class="listing-address">${l.address}</div>
-      <div class="listing-suburb">${l.suburb} NSW</div>
-      <div class="listing-stats">${statsHtml}</div>
-      ${agentHtml}
-    `;
-    card.addEventListener('click', () => selectListing(l.id));
+    const card = makeListingCard(l);
     list.appendChild(card);
 
-    // Popup — use Domain data if available
-    const domainLink = dl
-      ? dl.listingUrl
-      : `https://www.domain.com.au/sale/?suburb=${encodeURIComponent(l.suburb)}`;
-    const agentPopup = dl
-      ? `<div style="margin-top:8px;font-size:11px;color:#888">${dl.advertiser.agents[0].firstName} ${dl.advertiser.agents[0].lastName} · ${dl.advertiser.name}</div>`
-      : '';
-    const mockTag = dl && DomainAPI.isMock()
-      ? `<div style="font-size:10px;color:#999;margin-top:4px">⚡ Mock data — live when API key active</div>`
-      : '';
+    const marker = L.marker([l.lat, l.lng], {
+      icon: makeIcon(MARKER_COLOR)
+    }).addTo(map);
 
-    const marker = L.marker([l.lat, l.lng], { icon: makeIcon(MARKER_COLOR) })
-      .bindPopup(`
-        <div class="popup-price">${l.price}</div>
-        <div class="popup-address">${l.address}, ${l.suburb}</div>
-        <div class="popup-stats">
-          ${l.type !== 'land'
-            ? `<span>🛏 ${l.beds}</span><span>🚿 ${l.baths}</span><span>🚗 ${l.cars}</span>`
-            : '<span>Land</span>'}
-        </div>
-        ${agentPopup}
-        ${mockTag}
-        <div style="margin-top:10px">
-          <a href="${domainLink}" target="_blank"
-            style="color:#c4841a;font-size:12px;text-decoration:none">
-            View on Domain →
-          </a>
-        </div>
-      `)
-      .addTo(map);
-
-    marker.on('click', () => selectListing(l.id));
+    marker.on('click', (e) => selectListing(l.id, e.latlng));
     markers[l.id] = marker;
   });
 
   if (!showListings) Object.values(markers).forEach(m => map.removeLayer(m));
+
+  // Restore active highlight
+  if (_activeListingId) {
+    const activeCard = document.querySelector(`.listing-card[data-id="${_activeListingId}"]`);
+    if (activeCard) {
+      activeCard.classList.add('active');
+      activeCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }
+
+  renderMultiSelectBar();
 }
 
 // ─── Electricity easement buffers ────────────────────────────────────────────
@@ -1145,33 +1312,153 @@ async function fetchAndDrawParcel(lat, lng) {
   } catch (err) { console.warn('fetchAndDrawParcel error:', err); }
 }
 
-function selectListing(id) {
+// ─── Multi-select ─────────────────────────────────────────────────────────────
+
+function buildMergedAddress(parcels) {
+  if (parcels.length === 0) return '';
+  if (parcels.length === 1) return parcels[0].label || '';
+
+  // Group by suburb (extracted from label "address, suburb")
+  const bySuburb = {};
+  parcels.forEach(p => {
+    const parts  = (p.label || '').split(',');
+    const addr   = parts[0]?.trim() || p.label;
+    const suburb = parts[1]?.trim() || '';
+    if (!bySuburb[suburb]) bySuburb[suburb] = [];
+    bySuburb[suburb].push(addr);
+  });
+
+  const parts = Object.entries(bySuburb).map(([suburb, addrs]) => {
+    const numbers = addrs.map(a => { const m = a.match(/^[\d/]+/); return m ? m[0] : a; });
+    const street  = addrs[0].replace(/^[\d/]+\s*/, '');
+    const numericNums = numbers.map(n => parseInt(n)).filter(n => !isNaN(n)).sort((a, b) => a - b);
+    const allNumeric  = numericNums.length === numbers.length;
+
+    let addrStr;
+    if (numbers.length === 1) {
+      addrStr = `${numbers[0]} ${street}`;
+    } else if (allNumeric && numericNums.length === 2) {
+      addrStr = `${numericNums[0]}-${numericNums[1]} ${street}`;
+    } else if (allNumeric) {
+      addrStr = `${numericNums[0]}-${numericNums[numericNums.length - 1]} ${street}`;
+    } else {
+      addrStr = `${numbers.join(' & ')} ${street}`;
+    }
+    return suburb ? `${addrStr}, ${suburb}` : addrStr;
+  });
+
+  return parts.join(' + ');
+}
+
+function renderMultiSelectBar() {
+  const sidebar = document.querySelector('.sidebar');
+  let bar = document.getElementById('multi-select-bar');
+
+  const hasSingle = !!clickMarkerData;
+  const hasMulti  = _selectedParcels.length > 0;
+
+  if (!hasSingle && !hasMulti) {
+    if (bar) bar.remove();
+    return;
+  }
+
+  const parcels    = hasMulti ? _selectedParcels : [clickMarkerData];
+  const merged     = buildMergedAddress(parcels);
+
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'multi-select-bar';
+    bar.className = 'multi-select-bar';
+    sidebar.appendChild(bar);
+  }
+
+  const count      = parcels.length;
+  const isParcel   = count > 1;
+  const countLabel = isParcel ? `Parcel — ${count} properties selected` : `1 property selected`;
+  const addLabel   = isParcel ? `+ Add to Pipeline as parcel` : `+ Add to Pipeline`;
+  const addrLabel  = isParcel ? 'Parcel address' : 'Address';
+
+  bar.innerHTML = `
+    <div class="msb-header">
+      <span class="msb-count">${countLabel}</span>
+      <button class="msb-clear" id="msbClear">✕ Clear</button>
+    </div>
+    <div class="msb-label">${addrLabel}</div>
+    <input class="msb-input" id="msbAddress" type="text" value="${merged}" />
+    <button class="msb-add" id="msbAdd">${addLabel}</button>
+  `;
+
+  document.getElementById('msbClear').addEventListener('click', () => {
+    clearParcelSelection();
+  });
+
+  document.getElementById('msbAdd').addEventListener('click', () => {
+    if (typeof addToPipeline !== 'function') return;
+    const address    = document.getElementById('msbAddress').value.trim();
+    const parts      = address.split(',');
+    const streetPart = parts[0]?.trim() || address;
+    const suburbPart = parts[1]?.trim() || parcels[0]?.label?.split(',')[1]?.trim() || '';
+
+    const totalArea = parcels.reduce((s, p) => s + (p.areaSqm || 0), 0);
+    const avgLat    = parcels.reduce((s, p) => s + p.lat, 0) / count;
+    const avgLng    = parcels.reduce((s, p) => s + p.lng, 0) / count;
+    const lotDPs    = parcels.map(p => p.lotDP).filter(Boolean).join(', ');
+
+    addToPipeline({
+      id:           (isParcel ? 'parcel-' : 'property-') + Date.now(),
+      address:      streetPart,
+      suburb:       suburbPart,
+      price:        'Unknown',
+      type:         'land',
+      beds: 0, baths: 0, cars: 0,
+      lat:          avgLat,
+      lng:          avgLng,
+      waterStatus:  'outside',
+      zone:         'all',
+      _lotDPs:      lotDPs,
+      _areaSqm:     totalArea || null,
+      _propertyCount: count,
+      _parcels:     parcels.map(p => ({ lat: p.lat, lng: p.lng, label: p.label }))
+    });
+    // Do NOT clear selection — leave pin and parcel on map after adding to pipeline
+  });
+}
+
+function selectListing(id, clickLatLng = null) {
+  clearParcelSelection();
+  _activeListingId = id;
+  _lastSearchCardData = null;
+
+  const existing = document.getElementById('search-result-card');
+  if (existing) existing.remove();
+
   document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
   const card = document.querySelector(`.listing-card[data-id="${id}"]`);
   if (card) { card.classList.add('active'); card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+
   const listing = listings.find(l => l.id === id);
   if (!listing) return;
 
-  // Clear any existing parcel + click marker
   if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
   if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
 
   map.setView([listing.lat, listing.lng], 16, { animate: false });
 
-  // Open popup if marker already in view, else re-render first
-  if (markers[id]) {
-    markers[id].openPopup();
-  } else {
-    renderListings();
-    if (markers[id]) markers[id].openPopup();
-  }
+  // Use actual click coordinates for cadastre query if available (listing coords are
+  // approximate dummy data — real coords arrive with the Domain API key).
+  // Fall back to listing coords when triggered from sidebar card click (no clickLatLng).
+  const queryLatLng = clickLatLng || { lat: listing.lat, lng: listing.lng };
 
-  // Fetch and draw parcel boundary
-  fetchLotDP(listing.lat, listing.lng).then(cadastre => {
-    if (cadastre && cadastre.rings) {
-      drawParcel(cadastre.rings);
-    }
-  });
+  const srlupEntry   = overlayRegistry['nsw-srlup'];
+  const zoningEntry  = overlayRegistry['nsw-land-zoning'];
+  const floodEntry   = overlayRegistry['nsw-flood'];
+  selectPropertyAtPoint(
+    queryLatLng,
+    !!(srlupEntry  && srlupEntry.def.enabled),
+    !!(zoningEntry && zoningEntry.def.enabled),
+    !!(floodEntry  && floodEntry.def.enabled),
+    listing
+  );
 }
 
 // ─── Filter chips ─────────────────────────────────────────────────────────────
@@ -1408,15 +1695,11 @@ function renderManageList() {
 let _lastSearchCardData = null;
 
 function _injectSearchCard() {
-  if (!_lastSearchCardData) return;
+  if (!_lastSearchCardData || !_lastSearchCardData.listing) return;
   const existing = document.getElementById('search-result-card');
   if (!existing) {
-    // Re-build and insert — handled by showSearchCard which checks for existing
-    // We call a lightweight re-inject directly
-    const container = document.getElementById('listingsList');
-    if (container && _lastSearchCardData._el) {
-      container.insertBefore(_lastSearchCardData._el, container.firstChild);
-    }
+    const { label, lga, lotDP, lat, lng, listing } = _lastSearchCardData;
+    showSearchCard({ label, lga, lotDP, lat, lng, listing });
   }
 }
 
@@ -1554,126 +1837,39 @@ renderListings();
     clearBtn.classList.add('visible');
     hideSuggestions();
 
-    // Remove previous search marker and any parcel outline
-    if (searchMarker) map.removeLayer(searchMarker);
-    if (parcelLayer)  { map.removeLayer(parcelLayer); parcelLayer = null; }
+    if (searchMarker) { map.removeLayer(searchMarker); searchMarker = null; }
+    if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
+    if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
 
-    // Show search result card in sidebar immediately
-    showSearchCard({ label, lga, lotDP: null, lat, lng });
+    // Check if this address matches a known listing
+    const nearbyListing = listings.find(l => {
+      const dlat = Math.abs(l.lat - lat);
+      const dlng = Math.abs(l.lng - lng);
+      return dlat < 0.0005 && dlng < 0.0005;
+    });
 
-    // Place pin
-    const popupStyle = `font-family:'DM Sans',sans-serif;font-size:13px;line-height:1.6`;
-    const rowStyle   = `display:flex;justify-content:space-between;gap:16px;border-top:1px solid #eee;padding-top:4px;margin-top:4px`;
-    const lblStyle   = `color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.05em`;
+    // If a known listing, set _activeListingId so renderListings restores .active
+    if (nearbyListing) {
+      _activeListingId = nearbyListing.id;
+    } else {
+      _activeListingId = null;
+    }
 
-    searchMarker = L.marker([lat, lng], {
-      icon: L.divIcon({
-        className: '',
-        html: '<div class="search-pin"></div>',
-        iconSize: [22, 22],
-        iconAnchor: [11, 22],
-        popupAnchor: [0, -24]
-      })
-    })
-    .bindPopup(`
-      <div style="${popupStyle}">
-        <div style="font-weight:600;margin-bottom:4px">${label}</div>
-        ${lga ? `<div style="${rowStyle}"><span style="${lblStyle}">LGA</span><span>${lga}</span></div>` : ''}
-        <div style="${rowStyle}"><span style="${lblStyle}">Lot/DP</span><span id="lotdp-val">Loading…</span></div>
-      </div>`, { minWidth: 200 })
-    .addTo(map)
-    .openPopup();
-
-    // Fetch Lot/DP + parcel geometry in parallel with fly animation
-    const lotDPPromise = fetchLotDP(lat, lng);
+    // Wait for flyTo to fully finish before populating the sidebar —
+    // moveend fires during animation and renderListings() would wipe the card.
     map.flyTo([lat, lng], 17, { animate: true, duration: 1.2 });
+    await new Promise(resolve => map.once('moveend', resolve));
 
-    const cadastre = await lotDPPromise;
-    const lotDP    = cadastre ? cadastre.lotid : null;
-
-    // Draw parcel boundary
-    drawParcel(cadastre ? cadastre.rings : null);
-
-    // Update popup
-    const el = document.getElementById('lotdp-val');
-    if (el) el.textContent = lotDP || 'Not found';
-
-    // Update sidebar card with Lot/DP
-    showSearchCard({ label, lga, lotDP, lat, lng });
-  }
-
-  // ── Inject searched property into sidebar ──────────────────────────────────
-  function showSearchCard({ label, lga, lotDP, lat, lng }) {
-    const container = document.getElementById('listingsList');
-
-    // Remove any existing search card
-    const existing = document.getElementById('search-result-card');
-    if (existing) existing.remove();
-
-    // Build search query strings for external links
-    const addrEncoded  = encodeURIComponent(label + ' NSW');
-    const domainUrl    = `https://www.domain.com.au/sale/?suburb=${encodeURIComponent(label.split(',')[1]?.trim() || label)}&excludeunderoffer=1`;
-    const domainSoldUrl = `https://www.domain.com.au/sold-listings/?suburb=${encodeURIComponent(label.split(',')[1]?.trim() || label)}`;
-    const reaUrl       = `https://www.realestate.com.au/sold/in-${encodeURIComponent((label.split(',')[1]?.trim() || label).toLowerCase().replace(/\s+/g,'-'))},+nsw/`;
-    const pricefinderUrl = `https://www.pricefinder.com.au/`;
-
-    const card = document.createElement('div');
-    card.id = 'search-result-card';
-    card.className = 'search-result-card';
-    card.innerHTML = `
-      <div class="src-badge">Search Result</div>
-      <div class="src-address">${label}</div>
-      ${lga ? `<div class="src-meta">${lga}</div>` : ''}
-      <div class="src-lotdp" id="src-lotdp">${lotDP ? `Lot/DP: ${lotDP}` : 'Fetching Lot/DP…'}</div>
-      <div class="src-links-title">View on external sites</div>
-      <div class="src-links">
-        <a href="${domainUrl}" target="_blank" class="src-link src-link-domain">
-          Domain <span class="src-link-tag">For Sale</span>
-        </a>
-        <a href="${domainSoldUrl}" target="_blank" class="src-link src-link-domain">
-          Domain <span class="src-link-tag">Sold</span>
-        </a>
-        <a href="${reaUrl}" target="_blank" class="src-link src-link-rea">
-          REA <span class="src-link-tag">Sold</span>
-        </a>
-      </div>
-      <div class="src-disclaimer">External links open Domain / REA search results for the suburb. Direct property matches depend on available listings.</div>
-    `;
-
-    // Pipeline button — only if kanban is loaded
-    if (typeof addToPipeline === 'function') {
-      const pipelineBtn = document.createElement('button');
-      pipelineBtn.className = 'src-pipeline-btn';
-      pipelineBtn.textContent = '+ Add to Pipeline';
-      pipelineBtn.addEventListener('click', () => {
-        // Build a pseudo-listing for pipeline
-        const parts = label.split(',');
-        addToPipeline({
-          id:        'search-' + Date.now(),
-          address:   parts[0]?.trim() || label,
-          suburb:    parts[1]?.trim() || '',
-          price:     'Unknown',
-          type:      'other',
-          beds: 0, baths: 0, cars: 0,
-          lat, lng,
-          waterStatus: 'outside',
-          zone: 'all'
-        });
-      });
-      card.appendChild(pipelineBtn);
-    }
-
-    // Insert at top of listings list
-    container.insertBefore(card, container.firstChild);
-
-    // Store so renderListings re-injects it after map moves
-    _lastSearchCardData = { label, lga, lotDP, lat, lng, _el: card };
-
-    // Update Lot/DP cell once available
-    if (lotDP) {
-      const cell = document.getElementById('src-lotdp');
-      if (cell) cell.textContent = `Lot/DP: ${lotDP}`;
-    }
+    const srlupEntry   = overlayRegistry['nsw-srlup'];
+    const zoningEntry  = overlayRegistry['nsw-land-zoning'];
+    const floodEntry   = overlayRegistry['nsw-flood'];
+    selectPropertyAtPoint(
+      { lat, lng },
+      !!(srlupEntry  && srlupEntry.def.enabled),
+      !!(zoningEntry && zoningEntry.def.enabled),
+      !!(floodEntry  && floodEntry.def.enabled),
+      nearbyListing || null
+    );
   }
 
   // ── Keyboard navigation ──
@@ -1736,7 +1932,10 @@ renderListings();
     hideSuggestions();
     if (searchMarker) { map.removeLayer(searchMarker); searchMarker = null; }
     if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
+    if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
+    _activeListingId = null;
     _lastSearchCardData = null;
+    document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
     const src = document.getElementById('search-result-card');
     if (src) src.remove();
     input.focus();
@@ -1755,7 +1954,45 @@ renderListings();
 
 })();
 
-// ─── Legend collapse ──────────────────────────────────────────────────────────
+// ─── Public API for kanban ────────────────────────────────────────────────────
+// Called by kanban.js when the address link is clicked for a multi-parcel entry.
+
+window.reSelectParcels = function(parcels) {
+  if (!parcels || parcels.length === 0) return;
+  clearParcelSelection();
+
+  const srlupEntry  = overlayRegistry['nsw-srlup'];
+  const zoningEntry = overlayRegistry['nsw-land-zoning'];
+  const floodEntry  = overlayRegistry['nsw-flood'];
+
+  const avgLat = parcels.reduce((s, p) => s + p.lat, 0) / parcels.length;
+  const avgLng = parcels.reduce((s, p) => s + p.lng, 0) / parcels.length;
+  map.setView([avgLat, avgLng], 16, { animate: false });
+
+  if (parcels.length === 1) {
+    // Single parcel — plain select (green pin, normal popup)
+    selectPropertyAtPoint(
+      { lat: parcels[0].lat, lng: parcels[0].lng },
+      !!(srlupEntry  && srlupEntry.def.enabled),
+      !!(zoningEntry && zoningEntry.def.enabled),
+      !!(floodEntry  && floodEntry.def.enabled),
+      null,
+      false
+    );
+  } else {
+    // Multi-parcel — addToSelection for all (numbered blue pins)
+    parcels.forEach(p => {
+      selectPropertyAtPoint(
+        { lat: p.lat, lng: p.lng },
+        !!(srlupEntry  && srlupEntry.def.enabled),
+        !!(zoningEntry && zoningEntry.def.enabled),
+        !!(floodEntry  && floodEntry.def.enabled),
+        null,
+        true
+      );
+    });
+  }
+};
 (function () {
   const legend = document.getElementById('legendPanel');
   const toggle = document.getElementById('legendToggle');
