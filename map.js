@@ -74,12 +74,12 @@ async function fetchPatchedTopoStyle() {
     Object.values(style.sources).forEach(src => {
       if (src.url) {
         delete src.url;
-        src.tiles = [`${window.location.origin}/api/tiles/{z}/{y}/{x}.pbf`];
+        src.tiles = [`${window.location.origin}/api/tiles?z={z}&y={y}&x={x}`];
         src.minzoom = src.minzoom || 0;
         src.maxzoom = src.maxzoom || 20;
       }
     });
-    console.log('[Topo] Tile proxy URL:', `${window.location.origin}/api/tiles/{z}/{y}/{x}.pbf`);
+    console.log('[Topo] Tile proxy URL:', `${window.location.origin}/api/tiles?z={z}&y={y}&x={x}`);
   }
   return style;
 }
