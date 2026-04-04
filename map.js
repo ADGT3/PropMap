@@ -42,8 +42,14 @@ const baseLayers = {
     attribution: '© Esri, Maxar, Earthstar Geographics',
     maxZoom: 19
   }),
-  topo: null // lazy-initialised on first click — requires maplibre-gl-leaflet
+  topo: null // lazy-initialised on first click — composite: hillshade raster + NSW vector hybrid
 };
+
+// Hillshade raster layer sits beneath the vector hybrid to give terrain relief
+const hillshadeLayer = L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', {
+  attribution: '© Esri',
+  maxZoom: 18
+});
 
 const TOPO_STYLE_URL = 'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer/resources/styles/root.json';
 const TOPO_RESOURCES_URL = 'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer/resources';
@@ -54,20 +60,16 @@ function resolveRelativeUrl(base, relative) {
 }
 
 async function fetchPatchedTopoStyle() {
-  console.log('[Topo] Fetching style from:', TOPO_STYLE_URL);
   const res = await fetch(TOPO_STYLE_URL);
   if (!res.ok) throw new Error(`Style fetch failed: ${res.status} ${res.statusText}`);
   const style = await res.json();
-  console.log('[Topo] Style JSON loaded, sources:', Object.keys(style.sources || {}));
   // sprite: "../sprites/sprite" → resources/../sprites/sprite → resources/sprites/sprite
   if (style.sprite) {
     style.sprite = resolveRelativeUrl(TOPO_RESOURCES_URL + '/styles', style.sprite);
-    console.log('[Topo] Sprite URL:', style.sprite);
   }
   // glyphs: "../fonts/{fontstack}/{range}.pbf"
   if (style.glyphs) {
     style.glyphs = decodeURIComponent(resolveRelativeUrl(TOPO_RESOURCES_URL + '/styles', style.glyphs));
-    console.log('[Topo] Glyphs URL:', style.glyphs);
   }
   // sources: replace relative url with explicit tiles array via proxy to avoid CORS
   if (style.sources) {
@@ -79,7 +81,6 @@ async function fetchPatchedTopoStyle() {
         src.maxzoom = src.maxzoom || 20;
       }
     });
-    console.log('[Topo] Tile proxy URL:', `${window.location.origin}/api/tiles?z={z}&y={y}&x={x}`);
   }
   return style;
 }
@@ -102,7 +103,6 @@ async function getTopoLayer() {
           });
         }
       });
-      console.log('[Topo] MapLibre GL layer created successfully');
     } catch (err) {
       console.error('[Topo] Failed to initialise vector tile layer:', err);
       baseLayers.topo = null;
@@ -129,15 +129,21 @@ baseToggle.onAdd = function () {
     btn.addEventListener('click', async () => {
       const target = btn.dataset.base;
       if (target === activeBase) return;
-      // Remove current layer
+      // Remove current layers (including hillshade if switching away from topo)
       const current = baseLayers[activeBase];
       if (current) map.removeLayer(current);
+      if (activeBase === 'topo' && map.hasLayer(hillshadeLayer)) map.removeLayer(hillshadeLayer);
       // Get layer (lazy-init topo if needed)
       try {
         const next = target === 'topo' ? await getTopoLayer() : baseLayers[target];
         if (!next) throw new Error('Layer not available');
+        // For topo: add hillshade first (below), then vector hybrid on top
+        if (target === 'topo') {
+          hillshadeLayer.addTo(map);
+          hillshadeLayer.bringToBack();
+        }
         next.addTo(map);
-        if (next.bringToBack) next.bringToBack();
+        if (target !== 'topo' && next.bringToBack) next.bringToBack();
         activeBase = target;
         div.querySelectorAll('.basemap-btn').forEach(b => b.classList.toggle('active', b.dataset.base === target));
       } catch (err) {
@@ -319,15 +325,14 @@ let _selectionGeneration = 0;
 
 function clearParcelSelection() {
   _selectionGeneration++;
-  console.log('[clear] generation now', _selectionGeneration, '_selectedParcels:', _selectedParcels.length);
+
   _selectedParcels.forEach(p => {
-    console.log('[clear] removing entry parcelLayer:', !!p.parcelLayer);
     if (p.marker)      map.removeLayer(p.marker);
     if (p.parcelLayer) map.removeLayer(p.parcelLayer);
   });
   _selectedParcels.length = 0;
-  if (clickMarker)  { console.log('[clear] removing clickMarker'); map.removeLayer(clickMarker);  clickMarker  = null; clickMarkerData = null; }
-  if (parcelLayer)  { console.log('[clear] removing parcelLayer'); map.removeLayer(parcelLayer);  parcelLayer  = null; }
+  if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; clickMarkerData = null; }
+  if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
   renderMultiSelectBar();
 }
 
@@ -584,10 +589,10 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   }
 
   if (_selectionGeneration !== myGeneration) {
-    console.log('[bail] myGen:', myGeneration, 'current:', _selectionGeneration);
+
     return;
   }
-  console.log('[draw] gen:', myGeneration, 'addToSelection:', addToSelection, 'hasRings:', !!(cadastre && cadastre.rings));
+
 
   if (addToSelection) {
     const entry = _selectedParcels.find(p => p.marker === newMarker);
