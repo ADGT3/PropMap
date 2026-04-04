@@ -69,7 +69,7 @@ async function fetchPatchedTopoStyle() {
     Object.values(style.sources).forEach(src => {
       if (src.url) {
         delete src.url;
-        src.tiles = ['/api/tiles?z={z}&y={y}&x={x}'];
+        src.tiles = [`${window.location.origin}/api/tiles?z={z}&y={y}&x={x}`];
         src.minzoom = src.minzoom || 0;
         src.maxzoom = src.maxzoom || 20;
       }
