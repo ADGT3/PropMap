@@ -64,15 +64,12 @@ async function fetchPatchedTopoStyle() {
   if (style.glyphs) {
     style.glyphs = decodeURIComponent(resolveRelativeUrl(TOPO_RESOURCES_URL + '/styles', style.glyphs));
   }
-  // sources: replace relative url with explicit tiles array
+  // sources: replace relative url with explicit tiles array via proxy to avoid CORS
   if (style.sources) {
     Object.values(style.sources).forEach(src => {
       if (src.url) {
-        // Replace ArcGIS-style service url with explicit tile URLs MapLibre understands
         delete src.url;
-        src.tiles = [
-          'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer/tile/{z}/{y}/{x}.pbf'
-        ];
+        src.tiles = ['/api/tiles?z={z}&y={y}&x={x}'];
         src.minzoom = src.minzoom || 0;
         src.maxzoom = src.maxzoom || 20;
       }
