@@ -85,6 +85,16 @@ async function getTopoLayer() {
       style,
       attribution: '© NSW Spatial Services'
     });
+    // Suppress expected 404s from NSW tile server (missing tiles are normal)
+    baseLayers.topo.once('add', () => {
+      const ml = baseLayers.topo.getMaplibreMap?.();
+      if (ml) {
+        ml.on('error', (e) => {
+          if (e.error?.status === 404 || e.error?.message?.includes('404')) return;
+          console.error('[MapLibre]', e);
+        });
+      }
+    });
   }
   return baseLayers.topo;
 }
