@@ -42,12 +42,55 @@ const baseLayers = {
     attribution: '© Esri, Maxar, Earthstar Geographics',
     maxZoom: 19
   }),
-  topo: L.tileLayer('https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
-    attribution: '© NSW Spatial Services',
-    maxZoom: 16,
-    minZoom: 5
-  })
+  topo: null // lazy-initialised on first click — requires maplibre-gl-leaflet
 };
+
+const TOPO_STYLE_URL = 'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer/resources/styles/root.json';
+const TOPO_RESOURCES_URL = 'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer/resources';
+const TOPO_SERVER_URL = 'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer';
+
+function resolveRelativeUrl(base, relative) {
+  return new URL(relative, base + '/').href;
+}
+
+async function fetchPatchedTopoStyle() {
+  const res = await fetch(TOPO_STYLE_URL);
+  const style = await res.json();
+  // sprite: "../sprites/sprite" → resources/../sprites/sprite → resources/sprites/sprite
+  if (style.sprite) {
+    style.sprite = resolveRelativeUrl(TOPO_RESOURCES_URL + '/styles', style.sprite);
+  }
+  // glyphs: "../fonts/{fontstack}/{range}.pbf"
+  if (style.glyphs) {
+    style.glyphs = decodeURIComponent(resolveRelativeUrl(TOPO_RESOURCES_URL + '/styles', style.glyphs));
+  }
+  // sources: replace relative url with explicit tiles array
+  if (style.sources) {
+    Object.values(style.sources).forEach(src => {
+      if (src.url) {
+        // Replace ArcGIS-style service url with explicit tile URLs MapLibre understands
+        delete src.url;
+        src.tiles = [
+          'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer/tile/{z}/{y}/{x}.pbf'
+        ];
+        src.minzoom = src.minzoom || 0;
+        src.maxzoom = src.maxzoom || 20;
+      }
+    });
+  }
+  return style;
+}
+
+async function getTopoLayer() {
+  if (!baseLayers.topo) {
+    const style = await fetchPatchedTopoStyle();
+    baseLayers.topo = L.maplibreGL({
+      style,
+      attribution: '© NSW Spatial Services'
+    });
+  }
+  return baseLayers.topo;
+}
 
 let activeBase = 'map';
 baseLayers.map.addTo(map);
@@ -59,17 +102,20 @@ baseToggle.onAdd = function () {
   div.innerHTML = `
     <button class="basemap-btn active" data-base="map">Map</button>
     <button class="basemap-btn" data-base="satellite">Satellite</button>
-    <button class="basemap-btn" data-base="topo">Topo</button>
+    <button class="basemap-btn" data-base="topo">Topography</button>
   `;
   L.DomEvent.disableClickPropagation(div);
   div.querySelectorAll('.basemap-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const target = btn.dataset.base;
       if (target === activeBase) return;
-      map.removeLayer(baseLayers[activeBase]);
-      baseLayers[target].addTo(map);
-      // Keep base below overlays
-      baseLayers[target].bringToBack();
+      // Remove current layer
+      const current = baseLayers[activeBase];
+      if (current) map.removeLayer(current);
+      // Get layer (lazy-init topo if needed)
+      const next = target === 'topo' ? await getTopoLayer() : baseLayers[target];
+      next.addTo(map);
+      if (next.bringToBack) next.bringToBack();
       activeBase = target;
       div.querySelectorAll('.basemap-btn').forEach(b => b.classList.toggle('active', b.dataset.base === target));
     });

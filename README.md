@@ -26,6 +26,13 @@ sydney-property-map/
 ├── api/
 │   ├── pipeline.js               — Vercel serverless API: pipeline CRUD (Neon Postgres)
 │   └── health.js                 — Vercel serverless API: DB connection health check
+├── images/
+│   ├── favicon.ico               — Multi-size ICO favicon (16×16 – 256×256)
+│   ├── favicon-16x16.png         — Browser tab favicon
+│   ├── favicon-32x32.png         — Browser tab favicon (retina)
+│   ├── favicon-180x180.png       — Apple Touch Icon (iOS home screen)
+│   ├── favicon-192x192.png       — Android / PWA icon
+│   └── favicon-512x512.png       — PWA splash icon
 ├── index.html                    — Page structure and UI layout
 ├── styles.css                    — All visual styling
 ├── overlays-meta.js              — Overlay definitions and zone configurations (no image data)
