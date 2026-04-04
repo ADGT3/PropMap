@@ -33,6 +33,10 @@ const map = L.map('map', {
   zoomControl: true
 });
 
+// Custom pane for hillshade so it sits below the MapLibre GL vector layer
+map.createPane('hillshade');
+map.getPane('hillshade').style.zIndex = 150; // below tilePane (200) and MapLibre canvas
+
 const baseLayers = {
   map: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     attribution: '© OpenStreetMap © CARTO',
@@ -48,7 +52,8 @@ const baseLayers = {
 // Hillshade raster layer sits beneath the vector hybrid to give terrain relief
 const hillshadeLayer = L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', {
   attribution: '© Esri',
-  maxZoom: 18
+  maxZoom: 18,
+  pane: 'hillshade'
 });
 
 const TOPO_STYLE_URL = 'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer/resources/styles/root.json';
@@ -137,13 +142,17 @@ baseToggle.onAdd = function () {
       try {
         const next = target === 'topo' ? await getTopoLayer() : baseLayers[target];
         if (!next) throw new Error('Layer not available');
-        // For topo: add hillshade first (below), then vector hybrid on top
+        // For topo: add hillshade first, then vector hybrid on top
         if (target === 'topo') {
           hillshadeLayer.addTo(map);
-          hillshadeLayer.bringToBack();
         }
         next.addTo(map);
-        if (target !== 'topo' && next.bringToBack) next.bringToBack();
+        // Ensure correct stacking: hillshade below everything, vector hybrid above it
+        if (target === 'topo') {
+          hillshadeLayer.bringToBack();
+        } else if (next.bringToBack) {
+          next.bringToBack();
+        }
         activeBase = target;
         div.querySelectorAll('.basemap-btn').forEach(b => b.classList.toggle('active', b.dataset.base === target));
       } catch (err) {
