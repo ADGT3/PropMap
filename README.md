@@ -2,7 +2,7 @@
 
 A browser-based interactive property map overlaying listings with planning, environmental and infrastructure data across Sydney's growth corridors. Deployed on Vercel with a Neon Postgres database for persistent pipeline storage.
 
-**Current baseline: v52**
+**Current baseline: v53**
 
 ---
 
@@ -25,7 +25,8 @@ python3 -m http.server 8080
 sydney-property-map/
 ├── api/
 │   ├── pipeline.js               — Vercel serverless API: pipeline CRUD (Neon Postgres)
-│   └── health.js                 — Vercel serverless API: DB connection health check
+│   ├── health.js                 — Vercel serverless API: DB connection health check
+│   └── tiles.js                  — Vercel serverless API: vector tile proxy for NSW Spatial
 ├── images/
 │   ├── favicon.ico               — Multi-size ICO favicon (16×16 – 256×256)
 │   ├── favicon-16x16.png         — Browser tab favicon
@@ -73,7 +74,7 @@ node split-overlays.js
 
 ### Map & Navigation
 - **Interactive Leaflet map** centred on Greater Sydney
-- **Basemap toggle** — Map (CartoDB Light) / Satellite (Esri) / Topo (NSW Spatial Services 1:25k–1:100k)
+- **Basemap toggle** — Map (CartoDB Light) / Satellite (Esri) / Topography (NSW Vector Hybrid + Esri World Hillshade)
 - **Address search** — ArcGIS geocoder with autocomplete, supports full street addresses. Flies to location, drops a pin, draws parcel boundary
 - **Map click** — Click anywhere to identify a property: shows address, LGA, Lot/DP, lot size, zoning, and active overlay data. Draws parcel boundary polygon
 - **Parcel boundary** — Green outline drawn on map whenever a property is selected, fetched from NSW Cadastre
@@ -264,6 +265,40 @@ const lng = dl ? dl.geoLocation.longitude : l.lng;
 
 ---
 
+## Topography Basemap — Vector Tile Proxy
+
+The Topography basemap composites two layers:
+1. **Esri World Hillshade** (raster) — terrain relief, rendered in a custom Leaflet pane at z-index 150 so it always sits below the vector layer. Uses `maxNativeZoom: 16` to upscale tiles beyond zoom 16 instead of showing blank tiles.
+2. **NSW Basemap Vector Hybrid** — roads, boundaries, water, labels, landcover. Rendered via MapLibre GL JS using the `maplibre-gl-leaflet` bridge plugin.
+
+### Why a proxy?
+
+The NSW VectorTileServer at `portal.spatial.nsw.gov.au` does not set CORS headers on tile responses. MapLibre GL JS fetches tiles via XHR which requires CORS. A Vercel serverless function (`api/tiles.js`) proxies tile requests to bypass this.
+
+### How it works
+
+1. `map.js` fetches the style JSON directly from NSW (CORS allowed on the style endpoint)
+2. It patches the style to replace the tile source URL with the proxy: `/api/tiles?z={z}&y={y}&x={x}`
+3. Sprite and glyph URLs are resolved to absolute NSW URLs (CORS allowed on those endpoints)
+4. MapLibre requests tiles from the proxy using **query parameters** (not path segments — Vercel's file-based routing returns 404 on `/api/tiles/z/y/x.pbf`)
+5. The proxy fetches the tile from NSW, decompresses gzip (NSW sends pre-compressed PBF), and returns raw protobuf to the client
+
+### Key files
+
+| File | Role |
+|---|---|
+| `api/tiles.js` | Vercel serverless proxy — fetches tiles from NSW, gunzip decompresses, returns raw protobuf |
+| `map.js` (lines ~48–112) | Style patching, MapLibre GL layer init, hillshade compositing |
+| `vercel.json` | Rewrite rule: `/api/tiles/:path*` → `/api/tiles` (fallback for path-based requests) |
+
+### Important notes
+
+- Tile URL must use **query params** (`?z=&y=&x=`), not path segments — Vercel file-based routing cannot route `/api/tiles/10/598/469.pbf` to `api/tiles.js`
+- The proxy uses `import { gunzipSync } from 'zlib'` (not `'node:zlib'` — the `node:` prefix can fail on some Vercel runtimes)
+- Do **not** revert to the old raster topo service (`maps.six.nsw.gov.au`) — the vector hybrid was intentionally chosen for its detail and interactivity
+
+---
+
 ## Deployment (Vercel + Neon)
 
 See DEPLOY.md for full setup. Summary:
@@ -294,7 +329,8 @@ See DEPLOY.md for full setup. Summary:
 | Address geocoding | geocode.arcgis.com/…/GeocodeServer |
 | Lot/DP + parcel boundary | maps.six.nsw.gov.au/…/public/NSW_Cadastre/MapServer/9 |
 | Satellite imagery | server.arcgisonline.com/…/World_Imagery/MapServer |
-| NSW Topo Map | maps.six.nsw.gov.au/…/public/NSW_Topo_Map/MapServer/tile/{z}/{y}/{x} |
+| World Hillshade | services.arcgisonline.com/…/Elevation/World_Hillshade/MapServer |
+| NSW Vector Hybrid Basemap | portal.spatial.nsw.gov.au/vectortileservices/…/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer |
 
 ---
 
@@ -303,8 +339,11 @@ See DEPLOY.md for full setup. Summary:
 | Library | Version | Purpose |
 |---|---|---|
 | Leaflet | 1.9.4 | Interactive map |
+| MapLibre GL JS | 4.x | Vector tile rendering for NSW Hybrid basemap |
+| maplibre-gl-leaflet | 0.1.0 | Bridge plugin: MapLibre GL inside Leaflet |
 | @neondatabase/serverless | ^0.10.4 | Neon Postgres client |
 | CartoDB Light | — | Street map tiles |
 | Esri World Imagery | — | Satellite tiles |
-| NSW Topo Map | — | Topographic tiles |
+| Esri World Hillshade | — | Terrain relief tiles (under NSW Hybrid) |
+| NSW Vector Hybrid | — | Vector basemap via tile proxy |
 | DM Sans + DM Serif Display | — | Typography |
