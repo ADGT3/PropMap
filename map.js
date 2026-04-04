@@ -54,15 +54,20 @@ function resolveRelativeUrl(base, relative) {
 }
 
 async function fetchPatchedTopoStyle() {
+  console.log('[Topo] Fetching style from:', TOPO_STYLE_URL);
   const res = await fetch(TOPO_STYLE_URL);
+  if (!res.ok) throw new Error(`Style fetch failed: ${res.status} ${res.statusText}`);
   const style = await res.json();
+  console.log('[Topo] Style JSON loaded, sources:', Object.keys(style.sources || {}));
   // sprite: "../sprites/sprite" → resources/../sprites/sprite → resources/sprites/sprite
   if (style.sprite) {
     style.sprite = resolveRelativeUrl(TOPO_RESOURCES_URL + '/styles', style.sprite);
+    console.log('[Topo] Sprite URL:', style.sprite);
   }
   // glyphs: "../fonts/{fontstack}/{range}.pbf"
   if (style.glyphs) {
     style.glyphs = decodeURIComponent(resolveRelativeUrl(TOPO_RESOURCES_URL + '/styles', style.glyphs));
+    console.log('[Topo] Glyphs URL:', style.glyphs);
   }
   // sources: replace relative url with explicit tiles array via proxy to avoid CORS
   if (style.sources) {
@@ -74,27 +79,35 @@ async function fetchPatchedTopoStyle() {
         src.maxzoom = src.maxzoom || 20;
       }
     });
+    console.log('[Topo] Tile proxy URL:', `${window.location.origin}/api/tiles/{z}/{y}/{x}.pbf`);
   }
   return style;
 }
 
 async function getTopoLayer() {
   if (!baseLayers.topo) {
-    const style = await fetchPatchedTopoStyle();
-    baseLayers.topo = L.maplibreGL({
-      style,
-      attribution: '© NSW Spatial Services'
-    });
-    // Suppress expected 404s from NSW tile server (missing tiles are normal)
-    baseLayers.topo.once('add', () => {
-      const ml = baseLayers.topo.getMaplibreMap?.();
-      if (ml) {
-        ml.on('error', (e) => {
-          if (e.error?.status === 404 || e.error?.message?.includes('404')) return;
-          console.error('[MapLibre]', e);
-        });
-      }
-    });
+    try {
+      const style = await fetchPatchedTopoStyle();
+      baseLayers.topo = L.maplibreGL({
+        style,
+        attribution: '© NSW Spatial Services'
+      });
+      // Suppress expected 404s from NSW tile server (missing tiles are normal)
+      baseLayers.topo.once('add', () => {
+        const ml = baseLayers.topo.getMaplibreMap?.();
+        if (ml) {
+          ml.on('error', (e) => {
+            if (e.error?.status === 404 || e.error?.message?.includes('404')) return;
+            console.error('[MapLibre]', e);
+          });
+        }
+      });
+      console.log('[Topo] MapLibre GL layer created successfully');
+    } catch (err) {
+      console.error('[Topo] Failed to initialise vector tile layer:', err);
+      baseLayers.topo = null;
+      throw err;
+    }
   }
   return baseLayers.topo;
 }
@@ -120,11 +133,18 @@ baseToggle.onAdd = function () {
       const current = baseLayers[activeBase];
       if (current) map.removeLayer(current);
       // Get layer (lazy-init topo if needed)
-      const next = target === 'topo' ? await getTopoLayer() : baseLayers[target];
-      next.addTo(map);
-      if (next.bringToBack) next.bringToBack();
-      activeBase = target;
-      div.querySelectorAll('.basemap-btn').forEach(b => b.classList.toggle('active', b.dataset.base === target));
+      try {
+        const next = target === 'topo' ? await getTopoLayer() : baseLayers[target];
+        if (!next) throw new Error('Layer not available');
+        next.addTo(map);
+        if (next.bringToBack) next.bringToBack();
+        activeBase = target;
+        div.querySelectorAll('.basemap-btn').forEach(b => b.classList.toggle('active', b.dataset.base === target));
+      } catch (err) {
+        console.error('[Basemap] Failed to switch to', target, err);
+        // Re-add the previous layer so the map isn't blank
+        if (current) current.addTo(map);
+      }
     });
   });
   return div;
