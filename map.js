@@ -52,7 +52,8 @@ const baseLayers = {
 // Hillshade raster layer sits beneath the vector hybrid to give terrain relief
 const hillshadeLayer = L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', {
   attribution: '© Esri',
-  maxZoom: 18,
+  maxNativeZoom: 16,
+  maxZoom: 22,
   pane: 'hillshade'
 });
 
