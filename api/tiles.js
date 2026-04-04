@@ -1,4 +1,4 @@
-import { gunzipSync } from 'node:zlib';
+import { gunzipSync } from 'zlib';
 
 export default async function handler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -18,7 +18,7 @@ export default async function handler(req, res) {
   }
 
   if (!z || !y || !x) {
-    return res.status(400).json({ error: 'Missing z, y, or x parameters', debug: { url: req.url, z, y, x } });
+    return res.status(400).json({ error: 'Missing z, y, or x parameters' });
   }
 
   const tileUrl = `https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer/tile/${z}/${y}/${x}.pbf`;
@@ -32,21 +32,14 @@ export default async function handler(req, res) {
     let buffer = Buffer.from(await response.arrayBuffer());
 
     // NSW server sends gzip-compressed PBF tiles.
-    // Decompress here so we can send clean uncompressed protobuf to the client.
-    // This avoids Content-Encoding mismatches between proxy and browser.
-    const isGzip = buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b;
-    if (isGzip) {
-      try {
-        buffer = gunzipSync(buffer);
-      } catch (e) {
-        // If decompression fails, send as-is
-      }
+    // Decompress so client receives clean protobuf.
+    if (buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b) {
+      try { buffer = gunzipSync(buffer); } catch (_) { /* send as-is */ }
     }
 
     res.setHeader('Content-Type', 'application/x-protobuf');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'public, max-age=86400');
-    // No Content-Encoding header — we're sending raw uncompressed protobuf
     res.status(200).send(buffer);
   } catch (err) {
     res.status(502).json({ error: err.message });
