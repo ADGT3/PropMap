@@ -1874,3 +1874,42 @@ header {
   padding: 2px 7px !important;
   opacity: 0.85;
 }
+
+/* ─── Domain API error state ─────────────────────────────────────────────── */
+.domain-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  text-align: center;
+  gap: 10px;
+}
+.domain-error-icon {
+  font-size: 32px;
+  color: var(--muted);
+}
+.domain-error-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.domain-error-msg {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 220px;
+}
+.domain-error-retry {
+  margin-top: 8px;
+  padding: 7px 20px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.domain-error-retry:hover { background: var(--border); }

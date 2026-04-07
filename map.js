@@ -1301,11 +1301,6 @@ function makeListingCard(l, { pinToTop = false } = {}) {
   const listingUrl = l.listingUrl || dl.listingUrl || null;
   const daysOnMarket = l.daysOnMarket ?? dl.daysOnMarket ?? null;
 
-  // Debug — remove after confirming
-  if (!listingUrl || !l.photos?.length) {
-    console.warn('[card] id:', l.id, 'listingUrl:', listingUrl, 'photos:', l.photos, 'keys:', Object.keys(l));
-  }
-
   const domBadge = listingUrl
     ? `<a href="${listingUrl}" target="_blank" rel="noopener" class="domain-badge ${isMock ? 'mock' : ''}" onclick="event.stopPropagation()">
          ${isMock ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=1ea765&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
@@ -2105,7 +2100,7 @@ let _domainSearchTimer = null;
 
 function debouncedDomainSearch() {
   clearTimeout(_domainSearchTimer);
-  _domainSearchTimer = setTimeout(runDomainSearch, 600);
+  _domainSearchTimer = setTimeout(runDomainSearch, 2000);
 }
 
 async function runDomainSearch() {
@@ -2132,17 +2127,35 @@ async function runDomainSearch() {
       excludeDepositTaken:  _activeFilters.excludeDepositTaken,
       newDevOnly:           _activeFilters.newDevOnly,
     });
-    if (domainListings.length > 0) {
-      listings.length = 0;
-      domainListings.forEach(l => listings.push(l));
-      console.log('[map] Domain API returned ' + listings.length + ' listings');
-    } else {
-      console.warn('[map] Domain API returned 0 listings for this viewport');
-    }
+    listings.length = 0;
+    domainListings.forEach(l => listings.push(l));
+    console.log('[map] Domain API returned ' + listings.length + ' listings');
+    renderListings();
   } catch (err) {
     console.error('[map] Domain API fetch failed:', err);
+    showDomainError(err.message);
   }
-  try { renderListings(); } catch (err) { console.error('[map] renderListings failed:', err); }
+}
+
+function showDomainError(msg) {
+  // Clear markers
+  Object.values(markers).forEach(m => map.removeLayer(m));
+  markers = {};
+
+  const list = document.getElementById('listingsList');
+  const isRateLimit = msg && msg.includes('429');
+  list.innerHTML = `
+    <div class="domain-error">
+      <div class="domain-error-icon">⚠</div>
+      <div class="domain-error-title">${isRateLimit ? 'Too many requests' : 'Domain connection error'}</div>
+      <div class="domain-error-msg">${isRateLimit
+        ? 'Domain API rate limit reached. Results will refresh automatically.'
+        : 'Could not connect to Domain API. Please check your connection and try again.'
+      }</div>
+      <button class="domain-error-retry" onclick="runDomainSearch()">Retry</button>
+    </div>
+  `;
+  document.getElementById('listingCount').textContent = '0';
 }
 
 // Initial load

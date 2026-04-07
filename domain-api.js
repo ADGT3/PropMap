@@ -9,8 +9,6 @@
  * API key lives in the DOMAIN_API_KEY Vercel environment variable — never in this file.
  */
 
-const DOMAIN_API_MOCK = false;   // ← switched to LIVE
-
 // ─── In-memory cache: id → normalised listing ────────────────────────────────
 const _enrichmentCache = {};
 
@@ -191,140 +189,21 @@ function normaliseLiveListing(item) {
   };
 }
 
-// ─── Mock enrichment (kept for fallback / offline dev) ───────────────────────
-
-const MOCK_AGENCIES = [
-  { id: 'ray-white-parramatta',     name: 'Ray White Parramatta',     phone: '(02) 9630 0000' },
-  { id: 'mcgrath-camden',           name: 'McGrath Camden',            phone: '(02) 4655 1111' },
-  { id: 'lj-hooker-campbelltown',   name: 'LJ Hooker Campbelltown',   phone: '(02) 4625 2222' },
-  { id: 'century21-penrith',        name: 'Century 21 Penrith',       phone: '(02) 4731 3333' },
-  { id: 'harcourts-liverpool',      name: 'Harcourts Liverpool',      phone: '(02) 9822 4444' },
-  { id: 'raine-horne-blacktown',    name: 'Raine & Horne Blacktown',  phone: '(02) 9622 5555' },
-  { id: 'professionals-rouse-hill', name: 'Professionals Rouse Hill', phone: '(02) 8882 6666' },
-  { id: 'first-national-kellyville',name: 'First National Kellyville',phone: '(02) 8883 7777' },
-];
-
-const MOCK_AGENTS = [
-  { firstName: 'James',   lastName: 'Chen',      mobile: '0411 111 001' },
-  { firstName: 'Sarah',   lastName: 'Williams',  mobile: '0422 222 002' },
-  { firstName: 'Michael', lastName: 'Nguyen',    mobile: '0433 333 003' },
-  { firstName: 'Emma',    lastName: 'Thompson',  mobile: '0444 444 004' },
-  { firstName: 'David',   lastName: 'Patel',     mobile: '0455 555 005' },
-  { firstName: 'Jessica', lastName: 'Kim',       mobile: '0466 666 006' },
-  { firstName: 'Andrew',  lastName: 'Murphy',    mobile: '0477 777 007' },
-  { firstName: 'Olivia',  lastName: 'Hassan',    mobile: '0488 888 008' },
-];
-
-function seededRand(seed) {
-  let s = seed;
-  return () => { s = (s * 1664525 + 1013904223) & 0xffffffff; return Math.abs(s) / 0x7fffffff; };
-}
-
-function mockListingId(listing) {
-  return 2000000 + parseInt(listing.id || 0, 10) * 7919;
-}
-
-function mockPrice(listing) {
-  const base = { house: 950000, land: 620000, unit: 680000, townhouse: 780000 };
-  const b = base[listing.type] || 800000;
-  const rand = seededRand(parseInt(listing.id || 1, 10));
-  const from = Math.round((b + (rand() - 0.5) * 200000) / 5000) * 5000;
-  return { display: `$${from.toLocaleString()}`, from, to: null };
-}
-
-function enrichMockListing(listing) {
-  const rand    = seededRand(parseInt(listing.id || 1, 10));
-  const agency  = MOCK_AGENCIES[Math.floor(rand() * MOCK_AGENCIES.length)];
-  const agent   = MOCK_AGENTS[Math.floor(rand()  * MOCK_AGENTS.length)];
-  const dom     = Math.floor(rand() * 90) + 1;
-
-  return {
-    id:          String(listing.id),
-    domainId:    mockListingId(listing),
-    listingUrl:  `https://www.domain.com.au/property-profile/${listing.address.toLowerCase().replace(/\s+/g, '-')}-${listing.suburb.toLowerCase().replace(/\s+/g, '-')}-nsw-${mockListingId(listing)}`,
-    lat:         listing.lat,
-    lng:         listing.lng,
-    address:     listing.address,
-    suburb:      listing.suburb,
-    state:       'NSW',
-    postcode:    '',
-    type:        listing.type,
-    beds:        listing.beds,
-    baths:       listing.baths,
-    cars:        listing.cars,
-    landAreaSqm: listing.type === 'land' ? Math.round(300 + rand() * 400) : null,
-    headline:    `${listing.beds > 0 ? listing.beds + ' Bed ' : ''}${listing.type.charAt(0).toUpperCase() + listing.type.slice(1)} in ${listing.suburb}`,
-    summary:     `A great opportunity in ${listing.suburb}. Contact ${agent.firstName} for more details.`,
-    price:       mockPrice(listing),
-    advertiser:  { id: agency.id, name: agency.name, phone: agency.phone },
-    agent:       { firstName: agent.firstName, lastName: agent.lastName, mobile: agent.mobile },
-    photos:      [],
-    daysOnMarket: dom,
-    dateListed:  null,
-    status:      'Live',
-    _raw:        listing,
-  };
-}
-
-async function mockSearch(options = {}) {
-  // Simulate latency
-  await new Promise(r => setTimeout(r, 400 + Math.random() * 400));
-
-  if (typeof listings === 'undefined') {
-    console.warn('[DomainAPI] Mock mode: listings[] not found — is data.js loaded?');
-    return [];
-  }
-
-  let results = listings.map(enrichMockListing);
-
-  const { suburbs, minBeds, maxBeds, minPrice, maxPrice, propertyTypes } = options;
-
-  if (suburbs?.length) {
-    results = results.filter(l => suburbs.some(s => l.suburb.toLowerCase() === s.toLowerCase()));
-  }
-  if (minBeds  != null) results = results.filter(l => l.beds  >= minBeds);
-  if (maxBeds  != null) results = results.filter(l => l.beds  <= maxBeds);
-  if (minPrice != null) results = results.filter(l => l.price.from == null || l.price.from >= minPrice);
-  if (maxPrice != null) results = results.filter(l => l.price.from == null || l.price.from <= maxPrice);
-  if (propertyTypes?.length) {
-    results = results.filter(l => propertyTypes.some(t => l.type === t.toLowerCase()));
-  }
-
-  results.forEach(l => { _enrichmentCache[String(l.id)] = l; });
-  return results;
-}
-
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 const DomainAPI = {
   /**
-   * Search residential listings.
-   * @param {object} options  - suburbs, minBeds, maxBeds, minPrice, maxPrice, propertyTypes, pageSize
+   * Search residential listings via live Domain API.
+   * @param {object} options  - geoWindow, propertyTypes, minBeds, maxBeds, minPrice, maxPrice, etc.
    * @returns {Promise<Array>} normalised listing objects
    */
   async search(options = {}) {
     try {
-      return DOMAIN_API_MOCK ? await mockSearch(options) : await liveSearch(options);
+      return await liveSearch(options);
     } catch (err) {
       console.error('[DomainAPI] search() failed:', err);
       throw err;
     }
-  },
-
-  /**
-   * Get a single listing by Domain listing ID.
-   * In mock mode returns the enriched mock object; in live mode fetches from proxy.
-   */
-  async getListing(id) {
-    if (DOMAIN_API_MOCK) {
-      const all = await mockSearch();
-      return all.find(l => String(l.domainId) === String(id) || String(l.id) === String(id)) || null;
-    }
-
-    const res = await fetch(`/api/domain-listing/${id}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    return normaliseLiveListing(data);
   },
 
   /** Synchronous cache lookup — used by map.js for badge/link display */
@@ -332,12 +211,9 @@ const DomainAPI = {
     return _enrichmentCache[String(id)] || null;
   },
 
-  /** Returns true when running in mock mode */
-  isMock() {
-    return DOMAIN_API_MOCK;
-  },
-
-  isLive: !DOMAIN_API_MOCK,
+  /** Always live */
+  isMock() { return false; },
+  isLive: true,
 };
 
 // Make available globally (loaded via <script> tag)
