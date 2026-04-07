@@ -248,7 +248,8 @@ function formatPrice(price) {
     const displayIsNumeric = display && /\d/.test(display);
     if (displayIsNumeric) return display;
     if (rangeStr) return rangeStr;
-    if (display) return display;
+    // Text-only display (e.g. "Contact Agent", "Price on Application") with no range
+    return 'Price Unavailable';
   }
   return 'Price Unavailable';
 }
