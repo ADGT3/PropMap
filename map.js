@@ -1353,29 +1353,34 @@ async function queryDDRisks(lat, lng) {
   }
 
   // Wastewater — point-in-polygon check against local GSP GeoJSON
-  console.log('[DD] GSP_WSA_SW_WW available:', !!window.GSP_WSA_SW_WW, 'features:', window.GSP_WSA_SW_WW?.features?.length);
-  if (window.GSP_WSA_SW_WW) {
-    const wwFeature = GSP_WSA_SW_WW.features.find(f => pointInPolygon(lng, lat, f.geometry));
-    console.log('[DD] wastewater feature found:', !!wwFeature, 'lat:', lat, 'lng:', lng);
-    if (wwFeature) {
-      const stage = wwFeature.properties.planning_stage || '';
-      const precinct = wwFeature.properties.precinct_name || '';
-      const fy = wwFeature.properties.fy_timeline ? ` (${wwFeature.properties.fy_timeline})` : '';
-      const stageRisk = {
-        'Design & Deliver':   'low',
-        'Concept Planning':   'possible',
-        'Option Planning':    'possible',
-        'Strategic Planning': 'high',
-      };
-      dd.wastewater = {
-        status: stageRisk[stage] || 'possible',
-        note: `${stage}${fy} — ${precinct}`
-      };
+  try {
+    const wwData = typeof GSP_WSA_SW_WW !== 'undefined' ? GSP_WSA_SW_WW : null;
+    console.log('[DD] GSP_WSA_SW_WW available:', !!wwData, 'features:', wwData?.features?.length);
+    if (wwData) {
+      const wwFeature = wwData.features.find(f => pointInPolygon(lng, lat, f.geometry));
+      console.log('[DD] wastewater feature found:', !!wwFeature, 'lat:', lat, 'lng:', lng);
+      if (wwFeature) {
+        const stage = wwFeature.properties.planning_stage || '';
+        const precinct = wwFeature.properties.precinct_name || '';
+        const fy = wwFeature.properties.fy_timeline ? ` (${wwFeature.properties.fy_timeline})` : '';
+        const stageRisk = {
+          'Design & Deliver':   'low',
+          'Concept Planning':   'possible',
+          'Option Planning':    'possible',
+          'Strategic Planning': 'high',
+        };
+        dd.wastewater = {
+          status: stageRisk[stage] || 'possible',
+          note: `${stage}${fy} — ${precinct}`
+        };
+      } else {
+        dd.wastewater = { status: 'high', note: 'Outside Sydney Water wastewater servicing plan area' };
+      }
     } else {
-      dd.wastewater = { status: 'high', note: 'Outside Sydney Water wastewater servicing plan area' };
+      console.warn('[DD] GSP_WSA_SW_WW not loaded — wastewater check skipped');
     }
-  } else {
-    console.warn('[DD] GSP_WSA_SW_WW not loaded — wastewater check skipped');
+  } catch(e) {
+    console.warn('[DD] wastewater check error:', e.message);
   }
 
   return dd;
