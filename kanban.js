@@ -153,16 +153,21 @@ function addToPipeline(listing) {
   showKanbanToast(`${listing.address} added to pipeline`);
 
   // Async — query overlay layers and pre-populate DD risks
-  if (listing.lat && listing.lng && window.queryDDRisks) {
-    queryDDRisks(listing.lat, listing.lng).then(dd => {
+  const lat = listing.lat ?? parcels[0]?.lat ?? null;
+  const lng = listing.lng ?? parcels[0]?.lng ?? null;
+  if (lat && lng && window.queryDDRisks) {
+    console.log('[DD] Querying risks for', listing.address, lat, lng);
+    queryDDRisks(lat, lng).then(dd => {
+      console.log('[DD] Results:', dd);
       if (!pipeline[id]) return;
-      // Only fill items not yet assessed by user
       Object.entries(dd).forEach(([key, val]) => {
         if (!pipeline[id].dd[key]?.status) pipeline[id].dd[key] = val;
       });
       savePipeline(id);
       if (kanbanVisible) renderBoard();
     }).catch(err => console.warn('[DD] Risk query failed:', err));
+  } else {
+    console.warn('[DD] Skipping risk query — lat:', lat, 'lng:', lng, 'queryDDRisks:', !!window.queryDDRisks);
   }
 }
 
