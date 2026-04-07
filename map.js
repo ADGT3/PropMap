@@ -1301,6 +1301,11 @@ function makeListingCard(l, { pinToTop = false } = {}) {
   const listingUrl = l.listingUrl || dl.listingUrl || null;
   const daysOnMarket = l.daysOnMarket ?? dl.daysOnMarket ?? null;
 
+  // Debug — remove after confirming
+  if (!listingUrl || !l.photos?.length) {
+    console.warn('[card] id:', l.id, 'listingUrl:', listingUrl, 'photos:', l.photos, 'keys:', Object.keys(l));
+  }
+
   const domBadge = listingUrl
     ? `<a href="${listingUrl}" target="_blank" rel="noopener" class="domain-badge ${isMock ? 'mock' : ''}" onclick="event.stopPropagation()">
          ${isMock ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=1ea765&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
