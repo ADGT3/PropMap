@@ -20,16 +20,17 @@ const _enrichmentCache = {};
 
 function buildSearchPayload(options = {}) {
   const {
-    suburbs        = [],          // e.g. ['Leppington', 'Edmondson Park']
+    suburbs        = [],
     minBeds        = null,
     maxBeds        = null,
     minPrice       = null,
     maxPrice       = null,
-    propertyTypes  = [],          // e.g. ['House', 'Land']
-    listingTypes   = ['Sale'],    // 'Sale' | 'Rent' | 'Share'
+    propertyTypes  = [],
+    listingTypes   = ['Sale'],
     pageNumber     = 1,
-    pageSize       = 100,         // capped at 100
+    pageSize       = 100,
     sort           = { sortKey: 'Default', direction: 'Descending' },
+    geoWindow      = null,   // { box: { topLeft: {lat,lon}, bottomRight: {lat,lon} } }
   } = options;
 
   const payload = {
@@ -38,12 +39,15 @@ function buildSearchPayload(options = {}) {
     pageSize,
     sort,
     propertyTypes: propertyTypes.length ? propertyTypes : undefined,
-    locations: suburbs.length
-      ? suburbs.map(suburb => ({
-          state: 'NSW',
-          suburb,
-          includeSurroundingSuburbs: false,
-        }))
+    // Use geoWindow if provided, otherwise fall back to suburb list or broad NSW
+    geoWindow: geoWindow || undefined,
+    locations: !geoWindow
+      ? suburbs.length
+        ? suburbs.map(suburb => ({
+            state: 'NSW', region: '', area: '', suburb, postCode: '',
+            includeSurroundingSuburbs: false,
+          }))
+        : [{ state: 'NSW', region: '', area: '', suburb: '', postCode: '', includeSurroundingSuburbs: false }]
       : undefined,
     minBedrooms: minBeds  ?? undefined,
     maxBedrooms: maxBeds  ?? undefined,

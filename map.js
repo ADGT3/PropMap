@@ -1919,6 +1919,8 @@ map.on('moveend zoomend', () => {
   // Refresh easement buffers if electricity overlay is active
   const elecEntry = overlayRegistry['electricity-transmission'];
   if (elecEntry && elecEntry.def.enabled) drawEasementBuffers();
+  // Re-fetch Domain listings for the new viewport
+  if (showListings && window.DomainAPI) debouncedDomainSearch();
 });
 
 // Move overlay panel inside its anchor for relative positioning
@@ -1931,25 +1933,72 @@ map.on('moveend zoomend', () => {
 buildZoneSelector();
 renderOverlayPanel();
 
-// ─── Load listings from Domain API (or fall back to static data.js) ──────────
-(async function initListings() {
-  if (window.DomainAPI) {
-    try {
-      console.log('[map] Fetching listings from Domain API…');
-      const domainListings = await DomainAPI.search();
-      if (domainListings.length > 0) {
-        listings.length = 0;
-        domainListings.forEach(l => listings.push(l));
-        console.log('[map] Loaded ' + listings.length + ' listings from Domain API');
-      } else {
-        console.warn('[map] Domain API returned 0 listings — keeping static data');
+// ─── Domain API: build geoWindow from current map state ──────────────────────
+// Uses the selected property (or first of multi-select) as centre if available,
+// otherwise uses the current map viewport bounds.
+
+function buildDomainGeoWindow() {
+  // Priority 1: first selected parcel
+  if (_selectedParcels.length > 0) {
+    const p = _selectedParcels[0];
+    const delta = 0.05; // ~5km radius box around selection
+    return {
+      box: {
+        topLeft:     { lat: p.lat + delta, lon: p.lng - delta },
+        bottomRight: { lat: p.lat - delta, lon: p.lng + delta },
       }
-    } catch (err) {
-      console.error('[map] Domain API fetch failed, using static data:', err);
-    }
+    };
   }
-  renderListings();
-})();
+  // Priority 2: single click marker
+  if (clickMarkerData) {
+    const { lat, lng } = clickMarkerData;
+    const delta = 0.05;
+    return {
+      box: {
+        topLeft:     { lat: lat + delta, lon: lng - delta },
+        bottomRight: { lat: lat - delta, lon: lng + delta },
+      }
+    };
+  }
+  // Priority 3: current map viewport
+  const b = map.getBounds();
+  return {
+    box: {
+      topLeft:     { lat: b.getNorth(), lon: b.getWest() },
+      bottomRight: { lat: b.getSouth(), lon: b.getEast() },
+    }
+  };
+}
+
+// ─── Domain search with debounce ─────────────────────────────────────────────
+let _domainSearchTimer = null;
+
+function debouncedDomainSearch() {
+  clearTimeout(_domainSearchTimer);
+  _domainSearchTimer = setTimeout(runDomainSearch, 600);
+}
+
+async function runDomainSearch() {
+  if (!window.DomainAPI || !DomainAPI.search) return;
+  try {
+    const geoWindow = buildDomainGeoWindow();
+    console.log('[map] Domain search — geoWindow:', JSON.stringify(geoWindow));
+    const domainListings = await DomainAPI.search({ geoWindow });
+    if (domainListings.length > 0) {
+      listings.length = 0;
+      domainListings.forEach(l => listings.push(l));
+      console.log('[map] Domain API returned ' + listings.length + ' listings');
+    } else {
+      console.warn('[map] Domain API returned 0 listings for this viewport');
+    }
+    renderListings();
+  } catch (err) {
+    console.error('[map] Domain API search failed:', err);
+  }
+}
+
+// Initial load
+runDomainSearch();
 
 // ─── Address search (Nominatim geocoder) ─────────────────────────────────────
 
