@@ -128,11 +128,13 @@
     <div id="map"></div>
     <div class="sidebar">
       <div class="sidebar-header">
-        <h2>Listings in view</h2>
-        <p><span id="listingCount">0</span> properties found</p>
-      </div>
-      <div class="filters">
-        <button class="filter-toggle-btn" id="filterToggleBtn">⚙ Filter <span class="filter-active-count" id="filterActiveCount"></span></button>
+        <div class="sidebar-header-row">
+          <div>
+            <h2>Listings in view</h2>
+            <p><span id="listingCount">0</span> properties found</p>
+          </div>
+          <button class="filter-toggle-btn" id="filterToggleBtn">⚙ Filter <span class="filter-active-count" id="filterActiveCount"></span></button>
+        </div>
       </div>
 
       <!-- Filter panel -->
@@ -145,6 +147,14 @@
           </div>
         </div>
         <div class="filter-panel-body">
+
+          <div class="filter-group">
+            <label class="filter-label">Listing Type</label>
+            <div class="filter-chips" id="filterListingType">
+              <button class="filter-chip active" data-value="Sale">Sale</button>
+              <button class="filter-chip" data-value="Rent">Rent</button>
+            </div>
+          </div>
 
           <div class="filter-group">
             <label class="filter-label">Property Type</label>
@@ -161,10 +171,118 @@
           </div>
 
           <div class="filter-group">
-            <label class="filter-label">Listing Type</label>
-            <div class="filter-chips" id="filterListingType">
-              <button class="filter-chip active" data-value="Sale">Sale</button>
-              <button class="filter-chip" data-value="Rent">Rent</button>
+            <label class="filter-label">Price</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinPrice">
+                  <option value="">Any</option>
+                  <option value="100000">$100k</option>
+                  <option value="200000">$200k</option>
+                  <option value="300000">$300k</option>
+                  <option value="400000">$400k</option>
+                  <option value="500000">$500k</option>
+                  <option value="600000">$600k</option>
+                  <option value="700000">$700k</option>
+                  <option value="750000">$750k</option>
+                  <option value="800000">$800k</option>
+                  <option value="900000">$900k</option>
+                  <option value="1000000">$1m</option>
+                  <option value="1250000">$1.25m</option>
+                  <option value="1500000">$1.5m</option>
+                  <option value="1750000">$1.75m</option>
+                  <option value="2000000">$2m</option>
+                  <option value="2500000">$2.5m</option>
+                  <option value="3000000">$3m</option>
+                  <option value="4000000">$4m</option>
+                  <option value="5000000">$5m</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxPrice">
+                  <option value="">Any</option>
+                  <option value="200000">$200k</option>
+                  <option value="300000">$300k</option>
+                  <option value="400000">$400k</option>
+                  <option value="500000">$500k</option>
+                  <option value="600000">$600k</option>
+                  <option value="700000">$700k</option>
+                  <option value="750000">$750k</option>
+                  <option value="800000">$800k</option>
+                  <option value="900000">$900k</option>
+                  <option value="1000000">$1m</option>
+                  <option value="1250000">$1.25m</option>
+                  <option value="1500000">$1.5m</option>
+                  <option value="1750000">$1.75m</option>
+                  <option value="2000000">$2m</option>
+                  <option value="2500000">$2.5m</option>
+                  <option value="3000000">$3m</option>
+                  <option value="4000000">$4m</option>
+                  <option value="5000000">$5m</option>
+                  <option value="7500000">$7.5m</option>
+                  <option value="10000000">$10m</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Land Area</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinLand">
+                  <option value="">Any</option>
+                  <option value="100">100m²</option>
+                  <option value="150">150m²</option>
+                  <option value="200">200m²</option>
+                  <option value="250">250m²</option>
+                  <option value="300">300m²</option>
+                  <option value="350">350m²</option>
+                  <option value="400">400m²</option>
+                  <option value="450">450m²</option>
+                  <option value="500">500m²</option>
+                  <option value="600">600m²</option>
+                  <option value="700">700m²</option>
+                  <option value="800">800m²</option>
+                  <option value="1000">1,000m²</option>
+                  <option value="1500">1,500m²</option>
+                  <option value="2000">2,000m²</option>
+                  <option value="3000">3,000m²</option>
+                  <option value="4000">4,000m²</option>
+                  <option value="5000">5,000m²</option>
+                  <option value="10000">10,000m²</option>
+                  <option value="20000">20,000m²</option>
+                  <option value="50000">50,000m²</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxLand">
+                  <option value="">Any</option>
+                  <option value="150">150m²</option>
+                  <option value="200">200m²</option>
+                  <option value="250">250m²</option>
+                  <option value="300">300m²</option>
+                  <option value="350">350m²</option>
+                  <option value="400">400m²</option>
+                  <option value="450">450m²</option>
+                  <option value="500">500m²</option>
+                  <option value="600">600m²</option>
+                  <option value="700">700m²</option>
+                  <option value="800">800m²</option>
+                  <option value="1000">1,000m²</option>
+                  <option value="1500">1,500m²</option>
+                  <option value="2000">2,000m²</option>
+                  <option value="3000">3,000m²</option>
+                  <option value="4000">4,000m²</option>
+                  <option value="5000">5,000m²</option>
+                  <option value="10000">10,000m²</option>
+                  <option value="20000">20,000m²</option>
+                  <option value="50000">50,000m²</option>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -226,67 +344,6 @@
           </div>
 
           <div class="filter-group">
-            <label class="filter-label">Price</label>
-            <div class="filter-row">
-              <div class="filter-field">
-                <span>Min</span>
-                <select id="filterMinPrice">
-                  <option value="">Any</option>
-                  <option value="300000">$300k</option>
-                  <option value="500000">$500k</option>
-                  <option value="750000">$750k</option>
-                  <option value="1000000">$1m</option>
-                  <option value="1500000">$1.5m</option>
-                  <option value="2000000">$2m</option>
-                  <option value="3000000">$3m</option>
-                </select>
-              </div>
-              <div class="filter-field">
-                <span>Max</span>
-                <select id="filterMaxPrice">
-                  <option value="">Any</option>
-                  <option value="500000">$500k</option>
-                  <option value="750000">$750k</option>
-                  <option value="1000000">$1m</option>
-                  <option value="1500000">$1.5m</option>
-                  <option value="2000000">$2m</option>
-                  <option value="3000000">$3m</option>
-                  <option value="5000000">$5m</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div class="filter-group">
-            <label class="filter-label">Land Area (m²)</label>
-            <div class="filter-row">
-              <div class="filter-field">
-                <span>Min</span>
-                <select id="filterMinLand">
-                  <option value="">Any</option>
-                  <option value="200">200m²</option>
-                  <option value="400">400m²</option>
-                  <option value="600">600m²</option>
-                  <option value="1000">1,000m²</option>
-                  <option value="4000">4,000m²</option>
-                  <option value="10000">10,000m²</option>
-                </select>
-              </div>
-              <div class="filter-field">
-                <span>Max</span>
-                <select id="filterMaxLand">
-                  <option value="">Any</option>
-                  <option value="400">400m²</option>
-                  <option value="600">600m²</option>
-                  <option value="1000">1,000m²</option>
-                  <option value="4000">4,000m²</option>
-                  <option value="10000">10,000m²</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div class="filter-group">
             <label class="filter-label">Property Features</label>
             <div class="filter-chips" id="filterFeatures">
               <button class="filter-chip" data-value="AirConditioning">Air Con</button>
@@ -321,7 +378,7 @@
               <span>Exclude price withheld</span>
             </label>
             <label class="filter-checkbox-row">
-              <input type="checkbox" id="filterExcludeDepositTaken">
+              <input type="checkbox" id="filterExcludeDepositTaken" checked>
               <span>Exclude deposit taken</span>
             </label>
             <label class="filter-checkbox-row">

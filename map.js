@@ -24,7 +24,7 @@ let _activeFilters = {
   listingAttributes:      [],   // e.g. ['HasPhotos']
   establishedType:        null, // 'New' | 'Established'
   excludePriceWithheld:   false,
-  excludeDepositTaken:    false,
+  excludeDepositTaken:    true,
   newDevOnly:             false,
 };
 let activeZone   = 'all';
