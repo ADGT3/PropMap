@@ -229,15 +229,28 @@ function drawParcel(rings) {
 // ─── Format price for display ─────────────────────────────────────────────────
 // Handles both live Domain shape { display, from, to } and static string prices.
 function formatPrice(price) {
-  if (!price) return 'Price on request';
+  if (!price) return 'Price Unavailable';
   if (typeof price === 'string') return price;
   if (typeof price === 'object') {
-    if (price.display) return price.display;
-    if (price.from && price.to) return `$${Number(price.from).toLocaleString()} – $${Number(price.to).toLocaleString()}`;
-    if (price.from) return `$${Number(price.from).toLocaleString()}`;
-    if (price.to)   return `$${Number(price.to).toLocaleString()}`;
+    const { display, from, to } = price;
+
+    // Build a numeric range string if we have from/to
+    const rangeStr = from && to
+      ? `$${Number(from).toLocaleString()} – $${Number(to).toLocaleString()}`
+      : from
+        ? `From $${Number(from).toLocaleString()}`
+        : to
+          ? `To $${Number(to).toLocaleString()}`
+          : null;
+
+    // If display is a real number string (e.g. "$850,000"), use it
+    // If display is text-only (e.g. "Contact Agent"), prefer the numeric range
+    const displayIsNumeric = display && /\d/.test(display);
+    if (displayIsNumeric) return display;
+    if (rangeStr) return rangeStr;
+    if (display) return display;
   }
-  return 'Price on request';
+  return 'Price Unavailable';
 }
 
 function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null) {
