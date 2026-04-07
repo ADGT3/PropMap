@@ -1353,8 +1353,10 @@ async function queryDDRisks(lat, lng) {
   }
 
   // Wastewater — point-in-polygon check against local GSP GeoJSON
+  console.log('[DD] GSP_WSA_SW_WW available:', !!window.GSP_WSA_SW_WW, 'features:', window.GSP_WSA_SW_WW?.features?.length);
   if (window.GSP_WSA_SW_WW) {
     const wwFeature = GSP_WSA_SW_WW.features.find(f => pointInPolygon(lng, lat, f.geometry));
+    console.log('[DD] wastewater feature found:', !!wwFeature, 'lat:', lat, 'lng:', lng);
     if (wwFeature) {
       const stage = wwFeature.properties.planning_stage || '';
       const precinct = wwFeature.properties.precinct_name || '';
@@ -1372,6 +1374,8 @@ async function queryDDRisks(lat, lng) {
     } else {
       dd.wastewater = { status: 'high', note: 'Outside Sydney Water wastewater servicing plan area' };
     }
+  } else {
+    console.warn('[DD] GSP_WSA_SW_WW not loaded — wastewater check skipped');
   }
 
   return dd;

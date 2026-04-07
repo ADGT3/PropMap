@@ -272,8 +272,10 @@ function getDd(id) {
 // Refresh the DD rows in an open modal after async risk results arrive
 function refreshModalDd(id) {
   const modal = document.getElementById('kb-modal');
+  console.log('[DD] refreshModalDd — modal:', !!modal, 'modal id:', modal?.dataset?.propertyId, 'target id:', String(id));
   if (!modal || modal.dataset.propertyId !== String(id)) return;
   const dd = getDd(id);
+  console.log('[DD] refreshModalDd — dd object:', dd);
   modal.querySelectorAll('.kb-dd-row').forEach(row => {
     const key    = row.dataset.key;
     const status = dd[key]?.status || '';
