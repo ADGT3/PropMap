@@ -226,12 +226,26 @@ function drawParcel(rings) {
   }).addTo(map);
 }
 
-function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null) {
+// ─── Format price for display ─────────────────────────────────────────────────
+// Handles both live Domain shape { display, from, to } and static string prices.
+function formatPrice(price) {
+  if (!price) return 'Price on request';
+  if (typeof price === 'string') return price;
+  if (typeof price === 'object') {
+    if (price.display) return price.display;
+    if (price.from && price.to) return `$${Number(price.from).toLocaleString()} – $${Number(price.to).toLocaleString()}`;
+    if (price.from) return `$${Number(price.from).toLocaleString()}`;
+    if (price.to)   return `$${Number(price.to).toLocaleString()}`;
+  }
+  return 'Price on request';
+}
+
+
   const dl = listing && window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(listing.id) : null;
 
   // Price only — no house type line, no agent line
   const priceSection = listing ? `
-    <div style="font-size:16px;font-weight:700;color:#c4841a;margin-bottom:6px">${listing.price}</div>` : '';
+    <div style="font-size:16px;font-weight:700;color:#c4841a;margin-bottom:6px">${formatPrice(listing.price)}</div>` : '';
 
   // Split lotidstring into Lot and DP if possible (format: "1//DP12345" or "1/DP12345")
   let lotDisplay = lotDP;
@@ -1252,32 +1266,16 @@ function makeIcon(color) {
 function makeListingCard(l, { pinToTop = false } = {}) {
   const dl = window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(l.id) : null;
 
-  const statsHtml = l.type !== 'land'
-    ? `<div class="stat">🛏 ${l.beds}</div><div class="stat">🚿 ${l.baths}</div><div class="stat">🚗 ${l.cars}</div>`
-    : `<div class="stat">Land</div>`;
-
   const domBadge = dl
     ? `<div class="domain-badge ${DomainAPI.isMock && DomainAPI.isMock() ? 'mock' : ''}">
          ${DomainAPI.isMock && DomainAPI.isMock() ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=e31837&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
-         <span class="dom-days">${dl.daysOnMarket}d</span>
+         <span class="dom-days">${dl.daysOnMarket != null ? dl.daysOnMarket + 'd' : ''}</span>
        </div>`
     : '';
 
-  const agentHtml = dl
-    ? (() => {
-        // Live API: advertiser.contacts[0].name (full name string)
-        // Mock API: agent.firstName + agent.lastName
-        const contact = dl.advertiser?.contacts?.[0];
-        const agentName = contact?.name
-          || (dl.agent ? `${dl.agent.firstName || ''} ${dl.agent.lastName || ''}`.trim() : '');
-        const agentPhoto = contact?.photoUrl || dl.agent?.photoUrl || '';
-        const agencyName = dl.advertiser?.name || '';
-        return `<div class="listing-agent">
-         ${agentPhoto ? `<img src="${agentPhoto}" class="agent-avatar" alt="">` : ''}
-         <span>${agentName}</span>
-         <span class="agent-agency">${agencyName}</span>
-       </div>`;
-      })()
+  const thumbUrl = l.photos?.[0]?.url || null;
+  const thumbHtml = thumbUrl
+    ? `<div class="listing-thumb"><img src="${thumbUrl}" alt="" loading="lazy"></div>`
     : '';
 
   const pinBadge = pinToTop
@@ -1289,8 +1287,9 @@ function makeListingCard(l, { pinToTop = false } = {}) {
   card.dataset.id = l.id;
   card.innerHTML = `
     ${pinBadge}
+    ${thumbHtml}
     <div class="listing-top">
-      <div class="listing-price">${l.price}</div>
+      <div class="listing-price">${formatPrice(l.price)}</div>
       <div style="display:flex;align-items:center;gap:6px">
         <div class="listing-type">${l.type}</div>
         ${domBadge}
@@ -1298,8 +1297,6 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     </div>
     <div class="listing-address">${l.address}</div>
     <div class="listing-suburb">${l.suburb} NSW</div>
-    <div class="listing-stats">${statsHtml}</div>
-    ${agentHtml}
   `;
   card.addEventListener('click', () => selectListing(l.id));
   return card;
