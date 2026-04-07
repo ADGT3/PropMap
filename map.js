@@ -2,14 +2,11 @@
  * map.js
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
- * Depends on: overlays-meta.js, overlays-b64-*.js, domain-api.js
+ * Depends on: overlays-meta.js, overlays-b64-*.js, data.js
  */
 
 // Merge b64 image data from split overlay files into OVERLAYS
 OVERLAYS.forEach(o => { if (window.OVERLAY_B64?.[o.id]) o.b64 = window.OVERLAY_B64[o.id]; });
-
-// ─── Listings — populated by Domain API on load ───────────────────────────────
-let listings = [];
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let _activeFilters = {
@@ -1277,53 +1274,44 @@ function buildZoneSelector() {
 }
 
 // ─── DD Risk Assessment ───────────────────────────────────────────────────────
-// Queries NSW overlay layers at a lat/lng and returns a DD risk object
-// matching the DD_ITEMS keys in kanban.js.
+// Queries NSW overlay layers at a lat/lng and returns pre-populated DD risks.
+// Called by kanban.js when a property is added to the pipeline.
 
 async function queryDDRisks(lat, lng) {
-  const pt = new URLSearchParams({
-    f: 'json', geometry: `${lng},${lat}`, geometryType: 'esriGeometryPoint',
-    inSR: '4326', spatialRel: 'esriSpatialRelIntersects',
-    returnGeometry: 'false', resultRecordCount: '1'
-  });
+  const baseParams = {
+    f: 'json',
+    geometry: `${lng},${lat}`,
+    geometryType: 'esriGeometryPoint',
+    inSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    returnGeometry: 'false',
+    resultRecordCount: '1'
+  };
+
+  const q = extra => new URLSearchParams({ ...baseParams, ...extra }).toString();
+  const hasFeatures = r => (r?.features?.length ?? 0) > 0;
 
   const [zoningRes, floodRes, bushfireRes, biodivRes, roadsRes, elecRes] = await Promise.all([
-    // Zoning
-    fetch(`${ZONING_BASE}/2/query?${new URLSearchParams({...Object.fromEntries(pt), outFields: 'SYM_CODE,LAY_CLASS,EPI_NAME'})}`)
-      .then(r => r.json()).catch(() => null),
-    // Flooding
-    fetch(`${FLOOD_BASE}/1/query?${new URLSearchParams({...Object.fromEntries(pt), outFields: 'LAY_CLASS,SYM_CODE'})}`)
-      .then(r => r.json()).catch(() => null),
-    // Bushfire prone land
-    fetch(`https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/ePlanning/Planning_Portal_Hazard/MapServer/229/query?${new URLSearchParams({...Object.fromEntries(pt), outFields: '*'})}`)
-      .then(r => r.json()).catch(() => null),
-    // Biodiversity Values Map
-    fetch(`https://www.lmbc.nsw.gov.au/arcgis/rest/services/BV/BiodiversityValues/MapServer/0/query?${new URLSearchParams({...Object.fromEntries(pt), outFields: '*'})}`)
-      .then(r => r.json()).catch(() => null),
-    // Future road reservations
-    fetch(`${ROADS_BASE}/10/query?${new URLSearchParams({...Object.fromEntries(pt), outFields: '*'})}`)
-      .then(r => r.json()).catch(() => null),
-    // Electricity transmission easements (vector — check drawEasementBuffers distance instead)
-    Promise.resolve(null),
+    fetch(`${ZONING_BASE}/2/query?${q({ outFields: 'SYM_CODE,LAY_CLASS' })}`).then(r => r.json()).catch(() => null),
+    fetch(`${FLOOD_BASE}/1/query?${q({ outFields: 'LAY_CLASS,SYM_CODE' })}`).then(r => r.json()).catch(() => null),
+    fetch(`https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/ePlanning/Planning_Portal_Hazard/MapServer/229/query?${q({ outFields: '*' })}`).then(r => r.json()).catch(() => null),
+    fetch(`https://www.lmbc.nsw.gov.au/arcgis/rest/services/BV/BiodiversityValues/MapServer/0/query?${q({ outFields: '*' })}`).then(r => r.json()).catch(() => null),
+    fetch(`${ROADS_BASE}/10/query?${q({ outFields: '*' })}`).then(r => r.json()).catch(() => null),
+    fetch(`https://services.ga.gov.au/gis/rest/services/National_Electricity_Infrastructure/MapServer/2/query?${q({ outFields: 'CAPACITYKV', returnGeometry: 'false' })}`).then(r => r.json()).catch(() => null),
   ]);
 
-  const hasFeatures = r => r?.features?.length > 0;
+  const dd = {};
 
   // Zoning
   const zoningCode = zoningRes?.features?.[0]?.attributes?.SYM_CODE || '';
   const layClass   = zoningRes?.features?.[0]?.attributes?.LAY_CLASS || '';
-
-  // Map results to DD risk levels
-  const dd = {};
-
-  // Zoning — flag if rural/environment/special purpose (may limit yield)
   if (zoningCode) {
-    const isResidential = /^R\d/i.test(zoningCode);
-    const isRural       = /^RU/i.test(zoningCode);
-    const isEnv         = /^E\d/i.test(zoningCode);
+    const isRural = /^RU/i.test(zoningCode);
+    const isEnv   = /^E\d/i.test(zoningCode);
+    const isRes   = /^R\d/i.test(zoningCode);
     dd.zoning = {
-      status: isRural || isEnv ? 'high' : isResidential ? 'low' : 'possible',
-      note: zoningCode ? `Zone: ${zoningCode}${layClass ? ' — ' + layClass : ''}` : ''
+      status: isRural || isEnv ? 'high' : isRes ? 'low' : 'possible',
+      note:   `Zone: ${zoningCode}${layClass ? ' — ' + layClass : ''}`
     };
   }
 
@@ -1332,7 +1320,7 @@ async function queryDDRisks(lat, lng) {
     const cls = floodRes.features[0].attributes?.LAY_CLASS || '';
     dd.flooding = { status: 'high', note: cls || 'Flood affected land' };
   } else {
-    dd.flooding = { status: 'low', note: 'No flood overlay at this location' };
+    dd.flooding = { status: 'low', note: 'No flood planning overlay at this location' };
   }
 
   // Bushfire
@@ -1349,30 +1337,27 @@ async function queryDDRisks(lat, lng) {
     dd.vegetation = { status: 'low', note: 'No BVMap constraint identified' };
   }
 
-  // Future road reservations
+  // Access / Future road reservations
   if (hasFeatures(roadsRes)) {
     dd.access = { status: 'high', note: 'Future road reservation on or near site' };
   } else {
     dd.access = { status: 'low', note: 'No road reservation identified' };
   }
 
-  // Electricity easements — check if any easement buffer geometries overlap
-  const elecEntry = overlayRegistry?.['electricity-transmission'];
-  if (elecEntry?.enabled && window._easementBuffers?.length) {
-    const ptLatLng = L.latLng(lat, lng);
-    const inEasement = window._easementBuffers.some(b => b.getBounds?.().contains(ptLatLng));
-    dd.easements = inEasement
-      ? { status: 'high',     note: 'Within electricity transmission easement' }
-      : { status: 'possible', note: 'Electricity overlay active — verify clearance' };
+  // Easements — electricity transmission lines nearby
+  if (hasFeatures(elecRes)) {
+    const kv = elecRes.features[0].attributes?.CAPACITYKV || '';
+    dd.easements = { status: 'high', note: `Electricity transmission line nearby${kv ? ' (' + kv + ' kV)' : ''}` };
+  } else {
+    dd.easements = { status: 'low', note: 'No transmission easement identified' };
   }
 
   return dd;
 }
 
-// Expose so kanban.js can call it
 window.queryDDRisks = queryDDRisks;
 
-
+// ─── Marker icon ──────────────────────────────────────────────────────────────
 
 function makeIcon(color) {
   return L.divIcon({
