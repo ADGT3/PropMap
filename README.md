@@ -1,4 +1,4 @@
-# Sydney Property Map — V59
+# Sydney Property Map — V60
 
 A browser-based interactive property map overlaying live Domain.com.au listings with planning, environmental and infrastructure data across Sydney's growth corridors. Deployed on Vercel with a Neon Postgres database for persistent pipeline storage.
 
@@ -39,7 +39,7 @@ sydney-property-map/
 ## Environment Variables (Vercel)
 | Variable | Description |
 |---|---|
-| `DOMAIN_API_KEY` | Domain Developer API key (`key_5a7f22b3a6d2d977340624127cf55a34`) — store in Vercel only, never in code |
+| `DOMAIN_API_KEY` | Domain Developer API key — store in Vercel only, never in code |
 | `POSTGRES_URL` | Neon database connection string (auto-injected by Vercel) |
 
 ---
@@ -47,7 +47,7 @@ sydney-property-map/
 ## Architecture Notes
 
 ### Domain API
-- **Live only** — no mock mode. `DOMAIN_API_MOCK` removed.
+- **Live only** — no mock mode
 - Proxy route: `api/domain-search.js` uses `export default` (ESM, matches `"type":"module"` in package.json)
 - Search uses `geoWindow.box` from current map viewport — refreshes on pan/zoom with 5s debounce
 - Capped at 100 results per search
@@ -93,7 +93,7 @@ sydney-property-map/
 - Refreshes on pan/zoom with 5s debounce to respect rate limits
 - 100 listing cap per search
 - Property thumbnail from Domain media
-- Price display: numeric if available, falls back to range, shows "Price Unavailable" if none
+- Price display: numeric if available, falls back to range, then vendor terms price, then "Price Unavailable"
 - Domain badge (green) links directly to Domain listing page
 - Filter panel: Listing Type, Property Type, Price, Land Area, Bedrooms, Bathrooms, Cars, Features, Attributes, Status, deposit/price withheld toggles
 - "Exclude deposit taken" ticked by default
@@ -114,6 +114,10 @@ Grouped into: Zoning, Environmental, Transport, Services, Western Parkland City 
 - Drag and drop cards between columns
 - DD risk auto-population on property add (async, from `dd-risks.js`)
 - DD items: Zoning, Yield, Access, Wastewater, Water, Easements, Electricity, Flooding, Riparian, Vegetation, Contamination, Salinity, Heritage, Aboriginal, Bushfire, Odor, Commercial
+- Card price shows vendor terms price as fallback when listing price unavailable
+- Price fields (vendor terms, offer) auto-format to whole dollars on blur/submit
+- Settlement fields accept days/months/years — converted to days on save (e.g. "3 months" → "90 days")
+- Deposit fields accept free text (dollars or percentage)
 - Click property address on card to fly map to that location
 - Notes field per card (autosaves)
 - Persistent via Neon Postgres with localStorage fallback

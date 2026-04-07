@@ -205,6 +205,69 @@ function saveTerms(id, terms) {
   }
 }
 
+// ─── Price formatting ─────────────────────────────────────────────────────────
+// Formats a price value for display on kanban cards/modals.
+// Handles Domain API price objects, plain strings, and numbers.
+// Falls back to termsPrice if listing price is unavailable.
+
+function formatKbPrice(price, termsPrice) {
+  const fmt = v => {
+    if (!v && v !== 0) return null;
+    // Already a formatted string with $ — return as-is if it has digits
+    if (typeof v === 'string' && /\d/.test(v)) {
+      // Strip non-numeric except decimal, reformat as whole dollars
+      const num = parseFloat(v.replace(/[^0-9.]/g, ''));
+      return isNaN(num) ? v : '$' + Math.round(num).toLocaleString();
+    }
+    if (typeof v === 'number') return '$' + Math.round(v).toLocaleString();
+    if (typeof v === 'object') {
+      // Domain API price object { display, from, to }
+      const { display, from, to } = v;
+      const hasNum = display && /\d/.test(display);
+      if (hasNum) {
+        const num = parseFloat(display.replace(/[^0-9.]/g, ''));
+        return isNaN(num) ? display : '$' + Math.round(num).toLocaleString();
+      }
+      if (from && to) return '$' + Math.round(from).toLocaleString() + ' – $' + Math.round(to).toLocaleString();
+      if (from) return '$' + Math.round(from).toLocaleString();
+      if (to)   return '$' + Math.round(to).toLocaleString();
+    }
+    return null;
+  };
+
+  const listed = fmt(price);
+  if (listed && listed !== 'Price Unavailable') return listed;
+
+  // Fall back to vendor terms price if listing price is unavailable
+  const terms = fmt(termsPrice);
+  if (terms) return terms + ' <span style="font-size:10px;opacity:0.7">(vendor terms)</span>';
+
+  return 'Price Unavailable';
+}
+
+// Formats a raw input price (from terms/offer fields) as whole dollars
+function formatInputPrice(val) {
+  if (!val) return '';
+  const num = parseFloat(String(val).replace(/[^0-9.]/g, ''));
+  return isNaN(num) ? val : '$' + Math.round(num).toLocaleString();
+}
+
+// Converts settlement entry (days, months or years) to days
+// e.g. "3 months" → "90 days", "2 years" → "730 days", "42" → "42 days", "42 days" → "42 days"
+function formatSettlement(val) {
+  if (!val) return '';
+  const s = val.trim().toLowerCase();
+  const match = s.match(/^(\d+(?:\.\d+)?)\s*(d|day|days|m|mo|month|months|y|yr|year|years)?$/);
+  if (!match) return val; // unrecognised — leave as-is
+  const num  = parseFloat(match[1]);
+  const unit = match[2] || 'd';
+  let days;
+  if (/^y/.test(unit))      days = Math.round(num * 365);
+  else if (/^m/.test(unit)) days = Math.round(num * 30);
+  else                       days = Math.round(num);
+  return days + ' days';
+}
+
 function getTerms(id) {
   return pipeline[id]?.terms || { price: '', settlement: '', deposits: [{ amount: '', due: '', note: '' }] };
 }
@@ -363,6 +426,9 @@ function renderBoard() {
       const offers   = getOffers(id);
       const dd       = getDd(id);
       const ddCount  = DD_ITEMS.filter(i => dd[i.toLowerCase()]?.status).length;
+      const ddHigh   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
+      const ddPoss   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
+      const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
       const hasTerms = terms.price || terms.settlement;
 
       const stageOptions = STAGES.map(s =>
@@ -374,14 +440,14 @@ function renderBoard() {
           <span class="kb-card-type">${p.type}</span>
           <button class="kb-remove" title="Remove from pipeline">✕</button>
         </div>
-        <div class="kb-card-price">${p.price}</div>
+        <div class="kb-card-price">${formatKbPrice(p.price, terms.price)}</div>
         <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address}</div>
         <div class="kb-card-suburb">${p.suburb} NSW</div>
         <select class="kb-stage-select">${stageOptions}</select>
         <div class="kb-card-indicators">
           ${hasTerms   ? `<span class="kb-ind kb-ind-terms" title="Vendor terms recorded">Terms</span>` : ''}
           ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
-          ${ddCount    ? `<span class="kb-ind kb-ind-dd" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
+          ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
           ${item.note  ? `<span class="kb-ind kb-ind-note" title="Has notes">Note</span>` : ''}
         </div>
       `;
@@ -513,7 +579,7 @@ function openCardModal(id) {
     <div class="kb-modal">
       <div class="kb-modal-header">
         <div>
-          <div class="kb-modal-price">${p.price}</div>
+          <div class="kb-modal-price">${formatKbPrice(p.price, terms.price)}</div>
           <div class="kb-modal-address">📍 ${p.address}, ${p.suburb} NSW</div>
           ${p._lotDPs ? `<div class="kb-modal-lotdp" style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${p._lotDPs}</div>` : ''}
         </div>
@@ -530,7 +596,7 @@ function openCardModal(id) {
             </div>
             <div class="kb-field-wrap">
               <label class="kb-field-label">Settlement</label>
-              <input class="kb-input kb-terms-settlement" type="text" placeholder="e.g. 90 days" value="${terms.settlement || ''}">
+              <input class="kb-input kb-terms-settlement" type="text" placeholder="e.g. 90, 3 months, 1 year" value="${terms.settlement || ''}">
             </div>
           </div>
           <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
@@ -547,7 +613,7 @@ function openCardModal(id) {
             </div>
             <div class="kb-field-wrap">
               <label class="kb-field-label">Settlement</label>
-              <input class="kb-input kb-offer-settlement" type="text" placeholder="e.g. 90 days">
+              <input class="kb-input kb-offer-settlement" type="text" placeholder="e.g. 90, 3 months, 1 year">
             </div>
           </div>
           <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
@@ -609,7 +675,15 @@ function openCardModal(id) {
     if (boardCard) refreshCardIndicators(boardCard, id);
   }
   modal.querySelector('.kb-terms-price').addEventListener('input', syncTerms);
+  modal.querySelector('.kb-terms-price').addEventListener('blur', function() {
+    this.value = formatInputPrice(this.value);
+    syncTerms();
+  });
   modal.querySelector('.kb-terms-settlement').addEventListener('input', syncTerms);
+  modal.querySelector('.kb-terms-settlement').addEventListener('blur', function() {
+    this.value = formatSettlement(this.value);
+    syncTerms();
+  });
 
   // Vendor deposits
   function syncDeposits() {
@@ -671,8 +745,8 @@ function openCardModal(id) {
       note:   row.querySelector('.kb-odep-note').value,
     })).filter(d => d.amount || d.due);
     const offer = {
-      price:      modal.querySelector('.kb-offer-price').value.trim(),
-      settlement: modal.querySelector('.kb-offer-settlement').value.trim(),
+      price:      formatInputPrice(modal.querySelector('.kb-offer-price').value.trim()),
+      settlement: formatSettlement(modal.querySelector('.kb-offer-settlement').value.trim()),
       deposits:   offerDeposits,
     };
     if (!offer.price && !offer.settlement && !offerDeposits.length) return;
@@ -723,17 +797,26 @@ function openCardModal(id) {
 // Refresh just the indicator pills on a board card without re-rendering the whole board
 function refreshCardIndicators(card, id) {
   const item   = pipeline[id]; if (!item) return;
+  const p      = item.property;
   const terms  = getTerms(id);
   const offers = getOffers(id);
   const dd     = getDd(id);
   const ddCount = DD_ITEMS.filter(i => dd[i.toLowerCase()]?.status).length;
+  const ddHigh  = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
+  const ddPoss  = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
+  const ddClass = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
   const hasTerms = terms.price || terms.settlement;
+
+  // Update price (may now show terms price as fallback)
+  const priceEl = card.querySelector('.kb-card-price');
+  if (priceEl) priceEl.innerHTML = formatKbPrice(p.price, terms.price);
+
   const el = card.querySelector('.kb-card-indicators');
   if (!el) return;
   el.innerHTML = `
     ${hasTerms    ? `<span class="kb-ind kb-ind-terms">Terms</span>` : ''}
     ${offers.length ? `<span class="kb-ind kb-ind-offers">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
-    ${ddCount     ? `<span class="kb-ind kb-ind-dd">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
+    ${ddCount     ? `<span class="kb-ind kb-ind-dd ${ddClass}">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
     ${item.note   ? `<span class="kb-ind kb-ind-note">Note</span>` : ''}
   `;
 }
