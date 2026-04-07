@@ -227,7 +227,7 @@ function drawParcel(rings) {
 }
 
 function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null) {
-  const dl = listing && window.DomainAPI ? DomainAPI.getEnrichedListing(listing.id) : null;
+  const dl = listing && window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(listing.id) : null;
 
   // Price only — no house type line, no agent line
   const priceSection = listing ? `
@@ -1250,15 +1250,15 @@ function makeIcon(color) {
 // Used by both renderListings() and showSearchCard() so the card format is identical.
 
 function makeListingCard(l, { pinToTop = false } = {}) {
-  const dl = window.DomainAPI ? DomainAPI.getEnrichedListing(l.id) : null;
+  const dl = window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(l.id) : null;
 
   const statsHtml = l.type !== 'land'
     ? `<div class="stat">🛏 ${l.beds}</div><div class="stat">🚿 ${l.baths}</div><div class="stat">🚗 ${l.cars}</div>`
     : `<div class="stat">Land</div>`;
 
   const domBadge = dl
-    ? `<div class="domain-badge ${DomainAPI.isMock() ? 'mock' : ''}">
-         ${DomainAPI.isMock() ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=e31837&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
+    ? `<div class="domain-badge ${DomainAPI.isMock && DomainAPI.isMock() ? 'mock' : ''}">
+         ${DomainAPI.isMock && DomainAPI.isMock() ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=e31837&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
          <span class="dom-days">${dl.daysOnMarket}d</span>
        </div>`
     : '';

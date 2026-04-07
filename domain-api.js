@@ -11,6 +11,9 @@
 
 const DOMAIN_API_MOCK = false;   // ← switched to LIVE
 
+// ─── In-memory cache: id → normalised listing ────────────────────────────────
+const _enrichmentCache = {};
+
 // ─── Search payload builder ───────────────────────────────────────────────────
 // Builds the POST body for POST /v1/listings/residential/_search
 // Adjust suburbs / filters to match your target pipeline area.
@@ -265,6 +268,7 @@ async function mockSearch(options = {}) {
     results = results.filter(l => propertyTypes.some(t => l.type === t.toLowerCase()));
   }
 
+  results.forEach(l => { _enrichmentCache[String(l.id)] = l; });
   return results;
 }
 
