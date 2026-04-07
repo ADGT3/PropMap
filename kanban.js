@@ -246,7 +246,7 @@ function formatOfferDate(iso) {
 // ─── Due Diligence ────────────────────────────────────────────────────────────
 
 const DD_ITEMS = [
-  'Zoning','Yield','Access','Sewer','Water','Easements','Electricity',
+  'Zoning','Yield','Access','Wastewater','Water','Easements','Electricity',
   'Flooding','Riparian','Vegetation','Contamination','Salinity',
   'Heritage','Aboriginal','Bushfire','Odor','Commercial'
 ];

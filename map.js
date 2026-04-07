@@ -1352,7 +1352,45 @@ async function queryDDRisks(lat, lng) {
     dd.easements = { status: 'low', note: 'No transmission easement identified' };
   }
 
+  // Wastewater — point-in-polygon check against local GSP GeoJSON
+  if (window.GSP_WSA_SW_WW) {
+    const wwFeature = GSP_WSA_SW_WW.features.find(f => pointInPolygon(lng, lat, f.geometry));
+    if (wwFeature) {
+      const stage = wwFeature.properties.planning_stage || '';
+      const precinct = wwFeature.properties.precinct_name || '';
+      const fy = wwFeature.properties.fy_timeline ? ` (${wwFeature.properties.fy_timeline})` : '';
+      const stageRisk = {
+        'Design & Deliver':   'low',
+        'Concept Planning':   'possible',
+        'Option Planning':    'possible',
+        'Strategic Planning': 'high',
+      };
+      dd.wastewater = {
+        status: stageRisk[stage] || 'possible',
+        note: `${stage}${fy} — ${precinct}`
+      };
+    } else {
+      dd.wastewater = { status: 'high', note: 'Outside Sydney Water wastewater servicing plan area' };
+    }
+  }
+
   return dd;
+}
+
+// Simple ray-casting point-in-polygon for GeoJSON Polygon geometry
+function pointInPolygon(lng, lat, geometry) {
+  if (!geometry) return false;
+  const rings = geometry.type === 'Polygon' ? geometry.coordinates : (geometry.coordinates?.[0] || []);
+  const ring = Array.isArray(rings[0][0]) ? rings[0] : rings;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
 }
 
 window.queryDDRisks = queryDDRisks;
