@@ -144,12 +144,31 @@ function addToPipeline(listing) {
       _lotDPs:        listing._lotDPs         || null,
       _areaSqm:       listing._areaSqm        || null,
       _propertyCount: listing._propertyCount  || 1,
-    }
+    },
+    dd: {}
   };
   savePipeline(id);
   updateAddButtons();
   if (kanbanVisible) renderBoard();
   showKanbanToast(`${listing.address} added to pipeline`);
+
+  // Async — query overlay layers and pre-populate DD risks
+  const lat = listing.lat;
+  const lng = listing.lng;
+  if (lat && lng && window.queryDDRisks) {
+    queryDDRisks(lat, lng).then(dd => {
+      if (pipeline[id]) {
+        // Merge — don't overwrite any items the user has already set
+        Object.entries(dd).forEach(([key, val]) => {
+          if (!pipeline[id].dd[key]?.status) {
+            pipeline[id].dd[key] = val;
+          }
+        });
+        savePipeline(id);
+        if (kanbanVisible) renderBoard();
+      }
+    }).catch(err => console.warn('[DD] Risk query failed:', err));
+  }
 }
 
 function removeFromPipeline(id) {
