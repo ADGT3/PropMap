@@ -410,9 +410,15 @@ function renderBoard() {
       card.querySelector('.kb-card-address-link').addEventListener('click', e => {
         e.stopPropagation();
         toggleKanban(false);
-        const parcels = p._parcels && p._parcels.length > 0 ? p._parcels : null;
+        // Build parcels from stored _parcels or fall back to raw lat/lng on property
+        const parcels = (p._parcels && p._parcels.length > 0 && p._parcels[0].lat)
+          ? p._parcels
+          : (p.lat && p.lng ? [{ lat: p.lat, lng: p.lng, label: `${p.address}, ${p.suburb}` }] : null);
         if (parcels && typeof window.reSelectParcels === 'function') {
-          window.reSelectParcels(parcels);
+          setTimeout(() => window.reSelectParcels(parcels), 150);
+        } else if (parcels) {
+          // Fallback — just fly to the location
+          setTimeout(() => map.setView([parcels[0].lat, parcels[0].lng], 16, { animate: true }), 150);
         }
       });
 
