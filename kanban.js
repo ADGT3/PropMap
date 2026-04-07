@@ -410,16 +410,11 @@ function renderBoard() {
       card.querySelector('.kb-card-address-link').addEventListener('click', e => {
         e.stopPropagation();
         toggleKanban(false);
-        console.log('[kanban] address click p._parcels:', JSON.stringify(p._parcels));
         const parcels = (p._parcels && p._parcels.length > 0 && p._parcels[0].lat)
           ? p._parcels
           : (p.lat && p.lng ? [{ lat: p.lat, lng: p.lng, label: `${p.address}, ${p.suburb}` }] : null);
-        console.log('[kanban] resolved parcels:', JSON.stringify(parcels));
-        console.log('[kanban] reSelectParcels exists:', typeof window.reSelectParcels);
         if (parcels && typeof window.reSelectParcels === 'function') {
           setTimeout(() => window.reSelectParcels(parcels), 150);
-        } else if (parcels) {
-          setTimeout(() => map.setView([parcels[0].lat, parcels[0].lng], 16, { animate: true }), 150);
         }
       });
 

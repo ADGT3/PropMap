@@ -2,11 +2,14 @@
  * map.js
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
- * Depends on: overlays-meta.js, overlays-b64-*.js, data.js
+ * Depends on: overlays-meta.js, overlays-b64-*.js, domain-api.js, dd-risks.js
  */
 
 // Merge b64 image data from split overlay files into OVERLAYS
 OVERLAYS.forEach(o => { if (window.OVERLAY_B64?.[o.id]) o.b64 = window.OVERLAY_B64[o.id]; });
+
+// ─── Listings — populated by Domain API ──────────────────────────────────────
+let listings = [];
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let _activeFilters = {
