@@ -1251,6 +1251,7 @@ document.getElementById('overlayToggleAll').addEventListener('click', function (
 
 function buildZoneSelector() {
   const select = document.getElementById('zoneSelect');
+  if (!select) return; // element removed from UI
   select.innerHTML = '';
   ZONES.forEach(z => {
     const opt = document.createElement('option');
@@ -2439,15 +2440,11 @@ window.reSelectParcels = function(parcels) {
   const toggle = document.getElementById('legendToggle');
   if (!legend || !toggle) return;
 
-  // Default collapsed unless user has explicitly expanded it before
-  const saved = localStorage.getItem('legendCollapsed');
-  if (saved !== 'false') {
-    legend.classList.add('collapsed');
-  }
+  // Always start collapsed
+  legend.classList.add('collapsed');
 
   toggle.addEventListener('click', () => {
     legend.classList.toggle('collapsed');
-    localStorage.setItem('legendCollapsed', legend.classList.contains('collapsed'));
   });
 })();
 
