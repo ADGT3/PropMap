@@ -1377,11 +1377,11 @@ async function queryDDRisks(lat, lng) {
   return dd;
 }
 
-// Simple ray-casting point-in-polygon for GeoJSON Polygon geometry
+// Ray-casting point-in-polygon for GeoJSON Polygon geometry
 function pointInPolygon(lng, lat, geometry) {
-  if (!geometry) return false;
-  const rings = geometry.type === 'Polygon' ? geometry.coordinates : (geometry.coordinates?.[0] || []);
-  const ring = Array.isArray(rings[0][0]) ? rings[0] : rings;
+  if (!geometry || geometry.type !== 'Polygon') return false;
+  // coordinates[0] is the outer ring — array of [lng, lat] pairs
+  const ring = geometry.coordinates[0];
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const [xi, yi] = ring[i];
