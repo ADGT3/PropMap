@@ -1930,7 +1930,26 @@ map.on('moveend zoomend', () => {
 
 buildZoneSelector();
 renderOverlayPanel();
-renderListings();
+
+// ─── Load listings from Domain API (or fall back to static data.js) ──────────
+(async function initListings() {
+  if (window.DomainAPI) {
+    try {
+      console.log('[map] Fetching listings from Domain API…');
+      const domainListings = await DomainAPI.search();
+      if (domainListings.length > 0) {
+        listings.length = 0;
+        domainListings.forEach(l => listings.push(l));
+        console.log('[map] Loaded ' + listings.length + ' listings from Domain API');
+      } else {
+        console.warn('[map] Domain API returned 0 listings — keeping static data');
+      }
+    } catch (err) {
+      console.error('[map] Domain API fetch failed, using static data:', err);
+    }
+  }
+  renderListings();
+})();
 
 // ─── Address search (Nominatim geocoder) ─────────────────────────────────────
 

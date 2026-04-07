@@ -25,7 +25,7 @@ function buildSearchPayload(options = {}) {
     propertyTypes  = [],          // e.g. ['House', 'Land']
     listingTypes   = ['Sale'],    // 'Sale' | 'Rent' | 'Share'
     pageNumber     = 1,
-    pageSize       = 200,         // max per Domain docs
+    pageSize       = 100,         // capped at 100
     sort           = { sortKey: 'Default', direction: 'Descending' },
   } = options;
 
@@ -54,7 +54,7 @@ function buildSearchPayload(options = {}) {
 
 // ─── Live API call via server proxy ──────────────────────────────────────────
 
-async function liveSearch(options = {}) {
+async function fetchOnePage(options = {}) {
   const payload = buildSearchPayload(options);
 
   const res = await fetch('/api/domain-search', {
@@ -68,58 +68,89 @@ async function liveSearch(options = {}) {
     throw new Error(`Domain proxy error ${res.status}: ${err.error || res.statusText}`);
   }
 
-  const results = await res.json();
-
-  // Domain returns an array of listing objects directly
-  // Normalise to the shape the rest of the app expects
-  return (Array.isArray(results) ? results : []).map(normaliseLiveListing);
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
 }
+
+async function liveSearch(options = {}) {
+  const MAX_RESULTS = 100;
+  const PAGE_SIZE   = 100;
+  const allRaw      = [];
+  let   page        = 1;
+
+  while (allRaw.length < MAX_RESULTS) {
+    const pageRaw = await fetchOnePage({ ...options, pageNumber: page, pageSize: PAGE_SIZE });
+    allRaw.push(...pageRaw);
+    if (pageRaw.length < PAGE_SIZE) break;   // no more pages
+    if (allRaw.length >= MAX_RESULTS) break; // hit cap
+    page++;
+  }
+
+  const results = allRaw.slice(0, MAX_RESULTS)
+    .map(normaliseLiveListing)
+    .filter(Boolean); // drops Project-type items
+
+  results.forEach(l => { _enrichmentCache[String(l.id)] = l; });
+  return results;
+}
+
+// (fetchOnePage used by liveSearch above)
+function _unusedPlaceholder() {}
 
 // ─── Normalise live Domain listing → app shape ────────────────────────────────
 // Maps Domain's response fields to the structure map.js and kanban.js consume.
 
 function normaliseLiveListing(item) {
-  const listing = item.listing || item;   // some endpoints wrap in { listing: {} }
+  // Response wraps each result as { type: "PropertyListing", listing: { ... } }
+  // or { type: "Project", listings: [...], project: { ... } }
+  // We only handle PropertyListing here; skip Project types.
+  if (item.type === 'Project') return null;
+  const listing = item.listing || item;
 
-  const geo    = listing.propertyDetails?.allhomes?.coordinates
-              || listing.geoLocation
-              || {};
-  const addr   = listing.propertyDetails?.address || {};
-  const price  = listing.priceDetails || {};
+  const pd    = listing.propertyDetails || {};
+  const price = listing.priceDetails    || {};
+
+  // Build listing URL from slug if available (cleaner), else fall back to id
+  const listingUrl = listing.listingSlug
+    ? `https://www.domain.com.au/${listing.listingSlug}`
+    : `https://www.domain.com.au/${listing.id}`;
+
+  // Agent contact: contacts[0].name is a full name string per API docs
+  const contact = listing.advertiser?.contacts?.[0] || null;
 
   return {
     // Identity
-    id:          String(listing.id),
-    domainId:    listing.id,
-    listingUrl:  `https://www.domain.com.au/${listing.id}`,
+    id:         String(listing.id),
+    domainId:   listing.id,
+    listingUrl,
 
-    // Location
-    lat:         geo.lat  ?? geo.latitude  ?? null,
-    lng:         geo.lon  ?? geo.longitude ?? null,
-    address:     addr.displayAddress || [addr.streetNumber, addr.street].filter(Boolean).join(' '),
-    suburb:      addr.suburb || '',
-    state:       addr.state  || 'NSW',
-    postcode:    addr.postcode || '',
+    // Location — coordinates live directly on propertyDetails per API docs
+    lat:     pd.latitude  ?? null,
+    lng:     pd.longitude ?? null,
+    address: pd.displayableAddress || [pd.streetNumber, pd.street].filter(Boolean).join(' '),
+    suburb:  pd.suburb   || '',
+    state:   pd.state    || 'NSW',
+    postcode: pd.postcode || '',
 
     // Property details
-    type:        (listing.propertyDetails?.propertyType || 'residential').toLowerCase(),
-    beds:        listing.propertyDetails?.bedrooms   ?? 0,
-    baths:       listing.propertyDetails?.bathrooms  ?? 0,
-    cars:        listing.propertyDetails?.carspaces  ?? 0,
-    landAreaSqm: listing.propertyDetails?.landArea   ?? null,
-    headline:    listing.headline || '',
-    summary:     listing.summary  || '',
+    type:        (pd.propertyType || 'residential').toLowerCase(),
+    beds:        pd.bedrooms  ?? 0,
+    baths:       pd.bathrooms ?? 0,
+    cars:        pd.carspaces ?? 0,
+    landAreaSqm: pd.landArea  ?? null,
+    headline:    listing.headline         || '',
+    summary:     listing.summaryDescription || '',  // API field is summaryDescription
 
-    // Price
+    // Price — API uses priceFrom/priceTo, with price as exact if known
     price: {
-      display:  price.displayPrice || '',
-      from:     price.price        || null,
-      to:       price.priceTo      || null,
+      display: price.displayPrice || '',
+      from:    price.priceFrom    ?? price.price ?? null,
+      to:      price.priceTo      ?? null,
     },
 
     // Agent / agency
     advertiser: listing.advertiser || null,
-    agent: listing.advertiser?.contacts?.[0] || null,
+    agent: contact ? { name: contact.name, photoUrl: contact.photoUrl } : null,
 
     // Media
     photos: (listing.media || [])
@@ -128,10 +159,9 @@ function normaliseLiveListing(item) {
 
     // Metadata
     daysOnMarket: listing.daysOnMarket ?? null,
-    dateListed:   listing.dateFirstListed || null,
-    status:       listing.status || 'Live',
+    dateListed:   listing.dateListed   || null,  // API field is dateListed
+    status:       listing.status       || 'Live',
 
-    // Keep raw for debugging
     _raw: listing,
   };
 }
@@ -269,6 +299,16 @@ const DomainAPI = {
     if (!res.ok) return null;
     const data = await res.json();
     return normaliseLiveListing(data);
+  },
+
+  /** Synchronous cache lookup — used by map.js for badge/link display */
+  getEnrichedListing(id) {
+    return _enrichmentCache[String(id)] || null;
+  },
+
+  /** Returns true when running in mock mode */
+  isMock() {
+    return DOMAIN_API_MOCK;
   },
 
   isLive: !DOMAIN_API_MOCK,
