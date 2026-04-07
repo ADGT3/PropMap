@@ -23,6 +23,14 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: 'Domain API key not configured on server' });
   }
 
+  // Parse body — Vercel provides req.body automatically for JSON content-type
+  // but fall back to raw parsing if needed
+  let body = req.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch (e) { body = {}; }
+  }
+  if (!body || typeof body !== 'object') body = {};
+
   try {
     const domainRes = await fetch(
       'https://api.domain.com.au/v1/listings/residential/_search',
@@ -32,14 +40,14 @@ module.exports = async function handler(req, res) {
           'Content-Type': 'application/json',
           'X-Api-Key': apiKey,
         },
-        body: JSON.stringify(req.body),
+        body: JSON.stringify(body),
       }
     );
 
     const data = await domainRes.json();
 
     if (!domainRes.ok) {
-      console.error('[domain-search] Domain API error:', domainRes.status, data);
+      console.error('[domain-search] Domain API error:', domainRes.status, JSON.stringify(data));
       return res.status(domainRes.status).json({
         error: 'Domain API error',
         status: domainRes.status,
@@ -47,7 +55,6 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // Pass Domain's response straight through
     return res.status(200).json(data);
 
   } catch (err) {
