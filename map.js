@@ -1264,11 +1264,20 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     : '';
 
   const agentHtml = dl
-    ? `<div class="listing-agent">
-         <img src="${dl.advertiser.agents[0].photoUrl}" class="agent-avatar" alt="">
-         <span>${dl.advertiser.agents[0].firstName} ${dl.advertiser.agents[0].lastName}</span>
-         <span class="agent-agency">${dl.advertiser.name}</span>
-       </div>`
+    ? (() => {
+        // Live API: advertiser.contacts[0].name (full name string)
+        // Mock API: agent.firstName + agent.lastName
+        const contact = dl.advertiser?.contacts?.[0];
+        const agentName = contact?.name
+          || (dl.agent ? `${dl.agent.firstName || ''} ${dl.agent.lastName || ''}`.trim() : '');
+        const agentPhoto = contact?.photoUrl || dl.agent?.photoUrl || '';
+        const agencyName = dl.advertiser?.name || '';
+        return `<div class="listing-agent">
+         ${agentPhoto ? `<img src="${agentPhoto}" class="agent-avatar" alt="">` : ''}
+         <span>${agentName}</span>
+         <span class="agent-agency">${agencyName}</span>
+       </div>`;
+      })()
     : '';
 
   const pinBadge = pinToTop
@@ -1979,7 +1988,7 @@ function debouncedDomainSearch() {
 }
 
 async function runDomainSearch() {
-  if (!window.DomainAPI || !DomainAPI.search) return;
+  if (!window.DomainAPI || !DomainAPI.search) { renderListings(); return; }
   try {
     const geoWindow = buildDomainGeoWindow();
     console.log('[map] Domain search — geoWindow:', JSON.stringify(geoWindow));
@@ -1991,10 +2000,10 @@ async function runDomainSearch() {
     } else {
       console.warn('[map] Domain API returned 0 listings for this viewport');
     }
-    renderListings();
   } catch (err) {
-    console.error('[map] Domain API search failed:', err);
+    console.error('[map] Domain API fetch failed:', err);
   }
+  try { renderListings(); } catch (err) { console.error('[map] renderListings failed:', err); }
 }
 
 // Initial load
