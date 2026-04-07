@@ -142,7 +142,7 @@ header {
 }
 
 .search-pin {
-  width: 22px; height: 22px;
+  width: 28px; height: 28px;
   background: var(--accent);
   border: 2px solid #fff;
   border-radius: 50% 50% 50% 0;

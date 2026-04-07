@@ -411,16 +411,16 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   const pinNum   = addToSelection ? _selectedParcels.length + 1 : null;
   const pinColor = addToSelection ? '#1a4a8a' : '#1a6b3a';
   const pinHtml  = addToSelection
-    ? `<div class="search-pin" style="background:${pinColor};display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">${pinNum}</span></div>`
+    ? `<div class="search-pin" style="background:${pinColor};display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">${pinNum}</span></div>`
     : `<div class="search-pin" style="background:${pinColor}"></div>`;
 
   const newMarker = L.marker([lat, lng], {
     icon: L.divIcon({
       className: '',
       html: pinHtml,
-      iconSize: [22, 22],
-      iconAnchor: [11, 22],
-      popupAnchor: [0, -24]
+      iconSize: [28, 28],
+      iconAnchor: [14, 28],
+      popupAnchor: [0, -30]
     })
   })
   .bindPopup(popupHtml('<span style="color:#888;font-size:12px">Loading…</span>'), { minWidth: 210 })
@@ -704,7 +704,7 @@ map.on('click', function (e) {
   } else if (clickMarker) {
     const d = clickMarkerData || { lat: clickMarker.getLatLng().lat, lng: clickMarker.getLatLng().lng, label: '', lga: '', lotDP: null, areaSqm: null, zoneCode: null, listing: null, parcelLayer: null };
     const pinHtml1 = `<div class="search-pin" style="background:#1a4a8a;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">1</span></div>`;
-    clickMarker.setIcon(L.divIcon({ className: '', html: pinHtml1, iconSize: [22, 22], iconAnchor: [11, 22], popupAnchor: [0, -24] }));
+    clickMarker.setIcon(L.divIcon({ className: '', html: pinHtml1, iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -30] }));
     if (d.parcelLayer) { parcelLayer = null; }
     _selectedParcels.push({ lat: d.lat, lng: d.lng, label: d.label, lga: d.lga, lotDP: d.lotDP, areaSqm: d.areaSqm, zoneCode: d.zoneCode, listing: d.listing, marker: clickMarker, parcelLayer: d.parcelLayer });
     clickMarker = null;
@@ -1359,7 +1359,10 @@ function renderListings() {
       icon: makeIcon(MARKER_COLOR)
     }).addTo(map);
 
-    marker.on('click', (e) => selectListing(l.id, e.latlng));
+    marker.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      selectListing(l.id, e.latlng);
+    });
     markers[l.id] = marker;
   });
 
