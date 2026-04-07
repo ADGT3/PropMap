@@ -132,10 +132,206 @@
         <p><span id="listingCount">0</span> properties found</p>
       </div>
       <div class="filters">
-        <button class="filter-chip active" data-filter="all">All</button>
-        <button class="filter-chip" data-filter="house">House</button>
-        <button class="filter-chip" data-filter="apartment">Apartment</button>
-        <button class="filter-chip" data-filter="land">Land</button>
+        <button class="filter-toggle-btn" id="filterToggleBtn">⚙ Filter <span class="filter-active-count" id="filterActiveCount"></span></button>
+      </div>
+
+      <!-- Filter panel -->
+      <div class="filter-panel" id="filterPanel">
+        <div class="filter-panel-header">
+          <span>Search Filters</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="filter-clear-btn" id="filterClearBtn">Clear all</button>
+            <button class="panel-close" id="filterPanelClose">✕</button>
+          </div>
+        </div>
+        <div class="filter-panel-body">
+
+          <div class="filter-group">
+            <label class="filter-label">Property Type</label>
+            <div class="filter-chips" id="filterPropertyTypes">
+              <button class="filter-chip" data-value="House">House</button>
+              <button class="filter-chip" data-value="Apartment">Apartment</button>
+              <button class="filter-chip" data-value="Land">Land</button>
+              <button class="filter-chip" data-value="Townhouse">Townhouse</button>
+              <button class="filter-chip" data-value="Villa">Villa</button>
+              <button class="filter-chip" data-value="Rural">Rural</button>
+              <button class="filter-chip" data-value="AcreageSemiRural">Acreage</button>
+              <button class="filter-chip" data-value="NewApartments">New Apartments</button>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Listing Type</label>
+            <div class="filter-chips" id="filterListingType">
+              <button class="filter-chip active" data-value="Sale">Sale</button>
+              <button class="filter-chip" data-value="Rent">Rent</button>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Bedrooms</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinBeds">
+                  <option value="">Any</option>
+                  <option value="1">1+</option>
+                  <option value="2">2+</option>
+                  <option value="3">3+</option>
+                  <option value="4">4+</option>
+                  <option value="5">5+</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxBeds">
+                  <option value="">Any</option>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Bathrooms</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinBaths">
+                  <option value="">Any</option>
+                  <option value="1">1+</option>
+                  <option value="2">2+</option>
+                  <option value="3">3+</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Car Spaces</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinCars">
+                  <option value="">Any</option>
+                  <option value="1">1+</option>
+                  <option value="2">2+</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Price</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinPrice">
+                  <option value="">Any</option>
+                  <option value="300000">$300k</option>
+                  <option value="500000">$500k</option>
+                  <option value="750000">$750k</option>
+                  <option value="1000000">$1m</option>
+                  <option value="1500000">$1.5m</option>
+                  <option value="2000000">$2m</option>
+                  <option value="3000000">$3m</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxPrice">
+                  <option value="">Any</option>
+                  <option value="500000">$500k</option>
+                  <option value="750000">$750k</option>
+                  <option value="1000000">$1m</option>
+                  <option value="1500000">$1.5m</option>
+                  <option value="2000000">$2m</option>
+                  <option value="3000000">$3m</option>
+                  <option value="5000000">$5m</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Land Area (m²)</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinLand">
+                  <option value="">Any</option>
+                  <option value="200">200m²</option>
+                  <option value="400">400m²</option>
+                  <option value="600">600m²</option>
+                  <option value="1000">1,000m²</option>
+                  <option value="4000">4,000m²</option>
+                  <option value="10000">10,000m²</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxLand">
+                  <option value="">Any</option>
+                  <option value="400">400m²</option>
+                  <option value="600">600m²</option>
+                  <option value="1000">1,000m²</option>
+                  <option value="4000">4,000m²</option>
+                  <option value="10000">10,000m²</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Property Features</label>
+            <div class="filter-chips" id="filterFeatures">
+              <button class="filter-chip" data-value="AirConditioning">Air Con</button>
+              <button class="filter-chip" data-value="SwimmingPool">Pool</button>
+              <button class="filter-chip" data-value="Garage">Garage</button>
+              <button class="filter-chip" data-value="Ensuite">Ensuite</button>
+              <button class="filter-chip" data-value="Study">Study</button>
+              <button class="filter-chip" data-value="Dishwasher">Dishwasher</button>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Listing Attributes</label>
+            <div class="filter-chips" id="filterAttributes">
+              <button class="filter-chip" data-value="HasPhotos">Has Photos</button>
+              <button class="filter-chip" data-value="HasFloorplan">Has Floorplan</button>
+              <button class="filter-chip" data-value="HasVideo">Has Video</button>
+            </div>
+          </div>
+
+          <div class="filter-group">
+            <label class="filter-label">Property Status</label>
+            <div class="filter-chips" id="filterEstablished">
+              <button class="filter-chip" data-value="New">New</button>
+              <button class="filter-chip" data-value="Established">Established</button>
+            </div>
+          </div>
+
+          <div class="filter-group" style="padding-top:4px">
+            <label class="filter-checkbox-row">
+              <input type="checkbox" id="filterExcludePriceWithheld">
+              <span>Exclude price withheld</span>
+            </label>
+            <label class="filter-checkbox-row">
+              <input type="checkbox" id="filterExcludeDepositTaken">
+              <span>Exclude deposit taken</span>
+            </label>
+            <label class="filter-checkbox-row">
+              <input type="checkbox" id="filterNewDevOnly">
+              <span>New developments only</span>
+            </label>
+          </div>
+
+          <button class="filter-apply-btn" id="filterApplyBtn">Apply Filters</button>
+        </div>
       </div>
       <div class="listings" id="listingsList"></div>
 

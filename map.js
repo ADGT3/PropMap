@@ -9,7 +9,24 @@
 OVERLAYS.forEach(o => { if (window.OVERLAY_B64?.[o.id]) o.b64 = window.OVERLAY_B64[o.id]; });
 
 // ─── State ────────────────────────────────────────────────────────────────────
-let activeFilter = 'all';
+let _activeFilters = {
+  propertyTypes:          [],   // e.g. ['House', 'Land']
+  listingType:            'Sale',
+  minBeds:                null,
+  maxBeds:                null,
+  minBaths:               null,
+  minCars:                null,
+  minPrice:               null,
+  maxPrice:               null,
+  minLand:                null,
+  maxLand:                null,
+  features:               [],   // e.g. ['AirConditioning', 'SwimmingPool']
+  listingAttributes:      [],   // e.g. ['HasPhotos']
+  establishedType:        null, // 'New' | 'Established'
+  excludePriceWithheld:   false,
+  excludeDepositTaken:    false,
+  newDevOnly:             false,
+};
 let activeZone   = 'all';
 let showListings = true;
 let markers      = {};
@@ -1327,7 +1344,8 @@ function renderListings() {
   const bounds = map.getBounds();
   const filtered = listings.filter(l => {
     const inView   = bounds.contains(L.latLng(l.lat, l.lng));
-    const typeMatch = activeFilter === 'all' || l.type === activeFilter;
+    const typeMatch = _activeFilters.propertyTypes.length === 0
+      || _activeFilters.propertyTypes.some(t => l.type === t.toLowerCase());
     return inView && typeMatch;
   });
 
@@ -1651,14 +1669,94 @@ function selectListing(id, clickLatLng = null) {
 
 // ─── Filter chips ─────────────────────────────────────────────────────────────
 
-document.querySelectorAll('.filter-chip').forEach(chip => {
-  chip.addEventListener('click', () => {
-    document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-    chip.classList.add('active');
-    activeFilter = chip.dataset.filter;
-    renderListings();
+// ─── Filter panel ─────────────────────────────────────────────────────────────
+
+(function initFilterPanel() {
+  const toggleBtn   = document.getElementById('filterToggleBtn');
+  const panel       = document.getElementById('filterPanel');
+  const closeBtn    = document.getElementById('filterPanelClose');
+  const clearBtn    = document.getElementById('filterClearBtn');
+  const applyBtn    = document.getElementById('filterApplyBtn');
+  const activeCount = document.getElementById('filterActiveCount');
+
+  // Toggle panel open/close
+  toggleBtn.addEventListener('click', () => {
+    panel.classList.toggle('open');
   });
-});
+  closeBtn.addEventListener('click', () => panel.classList.remove('open'));
+
+  // Multi-select chip groups
+  function initChipGroup(containerId, key) {
+    document.getElementById(containerId).querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', () => chip.classList.toggle('active'));
+    });
+  }
+  initChipGroup('filterPropertyTypes', 'propertyTypes');
+  initChipGroup('filterFeatures',      'features');
+  initChipGroup('filterAttributes',    'listingAttributes');
+  initChipGroup('filterEstablished',   'establishedType');
+
+  // Single-select listing type
+  document.getElementById('filterListingType').querySelectorAll('.filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.getElementById('filterListingType').querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+    });
+  });
+
+  // Clear all
+  clearBtn.addEventListener('click', () => {
+    panel.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    // Re-set Sale as default
+    document.querySelector('#filterListingType [data-value="Sale"]').classList.add('active');
+    panel.querySelectorAll('select').forEach(s => s.value = '');
+    panel.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = false);
+    updateActiveCount();
+  });
+
+  // Count active filters for badge
+  function updateActiveCount() {
+    let count = 0;
+    panel.querySelectorAll('#filterPropertyTypes .filter-chip.active, #filterFeatures .filter-chip.active, #filterAttributes .filter-chip.active, #filterEstablished .filter-chip.active').forEach(() => count++);
+    panel.querySelectorAll('select').forEach(s => { if (s.value) count++; });
+    panel.querySelectorAll('input[type="checkbox"]').forEach(c => { if (c.checked) count++; });
+    activeCount.textContent = count > 0 ? count : '';
+    activeCount.style.display = count > 0 ? 'inline' : 'none';
+  }
+
+  // Apply filters → read state, store in _activeFilters, trigger search
+  applyBtn.addEventListener('click', () => {
+    const getChips = id => [...document.getElementById(id).querySelectorAll('.filter-chip.active')].map(c => c.dataset.value);
+    const selVal   = id => document.getElementById(id).value || null;
+    const numVal   = id => { const v = selVal(id); return v ? Number(v) : null; };
+
+    const established = getChips('filterEstablished');
+    const listingTypeChip = document.querySelector('#filterListingType .filter-chip.active');
+
+    _activeFilters = {
+      propertyTypes:        getChips('filterPropertyTypes'),
+      listingType:          listingTypeChip ? listingTypeChip.dataset.value : 'Sale',
+      minBeds:              numVal('filterMinBeds'),
+      maxBeds:              numVal('filterMaxBeds'),
+      minBaths:             numVal('filterMinBaths'),
+      minCars:              numVal('filterMinCars'),
+      minPrice:             numVal('filterMinPrice'),
+      maxPrice:             numVal('filterMaxPrice'),
+      minLand:              numVal('filterMinLand'),
+      maxLand:              numVal('filterMaxLand'),
+      features:             getChips('filterFeatures'),
+      listingAttributes:    getChips('filterAttributes'),
+      establishedType:      established.length === 1 ? established[0] : null,
+      excludePriceWithheld: document.getElementById('filterExcludePriceWithheld').checked,
+      excludeDepositTaken:  document.getElementById('filterExcludeDepositTaken').checked,
+      newDevOnly:           document.getElementById('filterNewDevOnly').checked,
+    };
+
+    updateActiveCount();
+    panel.classList.remove('open');
+    runDomainSearch();
+  });
+})();
 
 // ─── Listings toggle ──────────────────────────────────────────────────────────
 
@@ -2003,7 +2101,25 @@ async function runDomainSearch() {
   try {
     const geoWindow = buildDomainGeoWindow();
     console.log('[map] Domain search — geoWindow:', JSON.stringify(geoWindow));
-    const domainListings = await DomainAPI.search({ geoWindow });
+    const domainListings = await DomainAPI.search({
+      geoWindow,
+      propertyTypes:        _activeFilters.propertyTypes,
+      listingTypes:         [_activeFilters.listingType],
+      minBeds:              _activeFilters.minBeds,
+      maxBeds:              _activeFilters.maxBeds,
+      minBaths:             _activeFilters.minBaths,
+      minCars:              _activeFilters.minCars,
+      minPrice:             _activeFilters.minPrice,
+      maxPrice:             _activeFilters.maxPrice,
+      minLand:              _activeFilters.minLand,
+      maxLand:              _activeFilters.maxLand,
+      propertyFeatures:     _activeFilters.features,
+      listingAttributes:    _activeFilters.listingAttributes,
+      establishedType:      _activeFilters.establishedType,
+      excludePriceWithheld: _activeFilters.excludePriceWithheld,
+      excludeDepositTaken:  _activeFilters.excludeDepositTaken,
+      newDevOnly:           _activeFilters.newDevOnly,
+    });
     if (domainListings.length > 0) {
       listings.length = 0;
       domainListings.forEach(l => listings.push(l));

@@ -20,27 +20,42 @@ const _enrichmentCache = {};
 
 function buildSearchPayload(options = {}) {
   const {
-    suburbs        = [],
-    minBeds        = null,
-    maxBeds        = null,
-    minPrice       = null,
-    maxPrice       = null,
-    propertyTypes  = [],
-    listingTypes   = ['Sale'],
-    pageNumber     = 1,
-    pageSize       = 100,
-    sort           = { sortKey: 'Default', direction: 'Descending' },
-    geoWindow      = null,   // { box: { topLeft: {lat,lon}, bottomRight: {lat,lon} } }
+    suburbs               = [],
+    minBeds               = null,
+    maxBeds               = null,
+    minBaths              = null,
+    minCars               = null,
+    minPrice              = null,
+    maxPrice              = null,
+    minLand               = null,
+    maxLand               = null,
+    propertyTypes         = [],
+    propertyFeatures      = [],
+    listingAttributes     = [],
+    establishedType       = null,
+    excludePriceWithheld  = false,
+    excludeDepositTaken   = false,
+    newDevOnly            = false,
+    listingTypes          = ['Sale'],
+    pageNumber            = 1,
+    pageSize              = 100,
+    sort                  = { sortKey: 'Default', direction: 'Descending' },
+    geoWindow             = null,
   } = options;
 
   const payload = {
-    listingType: listingTypes[0] || 'Sale',
+    listingType:            listingTypes[0] || 'Sale',
     pageNumber,
     pageSize,
     sort,
-    propertyTypes: propertyTypes.length ? propertyTypes : undefined,
-    // Use geoWindow if provided, otherwise fall back to suburb list or broad NSW
-    geoWindow: geoWindow || undefined,
+    propertyTypes:          propertyTypes.length          ? propertyTypes         : undefined,
+    propertyFeatures:       propertyFeatures.length       ? propertyFeatures      : undefined,
+    listingAttributes:      listingAttributes.length      ? listingAttributes     : undefined,
+    propertyEstablishedType: establishedType              ? establishedType       : undefined,
+    excludePriceWithheld:   excludePriceWithheld          ? true                  : undefined,
+    excludeDepositTaken:    excludeDepositTaken           ? true                  : undefined,
+    newDevOnly:             newDevOnly                    ? true                  : undefined,
+    geoWindow:              geoWindow                     || undefined,
     locations: !geoWindow
       ? suburbs.length
         ? suburbs.map(suburb => ({
@@ -49,13 +64,16 @@ function buildSearchPayload(options = {}) {
           }))
         : [{ state: 'NSW', region: '', area: '', suburb: '', postCode: '', includeSurroundingSuburbs: false }]
       : undefined,
-    minBedrooms: minBeds  ?? undefined,
-    maxBedrooms: maxBeds  ?? undefined,
-    minPrice:    minPrice ?? undefined,
-    maxPrice:    maxPrice ?? undefined,
+    minBedrooms:  minBeds  ?? undefined,
+    maxBedrooms:  maxBeds  ?? undefined,
+    minBathrooms: minBaths ?? undefined,
+    minCarspaces: minCars  ?? undefined,
+    minPrice:     minPrice ?? undefined,
+    maxPrice:     maxPrice ?? undefined,
+    minLandArea:  minLand  ?? undefined,
+    maxLandArea:  maxLand  ?? undefined,
   };
 
-  // Remove undefined keys so Domain doesn't complain
   return JSON.parse(JSON.stringify(payload));
 }
 
