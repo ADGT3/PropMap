@@ -1295,12 +1295,16 @@ function makeIcon(color) {
 // Used by both renderListings() and showSearchCard() so the card format is identical.
 
 function makeListingCard(l, { pinToTop = false } = {}) {
-  const dl = window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(l.id) : null;
+  const dl = (window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(l.id) : null) || l;
 
-  const domBadge = dl
-    ? `<a href="${dl.listingUrl}" target="_blank" rel="noopener" class="domain-badge ${DomainAPI.isMock && DomainAPI.isMock() ? 'mock' : ''}" onclick="event.stopPropagation()">
-         ${DomainAPI.isMock && DomainAPI.isMock() ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=1ea765&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
-         <span class="dom-days">${dl.daysOnMarket != null ? dl.daysOnMarket + 'd' : ''}</span>
+  const isMock = window.DomainAPI && DomainAPI.isMock && DomainAPI.isMock();
+  const listingUrl = l.listingUrl || dl.listingUrl || null;
+  const daysOnMarket = l.daysOnMarket ?? dl.daysOnMarket ?? null;
+
+  const domBadge = listingUrl
+    ? `<a href="${listingUrl}" target="_blank" rel="noopener" class="domain-badge ${isMock ? 'mock' : ''}" onclick="event.stopPropagation()">
+         ${isMock ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=1ea765&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
+         <span class="dom-days">${daysOnMarket != null ? daysOnMarket + 'd' : ''}</span>
        </a>`
     : '';
 
