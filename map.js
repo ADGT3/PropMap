@@ -902,6 +902,25 @@ function buildLeafletLayer(def) {
     return buildArcGISDynamicLayer(def);
   }
 
+  // Vector GeoJSON layer — driven by an addGSPLayer-style function
+  if (def.vector && def.vectorFn) {
+    const fn = window[def.vectorFn];
+    if (typeof fn !== 'function') {
+      console.warn(`[overlay] vector fn "${def.vectorFn}" not found for "${def.id}"`);
+      return null;
+    }
+    // addGSPLayer(map) creates the layer AND adds it to the map immediately.
+    // We capture the returned layer so the panel can toggle/opacity it.
+    const geoJsonLayer = fn(map);
+    // Patch setOpacity so the opacity slider works (GeoJSON uses setStyle)
+    geoJsonLayer.setOpacity = function(v) {
+      this.setStyle({ opacity: v, fillOpacity: v * 0.6 });
+    };
+    // If not enabled by default, remove it straight away
+    if (!def.enabled) map.removeLayer(geoJsonLayer);
+    return geoJsonLayer;
+  }
+
   // GeoTIFF image overlay
   if (!def.b64 || !def.bounds) return null;
   const leafletBounds = [
