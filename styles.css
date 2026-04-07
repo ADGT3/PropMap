@@ -1305,10 +1305,16 @@ header {
   font-size: 10px;
   padding: 2px 7px;
   border-radius: 4px;
-  background: rgba(227,24,55,0.08);
-  color: #e31837;
-  border: 1px solid rgba(227,24,55,0.2);
+  background: rgba(30,167,101,0.1);
+  color: #1ea765;
+  border: 1px solid rgba(30,167,101,0.25);
   font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.domain-badge:hover {
+  background: rgba(30,167,101,0.18);
 }
 .domain-badge.mock {
   background: rgba(100,100,100,0.07);
@@ -1316,13 +1322,13 @@ header {
   border-color: var(--border);
 }
 .dom-days {
-  color: var(--muted);
+  color: #1ea765;
   font-weight: 400;
-  border-left: 1px solid currentColor;
+  border-left: 1px solid rgba(30,167,101,0.35);
   padding-left: 5px;
   margin-left: 2px;
 }
-.domain-badge.mock .dom-days { border-color: var(--border); }
+.domain-badge.mock .dom-days { color: var(--muted); border-color: var(--border); }
 
 .listing-agent {
   display: flex;

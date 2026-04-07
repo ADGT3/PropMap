@@ -1298,10 +1298,10 @@ function makeListingCard(l, { pinToTop = false } = {}) {
   const dl = window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(l.id) : null;
 
   const domBadge = dl
-    ? `<div class="domain-badge ${DomainAPI.isMock && DomainAPI.isMock() ? 'mock' : ''}">
-         ${DomainAPI.isMock && DomainAPI.isMock() ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=e31837&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
+    ? `<a href="${dl.listingUrl}" target="_blank" rel="noopener" class="domain-badge ${DomainAPI.isMock && DomainAPI.isMock() ? 'mock' : ''}" onclick="event.stopPropagation()">
+         ${DomainAPI.isMock && DomainAPI.isMock() ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=1ea765&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
          <span class="dom-days">${dl.daysOnMarket != null ? dl.daysOnMarket + 'd' : ''}</span>
-       </div>`
+       </a>`
     : '';
 
   const thumbUrl = l.photos?.[0]?.url || null;
