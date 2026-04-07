@@ -240,7 +240,7 @@ function formatPrice(price) {
   return 'Price on request';
 }
 
-
+function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null) {
   const dl = listing && window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(listing.id) : null;
 
   // Price only — no house type line, no agent line
