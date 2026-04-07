@@ -165,6 +165,8 @@ function addToPipeline(listing) {
       });
       savePipeline(id);
       if (kanbanVisible) renderBoard();
+      // If this card's modal is open, refresh its DD section
+      refreshModalDd(id);
     }).catch(err => console.warn('[DD] Risk query failed:', err));
   } else {
     console.warn('[DD] Skipping risk query — lat:', lat, 'lng:', lng, 'queryDDRisks:', !!window.queryDDRisks);
@@ -265,6 +267,25 @@ const DD_RISK_OPTIONS = [
 
 function getDd(id) {
   return pipeline[id]?.dd || {};
+}
+
+// Refresh the DD rows in an open modal after async risk results arrive
+function refreshModalDd(id) {
+  const modal = document.getElementById('kb-modal');
+  if (!modal || modal.dataset.propertyId !== String(id)) return;
+  const dd = getDd(id);
+  modal.querySelectorAll('.kb-dd-row').forEach(row => {
+    const key    = row.dataset.key;
+    const status = dd[key]?.status || '';
+    const note   = dd[key]?.note   || '';
+    const sel    = row.querySelector('.kb-dd-select');
+    const inp    = row.querySelector('.kb-dd-note');
+    if (sel && !sel.value) {
+      sel.value     = status;
+      sel.className = `kb-dd-select dd-risk-${status || 'none'}`;
+    }
+    if (inp && !inp.value) inp.value = note;
+  });
 }
 
 function saveDd(id, dd) {
@@ -483,6 +504,7 @@ function openCardModal(id) {
   const overlay = document.createElement('div');
   overlay.id = 'kb-modal';
   overlay.className = 'kb-modal-overlay';
+  overlay.dataset.propertyId = String(id);
   overlay.innerHTML = `
     <div class="kb-modal">
       <div class="kb-modal-header">

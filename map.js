@@ -2223,7 +2223,7 @@ let _domainSearchTimer = null;
 
 function debouncedDomainSearch() {
   clearTimeout(_domainSearchTimer);
-  _domainSearchTimer = setTimeout(runDomainSearch, 2000);
+  _domainSearchTimer = setTimeout(runDomainSearch, 5000);
 }
 
 async function runDomainSearch() {
