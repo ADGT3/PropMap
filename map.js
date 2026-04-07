@@ -2,14 +2,34 @@
  * map.js
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
- * Depends on: overlays-meta.js, overlays-b64-*.js, data.js
+ * Depends on: overlays-meta.js, overlays-b64-*.js, domain-api.js, dd-risks.js
  */
 
 // Merge b64 image data from split overlay files into OVERLAYS
 OVERLAYS.forEach(o => { if (window.OVERLAY_B64?.[o.id]) o.b64 = window.OVERLAY_B64[o.id]; });
 
+// ─── Listings — populated by Domain API ──────────────────────────────────────
+let listings = [];
+
 // ─── State ────────────────────────────────────────────────────────────────────
-let activeFilter = 'all';
+let _activeFilters = {
+  propertyTypes:          [],   // e.g. ['House', 'Land']
+  listingType:            'Sale',
+  minBeds:                null,
+  maxBeds:                null,
+  minBaths:               null,
+  minCars:                null,
+  minPrice:               null,
+  maxPrice:               null,
+  minLand:                null,
+  maxLand:                null,
+  features:               [],   // e.g. ['AirConditioning', 'SwimmingPool']
+  listingAttributes:      [],   // e.g. ['HasPhotos']
+  establishedType:        null, // 'New' | 'Established'
+  excludePriceWithheld:   false,
+  excludeDepositTaken:    true,
+  newDevOnly:             false,
+};
 let activeZone   = 'all';
 let showListings = true;
 let markers      = {};
@@ -33,6 +53,10 @@ const map = L.map('map', {
   zoomControl: true
 });
 
+// Custom pane for hillshade so it sits below the MapLibre GL vector layer
+map.createPane('hillshade');
+map.getPane('hillshade').style.zIndex = 150; // below tilePane (200) and MapLibre canvas
+
 const baseLayers = {
   map: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     attribution: '© OpenStreetMap © CARTO',
@@ -42,12 +66,77 @@ const baseLayers = {
     attribution: '© Esri, Maxar, Earthstar Geographics',
     maxZoom: 19
   }),
-  topo: L.tileLayer('https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Topo_Map/MapServer/tile/{z}/{y}/{x}', {
-    attribution: '© NSW Spatial Services',
-    maxZoom: 16,
-    minZoom: 5
-  })
+  topo: null // lazy-initialised on first click — composite: hillshade raster + NSW vector hybrid
 };
+
+// Hillshade raster layer sits beneath the vector hybrid to give terrain relief
+const hillshadeLayer = L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', {
+  attribution: '© Esri',
+  maxNativeZoom: 16,
+  maxZoom: 22,
+  pane: 'hillshade'
+});
+
+const TOPO_STYLE_URL = 'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer/resources/styles/root.json';
+const TOPO_RESOURCES_URL = 'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer/resources';
+const TOPO_SERVER_URL = 'https://portal.spatial.nsw.gov.au/vectortileservices/rest/services/Hosted/NSW_BaseMap_VectorTile_Hybrid/VectorTileServer';
+
+function resolveRelativeUrl(base, relative) {
+  return new URL(relative, base + '/').href;
+}
+
+async function fetchPatchedTopoStyle() {
+  const res = await fetch(TOPO_STYLE_URL);
+  if (!res.ok) throw new Error(`Style fetch failed: ${res.status} ${res.statusText}`);
+  const style = await res.json();
+  // sprite: "../sprites/sprite" → resources/../sprites/sprite → resources/sprites/sprite
+  if (style.sprite) {
+    style.sprite = resolveRelativeUrl(TOPO_RESOURCES_URL + '/styles', style.sprite);
+  }
+  // glyphs: "../fonts/{fontstack}/{range}.pbf"
+  if (style.glyphs) {
+    style.glyphs = decodeURIComponent(resolveRelativeUrl(TOPO_RESOURCES_URL + '/styles', style.glyphs));
+  }
+  // sources: replace relative url with explicit tiles array via proxy to avoid CORS
+  if (style.sources) {
+    Object.values(style.sources).forEach(src => {
+      if (src.url) {
+        delete src.url;
+        src.tiles = [`${window.location.origin}/api/tiles?z={z}&y={y}&x={x}`];
+        src.minzoom = src.minzoom || 0;
+        src.maxzoom = src.maxzoom || 20;
+      }
+    });
+  }
+  return style;
+}
+
+async function getTopoLayer() {
+  if (!baseLayers.topo) {
+    try {
+      const style = await fetchPatchedTopoStyle();
+      baseLayers.topo = L.maplibreGL({
+        style,
+        attribution: '© NSW Spatial Services'
+      });
+      // Suppress expected 404s from NSW tile server (missing tiles are normal)
+      baseLayers.topo.once('add', () => {
+        const ml = baseLayers.topo.getMaplibreMap?.();
+        if (ml) {
+          ml.on('error', (e) => {
+            if (e.error?.status === 404 || e.error?.message?.includes('404')) return;
+            console.error('[MapLibre]', e);
+          });
+        }
+      });
+    } catch (err) {
+      console.error('[Topo] Failed to initialise vector tile layer:', err);
+      baseLayers.topo = null;
+      throw err;
+    }
+  }
+  return baseLayers.topo;
+}
 
 let activeBase = 'map';
 baseLayers.map.addTo(map);
@@ -59,19 +148,39 @@ baseToggle.onAdd = function () {
   div.innerHTML = `
     <button class="basemap-btn active" data-base="map">Map</button>
     <button class="basemap-btn" data-base="satellite">Satellite</button>
-    <button class="basemap-btn" data-base="topo">Topo</button>
+    <button class="basemap-btn" data-base="topo">Topography</button>
   `;
   L.DomEvent.disableClickPropagation(div);
   div.querySelectorAll('.basemap-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const target = btn.dataset.base;
       if (target === activeBase) return;
-      map.removeLayer(baseLayers[activeBase]);
-      baseLayers[target].addTo(map);
-      // Keep base below overlays
-      baseLayers[target].bringToBack();
-      activeBase = target;
-      div.querySelectorAll('.basemap-btn').forEach(b => b.classList.toggle('active', b.dataset.base === target));
+      // Remove current layers (including hillshade if switching away from topo)
+      const current = baseLayers[activeBase];
+      if (current) map.removeLayer(current);
+      if (activeBase === 'topo' && map.hasLayer(hillshadeLayer)) map.removeLayer(hillshadeLayer);
+      // Get layer (lazy-init topo if needed)
+      try {
+        const next = target === 'topo' ? await getTopoLayer() : baseLayers[target];
+        if (!next) throw new Error('Layer not available');
+        // For topo: add hillshade first, then vector hybrid on top
+        if (target === 'topo') {
+          hillshadeLayer.addTo(map);
+        }
+        next.addTo(map);
+        // Ensure correct stacking: hillshade below everything, vector hybrid above it
+        if (target === 'topo') {
+          hillshadeLayer.bringToBack();
+        } else if (next.bringToBack) {
+          next.bringToBack();
+        }
+        activeBase = target;
+        div.querySelectorAll('.basemap-btn').forEach(b => b.classList.toggle('active', b.dataset.base === target));
+      } catch (err) {
+        console.error('[Basemap] Failed to switch to', target, err);
+        // Re-add the previous layer so the map isn't blank
+        if (current) current.addTo(map);
+      }
     });
   });
   return div;
@@ -137,12 +246,40 @@ function drawParcel(rings) {
   }).addTo(map);
 }
 
+// ─── Format price for display ─────────────────────────────────────────────────
+// Handles both live Domain shape { display, from, to } and static string prices.
+function formatPrice(price) {
+  if (!price) return 'Price Unavailable';
+  if (typeof price === 'string') return price;
+  if (typeof price === 'object') {
+    const { display, from, to } = price;
+
+    // Build a numeric range string if we have from/to
+    const rangeStr = from && to
+      ? `$${Number(from).toLocaleString()} – $${Number(to).toLocaleString()}`
+      : from
+        ? `From $${Number(from).toLocaleString()}`
+        : to
+          ? `To $${Number(to).toLocaleString()}`
+          : null;
+
+    // If display is a real number string (e.g. "$850,000"), use it
+    // If display is text-only (e.g. "Contact Agent"), prefer the numeric range
+    const displayIsNumeric = display && /\d/.test(display);
+    if (displayIsNumeric) return display;
+    if (rangeStr) return rangeStr;
+    // Text-only display (e.g. "Contact Agent", "Price on Application") with no range
+    return 'Price Unavailable';
+  }
+  return 'Price Unavailable';
+}
+
 function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null) {
-  const dl = listing && window.DomainAPI ? DomainAPI.getEnrichedListing(listing.id) : null;
+  const dl = listing && window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(listing.id) : null;
 
   // Price only — no house type line, no agent line
   const priceSection = listing ? `
-    <div style="font-size:16px;font-weight:700;color:#c4841a;margin-bottom:6px">${listing.price}</div>` : '';
+    <div style="font-size:16px;font-weight:700;color:#c4841a;margin-bottom:6px">${formatPrice(listing.price)}</div>` : '';
 
   // Split lotidstring into Lot and DP if possible (format: "1//DP12345" or "1/DP12345")
   let lotDisplay = lotDP;
@@ -246,15 +383,14 @@ let _selectionGeneration = 0;
 
 function clearParcelSelection() {
   _selectionGeneration++;
-  console.log('[clear] generation now', _selectionGeneration, '_selectedParcels:', _selectedParcels.length);
+
   _selectedParcels.forEach(p => {
-    console.log('[clear] removing entry parcelLayer:', !!p.parcelLayer);
     if (p.marker)      map.removeLayer(p.marker);
     if (p.parcelLayer) map.removeLayer(p.parcelLayer);
   });
   _selectedParcels.length = 0;
-  if (clickMarker)  { console.log('[clear] removing clickMarker'); map.removeLayer(clickMarker);  clickMarker  = null; clickMarkerData = null; }
-  if (parcelLayer)  { console.log('[clear] removing parcelLayer'); map.removeLayer(parcelLayer);  parcelLayer  = null; }
+  if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; clickMarkerData = null; }
+  if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
   renderMultiSelectBar();
 }
 
@@ -278,16 +414,16 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   const pinNum   = addToSelection ? _selectedParcels.length + 1 : null;
   const pinColor = addToSelection ? '#1a4a8a' : '#1a6b3a';
   const pinHtml  = addToSelection
-    ? `<div class="search-pin" style="background:${pinColor};display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">${pinNum}</span></div>`
+    ? `<div class="search-pin" style="background:${pinColor};display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">${pinNum}</span></div>`
     : `<div class="search-pin" style="background:${pinColor}"></div>`;
 
   const newMarker = L.marker([lat, lng], {
     icon: L.divIcon({
       className: '',
       html: pinHtml,
-      iconSize: [22, 22],
-      iconAnchor: [11, 22],
-      popupAnchor: [0, -24]
+      iconSize: [28, 28],
+      iconAnchor: [14, 28],
+      popupAnchor: [0, -30]
     })
   })
   .bindPopup(popupHtml('<span style="color:#888;font-size:12px">Loading…</span>'), { minWidth: 210 })
@@ -511,10 +647,10 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   }
 
   if (_selectionGeneration !== myGeneration) {
-    console.log('[bail] myGen:', myGeneration, 'current:', _selectionGeneration);
+
     return;
   }
-  console.log('[draw] gen:', myGeneration, 'addToSelection:', addToSelection, 'hasRings:', !!(cadastre && cadastre.rings));
+
 
   if (addToSelection) {
     const entry = _selectedParcels.find(p => p.marker === newMarker);
@@ -571,7 +707,7 @@ map.on('click', function (e) {
   } else if (clickMarker) {
     const d = clickMarkerData || { lat: clickMarker.getLatLng().lat, lng: clickMarker.getLatLng().lng, label: '', lga: '', lotDP: null, areaSqm: null, zoneCode: null, listing: null, parcelLayer: null };
     const pinHtml1 = `<div class="search-pin" style="background:#1a4a8a;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">1</span></div>`;
-    clickMarker.setIcon(L.divIcon({ className: '', html: pinHtml1, iconSize: [22, 22], iconAnchor: [11, 22], popupAnchor: [0, -24] }));
+    clickMarker.setIcon(L.divIcon({ className: '', html: pinHtml1, iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -30] }));
     if (d.parcelLayer) { parcelLayer = null; }
     _selectedParcels.push({ lat: d.lat, lng: d.lng, label: d.label, lga: d.lga, lotDP: d.lotDP, areaSqm: d.areaSqm, zoneCode: d.zoneCode, listing: d.listing, marker: clickMarker, parcelLayer: d.parcelLayer });
     clickMarker = null;
@@ -812,6 +948,25 @@ function buildLeafletLayer(def) {
   // ArcGIS MapServer dynamic layer (uses /export endpoint per tile bbox)
   if (def.wms) {
     return buildArcGISDynamicLayer(def);
+  }
+
+  // Vector GeoJSON layer — driven by an addGSPLayer-style function
+  if (def.vector && def.vectorFn) {
+    const fn = window[def.vectorFn];
+    if (typeof fn !== 'function') {
+      console.warn(`[overlay] vector fn "${def.vectorFn}" not found for "${def.id}"`);
+      return null;
+    }
+    // addGSPLayer(map) creates the layer AND adds it to the map immediately.
+    // We capture the returned layer so the panel can toggle/opacity it.
+    const geoJsonLayer = fn(map);
+    // Patch setOpacity so the opacity slider works (GeoJSON uses setStyle)
+    geoJsonLayer.setOpacity = function(v) {
+      this.setStyle({ opacity: v, fillOpacity: v * 0.6 });
+    };
+    // If not enabled by default, remove it straight away
+    if (!def.enabled) map.removeLayer(geoJsonLayer);
+    return geoJsonLayer;
   }
 
   // GeoTIFF image overlay
@@ -1099,6 +1254,7 @@ document.getElementById('overlayToggleAll').addEventListener('click', function (
 
 function buildZoneSelector() {
   const select = document.getElementById('zoneSelect');
+  if (!select) return; // element removed from UI
   select.innerHTML = '';
   ZONES.forEach(z => {
     const opt = document.createElement('option');
@@ -1119,6 +1275,7 @@ function buildZoneSelector() {
     renderListings();
   });
 }
+
 
 // ─── Marker icon ──────────────────────────────────────────────────────────────
 
@@ -1143,25 +1300,22 @@ function makeIcon(color) {
 // Used by both renderListings() and showSearchCard() so the card format is identical.
 
 function makeListingCard(l, { pinToTop = false } = {}) {
-  const dl = window.DomainAPI ? DomainAPI.getEnrichedListing(l.id) : null;
+  const dl = (window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(l.id) : null) || l;
 
-  const statsHtml = l.type !== 'land'
-    ? `<div class="stat">🛏 ${l.beds}</div><div class="stat">🚿 ${l.baths}</div><div class="stat">🚗 ${l.cars}</div>`
-    : `<div class="stat">Land</div>`;
+  const isMock = window.DomainAPI && DomainAPI.isMock && DomainAPI.isMock();
+  const listingUrl = l.listingUrl || dl.listingUrl || null;
+  const daysOnMarket = l.daysOnMarket ?? dl.daysOnMarket ?? null;
 
-  const domBadge = dl
-    ? `<div class="domain-badge ${DomainAPI.isMock() ? 'mock' : ''}">
-         ${DomainAPI.isMock() ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=e31837&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
-         <span class="dom-days">${dl.daysOnMarket}d</span>
-       </div>`
+  const domBadge = listingUrl
+    ? `<a href="${listingUrl}" target="_blank" rel="noopener" class="domain-badge ${isMock ? 'mock' : ''}" onclick="event.stopPropagation()">
+         ${isMock ? '⚡ Mock' : '<img src="https://ui-avatars.com/api/?name=D&size=12&background=1ea765&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain'}
+         <span class="dom-days">${daysOnMarket != null ? daysOnMarket + 'd' : ''}</span>
+       </a>`
     : '';
 
-  const agentHtml = dl
-    ? `<div class="listing-agent">
-         <img src="${dl.advertiser.agents[0].photoUrl}" class="agent-avatar" alt="">
-         <span>${dl.advertiser.agents[0].firstName} ${dl.advertiser.agents[0].lastName}</span>
-         <span class="agent-agency">${dl.advertiser.name}</span>
-       </div>`
+  const thumbUrl = l.photos?.[0]?.url || null;
+  const thumbHtml = thumbUrl
+    ? `<div class="listing-thumb"><img src="${thumbUrl}" alt="" loading="lazy"></div>`
     : '';
 
   const pinBadge = pinToTop
@@ -1173,8 +1327,9 @@ function makeListingCard(l, { pinToTop = false } = {}) {
   card.dataset.id = l.id;
   card.innerHTML = `
     ${pinBadge}
+    ${thumbHtml}
     <div class="listing-top">
-      <div class="listing-price">${l.price}</div>
+      <div class="listing-price">${formatPrice(l.price)}</div>
       <div style="display:flex;align-items:center;gap:6px">
         <div class="listing-type">${l.type}</div>
         ${domBadge}
@@ -1182,8 +1337,6 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     </div>
     <div class="listing-address">${l.address}</div>
     <div class="listing-suburb">${l.suburb} NSW</div>
-    <div class="listing-stats">${statsHtml}</div>
-    ${agentHtml}
   `;
   card.addEventListener('click', () => selectListing(l.id));
   return card;
@@ -1200,7 +1353,8 @@ function renderListings() {
   const bounds = map.getBounds();
   const filtered = listings.filter(l => {
     const inView   = bounds.contains(L.latLng(l.lat, l.lng));
-    const typeMatch = activeFilter === 'all' || l.type === activeFilter;
+    const typeMatch = _activeFilters.propertyTypes.length === 0
+      || _activeFilters.propertyTypes.some(t => l.type === t.toLowerCase());
     return inView && typeMatch;
   });
 
@@ -1214,7 +1368,10 @@ function renderListings() {
       icon: makeIcon(MARKER_COLOR)
     }).addTo(map);
 
-    marker.on('click', (e) => selectListing(l.id, e.latlng));
+    marker.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      selectListing(l.id, e.latlng);
+    });
     markers[l.id] = marker;
   });
 
@@ -1524,14 +1681,94 @@ function selectListing(id, clickLatLng = null) {
 
 // ─── Filter chips ─────────────────────────────────────────────────────────────
 
-document.querySelectorAll('.filter-chip').forEach(chip => {
-  chip.addEventListener('click', () => {
-    document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-    chip.classList.add('active');
-    activeFilter = chip.dataset.filter;
-    renderListings();
+// ─── Filter panel ─────────────────────────────────────────────────────────────
+
+(function initFilterPanel() {
+  const toggleBtn   = document.getElementById('filterToggleBtn');
+  const panel       = document.getElementById('filterPanel');
+  const closeBtn    = document.getElementById('filterPanelClose');
+  const clearBtn    = document.getElementById('filterClearBtn');
+  const applyBtn    = document.getElementById('filterApplyBtn');
+  const activeCount = document.getElementById('filterActiveCount');
+
+  // Toggle panel open/close
+  toggleBtn.addEventListener('click', () => {
+    panel.classList.toggle('open');
   });
-});
+  closeBtn.addEventListener('click', () => panel.classList.remove('open'));
+
+  // Multi-select chip groups
+  function initChipGroup(containerId, key) {
+    document.getElementById(containerId).querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', () => chip.classList.toggle('active'));
+    });
+  }
+  initChipGroup('filterPropertyTypes', 'propertyTypes');
+  initChipGroup('filterFeatures',      'features');
+  initChipGroup('filterAttributes',    'listingAttributes');
+  initChipGroup('filterEstablished',   'establishedType');
+
+  // Single-select listing type
+  document.getElementById('filterListingType').querySelectorAll('.filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.getElementById('filterListingType').querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+    });
+  });
+
+  // Clear all
+  clearBtn.addEventListener('click', () => {
+    panel.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    // Re-set Sale as default
+    document.querySelector('#filterListingType [data-value="Sale"]').classList.add('active');
+    panel.querySelectorAll('select').forEach(s => s.value = '');
+    panel.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = false);
+    updateActiveCount();
+  });
+
+  // Count active filters for badge
+  function updateActiveCount() {
+    let count = 0;
+    panel.querySelectorAll('#filterPropertyTypes .filter-chip.active, #filterFeatures .filter-chip.active, #filterAttributes .filter-chip.active, #filterEstablished .filter-chip.active').forEach(() => count++);
+    panel.querySelectorAll('select').forEach(s => { if (s.value) count++; });
+    panel.querySelectorAll('input[type="checkbox"]').forEach(c => { if (c.checked) count++; });
+    activeCount.textContent = count > 0 ? count : '';
+    activeCount.style.display = count > 0 ? 'inline' : 'none';
+  }
+
+  // Apply filters → read state, store in _activeFilters, trigger search
+  applyBtn.addEventListener('click', () => {
+    const getChips = id => [...document.getElementById(id).querySelectorAll('.filter-chip.active')].map(c => c.dataset.value);
+    const selVal   = id => document.getElementById(id).value || null;
+    const numVal   = id => { const v = selVal(id); return v ? Number(v) : null; };
+
+    const established = getChips('filterEstablished');
+    const listingTypeChip = document.querySelector('#filterListingType .filter-chip.active');
+
+    _activeFilters = {
+      propertyTypes:        getChips('filterPropertyTypes'),
+      listingType:          listingTypeChip ? listingTypeChip.dataset.value : 'Sale',
+      minBeds:              numVal('filterMinBeds'),
+      maxBeds:              numVal('filterMaxBeds'),
+      minBaths:             numVal('filterMinBaths'),
+      minCars:              numVal('filterMinCars'),
+      minPrice:             numVal('filterMinPrice'),
+      maxPrice:             numVal('filterMaxPrice'),
+      minLand:              numVal('filterMinLand'),
+      maxLand:              numVal('filterMaxLand'),
+      features:             getChips('filterFeatures'),
+      listingAttributes:    getChips('filterAttributes'),
+      establishedType:      established.length === 1 ? established[0] : null,
+      excludePriceWithheld: document.getElementById('filterExcludePriceWithheld').checked,
+      excludeDepositTaken:  document.getElementById('filterExcludeDepositTaken').checked,
+      newDevOnly:           document.getElementById('filterNewDevOnly').checked,
+    };
+
+    updateActiveCount();
+    panel.classList.remove('open');
+    runDomainSearch();
+  });
+})();
 
 // ─── Listings toggle ──────────────────────────────────────────────────────────
 
@@ -1812,6 +2049,8 @@ map.on('moveend zoomend', () => {
   // Refresh easement buffers if electricity overlay is active
   const elecEntry = overlayRegistry['electricity-transmission'];
   if (elecEntry && elecEntry.def.enabled) drawEasementBuffers();
+  // Re-fetch Domain listings for the new viewport
+  if (showListings && window.DomainAPI) debouncedDomainSearch();
 });
 
 // Move overlay panel inside its anchor for relative positioning
@@ -1823,7 +2062,109 @@ map.on('moveend zoomend', () => {
 
 buildZoneSelector();
 renderOverlayPanel();
-renderListings();
+
+// ─── Domain API: build geoWindow from current map state ──────────────────────
+// Uses the selected property (or first of multi-select) as centre if available,
+// otherwise uses the current map viewport bounds.
+
+function buildDomainGeoWindow() {
+  // Priority 1: first selected parcel
+  if (_selectedParcels.length > 0) {
+    const p = _selectedParcels[0];
+    const delta = 0.05; // ~5km radius box around selection
+    return {
+      box: {
+        topLeft:     { lat: p.lat + delta, lon: p.lng - delta },
+        bottomRight: { lat: p.lat - delta, lon: p.lng + delta },
+      }
+    };
+  }
+  // Priority 2: single click marker
+  if (clickMarkerData) {
+    const { lat, lng } = clickMarkerData;
+    const delta = 0.05;
+    return {
+      box: {
+        topLeft:     { lat: lat + delta, lon: lng - delta },
+        bottomRight: { lat: lat - delta, lon: lng + delta },
+      }
+    };
+  }
+  // Priority 3: current map viewport
+  const b = map.getBounds();
+  return {
+    box: {
+      topLeft:     { lat: b.getNorth(), lon: b.getWest() },
+      bottomRight: { lat: b.getSouth(), lon: b.getEast() },
+    }
+  };
+}
+
+// ─── Domain search with debounce ─────────────────────────────────────────────
+let _domainSearchTimer = null;
+
+function debouncedDomainSearch() {
+  clearTimeout(_domainSearchTimer);
+  _domainSearchTimer = setTimeout(runDomainSearch, 5000);
+}
+
+async function runDomainSearch() {
+  if (!window.DomainAPI || !DomainAPI.search) { renderListings(); return; }
+  try {
+    const geoWindow = buildDomainGeoWindow();
+    console.log('[map] Domain search — geoWindow:', JSON.stringify(geoWindow));
+    const domainListings = await DomainAPI.search({
+      geoWindow,
+      propertyTypes:        _activeFilters.propertyTypes,
+      listingTypes:         [_activeFilters.listingType],
+      minBeds:              _activeFilters.minBeds,
+      maxBeds:              _activeFilters.maxBeds,
+      minBaths:             _activeFilters.minBaths,
+      minCars:              _activeFilters.minCars,
+      minPrice:             _activeFilters.minPrice,
+      maxPrice:             _activeFilters.maxPrice,
+      minLand:              _activeFilters.minLand,
+      maxLand:              _activeFilters.maxLand,
+      propertyFeatures:     _activeFilters.features,
+      listingAttributes:    _activeFilters.listingAttributes,
+      establishedType:      _activeFilters.establishedType,
+      excludePriceWithheld: _activeFilters.excludePriceWithheld,
+      excludeDepositTaken:  _activeFilters.excludeDepositTaken,
+      newDevOnly:           _activeFilters.newDevOnly,
+    });
+    listings.length = 0;
+    domainListings.forEach(l => listings.push(l));
+    console.log('[map] Domain API returned ' + listings.length + ' listings');
+    renderListings();
+  } catch (err) {
+    console.error('[map] Domain API fetch failed:', err);
+    showDomainError(err.message);
+  }
+}
+
+function showDomainError(msg) {
+  // Clear markers
+  Object.values(markers).forEach(m => map.removeLayer(m));
+  markers = {};
+
+  const list = document.getElementById('listingsList');
+  const isRateLimit = msg && msg.includes('429');
+  list.innerHTML = `
+    <div class="domain-error">
+      <div class="domain-error-icon">⚠</div>
+      <div class="domain-error-title">${isRateLimit ? 'Too many requests' : 'Domain connection error'}</div>
+      <div class="domain-error-msg">${isRateLimit
+        ? 'Domain API rate limit reached. Results will refresh automatically.'
+        : 'Could not connect to Domain API. Please check your connection and try again.'
+      }</div>
+      <button class="domain-error-retry" onclick="runDomainSearch()">Retry</button>
+    </div>
+  `;
+  document.getElementById('listingCount').textContent = '0';
+}
+
+// Initial load
+runDomainSearch();
 
 // ─── Address search (Nominatim geocoder) ─────────────────────────────────────
 
@@ -2103,15 +2444,11 @@ window.reSelectParcels = function(parcels) {
   const toggle = document.getElementById('legendToggle');
   if (!legend || !toggle) return;
 
-  // Default collapsed unless user has explicitly expanded it before
-  const saved = localStorage.getItem('legendCollapsed');
-  if (saved !== 'false') {
-    legend.classList.add('collapsed');
-  }
+  // Always start collapsed
+  legend.classList.add('collapsed');
 
   toggle.addEventListener('click', () => {
     legend.classList.toggle('collapsed');
-    localStorage.setItem('legendCollapsed', legend.classList.contains('collapsed'));
   });
 })();
 

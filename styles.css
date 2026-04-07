@@ -142,7 +142,7 @@ header {
 }
 
 .search-pin {
-  width: 22px; height: 22px;
+  width: 28px; height: 28px;
   background: var(--accent);
   border: 2px solid #fff;
   border-radius: 50% 50% 50% 0;
@@ -514,6 +514,11 @@ header {
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--border);
 }
+.sidebar-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
 .sidebar-header h2 {
   font-family: 'DM Serif Display', serif;
   font-size: 17px;
@@ -523,12 +528,67 @@ header {
 .sidebar-header p { font-size: 12px; color: var(--muted); }
 
 .filters {
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  display: none;
 }
+.filter-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  transition: all 0.15s;
+}
+.filter-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
+.filter-active-count {
+  display: none;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 10px;
+  padding: 1px 6px;
+  font-weight: 600;
+}
+
+.filter-panel {
+  display: none;
+  flex-direction: column;
+  border-bottom: 2px solid var(--border);
+  background: var(--surface);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.filter-panel.open { display: flex; }
+.filter-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 20px;
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.filter-panel-body { padding: 8px 20px 16px; }
+.filter-group { margin-bottom: 14px; }
+.filter-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .filter-chip {
   padding: 4px 12px;
   border-radius: 20px;
@@ -544,6 +604,61 @@ header {
   border-color: var(--accent);
   color: var(--accent);
   background: rgba(196,132,26,0.08);
+}
+.filter-row {
+  display: flex;
+  gap: 10px;
+}
+.filter-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.filter-field select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+}
+.filter-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.filter-checkbox-row input { cursor: pointer; accent-color: var(--accent); }
+.filter-apply-btn {
+  width: 100%;
+  padding: 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: opacity 0.15s;
+}
+.filter-apply-btn:hover { opacity: 0.88; }
+.filter-clear-btn {
+  font-size: 11px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  font-family: 'DM Sans', sans-serif;
 }
 
 .listings {
@@ -566,6 +681,20 @@ header {
 .listing-card.active {
   border-left: 2px solid var(--accent);
   padding-left: 18px;
+}
+
+.listing-thumb {
+  width: calc(100% + 0px);
+  height: 160px;
+  margin: -14px -20px 12px -20px;
+  overflow: hidden;
+  border-radius: 0;
+}
+.listing-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .listing-top {
@@ -596,9 +725,7 @@ header {
   margin-bottom: 6px;
   line-height: 1.4;
 }
-.listing-suburb { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
-.listing-stats { display: flex; gap: 12px; font-size: 12px; color: var(--muted); }
-.stat { display: flex; align-items: center; gap: 4px; }
+.listing-suburb { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 
 .water-badge {
   display: inline-flex;
@@ -1178,10 +1305,16 @@ header {
   font-size: 10px;
   padding: 2px 7px;
   border-radius: 4px;
-  background: rgba(227,24,55,0.08);
-  color: #e31837;
-  border: 1px solid rgba(227,24,55,0.2);
+  background: rgba(30,167,101,0.1);
+  color: #1ea765;
+  border: 1px solid rgba(30,167,101,0.25);
   font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.domain-badge:hover {
+  background: rgba(30,167,101,0.18);
 }
 .domain-badge.mock {
   background: rgba(100,100,100,0.07);
@@ -1189,13 +1322,13 @@ header {
   border-color: var(--border);
 }
 .dom-days {
-  color: var(--muted);
+  color: #1ea765;
   font-weight: 400;
-  border-left: 1px solid currentColor;
+  border-left: 1px solid rgba(30,167,101,0.35);
   padding-left: 5px;
   margin-left: 2px;
 }
-.domain-badge.mock .dom-days { border-color: var(--border); }
+.domain-badge.mock .dom-days { color: var(--muted); border-color: var(--border); }
 
 .listing-agent {
   display: flex;
@@ -1741,3 +1874,42 @@ header {
   padding: 2px 7px !important;
   opacity: 0.85;
 }
+
+/* ─── Domain API error state ─────────────────────────────────────────────── */
+.domain-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  text-align: center;
+  gap: 10px;
+}
+.domain-error-icon {
+  font-size: 32px;
+  color: var(--muted);
+}
+.domain-error-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.domain-error-msg {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 220px;
+}
+.domain-error-retry {
+  margin-top: 8px;
+  padding: 7px 20px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.domain-error-retry:hover { background: var(--border); }

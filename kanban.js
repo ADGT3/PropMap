@@ -144,12 +144,33 @@ function addToPipeline(listing) {
       _lotDPs:        listing._lotDPs         || null,
       _areaSqm:       listing._areaSqm        || null,
       _propertyCount: listing._propertyCount  || 1,
-    }
+    },
+    dd: {}
   };
   savePipeline(id);
   updateAddButtons();
   if (kanbanVisible) renderBoard();
   showKanbanToast(`${listing.address} added to pipeline`);
+
+  // Async — query overlay layers and pre-populate DD risks
+  const lat = listing.lat ?? parcels[0]?.lat ?? null;
+  const lng = listing.lng ?? parcels[0]?.lng ?? null;
+  if (lat && lng && window.queryDDRisks) {
+    console.log('[DD] Querying risks for', listing.address, lat, lng);
+    queryDDRisks(lat, lng).then(dd => {
+      console.log('[DD] Results:', dd);
+      if (!pipeline[id]) return;
+      Object.entries(dd).forEach(([key, val]) => {
+        if (!pipeline[id].dd[key]?.status) pipeline[id].dd[key] = val;
+      });
+      savePipeline(id);
+      if (kanbanVisible) renderBoard();
+      // If this card's modal is open, refresh its DD section
+      refreshModalDd(id);
+    }).catch(err => console.warn('[DD] Risk query failed:', err));
+  } else {
+    console.warn('[DD] Skipping risk query — lat:', lat, 'lng:', lng, 'queryDDRisks:', !!window.queryDDRisks);
+  }
 }
 
 function removeFromPipeline(id) {
@@ -232,7 +253,7 @@ function formatOfferDate(iso) {
 // ─── Due Diligence ────────────────────────────────────────────────────────────
 
 const DD_ITEMS = [
-  'Zoning','Yield','Access','Sewer','Water','Easements','Electricity',
+  'Zoning','Yield','Access','Wastewater','Water','Easements','Electricity',
   'Flooding','Riparian','Vegetation','Contamination','Salinity',
   'Heritage','Aboriginal','Bushfire','Odor','Commercial'
 ];
@@ -246,6 +267,27 @@ const DD_RISK_OPTIONS = [
 
 function getDd(id) {
   return pipeline[id]?.dd || {};
+}
+
+// Refresh the DD rows in an open modal after async risk results arrive
+function refreshModalDd(id) {
+  const modal = document.getElementById('kb-modal');
+  console.log('[DD] refreshModalDd — modal:', !!modal, 'modal id:', modal?.dataset?.propertyId, 'target id:', String(id));
+  if (!modal || modal.dataset.propertyId !== String(id)) return;
+  const dd = getDd(id);
+  console.log('[DD] refreshModalDd — dd object:', dd);
+  modal.querySelectorAll('.kb-dd-row').forEach(row => {
+    const key    = row.dataset.key;
+    const status = dd[key]?.status || '';
+    const note   = dd[key]?.note   || '';
+    const sel    = row.querySelector('.kb-dd-select');
+    const inp    = row.querySelector('.kb-dd-note');
+    if (sel && !sel.value) {
+      sel.value     = status;
+      sel.className = `kb-dd-select dd-risk-${status || 'none'}`;
+    }
+    if (inp && !inp.value) inp.value = note;
+  });
 }
 
 function saveDd(id, dd) {
@@ -368,9 +410,11 @@ function renderBoard() {
       card.querySelector('.kb-card-address-link').addEventListener('click', e => {
         e.stopPropagation();
         toggleKanban(false);
-        const parcels = p._parcels && p._parcels.length > 0 ? p._parcels : null;
+        const parcels = (p._parcels && p._parcels.length > 0 && p._parcels[0].lat)
+          ? p._parcels
+          : (p.lat && p.lng ? [{ lat: p.lat, lng: p.lng, label: `${p.address}, ${p.suburb}` }] : null);
         if (parcels && typeof window.reSelectParcels === 'function') {
-          window.reSelectParcels(parcels);
+          setTimeout(() => window.reSelectParcels(parcels), 150);
         }
       });
 
@@ -464,6 +508,7 @@ function openCardModal(id) {
   const overlay = document.createElement('div');
   overlay.id = 'kb-modal';
   overlay.className = 'kb-modal-overlay';
+  overlay.dataset.propertyId = String(id);
   overlay.innerHTML = `
     <div class="kb-modal">
       <div class="kb-modal-header">

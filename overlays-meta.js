@@ -297,9 +297,10 @@ const OVERLAYS = [
     group: "services",
     zone: "south-west-sydney",
     enabled: false,
-    opacity: 0.4,
+    opacity: 0.7,
     bounds: { latMin: -34.0673002106552, latMax: -33.80758423780651, lonMin: 150.64488252729578, lonMax: 150.87546633811064 },
-    b64: null
+    vector: true,
+    vectorFn: "addGSPLayer"
   },
   {
     id: "sw-potable",
