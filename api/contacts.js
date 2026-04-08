@@ -2,22 +2,49 @@
  * api/contacts.js
  * CRM Contacts CRUD — Neon Postgres
  *
- * GET    /api/contacts              → list all contacts (with linked pipeline ids)
- * GET    /api/contacts?id=1         → single contact
- * GET    /api/contacts?search=jones → search by name / company / email
- * GET    /api/contacts?pipeline_id=x → contacts linked to a pipeline item
- * POST   /api/contacts              → create contact  { first_name, last_name, mobile, email, company, source, domain_id }
- * PUT    /api/contacts              → update contact  { id, ...fields }
- * DELETE /api/contacts?id=1         → delete contact (cascades junction rows)
+ * Contacts
+ * GET    /api/contacts                     → list all (with org, linked pipeline ids)
+ * GET    /api/contacts?id=1                → single contact
+ * GET    /api/contacts?search=jones        → search by name / email / org
+ * GET    /api/contacts?pipeline_id=x       → contacts linked to a pipeline item
+ * GET    /api/contacts?check_duplicate=1&first_name=x&last_name=y&email=z&mobile=m → duplicate check
+ * POST   /api/contacts                     → create contact
+ * PUT    /api/contacts                     → update contact
+ * DELETE /api/contacts?id=1               → delete contact
  *
  * Link / unlink:
- * POST   /api/contacts  { action:'link',   contact_id, pipeline_id, role }
- * POST   /api/contacts  { action:'unlink', contact_id, pipeline_id }
+ * POST   /api/contacts { action:'link',   contact_id, pipeline_id, role }
+ * POST   /api/contacts { action:'unlink', contact_id, pipeline_id }
+ *
+ * Organisations
+ * GET    /api/contacts?orgs=1             → list all orgs
+ * GET    /api/contacts?org_search=name    → search orgs by name
+ * POST   /api/contacts { action:'create_org', name, phone, email, website }
+ *
+ * Notes
+ * GET    /api/contacts?notes=1&contact_id=x           → notes for a contact
+ * GET    /api/contacts?notes=1&pipeline_id=x          → notes for a pipeline item
+ * POST   /api/contacts { action:'add_note', contact_id, pipeline_id, note_text }
+ * DELETE /api/contacts?note_id=x                      → delete a note
  */
 
 import { neon } from '@neondatabase/serverless';
 
 const sql = neon(process.env.POSTGRES_URL);
+
+const CONTACT_SELECT = sql`
+  SELECT c.*,
+    o.name AS org_name,
+    o.phone AS org_phone,
+    o.email AS org_email,
+    o.website AS org_website,
+    COALESCE(
+      json_agg(json_build_object('pipeline_id', cp.pipeline_id, 'role', cp.role))
+      FILTER (WHERE cp.pipeline_id IS NOT NULL), '[]'
+    ) AS properties
+  FROM contacts c
+  LEFT JOIN organisations o ON o.id = c.organisation_id
+  LEFT JOIN contact_properties cp ON cp.contact_id = c.id`;
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -28,22 +55,79 @@ export default async function handler(req, res) {
   try {
     switch (req.method) {
 
-      // ── GET ────────────────────────────────────────────────────────────────
+      // ── GET ──────────────────────────────────────────────────────────────────
       case 'GET': {
-        const { id, search, pipeline_id } = req.query;
+        const { id, search, pipeline_id, check_duplicate, orgs, org_search, notes, contact_id, note_id } = req.query;
 
-        // Single contact by id
+        // List / search organisations
+        if (orgs) {
+          const rows = await sql`SELECT * FROM organisations ORDER BY name`;
+          return res.status(200).json(rows);
+        }
+        if (org_search) {
+          const q = `%${org_search}%`;
+          const rows = await sql`
+            SELECT * FROM organisations WHERE name ILIKE ${q} ORDER BY name LIMIT 20`;
+          return res.status(200).json(rows);
+        }
+
+        // Notes
+        if (notes) {
+          if (contact_id) {
+            const rows = await sql`
+              SELECT n.*, p.data->>'address' AS property_address
+              FROM contact_notes n
+              LEFT JOIN pipeline p ON p.id = n.pipeline_id
+              WHERE n.contact_id = ${parseInt(contact_id)}
+              ORDER BY n.created_at DESC`;
+            return res.status(200).json(rows);
+          }
+          if (pipeline_id) {
+            const rows = await sql`
+              SELECT n.*, c.first_name, c.last_name
+              FROM contact_notes n
+              JOIN contacts c ON c.id = n.contact_id
+              WHERE n.pipeline_id = ${pipeline_id}
+              ORDER BY n.created_at DESC`;
+            return res.status(200).json(rows);
+          }
+          return res.status(400).json({ error: 'contact_id or pipeline_id required' });
+        }
+
+        // Duplicate check
+        if (check_duplicate) {
+          const { first_name, last_name, email, mobile } = req.query;
+          const conditions = [];
+          if (email?.trim()) conditions.push(sql`c.email ILIKE ${email.trim()}`);
+          if (mobile?.trim()) conditions.push(sql`c.mobile ILIKE ${mobile.trim()}`);
+          if (first_name?.trim() && last_name?.trim()) {
+            conditions.push(sql`(c.first_name ILIKE ${first_name.trim()} AND c.last_name ILIKE ${last_name.trim()})`);
+          }
+          if (!conditions.length) return res.status(200).json([]);
+          const rows = await sql`
+            SELECT c.*, o.name AS org_name
+            FROM contacts c
+            LEFT JOIN organisations o ON o.id = c.organisation_id
+            WHERE ${conditions[0]}
+            ${conditions[1] ? sql`OR ${conditions[1]}` : sql``}
+            ${conditions[2] ? sql`OR ${conditions[2]}` : sql``}
+            LIMIT 5`;
+          return res.status(200).json(rows);
+        }
+
+        // Single contact
         if (id) {
           const rows = await sql`
-            SELECT c.*,
+            SELECT c.*, o.name AS org_name, o.phone AS org_phone, o.email AS org_email, o.website AS org_website,
               COALESCE(
                 json_agg(json_build_object('pipeline_id', cp.pipeline_id, 'role', cp.role))
                 FILTER (WHERE cp.pipeline_id IS NOT NULL), '[]'
               ) AS properties
             FROM contacts c
+            LEFT JOIN organisations o ON o.id = c.organisation_id
             LEFT JOIN contact_properties cp ON cp.contact_id = c.id
             WHERE c.id = ${parseInt(id)}
-            GROUP BY c.id`;
+            GROUP BY c.id, o.id`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           return res.status(200).json(rows[0]);
         }
@@ -51,8 +135,9 @@ export default async function handler(req, res) {
         // Contacts linked to a pipeline item
         if (pipeline_id) {
           const rows = await sql`
-            SELECT c.*, cp.role
+            SELECT c.*, o.name AS org_name, cp.role
             FROM contacts c
+            LEFT JOIN organisations o ON o.id = c.organisation_id
             JOIN contact_properties cp ON cp.contact_id = c.id
             WHERE cp.pipeline_id = ${pipeline_id}
             ORDER BY c.last_name, c.first_name`;
@@ -63,18 +148,20 @@ export default async function handler(req, res) {
         if (search) {
           const q = `%${search}%`;
           const rows = await sql`
-            SELECT c.*,
+            SELECT c.*, o.name AS org_name,
               COALESCE(
                 json_agg(json_build_object('pipeline_id', cp.pipeline_id, 'role', cp.role))
                 FILTER (WHERE cp.pipeline_id IS NOT NULL), '[]'
               ) AS properties
             FROM contacts c
+            LEFT JOIN organisations o ON o.id = c.organisation_id
             LEFT JOIN contact_properties cp ON cp.contact_id = c.id
             WHERE c.first_name ILIKE ${q}
                OR c.last_name  ILIKE ${q}
-               OR c.company    ILIKE ${q}
                OR c.email      ILIKE ${q}
-            GROUP BY c.id
+               OR c.mobile     ILIKE ${q}
+               OR o.name       ILIKE ${q}
+            GROUP BY c.id, o.id
             ORDER BY c.last_name, c.first_name
             LIMIT 50`;
           return res.status(200).json(rows);
@@ -82,25 +169,42 @@ export default async function handler(req, res) {
 
         // List all
         const rows = await sql`
-          SELECT c.*,
+          SELECT c.*, o.name AS org_name,
             COALESCE(
               json_agg(json_build_object('pipeline_id', cp.pipeline_id, 'role', cp.role))
               FILTER (WHERE cp.pipeline_id IS NOT NULL), '[]'
             ) AS properties
           FROM contacts c
+          LEFT JOIN organisations o ON o.id = c.organisation_id
           LEFT JOIN contact_properties cp ON cp.contact_id = c.id
-          GROUP BY c.id
+          GROUP BY c.id, o.id
           ORDER BY c.last_name, c.first_name`;
         return res.status(200).json(rows);
       }
 
-      // ── POST ───────────────────────────────────────────────────────────────
+      // ── POST ─────────────────────────────────────────────────────────────────
       case 'POST': {
         const body = req.body;
 
-        // Link action
+        // Create organisation
+        if (body.action === 'create_org') {
+          const { name, phone = '', email = '', website = '' } = body;
+          if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+          const rows = await sql`
+            INSERT INTO organisations (name, phone, email, website)
+            VALUES (${name.trim()}, ${phone.trim()}, ${email.trim()}, ${website.trim()})
+            ON CONFLICT DO NOTHING
+            RETURNING *`;
+          if (!rows.length) {
+            const existing = await sql`SELECT * FROM organisations WHERE name ILIKE ${name.trim()} LIMIT 1`;
+            return res.status(200).json(existing[0]);
+          }
+          return res.status(201).json(rows[0]);
+        }
+
+        // Link
         if (body.action === 'link') {
-          const { contact_id, pipeline_id, role = 'referrer' } = body;
+          const { contact_id, pipeline_id, role = 'vendor' } = body;
           await sql`
             INSERT INTO contact_properties (contact_id, pipeline_id, role)
             VALUES (${contact_id}, ${pipeline_id}, ${role})
@@ -108,7 +212,7 @@ export default async function handler(req, res) {
           return res.status(200).json({ ok: true });
         }
 
-        // Unlink action
+        // Unlink
         if (body.action === 'unlink') {
           const { contact_id, pipeline_id } = body;
           await sql`
@@ -117,41 +221,54 @@ export default async function handler(req, res) {
           return res.status(200).json({ ok: true });
         }
 
-        // Create contact
-        const { first_name, last_name = '', mobile = '', email = '', company = '', source = 'manual', domain_id = null } = body;
-        if (!first_name?.trim()) return res.status(400).json({ error: 'first_name required' });
+        // Add note
+        if (body.action === 'add_note') {
+          const { contact_id, pipeline_id = null, note_text } = body;
+          if (!contact_id || !note_text?.trim()) return res.status(400).json({ error: 'contact_id and note_text required' });
+          const rows = await sql`
+            INSERT INTO contact_notes (contact_id, pipeline_id, note_text)
+            VALUES (${contact_id}, ${pipeline_id}, ${note_text.trim()})
+            RETURNING *`;
+          return res.status(201).json(rows[0]);
+        }
 
+        // Create contact
+        const { first_name, last_name = '', mobile = '', email = '', organisation_id = null, source = 'manual', domain_id = null } = body;
+        if (!first_name?.trim()) return res.status(400).json({ error: 'first_name required' });
         const rows = await sql`
-          INSERT INTO contacts (first_name, last_name, mobile, email, company, source, domain_id)
-          VALUES (${first_name.trim()}, ${last_name.trim()}, ${mobile.trim()}, ${email.trim()}, ${company.trim()}, ${source}, ${domain_id})
+          INSERT INTO contacts (first_name, last_name, mobile, email, organisation_id, source, domain_id)
+          VALUES (${first_name.trim()}, ${last_name.trim()}, ${mobile.trim()}, ${email.trim()}, ${organisation_id}, ${source}, ${domain_id})
           RETURNING *`;
         return res.status(201).json(rows[0]);
       }
 
-      // ── PUT ────────────────────────────────────────────────────────────────
+      // ── PUT ──────────────────────────────────────────────────────────────────
       case 'PUT': {
-        const { id, first_name, last_name, mobile, email, company, source, domain_id } = req.body;
+        const { id, first_name, last_name, mobile, email, organisation_id, source, domain_id } = req.body;
         if (!id) return res.status(400).json({ error: 'id required' });
-
         const rows = await sql`
           UPDATE contacts SET
-            first_name = COALESCE(${first_name ?? null}, first_name),
-            last_name  = COALESCE(${last_name  ?? null}, last_name),
-            mobile     = COALESCE(${mobile     ?? null}, mobile),
-            email      = COALESCE(${email      ?? null}, email),
-            company    = COALESCE(${company    ?? null}, company),
-            source     = COALESCE(${source     ?? null}, source),
-            domain_id  = COALESCE(${domain_id  ?? null}, domain_id),
-            updated_at = now()
+            first_name      = COALESCE(${first_name      ?? null}, first_name),
+            last_name       = COALESCE(${last_name       ?? null}, last_name),
+            mobile          = COALESCE(${mobile          ?? null}, mobile),
+            email           = COALESCE(${email           ?? null}, email),
+            organisation_id = COALESCE(${organisation_id ?? null}, organisation_id),
+            source          = COALESCE(${source          ?? null}, source),
+            domain_id       = COALESCE(${domain_id       ?? null}, domain_id),
+            updated_at      = now()
           WHERE id = ${parseInt(id)}
           RETURNING *`;
         if (!rows.length) return res.status(404).json({ error: 'Not found' });
         return res.status(200).json(rows[0]);
       }
 
-      // ── DELETE ─────────────────────────────────────────────────────────────
+      // ── DELETE ───────────────────────────────────────────────────────────────
       case 'DELETE': {
-        const { id } = req.query;
+        const { id, note_id } = req.query;
+        if (note_id) {
+          await sql`DELETE FROM contact_notes WHERE id = ${parseInt(note_id)}`;
+          return res.status(200).json({ ok: true });
+        }
         if (!id) return res.status(400).json({ error: 'id required' });
         await sql`DELETE FROM contacts WHERE id = ${parseInt(id)}`;
         return res.status(200).json({ ok: true });
