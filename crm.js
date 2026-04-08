@@ -544,7 +544,8 @@ async function renderContactsSection(pipelineId, agentData) {
 
   addBtn.addEventListener('click', () => showForm());
 
-  await reload();
+  // Load contacts async — section renders immediately, contacts populate in background
+  reload();
   return section;
 }
 
