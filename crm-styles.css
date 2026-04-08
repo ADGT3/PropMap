@@ -254,3 +254,115 @@
 }
 .crm-search-item:last-child { border-bottom: none; }
 .crm-search-item:hover { background: #f0f7f3; }
+
+/* ─── Duplicate warning ──────────────────────────────────────────────────────── */
+.crm-duplicate-warning {
+  background: #fff8e6;
+  border: 1px solid #f0c040;
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.crm-dup-title {
+  font-weight: 600;
+  color: #9a6500;
+  margin-bottom: 5px;
+}
+.crm-dup-item {
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: #333;
+}
+.crm-dup-item:hover { background: #fdefc0; }
+
+/* ─── Contact notes panel ────────────────────────────────────────────────────── */
+.crm-notes-panel {
+  background: #f8f9fa;
+  border: 1px solid #e8e8e8;
+  border-radius: 5px;
+  padding: 10px 12px;
+  margin: 4px 0 8px 0;
+}
+.crm-notes-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #aaa;
+  margin-bottom: 8px;
+}
+.crm-notes-input-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.crm-notes-input-row .kb-input {
+  flex: 1;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.crm-note-add-btn {
+  padding: 5px 10px;
+  background: #1a6b3a;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.crm-note-add-btn:hover { background: #155c30; }
+.crm-note-entry {
+  padding: 5px 0;
+  border-bottom: 1px solid #efefef;
+  font-size: 12px;
+}
+.crm-note-entry:last-child { border-bottom: none; }
+.crm-note-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+.crm-note-date {
+  font-size: 10px;
+  color: #aaa;
+}
+.crm-note-prop {
+  color: #1a6b3a;
+  font-style: normal;
+}
+.crm-note-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: #ccc;
+  padding: 0 2px;
+}
+.crm-note-delete:hover { color: #c0392b; }
+.crm-note-text { color: #333; line-height: 1.4; }
+.crm-notes-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: #bbb;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+.crm-notes-btn:hover { color: #1a6b3a; background: #e8f5ee; }
+
+/* ─── Organisation typeahead ─────────────────────────────────────────────────── */
+.crm-org-create { color: #1a6b3a; font-style: italic; }
+.crm-org-results { max-height: 140px; }
+
+/* ─── Role badges — new roles ────────────────────────────────────────────────── */
+.crm-role-vendor       { background: #fdf3e8; color: #c4841a; }
+.crm-role-purchaser    { background: #e8f0fa; color: #1a4a8a; }
+.crm-role-agent        { background: #e8f5ee; color: #1a6b3a; }
+.crm-role-buyers_agent { background: #fdf3e8; color: #c4841a; }
+.crm-role-referrer     { background: #f0e8fa; color: #6c3483; }
+.crm-role-solicitor    { background: #fdf0f0; color: #c0392b; }
