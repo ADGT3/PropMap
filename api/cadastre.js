@@ -1,10 +1,6 @@
 /**
  * api/cadastre.js
  * Server-side proxy for state cadastre ArcGIS endpoints.
- * Avoids browser CORS restrictions on state government tile servers.
- *
- * GET /api/cadastre?state=NSW&lng=151.21&lat=-33.87
- * Returns: { lotid, areaSqm, rings } or { lotid: null, areaSqm: null, rings: null }
  */
 
 const STATE_CADASTRE = {
@@ -63,15 +59,28 @@ export default async function handler(req, res) {
     resultRecordCount: '1',
   });
 
-  try {
-    const upstream = await fetch(`${service.url}?${params}`);
-    if (!upstream.ok) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
-    }
-    const json = await upstream.json();
-    const feat = (json.features || [])[0];
+  const upstreamUrl = `${service.url}?${params}`;
+  console.log('[cadastre] fetching', state, upstreamUrl);
 
-    if (!feat) return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
+  try {
+    const upstream = await fetch(upstreamUrl);
+    const rawText  = await upstream.text();
+    console.log('[cadastre] status', upstream.status, 'body[:300]', rawText.slice(0, 300));
+
+    if (!upstream.ok) {
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { status: upstream.status, body: rawText.slice(0, 300) } });
+    }
+
+    let json;
+    try { json = JSON.parse(rawText); }
+    catch (e) {
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { parseError: e.message, body: rawText.slice(0, 300) } });
+    }
+
+    const feat = (json.features || [])[0];
+    if (!feat) {
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { featureCount: (json.features || []).length, jsonError: json.error } });
+    }
 
     const attrs = feat.attributes || {};
     const lotid = attrs[service.lotField] ? String(attrs[service.lotField]) : null;
@@ -82,7 +91,6 @@ export default async function handler(req, res) {
     if (feat.geometry && feat.geometry.rings) {
       rings = feat.geometry.rings.map(ring => ring.map(([x, y]) => [y, x]));
       const latNum = parseFloat(lat);
-      const metersPerDegLat = 111320;
       const metersPerDegLng = 111320 * Math.cos(latNum * Math.PI / 180);
       let area = 0;
       for (const ring of feat.geometry.rings) {
@@ -92,12 +100,12 @@ export default async function handler(req, res) {
         }
         area += Math.abs(ringArea) / 2;
       }
-      areaSqm = Math.round(area * metersPerDegLng * metersPerDegLat);
+      areaSqm = Math.round(area * 111320 * metersPerDegLng);
     }
 
     return res.status(200).json({ lotid, areaSqm, rings });
   } catch (err) {
-    console.error('[cadastre]', state, err.message);
-    return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
+    console.error('[cadastre] exception', state, err.message);
+    return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { exception: err.message } });
   }
 }
