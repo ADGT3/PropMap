@@ -2136,7 +2136,6 @@ async function runDomainSearch() {
     domainListings.forEach(l => listings.push(l));
     console.log('[map] Domain API returned ' + listings.length + ' listings');
     renderListings();
-    // Backfill agent details on existing pipeline items that predate this feature
     if (window.backfillAgentFromCache) backfillAgentFromCache();
   } catch (err) {
     console.error('[map] Domain API fetch failed:', err);

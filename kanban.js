@@ -572,11 +572,20 @@ function openCardModal(id) {
 
   const dd = getDd(id);
 
-  // Resolve agent: stored value OR live cache (backfills existing pipeline items)
-  const _cached = window.DomainAPI?.getEnrichedListing?.(id);
-  const agentData = (p._agent?.name || p._agent?.email || p._agent?.phone)
-    ? p._agent
-    : (_cached?.agent || {});
+  // Resolve agent data: stored value → cache by id → cache by address
+  const _cachedById   = window.DomainAPI?.getEnrichedListing?.(id);
+  const _cachedByAddr = window.DomainAPI?.getEnrichedByAddress?.(p.address);
+  const _cacheAgent   = _cachedById?.agent || _cachedByAddr?.agent || null;
+  const _stored       = p._agent;
+  // Use stored if it has any real content, else use live cache
+  const agentData = (_stored?.name || _stored?.email || _stored?.phone)
+    ? _stored
+    : (_cacheAgent || {});
+  // If cache has agent but stored doesn't, persist it now so it survives
+  if (_cacheAgent && !(_stored?.name || _stored?.email || _stored?.phone)) {
+    p._agent = _cacheAgent;
+    savePipeline(id);
+  }
 
   const overlay = document.createElement('div');
   overlay.id = 'kb-modal';
@@ -654,6 +663,10 @@ function openCardModal(id) {
               <label class="kb-field-label">Name</label>
               <input class="kb-input kb-agent-name" type="text" placeholder="Agent name" value="${agentData.name || ''}">
             </div>
+            <div class="kb-field-wrap" style="flex:2">
+              <label class="kb-field-label">Agency</label>
+              <input class="kb-input kb-agent-agency" type="text" placeholder="Agency name" value="${agentData.agency || ''}">
+            </div>
           </div>
           <div class="kb-terms-row" style="margin-top:6px">
             <div class="kb-field-wrap">
@@ -688,12 +701,14 @@ function openCardModal(id) {
   function syncAgent() {
     if (!pipeline[id]) return;
     if (!pipeline[id].property._agent) pipeline[id].property._agent = {};
-    pipeline[id].property._agent.name  = modal.querySelector('.kb-agent-name').value;
-    pipeline[id].property._agent.email = modal.querySelector('.kb-agent-email').value;
-    pipeline[id].property._agent.phone = modal.querySelector('.kb-agent-phone').value;
+    pipeline[id].property._agent.name   = modal.querySelector('.kb-agent-name').value;
+    pipeline[id].property._agent.agency = modal.querySelector('.kb-agent-agency').value;
+    pipeline[id].property._agent.email  = modal.querySelector('.kb-agent-email').value;
+    pipeline[id].property._agent.phone  = modal.querySelector('.kb-agent-phone').value;
     savePipeline(id);
   }
   modal.querySelector('.kb-agent-name').addEventListener('input', syncAgent);
+  modal.querySelector('.kb-agent-agency').addEventListener('input', syncAgent);
   modal.querySelector('.kb-agent-email').addEventListener('input', syncAgent);
   modal.querySelector('.kb-agent-phone').addEventListener('input', syncAgent);
 
@@ -904,10 +919,8 @@ window.renderListings = function () {
 
 // ─── Backfill agent details from Domain enrichment cache ──────────────────────
 // Called by map.js after each successful Domain search.
-// Fills _agent on any pipeline item that has a matching live listing in the cache
-// but was saved before agent data was captured.
 window.backfillAgentFromCache = function () {
-  if (!window.DomainAPI?.getEnrichedListing) return;
+  if (!window.DomainAPI) return;
   let changed = false;
   Object.keys(pipeline).forEach(id => {
     const item = pipeline[id];
@@ -915,11 +928,14 @@ window.backfillAgentFromCache = function () {
     const p = item.property;
     // Skip if already has agent data
     if (p._agent?.name || p._agent?.email || p._agent?.phone) return;
-    const cached = DomainAPI.getEnrichedListing(id);
+    // Try by id first, then by address
+    const cached = DomainAPI.getEnrichedListing?.(id)
+      || DomainAPI.getEnrichedByAddress?.(p.address);
     if (!cached?.agent) return;
     p._agent = cached.agent;
     dbSave(id, item);
     changed = true;
+    console.log('[Agent] Backfilled:', p.address, cached.agent);
   });
   if (changed) cacheSave(pipeline);
 };
