@@ -7,34 +7,42 @@ const STATE_CADASTRE = {
   NSW: {
     url:      'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query',
     lotField: 'lotidstring',
+    extraParams: {},
   },
   VIC: {
     url:      'https://services6.arcgis.com/GB33F62SbDxJjwEL/arcgis/rest/services/Vicmap_PROPERTY/FeatureServer/1/query',
     lotField: 'propnum',
+    extraParams: { resultRecordCount: '1' },
   },
   QLD: {
     url:      'https://spatial-img.information.qld.gov.au/arcgis/rest/services/Basemaps/QldCadastralData/MapServer/0/query',
     lotField: 'lotplan',
+    extraParams: { resultRecordCount: '1' },
   },
   SA: {
     url:      'https://services.sailis.sa.gov.au/arcgis/rest/services/Property/LandParcel/MapServer/0/query',
     lotField: 'parcel_id',
+    extraParams: { resultRecordCount: '1' },
   },
   WA: {
     url:      'https://services.slip.wa.gov.au/public/rest/services/SLIP_Public_Services/Cadastre/MapServer/0/query',
     lotField: 'lot',
+    extraParams: { resultRecordCount: '1' },
   },
   TAS: {
     url:      'https://services.thelist.tas.gov.au/arcgis/rest/services/Public/Cadastre/MapServer/0/query',
     lotField: 'pid',
+    extraParams: { resultRecordCount: '1' },
   },
   ACT: {
     url:      'https://services1.arcgis.com/E5n4f1VY84i0xSjy/arcgis/rest/services/ACT_Cadastre/FeatureServer/0/query',
     lotField: 'block',
+    extraParams: { resultRecordCount: '1' },
   },
   NT: {
     url:      'https://services1.arcgis.com/vkTzFGtvYHzHuEWo/arcgis/rest/services/NT_Cadastral_Parcels/FeatureServer/0/query',
     lotField: 'parcel_id',
+    extraParams: { resultRecordCount: '1' },
   },
 };
 
@@ -48,39 +56,35 @@ export default async function handler(req, res) {
   const service = STATE_CADASTRE[state] || STATE_CADASTRE.NSW;
 
   const params = new URLSearchParams({
-    f:                 'json',
-    geometry:          `${lng},${lat}`,
-    geometryType:      'esriGeometryPoint',
-    inSR:              '4326',
-    spatialRel:        'esriSpatialRelIntersects',
-    outFields:         service.lotField,
-    returnGeometry:    'true',
-    outSR:             '4326',
-    resultRecordCount: '1',
+    f:              'json',
+    geometry:       `${lng},${lat}`,
+    geometryType:   'esriGeometryPoint',
+    inSR:           '4326',
+    spatialRel:     'esriSpatialRelIntersects',
+    outFields:      service.lotField,
+    returnGeometry: 'true',
+    outSR:          '4326',
+    ...service.extraParams,
   });
 
   const upstreamUrl = `${service.url}?${params}`;
-  console.log('[cadastre] fetching', state, upstreamUrl);
 
   try {
     const upstream = await fetch(upstreamUrl);
     const rawText  = await upstream.text();
-    console.log('[cadastre] status', upstream.status, 'body[:300]', rawText.slice(0, 300));
 
     if (!upstream.ok) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { status: upstream.status, body: rawText.slice(0, 300) } });
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
     }
 
     let json;
     try { json = JSON.parse(rawText); }
     catch (e) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { parseError: e.message, body: rawText.slice(0, 300) } });
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
     }
 
     const feat = (json.features || [])[0];
-    if (!feat) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { featureCount: (json.features || []).length, jsonError: json.error } });
-    }
+    if (!feat) return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
 
     const attrs = feat.attributes || {};
     const lotid = attrs[service.lotField] ? String(attrs[service.lotField]) : null;
@@ -105,7 +109,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ lotid, areaSqm, rings });
   } catch (err) {
-    console.error('[cadastre] exception', state, err.message);
-    return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { exception: err.message } });
+    console.error('[cadastre]', state, err.message);
+    return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
   }
 }
