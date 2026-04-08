@@ -173,7 +173,12 @@ function normaliseLiveListing(item) {
 
     // Agent / agency
     advertiser: listing.advertiser || null,
-    agent: contact ? { name: contact.name, photoUrl: contact.photoUrl } : null,
+    agent: contact ? {
+      name:     contact.name     || '',
+      photoUrl: contact.photoUrl || '',
+      email:    contact.email    || '',
+      phone:    contact.phoneNumber || contact.phone || '',
+    } : null,
 
     // Media
     photos: (listing.media || [])

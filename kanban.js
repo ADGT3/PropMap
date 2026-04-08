@@ -144,6 +144,7 @@ function addToPipeline(listing) {
       _lotDPs:        listing._lotDPs         || null,
       _areaSqm:       listing._areaSqm        || null,
       _propertyCount: listing._propertyCount  || 1,
+      _agent:         listing.agent           || null,
     },
     dd: {}
   };
@@ -640,6 +641,26 @@ function openCardModal(id) {
           }).join('')}
         </div>
 
+        <div class="kb-section-label" style="margin-top:16px">Agent</div>
+        <div class="kb-agent">
+          <div class="kb-terms-row">
+            <div class="kb-field-wrap" style="flex:2">
+              <label class="kb-field-label">Name</label>
+              <input class="kb-input kb-agent-name" type="text" placeholder="Agent name" value="${p._agent?.name || ''}">
+            </div>
+          </div>
+          <div class="kb-terms-row" style="margin-top:6px">
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Email</label>
+              <input class="kb-input kb-agent-email" type="text" placeholder="agent@agency.com.au" value="${p._agent?.email || ''}">
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Phone</label>
+              <input class="kb-input kb-agent-phone" type="text" placeholder="04xx xxx xxx" value="${p._agent?.phone || ''}">
+            </div>
+          </div>
+        </div>
+
         <div class="kb-section-label" style="margin-top:16px">Notes</div>
         <textarea class="kb-note" placeholder="Add a note…" rows="3">${item.note || ''}</textarea>
 
@@ -656,6 +677,19 @@ function openCardModal(id) {
   document.addEventListener('keydown', function escClose(e) {
     if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escClose); }
   });
+
+  // Agent
+  function syncAgent() {
+    if (!pipeline[id]) return;
+    pipeline[id].property._agent = pipeline[id].property._agent || {};
+    pipeline[id].property._agent.name  = modal.querySelector('.kb-agent-name').value;
+    pipeline[id].property._agent.email = modal.querySelector('.kb-agent-email').value;
+    pipeline[id].property._agent.phone = modal.querySelector('.kb-agent-phone').value;
+    savePipeline(id);
+  }
+  modal.querySelector('.kb-agent-name').addEventListener('input', syncAgent);
+  modal.querySelector('.kb-agent-email').addEventListener('input', syncAgent);
+  modal.querySelector('.kb-agent-phone').addEventListener('input', syncAgent);
 
   // Note
   modal.querySelector('.kb-note').addEventListener('input', function () {
