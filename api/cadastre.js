@@ -3,21 +3,34 @@
  * Server-side proxy for state cadastre ArcGIS endpoints.
  */
 
+// Convert WGS84 lng/lat to Web Mercator x/y
+function toWebMercator(lng, lat) {
+  const x = lng * 20037508.34 / 180;
+  let y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
+  y = y * 20037508.34 / 180;
+  return { x, y };
+}
+
 const STATE_CADASTRE = {
   NSW: {
     url:      'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query',
     lotField: 'lotidstring',
+    inSR:     '4326',
+    outSR:    '4326',
     extraParams: {},
   },
   QLD: {
-    // QLD DCDB — layer 6 = Base Parcels Only (no scale restriction on query)
     url:      'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/LandParcelPropertyFramework/MapServer/6/query',
     lotField: 'lotplan',
+    inSR:     '102100',  // Web Mercator
+    outSR:    '4326',
     extraParams: { resultRecordCount: '1', where: '1=1' },
   },
   VIC: {
     url:      'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/ArcGIS/rest/services/Vicmap_Parcel/FeatureServer/0/query',
     lotField: 'spi',
+    inSR:     '4326',
+    outSR:    '4326',
     extraParams: { resultRecordCount: '1', where: '1=1' },
   },
   SA:  null,
@@ -39,15 +52,27 @@ export default async function handler(req, res) {
     return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
   }
 
+  const latNum = parseFloat(lat);
+  const lngNum = parseFloat(lng);
+
+  // Use Web Mercator geometry for services that need it
+  let geomStr;
+  if (service.inSR === '102100') {
+    const { x, y } = toWebMercator(lngNum, latNum);
+    geomStr = `${x},${y}`;
+  } else {
+    geomStr = `${lngNum},${latNum}`;
+  }
+
   const params = new URLSearchParams({
     f:              'json',
-    geometry:       `${lng},${lat}`,
+    geometry:       geomStr,
     geometryType:   'esriGeometryPoint',
-    inSR:           '4326',
+    inSR:           service.inSR,
     spatialRel:     'esriSpatialRelIntersects',
     outFields:      service.lotField,
     returnGeometry: 'true',
-    outSR:          '4326',
+    outSR:          service.outSR,
     ...service.extraParams,
   });
 
@@ -71,7 +96,7 @@ export default async function handler(req, res) {
 
     const feat = (json.features || [])[0];
     if (!feat) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, featureCount: 0, exceededTransfer: json.exceededTransferLimit, fields: (json.fields||[]).map(f=>f.name) } });
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, featureCount: 0 } });
     }
 
     const attrs = feat.attributes || {};
@@ -82,7 +107,6 @@ export default async function handler(req, res) {
 
     if (feat.geometry && feat.geometry.rings) {
       rings = feat.geometry.rings.map(ring => ring.map(([x, y]) => [y, x]));
-      const latNum = parseFloat(lat);
       const metersPerDegLng = 111320 * Math.cos(latNum * Math.PI / 180);
       let area = 0;
       for (const ring of feat.geometry.rings) {
