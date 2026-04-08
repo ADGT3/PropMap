@@ -1,4 +1,4 @@
-# Sydney Property Map — V63
+# Sydney Property Map — V62
 
 A browser-based interactive property map overlaying live Domain.com.au listings with planning, environmental and infrastructure data across Sydney's growth corridors. Deployed on Vercel with a Neon Postgres database for persistent pipeline and CRM storage.
 
@@ -15,7 +15,6 @@ sydney-property-map/
 │   ├── domain-search.js     — Domain API proxy (keeps key server-side)
 │   ├── tiles.js             — NSW tile proxy (query params, not path segments)
 │   ├── topo-style.js        — NSW topo style proxy (CORS fix)
-│   └── cadastre.js          — National parcel boundary proxy (state-aware)
 │   └── health.js            — DB health check endpoint
 ├── index.html               — Page structure and UI
 ├── styles.css               — All styling (includes timestamped notes styles)
@@ -194,25 +193,7 @@ contact_properties (
 3. `runDomainSearchAt` fires immediately, waits for Domain results
 4. `matchListingByAddress` finds matching listing by address string
 5. Listing highlighted/scrolled-to in panel; if not in current results, pinned as search card at top
-6. If no address match, `_pendingAddressMatch` set — cadastre Lot/DP match attempted when cadastre returns (state-aware via `api/cadastre.js`)
-
-
-### Cadastre — Parcel Boundary (`api/cadastre.js`)
-- **NSW queries sixmaps directly from the browser** — sixmaps allows cross-origin requests so no proxy needed; this keeps NSW fast with no cold-start latency
-- **Interstate queries** go via `api/cadastre.js` server-side proxy — other state ArcGIS servers block browser CORS requests
-- `detectAustralianState(lat, lng)` in `map.js` routes to the correct path based on bounding box
-- Address search and map clicks both use this logic for boundary drawing and Lot/DP lookup
-
-| State | Boundary | Lot ID | Source |
-|---|---|---|---|
-| NSW | ✓ | ✓ | maps.six.nsw.gov.au — NSW Cadastre MapServer |
-| QLD | ✓ | ✓ | spatial-gis.information.qld.gov.au — DCDB, updated nightly |
-| VIC | ✓ | ✓ | services-ap1.arcgis.com — Vicmap Parcel FeatureServer |
-| WA | ✓ | ✗ | services.slip.wa.gov.au — geometry only (lot ID requires Landgate subscription) |
-| ACT | pending | pending | data.actmapi.act.gov.au — endpoint under investigation |
-| SA | ✗ | ✗ | Paywalled — Land Services SA charges min. $250 for cadastre access |
-| TAS | ✗ | ✗ | Pending — no verified public endpoint yet |
-| NT | ✗ | ✗ | Pending — no verified public endpoint yet |
+6. If no address match, `_pendingAddressMatch` set — cadastre Lot/DP match attempted when cadastre returns
 
 ### Tile Proxying
 - NSW tiles proxied via `api/tiles.js` using **query params** (`?z=&y=&x=`) — path segments cause Vercel 404s
@@ -254,7 +235,7 @@ contact_properties (
 - Basemap toggle — Map (CartoDB) / Satellite (Esri) / Topo (NSW VectorTile Hybrid via MapLibre GL)
 - Address search with autocomplete (ArcGIS geocoder)
 - Map click to identify property — address, LGA, Lot/DP, zoning, flood, road reservation data
-- Parcel boundary drawn on selection (state-aware — see Cadastre Coverage below)
+- Parcel boundary drawn on selection (NSW Cadastre)
 - Multi-select parcels with numbered pins
 
 ### Listings
@@ -292,7 +273,7 @@ Grouped into: Zoning, Environmental, Transport, Services, Western Parkland City 
 - Persistent via Neon Postgres with localStorage fallback
 
 ### Pipeline Card Modal
-- **Header**: Price → address → Lot/DP (async backfill via state cadastre if missing) → Domain link
+- **Header**: Price → address → Lot/DP (async backfill via NSW Cadastre if missing) → Domain link
 - **Contacts section** (collapsible, first in body):
   - Domain listing agent shown as first read-only row (name, agency, phone/email as tappable links)
   - 💾 button saves Domain agent to CRM contacts DB with one tap
@@ -307,7 +288,7 @@ Grouped into: Zoning, Environmental, Transport, Services, Western Parkland City 
 - When a Domain listing is matched to a pipeline property, `_agent` (name, agency, phone, email) and `_listingUrl` are stored on `pipeline[id].property` and persisted to Neon
 - `resolveFromDomain()` runs async on modal open — tries address match against current listings, falls back to `runDomainSearchAt` if needed
 - `backfillAgentFromCache()` runs after every Domain viewport search — backfills agent data on all pipeline items that currently lack it
-- Lot/DP backfilled async from state cadastre on property add if not already captured
+- Lot/DP backfilled async from NSW Cadastre on property add if not already captured
 
 ---
 
@@ -320,6 +301,5 @@ See `DEPLOY.md` for full setup guide.
 
 | Version | Notes |
 |---|---|
-| V63 | State-aware parcel boundary. NSW queries sixmaps directly (fast). Interstate via `api/cadastre.js` proxy. QLD, VIC, WA boundaries working. Address search works nationally. |
 | V62 | CRM module (contacts DB, collapsible modal section, Domain agent save). Timestamped notes with reverse-chronological history. Lot/DP async backfill. Agent/listingUrl stored on pipeline items. Address-string listing match (normalised, 3-pass). `runDomainSearchAt` for immediate post-search address lookup. Domain search debounce 5s→1.5s. `_suppressNextDomainSearch` flag. Listing panel highlight after address search. `api/contacts.js`, `api/db-setup.js`, `crm.js`, `crm-styles.css` added. |
 | V60 | Domain API live (no mock). Viewport geoWindow search, 1.5s debounce, 100 cap. `dd-risks.js` for DD automation. Topo = NSW VectorTile Hybrid via MapLibre GL. Tiles proxied via `api/tiles.js` query params. |

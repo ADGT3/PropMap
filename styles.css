@@ -2006,3 +2006,9 @@ header {
   transition: background 0.15s;
 }
 .domain-error-retry:hover { background: var(--border); }
+
+/* ─── Pipeline map pins ──────────────────────────────────────────────────────── */
+.pipeline-map-pin {
+  background: none !important;
+  border: none !important;
+}
