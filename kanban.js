@@ -768,8 +768,7 @@ function openCardModal(id) {
           <span class="kb-note-date">${formatNoteDate(n.ts)}</span>
           <button class="kb-note-delete" data-ts="${n.ts}" title="Delete note">✕</button>
         </div>
-        <div class="kb-note-text">${n.text.replace(/
-/g, '<br>')}</div>`;
+        <div class="kb-note-text">${n.text.split('\n').join('<br>')}</div>`;
       entry.querySelector('.kb-note-delete').addEventListener('click', () => {
         if (!confirm('Delete this note?')) return;
         deleteNote(id, n.ts);
