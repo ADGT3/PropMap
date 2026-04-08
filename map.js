@@ -1683,7 +1683,7 @@ function selectListing(id, clickLatLng = null) {
   if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
 
   _suppressNextDomainSearch = true;
-  map.setView([listing.lat, listing.lng], 16, { animate: false });
+  map.setView([listing.lat, listing.lng], 15, { animate: false });
 
   // Use actual click coordinates for cadastre query if available (listing coords are
   // approximate dummy data — real coords arrive with the Domain API key).
@@ -2386,7 +2386,7 @@ runDomainSearch();
     _activeListingId = null;
     _pendingAddressMatch = null;
     _suppressNextDomainSearch = true;
-    map.flyTo([lat, lng], 17, { animate: true, duration: 1.2 });
+    map.flyTo([lat, lng], 15, { animate: true, duration: 1.2 });
     await new Promise(resolve => map.once('moveend', resolve));
     const _street = label.split(',')[0].trim();
     const _suburb = label.split(',').slice(1).join(',').trim();
@@ -2586,7 +2586,7 @@ window.reSelectParcels = function(parcels) {
 
   const avgLat = parcels.reduce((s, p) => s + p.lat, 0) / parcels.length;
   const avgLng = parcels.reduce((s, p) => s + p.lng, 0) / parcels.length;
-  map.setView([avgLat, avgLng], 16, { animate: false });
+  map.setView([avgLat, avgLng], 15, { animate: false });
 
   if (parcels.length === 1) {
     // Single parcel — plain select (green pin, normal popup)
