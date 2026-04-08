@@ -1,11 +1,7 @@
 /**
  * api/db-setup.js
  * One-time database schema setup endpoint.
- *
- * GET  /api/db-setup  → check table status
- * POST /api/db-setup  → create / migrate tables
- *
- * Safe to re-run — all statements use IF NOT EXISTS.
+ * Safe to re-run — all statements use IF NOT EXISTS / ADD COLUMN IF NOT EXISTS.
  */
 
 import { neon } from '@neondatabase/serverless';
@@ -76,20 +72,21 @@ export default async function handler(req, res) {
         updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
       )`);
 
-    // Migrate existing company column if it exists
+    // Add organisation_id to existing contacts table (may predate this column)
+    await run('ALTER contacts: add organisation_id', () => sql`
+      ALTER TABLE contacts ADD COLUMN IF NOT EXISTS organisation_id INTEGER REFERENCES organisations(id) ON DELETE SET NULL`);
+
+    // Migrate existing company text values to organisations table
     await run('Migrate company → organisation_id', async () => {
-      // Add company column back as nullable for migration only
+      // Ensure company column exists (older schema had it)
       await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS company TEXT`;
-      // For each distinct company name, create an org and update contacts
       const companies = await sql`
         SELECT DISTINCT company FROM contacts
-        WHERE company IS NOT NULL AND company != '' AND organisation_id IS NULL`;
+        WHERE company IS NOT NULL AND company <> '' AND organisation_id IS NULL`;
       for (const row of companies) {
         const orgs = await sql`
-          INSERT INTO organisations (name)
-          VALUES (${row.company})
-          ON CONFLICT DO NOTHING
-          RETURNING id`;
+          INSERT INTO organisations (name) VALUES (${row.company})
+          ON CONFLICT DO NOTHING RETURNING id`;
         const orgId = orgs[0]?.id;
         if (orgId) {
           await sql`
