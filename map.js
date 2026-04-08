@@ -2499,7 +2499,6 @@ runDomainSearch();
 // ─── Pipeline map pins ────────────────────────────────────────────────────────
 
 const PIPELINE_PIN_STAGES = new Set(['shortlisted', 'under-dd', 'offer', 'acquired']);
-const PIPELINE_PIN_COLOR  = '#7b2fbe'; // purple
 let _pipelinePinLayer = null;
 
 window._renderPipelinePins = function () {
@@ -2533,18 +2532,13 @@ window._renderPipelinePins = function () {
     const suburb  = p.suburb  || '';
     const stage   = stageLabel[item.stage] || item.stage;
 
-    // Purple teardrop pin matching app style
-    const pinHtml = `<div style="
-      width:22px;height:22px;border-radius:50% 50% 50% 0;
-      transform:rotate(-45deg);background:${PIPELINE_PIN_COLOR};
-      border:2px solid rgba(255,255,255,0.8);
-      box-shadow:0 1px 4px rgba(0,0,0,0.35);
-    "></div>`;
+    // Same gold teardrop as standard listing pins, with a star to indicate pipeline property
+    const pinHtml = `<div style="width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${MARKER_COLOR};border:2px solid rgba(255,255,255,0.8);box-shadow:0 2px 8px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px"><span style="transform:rotate(45deg);line-height:1">★</span></div>`;
 
     const icon = L.divIcon({
       html:      pinHtml,
-      iconSize:  [22, 22],
-      iconAnchor:[11, 22],
+      iconSize:  [28, 28],
+      iconAnchor:[14, 28],
       className: 'pipeline-map-pin',
     });
 
