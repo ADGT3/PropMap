@@ -845,6 +845,14 @@ function openCardModal(id) {
     modal.querySelector('.kb-deposits').innerHTML = buildDepositsHtml(getTerms(id).deposits);
   });
 
+  // Offer price/settlement formatting on blur
+  modal.querySelector('.kb-offer-price').addEventListener('blur', function() {
+    this.value = formatInputPrice(this.value);
+  });
+  modal.querySelector('.kb-offer-settlement').addEventListener('blur', function() {
+    this.value = formatSettlement(this.value);
+  });
+
   // Offer deposits
   modal.querySelector('.kb-offer-add-deposit').addEventListener('click', () => {
     const el = modal.querySelector('.kb-offer-deposits');
@@ -1016,16 +1024,6 @@ window.backfillAgentFromCache = function () {
 
 // Load pipeline from DB (falls back to localStorage if offline)
 initPipeline();
-
-// ─── Pipeline map pins ────────────────────────────────────────────────────────
-// Expose pipeline data so map.js can render pipeline pins.
-// Call window.refreshPipelinePins() after any pipeline change to sync the map.
-
-window.getPipelineData = () => pipeline;
-window.getPipelineStages = () => STAGES;
-window.refreshPipelinePins = function () {
-  if (typeof window._renderPipelinePins === 'function') window._renderPipelinePins();
-};
 
 // ─── Pipeline map pins ────────────────────────────────────────────────────────
 // Expose pipeline data so map.js can render pipeline pins.
