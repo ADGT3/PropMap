@@ -68,23 +68,27 @@ export default async function handler(req, res) {
   });
 
   const upstreamUrl = `${service.url}?${params}`;
+  console.log('[cadastre] →', state, upstreamUrl);
 
   try {
     const upstream = await fetch(upstreamUrl);
     const rawText  = await upstream.text();
-
-    if (!upstream.ok) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
-    }
+    console.log('[cadastre] ←', state, upstream.status, rawText.slice(0, 300));
 
     let json;
     try { json = JSON.parse(rawText); }
     catch (e) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, status: upstream.status, parseError: e.message, body: rawText.slice(0, 300) } });
+    }
+
+    if (!upstream.ok || json.error) {
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, status: upstream.status, jsonError: json.error, body: rawText.slice(0, 300) } });
     }
 
     const feat = (json.features || [])[0];
-    if (!feat) return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
+    if (!feat) {
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, featureCount: (json.features || []).length } });
+    }
 
     const attrs = feat.attributes || {};
     const lotid = attrs[service.lotField] ? String(attrs[service.lotField]) : null;
@@ -109,7 +113,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ lotid, areaSqm, rings });
   } catch (err) {
-    console.error('[cadastre]', state, err.message);
-    return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
+    console.error('[cadastre] exception', state, err.message);
+    return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, exception: err.message } });
   }
 }
