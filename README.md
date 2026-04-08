@@ -140,30 +140,50 @@ All four should respond without errors. If any return a 500, check `POSTGRES_URL
 ### Schema
 
 ```sql
--- Pipeline items (existing)
+-- Pipeline items
 pipeline (id TEXT PK, data JSONB, updated_at TIMESTAMPTZ)
+
+-- Organisations
+organisations (
+  id         SERIAL PK,
+  name       TEXT NOT NULL,
+  phone      TEXT DEFAULT '',
+  email      TEXT DEFAULT '',
+  website    TEXT DEFAULT '',
+  created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ
+)
 
 -- CRM contacts
 contacts (
-  id         SERIAL PK,
-  first_name TEXT NOT NULL,
-  last_name  TEXT DEFAULT '',
-  mobile     TEXT DEFAULT '',
-  email      TEXT DEFAULT '',
-  company    TEXT DEFAULT '',
-  source     TEXT DEFAULT 'manual',   -- 'manual' | 'domain_agent' | 'referrer'
-  domain_id  TEXT,
-  created_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ
+  id              SERIAL PK,
+  first_name      TEXT NOT NULL,
+  last_name       TEXT DEFAULT '',
+  mobile          TEXT DEFAULT '',
+  email           TEXT DEFAULT '',
+  organisation_id INTEGER REFERENCES organisations(id) ON DELETE SET NULL,
+  source          TEXT DEFAULT 'manual',
+  domain_id       TEXT,
+  created_at      TIMESTAMPTZ,
+  updated_at      TIMESTAMPTZ
 )
 
 -- Contact ↔ Pipeline junction (many-to-many)
 contact_properties (
   contact_id  INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
   pipeline_id TEXT,
-  role        TEXT DEFAULT 'referrer', -- 'listing_agent' | 'referrer' | 'buyer_agent'
+  role        TEXT DEFAULT 'vendor', -- 'vendor'|'purchaser'|'agent'|'buyers_agent'|'referrer'|'solicitor'
   linked_at   TIMESTAMPTZ,
   PRIMARY KEY (contact_id, pipeline_id)
+)
+
+-- Contact notes (linked to contact + optionally a pipeline property)
+contact_notes (
+  id          SERIAL PK,
+  contact_id  INTEGER REFERENCES contacts(id) ON DELETE CASCADE,
+  pipeline_id TEXT,
+  note_text   TEXT NOT NULL,
+  created_at  TIMESTAMPTZ
 )
 ```
 
@@ -219,12 +239,15 @@ contact_properties (
 
 ### CRM (`crm.js` + `api/contacts.js`)
 - Contacts stored as first-class DB entities in the `contacts` table
+- **Organisations** table — contacts belong to an org; org typeahead with inline create
 - Many-to-many relationship with pipeline items via `contact_properties` junction table
-- Three contact roles: **Listing Agent**, **Referrer**, **Buyer's Agent**
+- Contact roles (per-property): **Vendor**, **Purchaser**, **Agent**, **Buyer's Agent**, **Referrer**, **Solicitor**
+- **Duplicate detection** — as you type name/email/mobile, existing contacts are surfaced with click-to-link
+- **Contact notes** (`contact_notes` table) — notes linked to a contact and optionally a pipeline property
+- Pipeline notes can tag a contact — note stored on the pipeline item AND mirrored to `contact_notes` for future CRM contact view
 - `window.CRM.renderContactsSection(pipelineId, agentData)` — renders collapsible Contacts section in kanban modal
 - Domain agent (from `p._agent`) shown as first read-only row with 💾 one-tap save to contacts DB
-- Existing contacts searchable by name, company, email — link to property with role selector
-- `api/contacts.js` endpoints: GET (list/search/by-pipeline), POST (create/link/unlink), PUT (update), DELETE (cascades junction rows)
+- `api/contacts.js` endpoints: GET (list/search/by-pipeline/org-search/notes/duplicate-check), POST (create/link/unlink/add-note/create-org), PUT (update), DELETE (contact or note)
 
 ---
 
