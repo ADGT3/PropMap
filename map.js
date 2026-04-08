@@ -2140,7 +2140,6 @@ function normaliseStreet(s) {
     .replace(/\bhwy\b/g, 'highway').replace(/\bblvd\b/g, 'boulevard')
     .replace(/[.,]/g, '').replace(/\s+/g, ' ').trim();
 }
-
 function matchListingByAddress(listingsArr, streetAddress, suburb, lotDP) {
   if (!listingsArr || !listingsArr.length) return null;
   const normSearch = normaliseStreet(streetAddress);
@@ -2167,8 +2166,6 @@ function matchListingByAddress(listingsArr, streetAddress, suburb, lotDP) {
   }
   return null;
 }
-
-// ─── Immediate Domain search centred on a point ───────────────────────────────
 async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
   if (!window.DomainAPI || !DomainAPI.search) return null;
   const delta = 0.05;
@@ -2197,7 +2194,6 @@ async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
     return null;
   }
 }
-
 // ─── Domain search with debounce ─────────────────────────────────────────────
 let _domainSearchTimer = null;
 

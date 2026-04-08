@@ -164,7 +164,6 @@ function addToPipeline(listing) {
         pipeline[id].property._lotDPs = cadastre.lotid;
         if (!pipeline[id].property._areaSqm && cadastre.areaSqm) pipeline[id].property._areaSqm = cadastre.areaSqm;
         savePipeline(id);
-        // Refresh modal if open
         const modal = document.getElementById('kb-modal');
         if (modal?.dataset?.propertyId === String(id)) {
           const lotEl = modal.querySelector('.kb-modal-lotdp');
@@ -550,16 +549,12 @@ function openCardModal(id) {
   const terms = getTerms(id);
   const offers = getOffers(id);
 
-  // Async Domain lookup — resolves agent + listingUrl for this pipeline property
   async function resolveFromDomain() {
     if (!window.matchListingByAddress || !window.getListings) return;
-    const currentListings = window.getListings();
-    let hit = matchListingByAddress(currentListings, p.address, p.suburb, p._lotDPs);
+    let hit = matchListingByAddress(window.getListings(), p.address, p.suburb, p._lotDPs);
     if (!hit && window.runDomainSearchAt) {
       const parcel = p._parcels?.[0];
-      if (parcel?.lat && parcel?.lng) {
-        hit = await runDomainSearchAt(parcel.lat, parcel.lng, p.address, p.suburb);
-      }
+      if (parcel?.lat && parcel?.lng) hit = await runDomainSearchAt(parcel.lat, parcel.lng, p.address, p.suburb);
     }
     if (!hit) return;
     let changed = false;
@@ -570,15 +565,7 @@ function openCardModal(id) {
     if (changed) savePipeline(id);
     const modal = document.getElementById('kb-modal');
     if (!modal || modal.dataset.propertyId !== String(id)) return;
-    const ag = p._agent || {};
-    const nameEl   = modal.querySelector('.kb-agent-name');
-    const agencyEl = modal.querySelector('.kb-agent-agency');
-    const emailEl  = modal.querySelector('.kb-agent-email');
-    const phoneEl  = modal.querySelector('.kb-agent-phone');
-    if (nameEl   && !nameEl.value)   nameEl.value   = ag.name   || '';
-    if (agencyEl && !agencyEl.value) agencyEl.value = ag.agency || '';
-    if (emailEl  && !emailEl.value)  emailEl.value  = ag.email  || '';
-    if (phoneEl  && !phoneEl.value)  phoneEl.value  = ag.phone  || '';
+    _renderHeaderAgent(modal, p);
     if (p._listingUrl && !modal.querySelector('.kb-domain-link')) {
       const hdr = modal.querySelector('.kb-modal-address');
       if (hdr) {
@@ -589,6 +576,10 @@ function openCardModal(id) {
         link.textContent = '↗ View on Domain';
         hdr.insertAdjacentElement('afterend', link);
       }
+    }
+    // Offer to save Domain agent to CRM contacts
+    if (window.CRM && p._agent?.name) {
+      CRM.offerSaveAgent(modal, id, p._agent, hit.domainId || id);
     }
   }
   resolveFromDomain();
@@ -637,7 +628,24 @@ function openCardModal(id) {
 
   const dd = getDd(id);
 
-  const agentData = p._agent || {};
+  const agentData      = p._agent || {};
+  const agentFromDomain = !!(p._agent?.name || p._agent?.email || p._agent?.phone);
+
+  function _renderHeaderAgent(modal, prop) {
+    const ag = prop._agent || {};
+    const fromDomain = !!(ag.name || ag.email || ag.phone);
+    const el = modal.querySelector('.kb-header-agent');
+    if (!el) return;
+    if (fromDomain) {
+      el.innerHTML = `
+        <div style="font-size:11px;color:#555;margin-top:6px;line-height:1.7">
+          ${ag.agency ? `<span style="font-weight:600;color:#333">${ag.agency}</span> · ` : ''}
+          ${ag.name   ? `<span>${ag.name}</span>` : ''}
+          ${ag.phone  ? ` · <a href="tel:${ag.phone}" style="color:#1a6b3a;text-decoration:none">${ag.phone}</a>` : ''}
+          ${ag.email  ? ` · <a href="mailto:${ag.email}" style="color:#1a6b3a;text-decoration:none">${ag.email}</a>` : ''}
+        </div>`;
+    }
+  }
 
   const overlay = document.createElement('div');
   overlay.id = 'kb-modal';
@@ -646,10 +654,33 @@ function openCardModal(id) {
   overlay.innerHTML = `
     <div class="kb-modal">
       <div class="kb-modal-header">
-        <div>
+        <div style="flex:1;min-width:0">
           <div class="kb-modal-price">${formatKbPrice(p.price, terms.price)}</div>
           <div class="kb-modal-address">📍 ${p.address}, ${p.suburb} NSW</div>
-          ${p._lotDPs ? `<div class="kb-modal-lotdp" style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${p._lotDPs}</div>` : ''}
+          ${p._lotDPs
+            ? `<div class="kb-modal-lotdp" style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${p._lotDPs}</div>`
+            : `<div class="kb-modal-lotdp" style="font-size:11px;color:#bbb;margin-top:3px">Lot/DP loading…</div>`}
+          ${p._listingUrl ? `<a href="${p._listingUrl}" target="_blank" rel="noopener" class="kb-domain-link" style="display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none">↗ View on Domain</a>` : ''}
+          <div class="kb-header-agent">
+            ${agentFromDomain ? `
+              <div style="font-size:11px;color:#555;margin-top:6px;line-height:1.7">
+                ${agentData.agency ? `<span style="font-weight:600;color:#333">${agentData.agency}</span> · ` : ''}
+                ${agentData.name   ? `<span>${agentData.name}</span>` : ''}
+                ${agentData.phone  ? ` · <a href="tel:${agentData.phone}" style="color:#1a6b3a;text-decoration:none">${agentData.phone}</a>` : ''}
+                ${agentData.email  ? ` · <a href="mailto:${agentData.email}" style="color:#1a6b3a;text-decoration:none">${agentData.email}</a>` : ''}
+              </div>` : `
+              <div style="margin-top:8px">
+                <div style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#bbb;margin-bottom:4px">Listing Agent</div>
+                <div class="kb-terms-row" style="gap:6px">
+                  <input class="kb-input kb-agent-name" type="text" placeholder="First Last" value="${agentData.name || ''}" style="flex:2">
+                  <input class="kb-input kb-agent-agency" type="text" placeholder="Agency" value="${agentData.agency || ''}" style="flex:2">
+                </div>
+                <div class="kb-terms-row" style="gap:6px;margin-top:4px">
+                  <input class="kb-input kb-agent-email" type="text" placeholder="Email" value="${agentData.email || ''}">
+                  <input class="kb-input kb-agent-phone" type="text" placeholder="Mobile" value="${agentData.phone || ''}">
+                </div>
+              </div>`}
+          </div>
         </div>
         <button class="kb-modal-close" title="Close">✕</button>
       </div>
@@ -708,32 +739,10 @@ function openCardModal(id) {
           }).join('')}
         </div>
 
-        <div class="kb-section-label" style="margin-top:16px">Agent</div>
-        <div class="kb-agent">
-          <div class="kb-terms-row">
-            <div class="kb-field-wrap" style="flex:2">
-              <label class="kb-field-label">Name</label>
-              <input class="kb-input kb-agent-name" type="text" placeholder="Agent name" value="${agentData.name || ''}">
-            </div>
-            <div class="kb-field-wrap" style="flex:2">
-              <label class="kb-field-label">Agency</label>
-              <input class="kb-input kb-agent-agency" type="text" placeholder="Agency name" value="${agentData.agency || ''}">
-            </div>
-          </div>
-          <div class="kb-terms-row" style="margin-top:6px">
-            <div class="kb-field-wrap">
-              <label class="kb-field-label">Email</label>
-              <input class="kb-input kb-agent-email" type="text" placeholder="agent@agency.com.au" value="${agentData.email || ''}">
-            </div>
-            <div class="kb-field-wrap">
-              <label class="kb-field-label">Phone</label>
-              <input class="kb-input kb-agent-phone" type="text" placeholder="04xx xxx xxx" value="${agentData.phone || ''}">
-            </div>
-          </div>
-        </div>
-
         <div class="kb-section-label" style="margin-top:16px">Notes</div>
         <textarea class="kb-note" placeholder="Add a note…" rows="3">${item.note || ''}</textarea>
+
+        <div class="crm-section-placeholder" style="margin-top:4px"></div>
 
       </div>
     </div>
@@ -742,6 +751,14 @@ function openCardModal(id) {
   document.body.appendChild(overlay);
   const modal = overlay.querySelector('.kb-modal');
 
+  // Mount CRM contacts section
+  if (window.CRM) {
+    CRM.renderContactsSection(id).then(crmEl => {
+      const placeholder = modal.querySelector('.crm-section-placeholder');
+      if (placeholder) placeholder.replaceWith(crmEl);
+    });
+  }
+
   // Close
   overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -749,20 +766,26 @@ function openCardModal(id) {
     if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escClose); }
   });
 
-  // Agent
-  function syncAgent() {
-    if (!pipeline[id]) return;
-    if (!pipeline[id].property._agent) pipeline[id].property._agent = {};
-    pipeline[id].property._agent.name   = modal.querySelector('.kb-agent-name').value;
-    pipeline[id].property._agent.agency = modal.querySelector('.kb-agent-agency').value;
-    pipeline[id].property._agent.email  = modal.querySelector('.kb-agent-email').value;
-    pipeline[id].property._agent.phone  = modal.querySelector('.kb-agent-phone').value;
-    savePipeline(id);
+  // Manual listing agent inputs (only when not from Domain)
+  if (!agentFromDomain) {
+    function syncAgent() {
+      if (!pipeline[id]) return;
+      if (!pipeline[id].property._agent) pipeline[id].property._agent = {};
+      const na = modal.querySelector('.kb-agent-name');
+      const aa = modal.querySelector('.kb-agent-agency');
+      const ea = modal.querySelector('.kb-agent-email');
+      const pa = modal.querySelector('.kb-agent-phone');
+      if (na) pipeline[id].property._agent.name   = na.value;
+      if (aa) pipeline[id].property._agent.agency = aa.value;
+      if (ea) pipeline[id].property._agent.email  = ea.value;
+      if (pa) pipeline[id].property._agent.phone  = pa.value;
+      savePipeline(id);
+    }
+    modal.querySelector('.kb-agent-name')?.addEventListener('input', syncAgent);
+    modal.querySelector('.kb-agent-agency')?.addEventListener('input', syncAgent);
+    modal.querySelector('.kb-agent-email')?.addEventListener('input', syncAgent);
+    modal.querySelector('.kb-agent-phone')?.addEventListener('input', syncAgent);
   }
-  modal.querySelector('.kb-agent-name').addEventListener('input', syncAgent);
-  modal.querySelector('.kb-agent-agency').addEventListener('input', syncAgent);
-  modal.querySelector('.kb-agent-email').addEventListener('input', syncAgent);
-  modal.querySelector('.kb-agent-phone').addEventListener('input', syncAgent);
 
   // Note
   modal.querySelector('.kb-note').addEventListener('input', function () {
@@ -969,7 +992,6 @@ window.renderListings = function () {
   setTimeout(updateAddButtons, 0);
 };
 
-// ─── Backfill agent from Domain cache after each search ───────────────────────
 window.backfillAgentFromCache = function () {
   if (!window.matchListingByAddress || !window.getListings) return;
   const currentListings = window.getListings();
