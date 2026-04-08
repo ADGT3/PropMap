@@ -1,9 +1,6 @@
 /**
  * api/cadastre.js
  * Server-side proxy for state cadastre ArcGIS endpoints.
- *
- * Only NSW, QLD and VIC have verified working endpoints.
- * SA, WA, TAS, ACT, NT are marked as unverified and will return null gracefully.
  */
 
 const STATE_CADASTRE = {
@@ -13,18 +10,16 @@ const STATE_CADASTRE = {
     extraParams: {},
   },
   QLD: {
-    // QLD Digital Cadastral Database (DCDB) — updated nightly
-    url:      'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/LandParcelPropertyFramework/MapServer/4/query',
+    // QLD DCDB — layer 6 = Base Parcels Only (no scale restriction on query)
+    url:      'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/LandParcelPropertyFramework/MapServer/6/query',
     lotField: 'lotplan',
-    extraParams: { resultRecordCount: '1' },
+    extraParams: { resultRecordCount: '1', where: '1=1' },
   },
   VIC: {
-    // Vicmap Parcel — Parcel Map Polygons
     url:      'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/ArcGIS/rest/services/Vicmap_Parcel/FeatureServer/0/query',
     lotField: 'spi',
-    extraParams: { resultRecordCount: '1' },
+    extraParams: { resultRecordCount: '1', where: '1=1' },
   },
-  // Unverified — will silently return null until confirmed
   SA:  null,
   WA:  null,
   TAS: null,
@@ -41,7 +36,6 @@ export default async function handler(req, res) {
 
   const service = STATE_CADASTRE[state];
   if (!service) {
-    // State not yet supported — return gracefully with no boundary
     return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
   }
 
@@ -63,7 +57,7 @@ export default async function handler(req, res) {
   try {
     const upstream = await fetch(upstreamUrl);
     const rawText  = await upstream.text();
-    console.log('[cadastre] ←', state, upstream.status, rawText.slice(0, 300));
+    console.log('[cadastre] ←', state, upstream.status, rawText.slice(0, 500));
 
     let json;
     try { json = JSON.parse(rawText); }
@@ -77,7 +71,7 @@ export default async function handler(req, res) {
 
     const feat = (json.features || [])[0];
     if (!feat) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, featureCount: 0 } });
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, featureCount: 0, exceededTransfer: json.exceededTransferLimit, fields: (json.fields||[]).map(f=>f.name) } });
     }
 
     const attrs = feat.attributes || {};
