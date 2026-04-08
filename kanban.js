@@ -572,6 +572,12 @@ function openCardModal(id) {
 
   const dd = getDd(id);
 
+  // Resolve agent: stored value OR live cache (backfills existing pipeline items)
+  const _cached = window.DomainAPI?.getEnrichedListing?.(id);
+  const agentData = (p._agent?.name || p._agent?.email || p._agent?.phone)
+    ? p._agent
+    : (_cached?.agent || {});
+
   const overlay = document.createElement('div');
   overlay.id = 'kb-modal';
   overlay.className = 'kb-modal-overlay';
@@ -646,17 +652,17 @@ function openCardModal(id) {
           <div class="kb-terms-row">
             <div class="kb-field-wrap" style="flex:2">
               <label class="kb-field-label">Name</label>
-              <input class="kb-input kb-agent-name" type="text" placeholder="Agent name" value="${p._agent?.name || ''}">
+              <input class="kb-input kb-agent-name" type="text" placeholder="Agent name" value="${agentData.name || ''}">
             </div>
           </div>
           <div class="kb-terms-row" style="margin-top:6px">
             <div class="kb-field-wrap">
               <label class="kb-field-label">Email</label>
-              <input class="kb-input kb-agent-email" type="text" placeholder="agent@agency.com.au" value="${p._agent?.email || ''}">
+              <input class="kb-input kb-agent-email" type="text" placeholder="agent@agency.com.au" value="${agentData.email || ''}">
             </div>
             <div class="kb-field-wrap">
               <label class="kb-field-label">Phone</label>
-              <input class="kb-input kb-agent-phone" type="text" placeholder="04xx xxx xxx" value="${p._agent?.phone || ''}">
+              <input class="kb-input kb-agent-phone" type="text" placeholder="04xx xxx xxx" value="${agentData.phone || ''}">
             </div>
           </div>
         </div>
@@ -681,7 +687,7 @@ function openCardModal(id) {
   // Agent
   function syncAgent() {
     if (!pipeline[id]) return;
-    pipeline[id].property._agent = pipeline[id].property._agent || {};
+    if (!pipeline[id].property._agent) pipeline[id].property._agent = {};
     pipeline[id].property._agent.name  = modal.querySelector('.kb-agent-name').value;
     pipeline[id].property._agent.email = modal.querySelector('.kb-agent-email').value;
     pipeline[id].property._agent.phone = modal.querySelector('.kb-agent-phone').value;
@@ -894,6 +900,28 @@ const _origRenderListings = renderListings;
 window.renderListings = function () {
   _origRenderListings();
   setTimeout(updateAddButtons, 0);
+};
+
+// ─── Backfill agent details from Domain enrichment cache ──────────────────────
+// Called by map.js after each successful Domain search.
+// Fills _agent on any pipeline item that has a matching live listing in the cache
+// but was saved before agent data was captured.
+window.backfillAgentFromCache = function () {
+  if (!window.DomainAPI?.getEnrichedListing) return;
+  let changed = false;
+  Object.keys(pipeline).forEach(id => {
+    const item = pipeline[id];
+    if (!item?.property) return;
+    const p = item.property;
+    // Skip if already has agent data
+    if (p._agent?.name || p._agent?.email || p._agent?.phone) return;
+    const cached = DomainAPI.getEnrichedListing(id);
+    if (!cached?.agent) return;
+    p._agent = cached.agent;
+    dbSave(id, item);
+    changed = true;
+  });
+  if (changed) cacheSave(pipeline);
 };
 
 // Load pipeline from DB (falls back to localStorage if offline)
