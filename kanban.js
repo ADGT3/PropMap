@@ -80,6 +80,7 @@ async function dbDelete(id) {
 function savePipeline(changedId) {
   cacheSave(pipeline);
   if (changedId && pipeline[changedId]) dbSave(changedId, pipeline[changedId]);
+  if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
 }
 
 // ── Init — load from DB, fall back to localStorage ───────────────────────────
@@ -93,6 +94,7 @@ async function initPipeline() {
   if (remote !== null) {
     pipeline = remote;
     cacheSave(pipeline);
+    if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
     updateAddButtons();
     if (kanbanVisible) renderBoard();
   }
@@ -202,6 +204,7 @@ function removeFromPipeline(id) {
   dbDelete(sid);
   updateAddButtons();
   renderBoard();
+  if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
 }
 
 function moveToStage(id, stageId) {
@@ -217,12 +220,23 @@ function getNotes(id) {
   if (Array.isArray(raw)) return raw;
   return [{ text: raw, ts: pipeline[id].addedAt || Date.now() }];
 }
-function addNote(id, text) {
+function addNote(id, text, contactId = null, contactName = null) {
   if (!pipeline[id] || !text.trim()) return;
   const notes = getNotes(id);
-  notes.unshift({ text: text.trim(), ts: Date.now() });
+  const entry = { text: text.trim(), ts: Date.now() };
+  if (contactId)   entry.contact_id   = contactId;
+  if (contactName) entry.contact_name = contactName;
+  notes.unshift(entry);
   pipeline[id].note = notes;
   savePipeline(id);
+  // Also write to contact_notes API for future CRM contact view
+  if (contactId) {
+    fetch('/api/contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'add_note', contact_id: contactId, pipeline_id: String(id), note_text: text.trim() })
+    }).catch(err => console.warn('[CRM] failed to mirror note to contact_notes:', err));
+  }
 }
 function deleteNote(id, ts) {
   if (!pipeline[id]) return;
@@ -718,6 +732,11 @@ function openCardModal(id) {
 
         <div class="kb-section-label" style="margin-top:16px">Notes</div>
         <div class="kb-notes-section">
+          <div class="kb-note-contact-row">
+            <input class="kb-input kb-note-contact-search" type="text" placeholder="Tag a contact (optional)…">
+            <div class="kb-note-contact-results"></div>
+            <div class="kb-note-contact-tag" style="display:none"></div>
+          </div>
           <div class="kb-notes-input-row">
             <textarea class="kb-input kb-note-input" placeholder="Add a note…" rows="2"></textarea>
             <button class="kb-note-add-btn">Add</button>
@@ -763,9 +782,10 @@ function openCardModal(id) {
     notes.forEach(n => {
       const entry = document.createElement('div');
       entry.className = 'kb-note-entry';
+      const contactTag = n.contact_name ? `<span class="kb-note-contact-badge">@${n.contact_name}</span>` : '';
       entry.innerHTML = `
         <div class="kb-note-meta">
-          <span class="kb-note-date">${formatNoteDate(n.ts)}</span>
+          <span class="kb-note-date">${formatNoteDate(n.ts)}${contactTag}</span>
           <button class="kb-note-delete" data-ts="${n.ts}" title="Delete note">✕</button>
         </div>
         <div class="kb-note-text">${n.text.split('\n').join('<br>')}</div>`;
@@ -781,12 +801,69 @@ function openCardModal(id) {
   }
   renderNotesList();
 
+  // Contact tag for notes
+  let _noteContactId = null;
+  let _noteContactName = null;
+  const contactSearch = modal.querySelector('.kb-note-contact-search');
+  const contactResults = modal.querySelector('.kb-note-contact-results');
+  const contactTag = modal.querySelector('.kb-note-contact-tag');
+
+  function clearContactTag() {
+    _noteContactId = null;
+    _noteContactName = null;
+    contactTag.style.display = 'none';
+    contactTag.innerHTML = '';
+    contactSearch.style.display = '';
+    contactSearch.value = '';
+    contactResults.innerHTML = '';
+  }
+
+  let _contactSearchTimer;
+  contactSearch.addEventListener('input', () => {
+    clearTimeout(_contactSearchTimer);
+    const q = contactSearch.value.trim();
+    if (q.length < 2) { contactResults.innerHTML = ''; return; }
+    _contactSearchTimer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/contacts?pipeline_id=${encodeURIComponent(id)}`);
+        const linked = await res.json();
+        // Also search all contacts
+        const res2 = await fetch(`/api/contacts?search=${encodeURIComponent(q)}`);
+        const all = await res2.json();
+        // Merge, linked first
+        const seen = new Set();
+        const combined = [...linked, ...all].filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; })
+          .filter(c => {
+            const name = `${c.first_name} ${c.last_name}`.toLowerCase();
+            return name.includes(q.toLowerCase()) || (c.org_name||'').toLowerCase().includes(q.toLowerCase());
+          }).slice(0, 8);
+        contactResults.innerHTML = '';
+        combined.forEach(c => {
+          const item = document.createElement('div');
+          item.className = 'kb-note-contact-result';
+          item.innerHTML = `<strong>${c.first_name} ${c.last_name}</strong>${c.org_name ? ` · ${c.org_name}` : ''}`;
+          item.addEventListener('click', () => {
+            _noteContactId = c.id;
+            _noteContactName = `${c.first_name} ${c.last_name}`.trim();
+            contactResults.innerHTML = '';
+            contactSearch.style.display = 'none';
+            contactTag.style.display = 'flex';
+            contactTag.innerHTML = `<span>@${_noteContactName}</span><button class="kb-note-contact-clear">✕</button>`;
+            contactTag.querySelector('.kb-note-contact-clear').addEventListener('click', clearContactTag);
+          });
+          contactResults.appendChild(item);
+        });
+      } catch (e) { console.warn('[notes] contact search failed', e); }
+    }, 300);
+  });
+
   const noteInput = modal.querySelector('.kb-note-input');
   modal.querySelector('.kb-note-add-btn').addEventListener('click', () => {
     const text = noteInput.value.trim();
     if (!text) return;
-    addNote(id, text);
+    addNote(id, text, _noteContactId, _noteContactName);
     noteInput.value = '';
+    clearContactTag();
     renderNotesList();
     const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (boardCard) refreshCardIndicators(boardCard, id);
@@ -840,6 +917,14 @@ function openCardModal(id) {
     syncDeposits();
     addDeposit(id);
     modal.querySelector('.kb-deposits').innerHTML = buildDepositsHtml(getTerms(id).deposits);
+  });
+
+  // Offer price/settlement formatting on blur
+  modal.querySelector('.kb-offer-price').addEventListener('blur', function() {
+    this.value = formatInputPrice(this.value);
+  });
+  modal.querySelector('.kb-offer-settlement').addEventListener('blur', function() {
+    this.value = formatSettlement(this.value);
   });
 
   // Offer deposits
@@ -1013,3 +1098,13 @@ window.backfillAgentFromCache = function () {
 
 // Load pipeline from DB (falls back to localStorage if offline)
 initPipeline();
+
+// ─── Pipeline map pins ────────────────────────────────────────────────────────
+// Expose pipeline data so map.js can render pipeline pins.
+// Call window.refreshPipelinePins() after any pipeline change to sync the map.
+
+window.getPipelineData = () => pipeline;
+window.getPipelineStages = () => STAGES;
+window.refreshPipelinePins = function () {
+  if (typeof window._renderPipelinePins === 'function') window._renderPipelinePins();
+};

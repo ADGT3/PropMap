@@ -309,42 +309,57 @@ const ZONING_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/service
 const FLOOD_BASE  = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/Hazard/MapServer';
 const ROADS_BASE  = 'https://mapprod.environment.nsw.gov.au/arcgis/rest/services/Planning/EPI_Additional_Layers/MapServer';
 
-// ─── Fetch Lot/DP + parcel boundary from NSW Cadastre ────────────────────────
-// Defined at module scope so selectPropertyAtPoint can call it directly.
+// ─── Fetch Lot/DP + parcel boundary — state-aware ────────────────────────────
+// Queries the appropriate state cadastre service based on lat/lng.
+// Falls back gracefully (no boundary) for locations without a known service.
 
+function detectAustralianState(lat, lng) {
+  // Rough bounding boxes — good enough for cadastre routing
+  if (lat > -29.0 && lat < -28.1 && lng > 153.2 && lng < 153.7) return 'QLD'; // SE QLD coast override
+  if (lat > -29.5 && lng > 138.0 && lng < 154.0) return 'QLD';
+  if (lat > -39.2 && lat < -33.9 && lng > 140.9 && lng < 149.9) return 'VIC';
+  if (lat > -38.1 && lat < -25.9 && lng > 129.0 && lng < 141.0) return 'SA';
+  if (lat > -35.2 && lat < -25.9 && lng > 112.9 && lng < 129.0) return 'WA';
+  if (lat > -43.7 && lat < -39.5 && lng > 143.8 && lng < 148.5) return 'TAS';
+  if (lat > -20.0 && lat < -11.0 && lng > 129.0 && lng < 138.1) return 'NT';
+  if (lat > -35.9 && lat < -35.1 && lng > 148.8 && lng < 149.4) return 'ACT';
+  return 'NSW'; // default
+}
+
+// fetchLotDP — NSW queries sixmaps directly (no CORS restriction, faster).
+// Interstate queries go via api/cadastre.js proxy (state ArcGIS servers block browser CORS).
 async function fetchLotDP(lat, lng) {
-  const params = new URLSearchParams({
-    f:            'json',
-    geometry:     `${lng},${lat}`,
-    geometryType: 'esriGeometryPoint',
-    inSR:         '4326',
-    spatialRel:   'esriSpatialRelIntersects',
-    outFields:    'lotidstring',
-    returnGeometry: 'true',
-    outSR:        '4326'
-  });
-
+  const state = detectAustralianState(lat, lng);
   const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), 8000);
+  const tid = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const res  = await fetch(
-      'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query?' + params,
-      { signal: controller.signal }
-    );
-    clearTimeout(tid);
-    const json = await res.json();
-    const feat = (json.features || [])[0];
-    if (feat) {
+    let url;
+    if (state === 'NSW') {
+      // Direct browser call — sixmaps allows cross-origin requests
+      const params = new URLSearchParams({
+        f:              'json',
+        geometry:       `${lng},${lat}`,
+        geometryType:   'esriGeometryPoint',
+        inSR:           '4326',
+        spatialRel:     'esriSpatialRelIntersects',
+        outFields:      'lotidstring',
+        returnGeometry: 'true',
+        outSR:          '4326',
+      });
+      url = `https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query?${params}`;
+      const res  = await fetch(url, { signal: controller.signal });
+      clearTimeout(tid);
+      const json = await res.json();
+      const feat = (json.features || [])[0];
+      if (!feat) return { lotid: null, areaSqm: null, rings: null };
       const attrs = feat.attributes || {};
       const lotid = attrs.lotidstring || null;
-      let rings   = null;
-      let areaSqm = null;
+      let rings = null, areaSqm = null;
       if (feat.geometry && feat.geometry.rings) {
         rings = feat.geometry.rings.map(ring => ring.map(([x, y]) => [y, x]));
-        // Calculate area from rings using shoelace formula, converted to m² at Sydney's latitude
         const metersPerDegLat = 111320;
-        const metersPerDegLng = 111320 * Math.cos(-33.87 * Math.PI / 180);
+        const metersPerDegLng = 111320 * Math.cos(lat * Math.PI / 180);
         let area = 0;
         for (const ring of feat.geometry.rings) {
           let ringArea = 0;
@@ -356,10 +371,17 @@ async function fetchLotDP(lat, lng) {
         areaSqm = Math.round(area * metersPerDegLng * metersPerDegLat);
       }
       return { lotid, areaSqm, rings };
+    } else {
+      // Interstate — proxy via api/cadastre.js (CORS restricted servers)
+      const res = await fetch(`/api/cadastre?state=${state}&lat=${lat}&lng=${lng}`, { signal: controller.signal });
+      clearTimeout(tid);
+      if (!res.ok) return { lotid: null, areaSqm: null, rings: null };
+      return await res.json();
     }
-  } catch (err) { clearTimeout(tid); }
-
-  return { lotid: null, areaSqm: null, rings: null };
+  } catch (err) {
+    clearTimeout(tid);
+    return { lotid: null, areaSqm: null, rings: null };
+  }
 }
 
 // ─── Sidebar property card ────────────────────────────────────────────────────
@@ -1523,25 +1545,9 @@ async function drawEasementBuffers() {
 async function fetchAndDrawParcel(lat, lng) {
   if (parcelLayer) { map.removeLayer(parcelLayer); parcelLayer = null; }
   try {
-    const params = new URLSearchParams({
-      f:              'json',
-      geometry:       `${lng},${lat}`,
-      geometryType:   'esriGeometryPoint',
-      inSR:           '4326',
-      spatialRel:     'esriSpatialRelIntersects',
-      outFields:      'lotidstring',
-      returnGeometry: 'true',
-      outSR:          '4326',
-      resultRecordCount: '1'
-    });
-    const res  = await fetch(
-      'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query?' + params
-    );
-    const json = await res.json();
-    const feat = (json.features || [])[0];
-    if (feat && feat.geometry && feat.geometry.rings) {
-      const rings = feat.geometry.rings.map(ring => ring.map(([x, y]) => [y, x]));
-      drawParcel(rings);
+    const cadastre = await fetchLotDP(lat, lng);
+    if (cadastre && cadastre.rings) {
+      drawParcel(cadastre.rings);
     }
   } catch (err) { console.warn('fetchAndDrawParcel error:', err); }
 }
@@ -1677,7 +1683,7 @@ function selectListing(id, clickLatLng = null) {
   if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
 
   _suppressNextDomainSearch = true;
-  map.setView([listing.lat, listing.lng], 16, { animate: false });
+  map.setView([listing.lat, listing.lng], 15, { animate: false });
 
   // Use actual click coordinates for cadastre query if available (listing coords are
   // approximate dummy data — real coords arrive with the Domain API key).
@@ -2286,7 +2292,6 @@ runDomainSearch();
       f:           'json',
       maxSuggestions: '8',
       countryCode: 'AUS',
-      searchExtent: '149.5,-35.5,152.0,-32.5'  // Greater Sydney bbox
     });
 
     const sugRes  = await fetch(`${BASE}/suggest?${sugParams}`);
@@ -2314,11 +2319,12 @@ runDomainSearch();
       // For Australian addresses ArcGIS returns suburb in Neighborhood, City = LGA
       const suburb = attr.Neighborhood || '';
       const lga    = attr.City || '';
+      const state  = attr.Region || '';
       return {
         lat:          c.location.y,
         lon:          c.location.x,
         display_name: [attr.StAddr, suburb].filter(Boolean).join(', '),
-        _sub:         ['NSW', attr.Postal].filter(Boolean).join(' '),
+        _sub:         [state, attr.Postal].filter(Boolean).join(' '),
         _lga:         lga,
         _postcode:    attr.Postal || ''
       };
@@ -2380,7 +2386,7 @@ runDomainSearch();
     _activeListingId = null;
     _pendingAddressMatch = null;
     _suppressNextDomainSearch = true;
-    map.flyTo([lat, lng], 17, { animate: true, duration: 1.2 });
+    map.flyTo([lat, lng], 15, { animate: true, duration: 1.2 });
     await new Promise(resolve => map.once('moveend', resolve));
     const _street = label.split(',')[0].trim();
     const _suburb = label.split(',').slice(1).join(',').trim();
@@ -2490,6 +2496,78 @@ runDomainSearch();
 
 })();
 
+// ─── Pipeline map pins ────────────────────────────────────────────────────────
+
+const PIPELINE_PIN_STAGES = new Set(['shortlisted', 'under-dd', 'offer', 'acquired']);
+let _pipelinePinLayer = null;
+
+window._renderPipelinePins = function () {
+  // Remove existing pipeline pin layer
+  if (_pipelinePinLayer) { map.removeLayer(_pipelinePinLayer); _pipelinePinLayer = null; }
+
+  const pipelineData = window.getPipelineData ? window.getPipelineData() : null;
+  console.log('[pipeline pins] pipelineData:', pipelineData);
+  if (!pipelineData) return;
+
+  const stages = window.getPipelineStages ? window.getPipelineStages() : [];
+  const stageLabel = {};
+  stages.forEach(s => { stageLabel[s.id] = s.label; });
+
+  const markers = [];
+
+  Object.entries(pipelineData).forEach(([id, item]) => {
+    console.log('[pipeline pins] item', id, 'stage:', item?.stage, 'property:', item?.property);
+    if (!item?.property) return;
+    if (!PIPELINE_PIN_STAGES.has(item.stage)) return;
+
+    const p   = item.property;
+    // lat/lng stored on _parcels array, not directly on property
+    const firstParcel = (p._parcels && p._parcels.length > 0) ? p._parcels[0] : null;
+    const lat = firstParcel?.lat ?? null;
+    const lng = firstParcel?.lng ?? null;
+    console.log('[pipeline pins] id:', id, 'firstParcel:', firstParcel, 'lat:', lat, 'lng:', lng);
+    if (!lat || !lng) return;
+
+    const address = p.address || '';
+    const suburb  = p.suburb  || '';
+    const stage   = stageLabel[item.stage] || item.stage;
+
+    // Same gold teardrop as standard listing pins, with a star to indicate pipeline property
+    const pinHtml = `<div style="width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${MARKER_COLOR};border:2px solid rgba(255,255,255,0.8);box-shadow:0 2px 8px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px"><span style="transform:rotate(45deg);line-height:1">★</span></div>`;
+
+    const icon = L.divIcon({
+      html:      pinHtml,
+      iconSize:  [28, 28],
+      iconAnchor:[14, 28],
+      className: 'pipeline-map-pin',
+    });
+
+    const marker = L.marker([lat, lng], { icon, zIndexOffset: 500 });
+
+    marker.on('click', () => {
+      // Same behaviour as any other pin — selectPropertyAtPoint
+      const srlupEntry  = overlayRegistry['nsw-srlup'];
+      const zoningEntry = overlayRegistry['nsw-land-zoning'];
+      const floodEntry  = overlayRegistry['nsw-flood'];
+      const roadsEntry  = overlayRegistry['nsw-future-roads'];
+      selectPropertyAtPoint(
+        { lat, lng },
+        !!(srlupEntry  && srlupEntry.def.enabled),
+        !!(zoningEntry && zoningEntry.def.enabled),
+        !!(floodEntry  && floodEntry.def.enabled),
+        !!(roadsEntry  && roadsEntry.def.enabled),
+        null
+      );
+    });
+
+    markers.push(marker);
+  });
+
+  if (markers.length) {
+    _pipelinePinLayer = L.layerGroup(markers).addTo(map);
+  }
+};
+
 // ─── Public API for kanban ────────────────────────────────────────────────────
 // Called by kanban.js when the address link is clicked for a multi-parcel entry.
 window.matchListingByAddress = matchListingByAddress;
@@ -2508,7 +2586,7 @@ window.reSelectParcels = function(parcels) {
 
   const avgLat = parcels.reduce((s, p) => s + p.lat, 0) / parcels.length;
   const avgLng = parcels.reduce((s, p) => s + p.lng, 0) / parcels.length;
-  map.setView([avgLat, avgLng], 16, { animate: false });
+  map.setView([avgLat, avgLng], 15, { animate: false });
 
   if (parcels.length === 1) {
     // Single parcel — plain select (green pin, normal popup)
@@ -2786,4 +2864,26 @@ window.reSelectParcels = function(parcels) {
   }
 
   btn.addEventListener('click', showModePicker);
+})();
+
+// ─── Deferred pipeline pin render ────────────────────────────────────────────
+// kanban.js may load and call refreshPipelinePins before map.js registers
+// _renderPipelinePins. Poll briefly after load to catch that case.
+(function () {
+  let attempts = 0;
+  const interval = setInterval(() => {
+    attempts++;
+    const data = typeof window.getPipelineData === 'function' ? window.getPipelineData() : null;
+    console.log('[pipeline pins] attempt', attempts, 'data keys:', data ? Object.keys(data).length : 'null');
+    if (data && Object.keys(data).length > 0) {
+      console.log('[pipeline pins] pipeline loaded, rendering pins');
+      window._renderPipelinePins();
+      clearInterval(interval);
+    } else if (attempts > 40) {
+      // Pipeline loaded but empty — still try render (will just place no pins)
+      console.log('[pipeline pins] pipeline empty or timeout, rendering anyway');
+      if (typeof window._renderPipelinePins === 'function') window._renderPipelinePins();
+      clearInterval(interval);
+    }
+  }, 200);
 })();
