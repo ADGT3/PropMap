@@ -145,6 +145,7 @@ function addToPipeline(listing) {
       _areaSqm:       listing._areaSqm        || null,
       _propertyCount: listing._propertyCount  || 1,
       _agent:         listing.agent           || null,
+      _listingUrl:    listing.listingUrl       || null,
     },
     dd: {}
   };
@@ -528,6 +529,62 @@ function openCardModal(id) {
   const terms = getTerms(id);
   const offers = getOffers(id);
 
+  // Async Domain lookup — resolves agent + listingUrl for this pipeline property.
+  // Tries current listings[] first (instant), then fires runDomainSearchAt if needed.
+  async function resolveFromDomain() {
+    if (!window.matchListingByAddress || !window.getListings) return;
+    const currentListings = window.getListings();
+    let hit = matchListingByAddress(currentListings, p.address, p.suburb, p._lotDPs);
+    if (!hit && window.runDomainSearchAt) {
+      const parcel = p._parcels?.[0];
+      if (parcel?.lat && parcel?.lng) {
+        hit = await runDomainSearchAt(parcel.lat, parcel.lng, p.address, p.suburb);
+      }
+    }
+    if (!hit) return;
+
+    // Persist agent + listingUrl back to pipeline
+    let changed = false;
+    if (hit.agent && !(p._agent?.name || p._agent?.email || p._agent?.phone)) {
+      p._agent = hit.agent;
+      changed = true;
+    }
+    if (hit.listingUrl && !p._listingUrl) {
+      p._listingUrl = hit.listingUrl;
+      changed = true;
+    }
+    if (changed) savePipeline(id);
+
+    // Populate agent fields in open modal (if still open)
+    const modal = document.getElementById('kb-modal');
+    if (!modal || modal.dataset.propertyId !== String(id)) return;
+    const ag = p._agent || {};
+    const nameEl   = modal.querySelector('.kb-agent-name');
+    const agencyEl = modal.querySelector('.kb-agent-agency');
+    const emailEl  = modal.querySelector('.kb-agent-email');
+    const phoneEl  = modal.querySelector('.kb-agent-phone');
+    if (nameEl   && !nameEl.value)   nameEl.value   = ag.name   || '';
+    if (agencyEl && !agencyEl.value) agencyEl.value = ag.agency || '';
+    if (emailEl  && !emailEl.value)  emailEl.value  = ag.email  || '';
+    if (phoneEl  && !phoneEl.value)  phoneEl.value  = ag.phone  || '';
+
+    // Show Domain link in modal header if not already there
+    if (p._listingUrl && !modal.querySelector('.kb-domain-link')) {
+      const hdr = modal.querySelector('.kb-modal-address');
+      if (hdr) {
+        const link = document.createElement('a');
+        link.href = p._listingUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.className = 'kb-domain-link';
+        link.style.cssText = 'display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none';
+        link.textContent = '↗ View on Domain';
+        hdr.insertAdjacentElement('afterend', link);
+      }
+    }
+  }
+  resolveFromDomain();
+
   function buildDepositsHtml(deps) {
     return deps.map((d, i) => `
       <div class="kb-deposit-row" data-idx="${i}">
@@ -572,20 +629,7 @@ function openCardModal(id) {
 
   const dd = getDd(id);
 
-  // Resolve agent data: stored value → cache by id → cache by address
-  const _cachedById   = window.DomainAPI?.getEnrichedListing?.(id);
-  const _cachedByAddr = window.DomainAPI?.getEnrichedByAddress?.(p.address);
-  const _cacheAgent   = _cachedById?.agent || _cachedByAddr?.agent || null;
-  const _stored       = p._agent;
-  // Use stored if it has any real content, else use live cache
-  const agentData = (_stored?.name || _stored?.email || _stored?.phone)
-    ? _stored
-    : (_cacheAgent || {});
-  // If cache has agent but stored doesn't, persist it now so it survives
-  if (_cacheAgent && !(_stored?.name || _stored?.email || _stored?.phone)) {
-    p._agent = _cacheAgent;
-    savePipeline(id);
-  }
+  const agentData = p._agent || {};
 
   const overlay = document.createElement('div');
   overlay.id = 'kb-modal';
@@ -918,24 +962,21 @@ window.renderListings = function () {
 };
 
 // ─── Backfill agent details from Domain enrichment cache ──────────────────────
-// Called by map.js after each successful Domain search.
 window.backfillAgentFromCache = function () {
-  if (!window.DomainAPI) return;
+  if (!window.matchListingByAddress || !window.getListings) return;
+  const currentListings = window.getListings();
+  if (!currentListings.length) return;
   let changed = false;
   Object.keys(pipeline).forEach(id => {
     const item = pipeline[id];
     if (!item?.property) return;
     const p = item.property;
-    // Skip if already has agent data
     if (p._agent?.name || p._agent?.email || p._agent?.phone) return;
-    // Try by id first, then by address
-    const cached = DomainAPI.getEnrichedListing?.(id)
-      || DomainAPI.getEnrichedByAddress?.(p.address);
-    if (!cached?.agent) return;
-    p._agent = cached.agent;
-    dbSave(id, item);
-    changed = true;
-    console.log('[Agent] Backfilled:', p.address, cached.agent);
+    const hit = matchListingByAddress(currentListings, p.address, p.suburb, p._lotDPs);
+    if (!hit) return;
+    if (hit.agent) { p._agent = hit.agent; changed = true; }
+    if (hit.listingUrl && !p._listingUrl) { p._listingUrl = hit.listingUrl; changed = true; }
+    if (changed) dbSave(id, item);
   });
   if (changed) cacheSave(pipeline);
 };

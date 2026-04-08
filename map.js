@@ -375,7 +375,6 @@ function showSearchCard({ label, lga, lotDP, lat, lng, listing = null }) {
 
   _lastSearchCardData = { label, lga, lotDP, lat, lng, listing };
 
-  // If already in panel, highlight there rather than duplicating
   const inList = document.querySelector(`.listing-card[data-id="${String(listing.id)}"]`);
   if (inList) {
     document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
@@ -556,7 +555,6 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   const lotDP   = cadastre ? cadastre.lotid   : null;
   const areaSqm = cadastre ? cadastre.areaSqm : null;
 
-  // LotDP fallback: if address search didn't match, try again now we have Lot/DP
   if (!listing && _pendingAddressMatch && lotDP && listings.length) {
     const lotMatch = matchListingByAddress(listings, _pendingAddressMatch.street, _pendingAddressMatch.suburb, lotDP);
     if (lotMatch) {
@@ -2148,12 +2146,12 @@ function normaliseStreet(s) {
 }
 
 function matchListingByAddress(listingsArr, streetAddress, suburb, lotDP) {
-  if (!listingsArr.length) return null;
+  if (!listingsArr || !listingsArr.length) return null;
   const normSearch = normaliseStreet(streetAddress);
   const subSearch  = (suburb || '').toLowerCase().trim();
 
-  // Pass 1: normalised street + suburb
   if (normSearch) {
+    // Pass 1: normalised street + suburb
     const hit = listingsArr.find(l => {
       const normL  = normaliseStreet(l.address);
       const subL   = (l.suburb || '').toLowerCase().trim();
@@ -2180,7 +2178,7 @@ function matchListingByAddress(listingsArr, streetAddress, suburb, lotDP) {
   return null;
 }
 
-// ─── Immediate Domain search centred on a point (used by address search) ─────
+// ─── Immediate Domain search centred on a point ───────────────────────────────
 async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
   if (!window.DomainAPI || !DomainAPI.search) return null;
   const delta = 0.05;
@@ -2407,16 +2405,12 @@ runDomainSearch();
     _activeListingId = null;
     _pendingAddressMatch = null;
 
-    // Fly first — suppress the moveend Domain search (we run our own below)
     _suppressNextDomainSearch = true;
     map.flyTo([lat, lng], 17, { animate: true, duration: 1.2 });
     await new Promise(resolve => map.once('moveend', resolve));
 
-    // label = "34 Pennant Hills Rd, Parramatta" from geocoder
     const _street = label.split(',')[0].trim();
     const _suburb = label.split(',').slice(1).join(',').trim();
-
-    // Run Domain search for this location and match by address string
     const nearbyListing = await runDomainSearchAt(lat, lng, _street, _suburb);
 
     if (nearbyListing) {
@@ -2425,7 +2419,6 @@ runDomainSearch();
       const matchCard = document.querySelector(`.listing-card[data-id="${_activeListingId}"]`);
       if (matchCard) { matchCard.classList.add('active'); matchCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
     } else {
-      // No match yet — store street/suburb so cadastre lotDP can try a second match
       _pendingAddressMatch = { street: _street, suburb: _suburb };
     }
 
@@ -2527,6 +2520,9 @@ runDomainSearch();
 
 // ─── Public API for kanban ────────────────────────────────────────────────────
 // Called by kanban.js when the address link is clicked for a multi-parcel entry.
+window.matchListingByAddress = matchListingByAddress;
+window.runDomainSearchAt = runDomainSearchAt;
+window.getListings = () => listings;
 
 window.reSelectParcels = function(parcels) {
   if (!parcels || parcels.length === 0) return;
