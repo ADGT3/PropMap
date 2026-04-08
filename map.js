@@ -2105,7 +2105,7 @@ let _domainSearchTimer = null;
 
 function debouncedDomainSearch() {
   clearTimeout(_domainSearchTimer);
-  _domainSearchTimer = setTimeout(runDomainSearch, 5000);
+  _domainSearchTimer = setTimeout(runDomainSearch, 1500);
 }
 
 async function runDomainSearch() {
@@ -2136,7 +2136,6 @@ async function runDomainSearch() {
     domainListings.forEach(l => listings.push(l));
     console.log('[map] Domain API returned ' + listings.length + ' listings');
     renderListings();
-    if (window.backfillAgentFromCache) backfillAgentFromCache();
   } catch (err) {
     console.error('[map] Domain API fetch failed:', err);
     showDomainError(err.message);
