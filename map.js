@@ -40,6 +40,7 @@ const overlayRegistry = {};
 // Single-select: tracks the most recently focused listing for popup/parcel display
 let _activeListingId = null;
 let _suppressNextDomainSearch = false;
+let _pendingAddressMatch = null;
 
 // Marker colour
 const MARKER_COLOR = '#c4841a';
@@ -374,16 +375,14 @@ function showSearchCard({ label, lga, lotDP, lat, lng, listing = null }) {
 
   _lastSearchCardData = { label, lga, lotDP, lat, lng, listing };
 
-  // If listing is already in panel (viewport results), highlight it there
-  const inListCard = document.querySelector(`.listing-card[data-id="${String(listing.id)}"]`);
-  if (inListCard) {
+  // If already in panel, highlight there rather than duplicating
+  const inList = document.querySelector(`.listing-card[data-id="${String(listing.id)}"]`);
+  if (inList) {
     document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
-    inListCard.classList.add('active');
-    inListCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    inList.classList.add('active');
+    inList.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     return;
   }
-
-  // Not in current results — pin at top
   const card = makeListingCard(listing, { pinToTop: true });
   card.id = 'search-result-card';
   card.classList.add('active');
@@ -556,6 +555,19 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   const [cadastre, srlupJson, zoningJson, floodJson, roadsJson] = await Promise.all(slowFetches);
   const lotDP   = cadastre ? cadastre.lotid   : null;
   const areaSqm = cadastre ? cadastre.areaSqm : null;
+
+  // LotDP fallback: if address search didn't match, try again now we have Lot/DP
+  if (!listing && _pendingAddressMatch && lotDP && listings.length) {
+    const lotMatch = matchListingByAddress(listings, _pendingAddressMatch.street, _pendingAddressMatch.suburb, lotDP);
+    if (lotMatch) {
+      listing = lotMatch;
+      _activeListingId = String(lotMatch.id);
+      document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
+      const mc = document.querySelector(`.listing-card[data-id="${_activeListingId}"]`);
+      if (mc) { mc.classList.add('active'); mc.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    }
+    _pendingAddressMatch = null;
+  }
 
   if (!listing && lotDP) {
     const hasStreetNumber = /^\d/.test(label);
@@ -2047,13 +2059,13 @@ let _lastSearchCardData = null;
 function _injectSearchCard() {
   if (!_lastSearchCardData || !_lastSearchCardData.listing) return;
   const { label, lga, lotDP, lat, lng, listing } = _lastSearchCardData;
-  const inListCard = document.querySelector(`.listing-card[data-id="${String(listing.id)}"]`);
-  if (inListCard) {
+  const inList = document.querySelector(`.listing-card[data-id="${String(listing.id)}"]`);
+  if (inList) {
     const src = document.getElementById('search-result-card');
     if (src) src.remove();
     document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
-    inListCard.classList.add('active');
-    inListCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    inList.classList.add('active');
+    inList.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     return;
   }
   const existing = document.getElementById('search-result-card');
@@ -2066,8 +2078,8 @@ function _injectSearchCard() {
 map.on('moveend zoomend', () => {
   if (showListings) renderListings();
   if (_activeListingId) {
-    const activeCard = document.querySelector(`.listing-card[data-id="${_activeListingId}"]`);
-    if (activeCard) { activeCard.classList.add('active'); activeCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    const _ac = document.querySelector(`.listing-card[data-id="${_activeListingId}"]`);
+    if (_ac) { _ac.classList.add('active'); _ac.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
   }
   _injectSearchCard();
   // Refresh easement buffers if electricity overlay is active
@@ -2124,8 +2136,52 @@ function buildDomainGeoWindow() {
   };
 }
 
-// ─── Immediate Domain search at a specific point (used by address search) ────
-async function runDomainSearchAt(lat, lng) {
+// ─── Address-string matching helper ──────────────────────────────────────────
+function normaliseStreet(s) {
+  if (!s) return '';
+  return s.toLowerCase()
+    .replace(/\brd\b/g, 'road').replace(/\bst\b/g, 'street').replace(/\bave?\b/g, 'avenue')
+    .replace(/\bdr\b/g, 'drive').replace(/\bcrt?\b/g, 'court').replace(/\bpl\b/g, 'place')
+    .replace(/\bpde\b/g, 'parade').replace(/\bcl\b/g, 'close').replace(/\bln\b/g, 'lane')
+    .replace(/\bhwy\b/g, 'highway').replace(/\bblvd\b/g, 'boulevard')
+    .replace(/[.,]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function matchListingByAddress(listingsArr, streetAddress, suburb, lotDP) {
+  if (!listingsArr.length) return null;
+  const normSearch = normaliseStreet(streetAddress);
+  const subSearch  = (suburb || '').toLowerCase().trim();
+
+  // Pass 1: normalised street + suburb
+  if (normSearch) {
+    const hit = listingsArr.find(l => {
+      const normL  = normaliseStreet(l.address);
+      const subL   = (l.suburb || '').toLowerCase().trim();
+      const streetOk = normL === normSearch || normL.startsWith(normSearch) || normSearch.startsWith(normL);
+      const subOk    = !subSearch || !subL || subL === subSearch || subL.includes(subSearch) || subSearch.includes(subL);
+      return streetOk && subOk;
+    });
+    if (hit) return hit;
+
+    // Pass 2: normalised street only
+    const hit2 = listingsArr.find(l => normaliseStreet(l.address) === normSearch);
+    if (hit2) return hit2;
+  }
+
+  // Pass 3: Lot/DP
+  if (lotDP) {
+    const normLot = lotDP.toLowerCase().replace(/\s/g, '');
+    const hit3 = listingsArr.find(l => {
+      const lLots = (l._lotDPs || '').toLowerCase().replace(/\s/g, '');
+      return lLots && lLots.includes(normLot);
+    });
+    if (hit3) return hit3;
+  }
+  return null;
+}
+
+// ─── Immediate Domain search centred on a point (used by address search) ─────
+async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
   if (!window.DomainAPI || !DomainAPI.search) return null;
   const delta = 0.05;
   const geoWindow = {
@@ -2158,11 +2214,7 @@ async function runDomainSearchAt(lat, lng) {
     domainListings.forEach(l => listings.push(l));
     renderListings();
     if (window.backfillAgentFromCache) backfillAgentFromCache();
-    return listings.find(l =>
-      l.lat != null && l.lng != null &&
-      Math.abs(l.lat - lat) < 0.0005 &&
-      Math.abs(l.lng - lng) < 0.0005
-    ) || null;
+    return matchListingByAddress(listings, searchAddress, searchSuburb, null);
   } catch (err) {
     console.error('[map] runDomainSearchAt failed:', err);
     return null;
@@ -2353,22 +2405,28 @@ runDomainSearch();
     if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
 
     _activeListingId = null;
+    _pendingAddressMatch = null;
 
-    // Fly to location; suppress the moveend-triggered Domain search since we
-    // run our own immediately after landing.
+    // Fly first — suppress the moveend Domain search (we run our own below)
     _suppressNextDomainSearch = true;
     map.flyTo([lat, lng], 17, { animate: true, duration: 1.2 });
     await new Promise(resolve => map.once('moveend', resolve));
 
-    // Run a Domain search centred on this point and wait for the results —
-    // this gives us the actual listings at this location before we try to match.
-    const nearbyListing = await runDomainSearchAt(lat, lng);
+    // label = "34 Pennant Hills Rd, Parramatta" from geocoder
+    const _street = label.split(',')[0].trim();
+    const _suburb = label.split(',').slice(1).join(',').trim();
+
+    // Run Domain search for this location and match by address string
+    const nearbyListing = await runDomainSearchAt(lat, lng, _street, _suburb);
 
     if (nearbyListing) {
       _activeListingId = String(nearbyListing.id);
       document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
       const matchCard = document.querySelector(`.listing-card[data-id="${_activeListingId}"]`);
       if (matchCard) { matchCard.classList.add('active'); matchCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    } else {
+      // No match yet — store street/suburb so cadastre lotDP can try a second match
+      _pendingAddressMatch = { street: _street, suburb: _suburb };
     }
 
     const srlupEntry   = overlayRegistry['nsw-srlup'];
