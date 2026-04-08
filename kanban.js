@@ -154,6 +154,27 @@ function addToPipeline(listing) {
   if (kanbanVisible) renderBoard();
   showKanbanToast(`${listing.address} added to pipeline`);
 
+  // Async — fetch Lot/DP from cadastre if not already present
+  if (!pipeline[id].property._lotDPs && window.fetchLotDP) {
+    const _lat = lat ?? parcels[0]?.lat ?? null;
+    const _lng = lng ?? parcels[0]?.lng ?? null;
+    if (_lat && _lng) {
+      fetchLotDP(_lat, _lng).then(cadastre => {
+        if (!pipeline[id] || !cadastre?.lotid) return;
+        pipeline[id].property._lotDPs = cadastre.lotid;
+        if (!pipeline[id].property._areaSqm && cadastre.areaSqm) pipeline[id].property._areaSqm = cadastre.areaSqm;
+        savePipeline(id);
+        // Refresh modal if open
+        const modal = document.getElementById('kb-modal');
+        if (modal?.dataset?.propertyId === String(id)) {
+          const lotEl = modal.querySelector('.kb-modal-lotdp');
+          if (lotEl) lotEl.textContent = cadastre.lotid;
+        }
+        if (kanbanVisible) renderBoard();
+      }).catch(() => {});
+    }
+  }
+
   // Async — query overlay layers and pre-populate DD risks
   const lat = listing.lat ?? parcels[0]?.lat ?? null;
   const lng = listing.lng ?? parcels[0]?.lng ?? null;
@@ -529,8 +550,7 @@ function openCardModal(id) {
   const terms = getTerms(id);
   const offers = getOffers(id);
 
-  // Async Domain lookup — resolves agent + listingUrl for this pipeline property.
-  // Tries current listings[] first (instant), then fires runDomainSearchAt if needed.
+  // Async Domain lookup — resolves agent + listingUrl for this pipeline property
   async function resolveFromDomain() {
     if (!window.matchListingByAddress || !window.getListings) return;
     const currentListings = window.getListings();
@@ -542,20 +562,12 @@ function openCardModal(id) {
       }
     }
     if (!hit) return;
-
-    // Persist agent + listingUrl back to pipeline
     let changed = false;
     if (hit.agent && !(p._agent?.name || p._agent?.email || p._agent?.phone)) {
-      p._agent = hit.agent;
-      changed = true;
+      p._agent = hit.agent; changed = true;
     }
-    if (hit.listingUrl && !p._listingUrl) {
-      p._listingUrl = hit.listingUrl;
-      changed = true;
-    }
+    if (hit.listingUrl && !p._listingUrl) { p._listingUrl = hit.listingUrl; changed = true; }
     if (changed) savePipeline(id);
-
-    // Populate agent fields in open modal (if still open)
     const modal = document.getElementById('kb-modal');
     if (!modal || modal.dataset.propertyId !== String(id)) return;
     const ag = p._agent || {};
@@ -567,15 +579,11 @@ function openCardModal(id) {
     if (agencyEl && !agencyEl.value) agencyEl.value = ag.agency || '';
     if (emailEl  && !emailEl.value)  emailEl.value  = ag.email  || '';
     if (phoneEl  && !phoneEl.value)  phoneEl.value  = ag.phone  || '';
-
-    // Show Domain link in modal header if not already there
     if (p._listingUrl && !modal.querySelector('.kb-domain-link')) {
       const hdr = modal.querySelector('.kb-modal-address');
       if (hdr) {
         const link = document.createElement('a');
-        link.href = p._listingUrl;
-        link.target = '_blank';
-        link.rel = 'noopener';
+        link.href = p._listingUrl; link.target = '_blank'; link.rel = 'noopener';
         link.className = 'kb-domain-link';
         link.style.cssText = 'display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none';
         link.textContent = '↗ View on Domain';
@@ -961,7 +969,7 @@ window.renderListings = function () {
   setTimeout(updateAddButtons, 0);
 };
 
-// ─── Backfill agent details from Domain enrichment cache ──────────────────────
+// ─── Backfill agent from Domain cache after each search ───────────────────────
 window.backfillAgentFromCache = function () {
   if (!window.matchListingByAddress || !window.getListings) return;
   const currentListings = window.getListings();

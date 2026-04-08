@@ -370,11 +370,8 @@ function showSearchCard({ label, lga, lotDP, lat, lng, listing = null }) {
   const container = document.getElementById('listingsList');
   const existing = document.getElementById('search-result-card');
   if (existing) existing.remove();
-
   if (!listing) return;
-
   _lastSearchCardData = { label, lga, lotDP, lat, lng, listing };
-
   const inList = document.querySelector(`.listing-card[data-id="${String(listing.id)}"]`);
   if (inList) {
     document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
@@ -554,7 +551,6 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   const [cadastre, srlupJson, zoningJson, floodJson, roadsJson] = await Promise.all(slowFetches);
   const lotDP   = cadastre ? cadastre.lotid   : null;
   const areaSqm = cadastre ? cadastre.areaSqm : null;
-
   if (!listing && _pendingAddressMatch && lotDP && listings.length) {
     const lotMatch = matchListingByAddress(listings, _pendingAddressMatch.street, _pendingAddressMatch.suburb, lotDP);
     if (lotMatch) {
@@ -2149,9 +2145,7 @@ function matchListingByAddress(listingsArr, streetAddress, suburb, lotDP) {
   if (!listingsArr || !listingsArr.length) return null;
   const normSearch = normaliseStreet(streetAddress);
   const subSearch  = (suburb || '').toLowerCase().trim();
-
   if (normSearch) {
-    // Pass 1: normalised street + suburb
     const hit = listingsArr.find(l => {
       const normL  = normaliseStreet(l.address);
       const subL   = (l.suburb || '').toLowerCase().trim();
@@ -2160,13 +2154,9 @@ function matchListingByAddress(listingsArr, streetAddress, suburb, lotDP) {
       return streetOk && subOk;
     });
     if (hit) return hit;
-
-    // Pass 2: normalised street only
     const hit2 = listingsArr.find(l => normaliseStreet(l.address) === normSearch);
     if (hit2) return hit2;
   }
-
-  // Pass 3: Lot/DP
   if (lotDP) {
     const normLot = lotDP.toLowerCase().replace(/\s/g, '');
     const hit3 = listingsArr.find(l => {
@@ -2182,31 +2172,20 @@ function matchListingByAddress(listingsArr, streetAddress, suburb, lotDP) {
 async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
   if (!window.DomainAPI || !DomainAPI.search) return null;
   const delta = 0.05;
-  const geoWindow = {
-    box: {
-      topLeft:     { lat: lat + delta, lon: lng - delta },
-      bottomRight: { lat: lat - delta, lon: lng + delta },
-    }
-  };
+  const geoWindow = { box: { topLeft: { lat: lat + delta, lon: lng - delta }, bottomRight: { lat: lat - delta, lon: lng + delta } } };
   try {
     const domainListings = await DomainAPI.search({
       geoWindow,
-      propertyTypes:        _activeFilters.propertyTypes,
-      listingTypes:         [_activeFilters.listingType],
-      minBeds:              _activeFilters.minBeds,
-      maxBeds:              _activeFilters.maxBeds,
-      minBaths:             _activeFilters.minBaths,
-      minCars:              _activeFilters.minCars,
-      minPrice:             _activeFilters.minPrice,
-      maxPrice:             _activeFilters.maxPrice,
-      minLand:              _activeFilters.minLand,
-      maxLand:              _activeFilters.maxLand,
-      propertyFeatures:     _activeFilters.features,
-      listingAttributes:    _activeFilters.listingAttributes,
-      establishedType:      _activeFilters.establishedType,
+      propertyTypes: _activeFilters.propertyTypes, listingTypes: [_activeFilters.listingType],
+      minBeds: _activeFilters.minBeds, maxBeds: _activeFilters.maxBeds,
+      minBaths: _activeFilters.minBaths, minCars: _activeFilters.minCars,
+      minPrice: _activeFilters.minPrice, maxPrice: _activeFilters.maxPrice,
+      minLand: _activeFilters.minLand, maxLand: _activeFilters.maxLand,
+      propertyFeatures: _activeFilters.features, listingAttributes: _activeFilters.listingAttributes,
+      establishedType: _activeFilters.establishedType,
       excludePriceWithheld: _activeFilters.excludePriceWithheld,
-      excludeDepositTaken:  _activeFilters.excludeDepositTaken,
-      newDevOnly:           _activeFilters.newDevOnly,
+      excludeDepositTaken: _activeFilters.excludeDepositTaken,
+      newDevOnly: _activeFilters.newDevOnly,
     });
     listings.length = 0;
     domainListings.forEach(l => listings.push(l));
@@ -2404,15 +2383,12 @@ runDomainSearch();
 
     _activeListingId = null;
     _pendingAddressMatch = null;
-
     _suppressNextDomainSearch = true;
     map.flyTo([lat, lng], 17, { animate: true, duration: 1.2 });
     await new Promise(resolve => map.once('moveend', resolve));
-
     const _street = label.split(',')[0].trim();
     const _suburb = label.split(',').slice(1).join(',').trim();
     const nearbyListing = await runDomainSearchAt(lat, lng, _street, _suburb);
-
     if (nearbyListing) {
       _activeListingId = String(nearbyListing.id);
       document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
@@ -2523,6 +2499,7 @@ runDomainSearch();
 window.matchListingByAddress = matchListingByAddress;
 window.runDomainSearchAt = runDomainSearchAt;
 window.getListings = () => listings;
+window.fetchLotDP = fetchLotDP;
 
 window.reSelectParcels = function(parcels) {
   if (!parcels || parcels.length === 0) return;
