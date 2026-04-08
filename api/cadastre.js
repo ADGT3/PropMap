@@ -1,6 +1,9 @@
 /**
  * api/cadastre.js
  * Server-side proxy for state cadastre ArcGIS endpoints.
+ *
+ * Only NSW, QLD and VIC have verified working endpoints.
+ * SA, WA, TAS, ACT, NT are marked as unverified and will return null gracefully.
  */
 
 const STATE_CADASTRE = {
@@ -9,41 +12,24 @@ const STATE_CADASTRE = {
     lotField: 'lotidstring',
     extraParams: {},
   },
-  VIC: {
-    url:      'https://services6.arcgis.com/GB33F62SbDxJjwEL/arcgis/rest/services/Vicmap_PROPERTY/FeatureServer/1/query',
-    lotField: 'propnum',
-    extraParams: { resultRecordCount: '1' },
-  },
   QLD: {
-    url:      'https://spatial-img.information.qld.gov.au/arcgis/rest/services/Basemaps/QldCadastralData/MapServer/0/query',
+    // QLD Digital Cadastral Database (DCDB) — updated nightly
+    url:      'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/LandParcelPropertyFramework/MapServer/4/query',
     lotField: 'lotplan',
     extraParams: { resultRecordCount: '1' },
   },
-  SA: {
-    url:      'https://services.sailis.sa.gov.au/arcgis/rest/services/Property/LandParcel/MapServer/0/query',
-    lotField: 'parcel_id',
+  VIC: {
+    // Vicmap Parcel — Parcel Map Polygons
+    url:      'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/ArcGIS/rest/services/Vicmap_Parcel/FeatureServer/0/query',
+    lotField: 'spi',
     extraParams: { resultRecordCount: '1' },
   },
-  WA: {
-    url:      'https://services.slip.wa.gov.au/public/rest/services/SLIP_Public_Services/Cadastre/MapServer/0/query',
-    lotField: 'lot',
-    extraParams: { resultRecordCount: '1' },
-  },
-  TAS: {
-    url:      'https://services.thelist.tas.gov.au/arcgis/rest/services/Public/Cadastre/MapServer/0/query',
-    lotField: 'pid',
-    extraParams: { resultRecordCount: '1' },
-  },
-  ACT: {
-    url:      'https://services1.arcgis.com/E5n4f1VY84i0xSjy/arcgis/rest/services/ACT_Cadastre/FeatureServer/0/query',
-    lotField: 'block',
-    extraParams: { resultRecordCount: '1' },
-  },
-  NT: {
-    url:      'https://services1.arcgis.com/vkTzFGtvYHzHuEWo/arcgis/rest/services/NT_Cadastral_Parcels/FeatureServer/0/query',
-    lotField: 'parcel_id',
-    extraParams: { resultRecordCount: '1' },
-  },
+  // Unverified — will silently return null until confirmed
+  SA:  null,
+  WA:  null,
+  TAS: null,
+  ACT: null,
+  NT:  null,
 };
 
 export default async function handler(req, res) {
@@ -53,7 +39,11 @@ export default async function handler(req, res) {
   const { state = 'NSW', lat, lng } = req.query;
   if (!lat || !lng) return res.status(400).json({ error: 'lat and lng required' });
 
-  const service = STATE_CADASTRE[state] || STATE_CADASTRE.NSW;
+  const service = STATE_CADASTRE[state];
+  if (!service) {
+    // State not yet supported — return gracefully with no boundary
+    return res.status(200).json({ lotid: null, areaSqm: null, rings: null });
+  }
 
   const params = new URLSearchParams({
     f:              'json',
@@ -78,16 +68,16 @@ export default async function handler(req, res) {
     let json;
     try { json = JSON.parse(rawText); }
     catch (e) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, status: upstream.status, parseError: e.message, body: rawText.slice(0, 300) } });
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, parseError: e.message, body: rawText.slice(0, 300) } });
     }
 
     if (!upstream.ok || json.error) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, status: upstream.status, jsonError: json.error, body: rawText.slice(0, 300) } });
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, status: upstream.status, jsonError: json.error } });
     }
 
     const feat = (json.features || [])[0];
     if (!feat) {
-      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, featureCount: (json.features || []).length } });
+      return res.status(200).json({ lotid: null, areaSqm: null, rings: null, _debug: { state, featureCount: 0 } });
     }
 
     const attrs = feat.attributes || {};
