@@ -39,6 +39,7 @@ const overlayRegistry = {};
 
 // Single-select: tracks the most recently focused listing for popup/parcel display
 let _activeListingId = null;
+let _suppressNextDomainSearch = false;
 
 // Marker colour
 const MARKER_COLOR = '#c4841a';
@@ -369,13 +370,24 @@ function showSearchCard({ label, lga, lotDP, lat, lng, listing = null }) {
   const existing = document.getElementById('search-result-card');
   if (existing) existing.remove();
 
-  if (!listing) return; // no listing match — popup has the info, nothing to add to panel
+  if (!listing) return;
 
+  _lastSearchCardData = { label, lga, lotDP, lat, lng, listing };
+
+  // If listing is already in panel (viewport results), highlight it there
+  const inListCard = document.querySelector(`.listing-card[data-id="${String(listing.id)}"]`);
+  if (inListCard) {
+    document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
+    inListCard.classList.add('active');
+    inListCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
+  }
+
+  // Not in current results — pin at top
   const card = makeListingCard(listing, { pinToTop: true });
   card.id = 'search-result-card';
   card.classList.add('active');
   container.insertBefore(card, container.firstChild);
-  _lastSearchCardData = { label, lga, lotDP, lat, lng, listing };
 }
 
 // Incremented on every clearParcelSelection so stale async calls know to abort
@@ -459,7 +471,7 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
 
   // Show in sidebar immediately with address (Lot/DP updates below).
   // Skip the search card when the listing card itself is the selection point.
-  const useSearchCard = !_activeListingId && !addToSelection;
+  const useSearchCard = !addToSelection;
   if (useSearchCard) {
     showSearchCard({ label, lga, lotDP: null, lat, lng, listing });
   }
@@ -1652,12 +1664,13 @@ function selectListing(id, clickLatLng = null) {
   const card = document.querySelector(`.listing-card[data-id="${id}"]`);
   if (card) { card.classList.add('active'); card.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
 
-  const listing = listings.find(l => l.id === id);
+  const listing = listings.find(l => String(l.id) === String(id));
   if (!listing) return;
 
   if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
   if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
 
+  _suppressNextDomainSearch = true;
   map.setView([listing.lat, listing.lng], 16, { animate: false });
 
   // Use actual click coordinates for cadastre query if available (listing coords are
@@ -2033,11 +2046,18 @@ let _lastSearchCardData = null;
 
 function _injectSearchCard() {
   if (!_lastSearchCardData || !_lastSearchCardData.listing) return;
-  const existing = document.getElementById('search-result-card');
-  if (!existing) {
-    const { label, lga, lotDP, lat, lng, listing } = _lastSearchCardData;
-    showSearchCard({ label, lga, lotDP, lat, lng, listing });
+  const { label, lga, lotDP, lat, lng, listing } = _lastSearchCardData;
+  const inListCard = document.querySelector(`.listing-card[data-id="${String(listing.id)}"]`);
+  if (inListCard) {
+    const src = document.getElementById('search-result-card');
+    if (src) src.remove();
+    document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
+    inListCard.classList.add('active');
+    inListCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return;
   }
+  const existing = document.getElementById('search-result-card');
+  if (!existing) showSearchCard({ label, lga, lotDP, lat, lng, listing });
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -2045,6 +2065,10 @@ function _injectSearchCard() {
 // Re-filter sidebar whenever the map moves or zooms
 map.on('moveend zoomend', () => {
   if (showListings) renderListings();
+  if (_activeListingId) {
+    const activeCard = document.querySelector(`.listing-card[data-id="${_activeListingId}"]`);
+    if (activeCard) { activeCard.classList.add('active'); activeCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+  }
   _injectSearchCard();
   // Refresh easement buffers if electricity overlay is active
   const elecEntry = overlayRegistry['electricity-transmission'];
@@ -2100,10 +2124,56 @@ function buildDomainGeoWindow() {
   };
 }
 
+// ─── Immediate Domain search at a specific point (used by address search) ────
+async function runDomainSearchAt(lat, lng) {
+  if (!window.DomainAPI || !DomainAPI.search) return null;
+  const delta = 0.05;
+  const geoWindow = {
+    box: {
+      topLeft:     { lat: lat + delta, lon: lng - delta },
+      bottomRight: { lat: lat - delta, lon: lng + delta },
+    }
+  };
+  try {
+    const domainListings = await DomainAPI.search({
+      geoWindow,
+      propertyTypes:        _activeFilters.propertyTypes,
+      listingTypes:         [_activeFilters.listingType],
+      minBeds:              _activeFilters.minBeds,
+      maxBeds:              _activeFilters.maxBeds,
+      minBaths:             _activeFilters.minBaths,
+      minCars:              _activeFilters.minCars,
+      minPrice:             _activeFilters.minPrice,
+      maxPrice:             _activeFilters.maxPrice,
+      minLand:              _activeFilters.minLand,
+      maxLand:              _activeFilters.maxLand,
+      propertyFeatures:     _activeFilters.features,
+      listingAttributes:    _activeFilters.listingAttributes,
+      establishedType:      _activeFilters.establishedType,
+      excludePriceWithheld: _activeFilters.excludePriceWithheld,
+      excludeDepositTaken:  _activeFilters.excludeDepositTaken,
+      newDevOnly:           _activeFilters.newDevOnly,
+    });
+    listings.length = 0;
+    domainListings.forEach(l => listings.push(l));
+    renderListings();
+    if (window.backfillAgentFromCache) backfillAgentFromCache();
+    return listings.find(l =>
+      l.lat != null && l.lng != null &&
+      Math.abs(l.lat - lat) < 0.0005 &&
+      Math.abs(l.lng - lng) < 0.0005
+    ) || null;
+  } catch (err) {
+    console.error('[map] runDomainSearchAt failed:', err);
+    return null;
+  }
+}
+
 // ─── Domain search with debounce ─────────────────────────────────────────────
 let _domainSearchTimer = null;
 
 function debouncedDomainSearch() {
+  if (_suppressNextDomainSearch) { _suppressNextDomainSearch = false; return; }
   clearTimeout(_domainSearchTimer);
   _domainSearchTimer = setTimeout(runDomainSearch, 1500);
 }
@@ -2282,24 +2352,24 @@ runDomainSearch();
     if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
     if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
 
-    // Check if this address matches a known listing
-    const nearbyListing = listings.find(l => {
-      const dlat = Math.abs(l.lat - lat);
-      const dlng = Math.abs(l.lng - lng);
-      return dlat < 0.0005 && dlng < 0.0005;
-    });
+    _activeListingId = null;
 
-    // If a known listing, set _activeListingId so renderListings restores .active
-    if (nearbyListing) {
-      _activeListingId = nearbyListing.id;
-    } else {
-      _activeListingId = null;
-    }
-
-    // Wait for flyTo to fully finish before populating the sidebar —
-    // moveend fires during animation and renderListings() would wipe the card.
+    // Fly to location; suppress the moveend-triggered Domain search since we
+    // run our own immediately after landing.
+    _suppressNextDomainSearch = true;
     map.flyTo([lat, lng], 17, { animate: true, duration: 1.2 });
     await new Promise(resolve => map.once('moveend', resolve));
+
+    // Run a Domain search centred on this point and wait for the results —
+    // this gives us the actual listings at this location before we try to match.
+    const nearbyListing = await runDomainSearchAt(lat, lng);
+
+    if (nearbyListing) {
+      _activeListingId = String(nearbyListing.id);
+      document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
+      const matchCard = document.querySelector(`.listing-card[data-id="${_activeListingId}"]`);
+      if (matchCard) { matchCard.classList.add('active'); matchCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    }
 
     const srlupEntry   = overlayRegistry['nsw-srlup'];
     const zoningEntry  = overlayRegistry['nsw-land-zoning'];
