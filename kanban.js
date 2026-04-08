@@ -144,6 +144,8 @@ function addToPipeline(listing) {
       _lotDPs:        listing._lotDPs         || null,
       _areaSqm:       listing._areaSqm        || null,
       _propertyCount: listing._propertyCount  || 1,
+      _agent:         listing.agent           || null,
+      _listingUrl:    listing.listingUrl       || null,
     },
     dd: {}
   };
@@ -151,6 +153,26 @@ function addToPipeline(listing) {
   updateAddButtons();
   if (kanbanVisible) renderBoard();
   showKanbanToast(`${listing.address} added to pipeline`);
+
+  // Async — fetch Lot/DP from cadastre if not already present
+  if (!pipeline[id].property._lotDPs && window.fetchLotDP) {
+    const _lat = lat ?? parcels[0]?.lat ?? null;
+    const _lng = lng ?? parcels[0]?.lng ?? null;
+    if (_lat && _lng) {
+      fetchLotDP(_lat, _lng).then(cadastre => {
+        if (!pipeline[id] || !cadastre?.lotid) return;
+        pipeline[id].property._lotDPs = cadastre.lotid;
+        if (!pipeline[id].property._areaSqm && cadastre.areaSqm) pipeline[id].property._areaSqm = cadastre.areaSqm;
+        savePipeline(id);
+        const modal = document.getElementById('kb-modal');
+        if (modal?.dataset?.propertyId === String(id)) {
+          const lotEl = modal.querySelector('.kb-modal-lotdp');
+          if (lotEl) lotEl.textContent = cadastre.lotid;
+        }
+        if (kanbanVisible) renderBoard();
+      }).catch(() => {});
+    }
+  }
 
   // Async — query overlay layers and pre-populate DD risks
   const lat = listing.lat ?? parcels[0]?.lat ?? null;
@@ -189,15 +211,12 @@ function moveToStage(id, stageId) {
   }
 }
 
-// getNotes: returns notes array, migrating legacy string format
 function getNotes(id) {
   const raw = pipeline[id]?.note;
   if (!raw) return [];
   if (Array.isArray(raw)) return raw;
-  // Migrate legacy plain string → single dated entry
   return [{ text: raw, ts: pipeline[id].addedAt || Date.now() }];
 }
-
 function addNote(id, text) {
   if (!pipeline[id] || !text.trim()) return;
   const notes = getNotes(id);
@@ -205,11 +224,9 @@ function addNote(id, text) {
   pipeline[id].note = notes;
   savePipeline(id);
 }
-
 function deleteNote(id, ts) {
   if (!pipeline[id]) return;
-  const notes = getNotes(id).filter(n => n.ts !== ts);
-  pipeline[id].note = notes;
+  pipeline[id].note = getNotes(id).filter(n => n.ts !== ts);
   savePipeline(id);
 }
 
@@ -544,6 +561,43 @@ function openCardModal(id) {
   const terms = getTerms(id);
   const offers = getOffers(id);
 
+  async function resolveFromDomain() {
+    if (!window.matchListingByAddress || !window.getListings) return;
+    let hit = matchListingByAddress(window.getListings(), p.address, p.suburb, p._lotDPs);
+    if (!hit && window.runDomainSearchAt) {
+      const parcel = p._parcels?.[0];
+      if (parcel?.lat && parcel?.lng) hit = await runDomainSearchAt(parcel.lat, parcel.lng, p.address, p.suburb);
+    }
+    if (!hit) return;
+    let changed = false;
+    if (hit.agent && !(p._agent?.name || p._agent?.email || p._agent?.phone)) {
+      p._agent = hit.agent; changed = true;
+    }
+    if (hit.listingUrl && !p._listingUrl) { p._listingUrl = hit.listingUrl; changed = true; }
+    if (changed) savePipeline(id);
+    const modal = document.getElementById('kb-modal');
+    if (!modal || modal.dataset.propertyId !== String(id)) return;
+    if (p._listingUrl && !modal.querySelector('.kb-domain-link')) {
+      const lotEl = modal.querySelector('.kb-modal-lotdp');
+      if (lotEl) {
+        const link = document.createElement('a');
+        link.href = p._listingUrl; link.target = '_blank'; link.rel = 'noopener';
+        link.className = 'kb-domain-link';
+        link.style.cssText = 'display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none';
+        link.textContent = '↗ View on Domain';
+        lotEl.insertAdjacentElement('afterend', link);
+      }
+    }
+    if (window.CRM) {
+      const crmEl = modal.querySelector('.crm-section');
+      if (crmEl) {
+        const newCrm = await CRM.renderContactsSection(id, p._agent);
+        crmEl.replaceWith(newCrm);
+      }
+    }
+  }
+  resolveFromDomain();
+
   function buildDepositsHtml(deps) {
     return deps.map((d, i) => `
       <div class="kb-deposit-row" data-idx="${i}">
@@ -595,16 +649,21 @@ function openCardModal(id) {
   overlay.innerHTML = `
     <div class="kb-modal">
       <div class="kb-modal-header">
-        <div>
+        <div style="flex:1;min-width:0">
           <div class="kb-modal-price">${formatKbPrice(p.price, terms.price)}</div>
           <div class="kb-modal-address">📍 ${p.address}, ${p.suburb} NSW</div>
-          ${p._lotDPs ? `<div class="kb-modal-lotdp" style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${p._lotDPs}</div>` : ''}
+          ${p._lotDPs
+            ? `<div class="kb-modal-lotdp" style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${p._lotDPs}</div>`
+            : `<div class="kb-modal-lotdp" style="font-size:11px;color:#bbb;margin-top:3px">Lot/DP loading…</div>`}
+          ${p._listingUrl ? `<a href="${p._listingUrl}" target="_blank" rel="noopener" class="kb-domain-link" style="display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none">↗ View on Domain</a>` : ''}
         </div>
         <button class="kb-modal-close" title="Close">✕</button>
       </div>
       <div class="kb-modal-body">
 
-        <div class="kb-section-label">Vendor Terms</div>
+        <div class="crm-section-placeholder"></div>
+
+        <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
         <div class="kb-terms">
           <div class="kb-terms-row">
             <div class="kb-field-wrap">
@@ -673,6 +732,14 @@ function openCardModal(id) {
   document.body.appendChild(overlay);
   const modal = overlay.querySelector('.kb-modal');
 
+  // Mount CRM contacts section
+  if (window.CRM) {
+    CRM.renderContactsSection(id, p._agent).then(crmEl => {
+      const placeholder = modal.querySelector('.crm-section-placeholder');
+      if (placeholder) placeholder.replaceWith(crmEl);
+    });
+  }
+
   // Close
   overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -713,8 +780,6 @@ function openCardModal(id) {
       listEl.appendChild(entry);
     });
   }
-
-  // Initial render
   renderNotesList();
 
   const noteInput = modal.querySelector('.kb-note-input');
@@ -727,12 +792,8 @@ function openCardModal(id) {
     const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (boardCard) refreshCardIndicators(boardCard, id);
   });
-
-  // Allow Ctrl/Cmd+Enter to submit
   noteInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      modal.querySelector('.kb-note-add-btn').click();
-    }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) modal.querySelector('.kb-note-add-btn').click();
   });
 
   // Terms
@@ -930,6 +991,25 @@ const _origRenderListings = renderListings;
 window.renderListings = function () {
   _origRenderListings();
   setTimeout(updateAddButtons, 0);
+};
+
+window.backfillAgentFromCache = function () {
+  if (!window.matchListingByAddress || !window.getListings) return;
+  const currentListings = window.getListings();
+  if (!currentListings.length) return;
+  let changed = false;
+  Object.keys(pipeline).forEach(id => {
+    const item = pipeline[id];
+    if (!item?.property) return;
+    const p = item.property;
+    if (p._agent?.name || p._agent?.email || p._agent?.phone) return;
+    const hit = matchListingByAddress(currentListings, p.address, p.suburb, p._lotDPs);
+    if (!hit) return;
+    if (hit.agent) { p._agent = hit.agent; changed = true; }
+    if (hit.listingUrl && !p._listingUrl) { p._listingUrl = hit.listingUrl; changed = true; }
+    if (changed) dbSave(id, item);
+  });
+  if (changed) cacheSave(pipeline);
 };
 
 // Load pipeline from DB (falls back to localStorage if offline)
