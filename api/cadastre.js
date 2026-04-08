@@ -3,34 +3,26 @@
  * Server-side proxy for state cadastre ArcGIS endpoints.
  */
 
-// Convert WGS84 lng/lat to Web Mercator x/y
-function toWebMercator(lng, lat) {
-  const x = lng * 20037508.34 / 180;
-  let y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / (Math.PI / 180);
-  y = y * 20037508.34 / 180;
-  return { x, y };
-}
-
 const STATE_CADASTRE = {
   NSW: {
     url:      'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query',
     lotField: 'lotidstring',
+    areaField: null,  // calculated from geometry
     inSR:     '4326',
-    outSR:    '4326',
     extraParams: {},
   },
   QLD: {
-    url:      'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/LandParcelPropertyFramework/MapServer/6/query',
+    url:      'https://spatial-gis.information.qld.gov.au/arcgis/rest/services/PlanningCadastre/LandParcelPropertyFramework/MapServer/4/query',
     lotField: 'lotplan',
-    inSR:     '102100',  // Web Mercator
-    outSR:    '4326',
-    extraParams: { resultRecordCount: '1', where: '1=1' },
+    areaField: 'lot_area',  // already in m²
+    inSR:     '4326',
+    extraParams: { resultRecordCount: '1', where: "parcel_typ <> 'Watercourse' AND parcel_typ <> 'Road'" },
   },
   VIC: {
     url:      'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/ArcGIS/rest/services/Vicmap_Parcel/FeatureServer/0/query',
     lotField: 'spi',
+    areaField: null,
     inSR:     '4326',
-    outSR:    '4326',
     extraParams: { resultRecordCount: '1', where: '1=1' },
   },
   SA:  null,
@@ -55,24 +47,15 @@ export default async function handler(req, res) {
   const latNum = parseFloat(lat);
   const lngNum = parseFloat(lng);
 
-  // Use Web Mercator geometry for services that need it
-  let geomStr;
-  if (service.inSR === '102100') {
-    const { x, y } = toWebMercator(lngNum, latNum);
-    geomStr = `${x},${y}`;
-  } else {
-    geomStr = `${lngNum},${latNum}`;
-  }
-
   const params = new URLSearchParams({
     f:              'json',
-    geometry:       geomStr,
+    geometry:       `${lngNum},${latNum}`,
     geometryType:   'esriGeometryPoint',
     inSR:           service.inSR,
     spatialRel:     'esriSpatialRelIntersects',
-    outFields:      service.lotField,
+    outFields:      service.areaField ? `${service.lotField},${service.areaField}` : service.lotField,
     returnGeometry: 'true',
-    outSR:          service.outSR,
+    outSR:          '4326',
     ...service.extraParams,
   });
 
@@ -105,18 +88,26 @@ export default async function handler(req, res) {
     let rings   = null;
     let areaSqm = null;
 
+    // Use server-provided area if available
+    if (service.areaField && attrs[service.areaField]) {
+      areaSqm = Math.round(attrs[service.areaField]);
+    }
+
     if (feat.geometry && feat.geometry.rings) {
       rings = feat.geometry.rings.map(ring => ring.map(([x, y]) => [y, x]));
-      const metersPerDegLng = 111320 * Math.cos(latNum * Math.PI / 180);
-      let area = 0;
-      for (const ring of feat.geometry.rings) {
-        let ringArea = 0;
-        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-          ringArea += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+      // Calculate area from geometry if not provided by server
+      if (!areaSqm) {
+        const metersPerDegLng = 111320 * Math.cos(latNum * Math.PI / 180);
+        let area = 0;
+        for (const ring of feat.geometry.rings) {
+          let ringArea = 0;
+          for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            ringArea += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+          }
+          area += Math.abs(ringArea) / 2;
         }
-        area += Math.abs(ringArea) / 2;
+        areaSqm = Math.round(area * 111320 * metersPerDegLng);
       }
-      areaSqm = Math.round(area * 111320 * metersPerDegLng);
     }
 
     return res.status(200).json({ lotid, areaSqm, rings });
