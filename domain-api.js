@@ -9,8 +9,9 @@
  * API key lives in the DOMAIN_API_KEY Vercel environment variable — never in this file.
  */
 
-// ─── In-memory cache: id → normalised listing ────────────────────────────────
+// ─── In-memory cache: id → normalised listing, address → normalised listing ──
 const _enrichmentCache = {};
+const _addressCache = {};  // normalised lowercase address → listing
 
 // ─── Search payload builder ───────────────────────────────────────────────────
 // Builds the POST body for POST /v1/listings/residential/_search
@@ -113,7 +114,10 @@ async function liveSearch(options = {}) {
     .map(normaliseLiveListing)
     .filter(Boolean); // drops Project-type items
 
-  results.forEach(l => { _enrichmentCache[String(l.id)] = l; });
+  results.forEach(l => {
+    _enrichmentCache[String(l.id)] = l;
+    if (l.address) _addressCache[l.address.toLowerCase()] = l;
+  });
   return results;
 }
 
@@ -138,8 +142,9 @@ function normaliseLiveListing(item) {
     ? `https://www.domain.com.au/${listing.listingSlug}`
     : `https://www.domain.com.au/${listing.id}`;
 
-  // Agent contact: contacts[0].name is a full name string per API docs
+  // Agent contact: contacts[0] per API docs
   const contact = listing.advertiser?.contacts?.[0] || null;
+  const agencyName = listing.advertiser?.name || '';
 
   return {
     // Identity
@@ -173,7 +178,13 @@ function normaliseLiveListing(item) {
 
     // Agent / agency
     advertiser: listing.advertiser || null,
-    agent: contact ? { name: contact.name, photoUrl: contact.photoUrl } : null,
+    agent: contact ? {
+      name:     contact.name         || '',
+      photoUrl: contact.photoUrl     || '',
+      email:    contact.email        || '',
+      phone:    contact.phoneNumber  || contact.mobile || contact.phone || '',
+      agency:   agencyName,
+    } : (agencyName ? { name: '', photoUrl: '', email: '', phone: '', agency: agencyName } : null),
 
     // Media
     photos: (listing.media || [])
@@ -206,9 +217,15 @@ const DomainAPI = {
     }
   },
 
-  /** Synchronous cache lookup — used by map.js for badge/link display */
+  /** Synchronous cache lookup by listing id */
   getEnrichedListing(id) {
     return _enrichmentCache[String(id)] || null;
+  },
+
+  /** Synchronous cache lookup by address string (case-insensitive) */
+  getEnrichedByAddress(address) {
+    if (!address) return null;
+    return _addressCache[address.toLowerCase()] || null;
   },
 
   /** Always live */
