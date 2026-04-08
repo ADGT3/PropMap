@@ -309,57 +309,37 @@ const ZONING_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/service
 const FLOOD_BASE  = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/Hazard/MapServer';
 const ROADS_BASE  = 'https://mapprod.environment.nsw.gov.au/arcgis/rest/services/Planning/EPI_Additional_Layers/MapServer';
 
-// ─── Fetch Lot/DP + parcel boundary from NSW Cadastre ────────────────────────
-// Defined at module scope so selectPropertyAtPoint can call it directly.
+// ─── Fetch Lot/DP + parcel boundary — state-aware ────────────────────────────
+// Queries the appropriate state cadastre service based on lat/lng.
+// Falls back gracefully (no boundary) for locations without a known service.
 
+function detectAustralianState(lat, lng) {
+  // Rough bounding boxes — good enough for cadastre routing
+  if (lat > -29.0 && lat < -28.1 && lng > 153.2 && lng < 153.7) return 'QLD'; // SE QLD coast override
+  if (lat > -29.5 && lng > 138.0 && lng < 154.0) return 'QLD';
+  if (lat > -39.2 && lat < -33.9 && lng > 140.9 && lng < 149.9) return 'VIC';
+  if (lat > -38.1 && lat < -25.9 && lng > 129.0 && lng < 141.0) return 'SA';
+  if (lat > -35.2 && lat < -25.9 && lng > 112.9 && lng < 129.0) return 'WA';
+  if (lat > -43.7 && lat < -39.5 && lng > 143.8 && lng < 148.5) return 'TAS';
+  if (lat > -20.0 && lat < -11.0 && lng > 129.0 && lng < 138.1) return 'NT';
+  if (lat > -35.9 && lat < -35.1 && lng > 148.8 && lng < 149.4) return 'ACT';
+  return 'NSW'; // default
+}
+
+// fetchLotDP — proxied via api/cadastre.js to avoid browser CORS on state ArcGIS servers
 async function fetchLotDP(lat, lng) {
-  const params = new URLSearchParams({
-    f:            'json',
-    geometry:     `${lng},${lat}`,
-    geometryType: 'esriGeometryPoint',
-    inSR:         '4326',
-    spatialRel:   'esriSpatialRelIntersects',
-    outFields:    'lotidstring',
-    returnGeometry: 'true',
-    outSR:        '4326'
-  });
-
+  const state = detectAustralianState(lat, lng);
   const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), 8000);
-
+  const tid = setTimeout(() => controller.abort(), 10000);
   try {
-    const res  = await fetch(
-      'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query?' + params,
-      { signal: controller.signal }
-    );
+    const res  = await fetch(`/api/cadastre?state=${state}&lat=${lat}&lng=${lng}`, { signal: controller.signal });
     clearTimeout(tid);
-    const json = await res.json();
-    const feat = (json.features || [])[0];
-    if (feat) {
-      const attrs = feat.attributes || {};
-      const lotid = attrs.lotidstring || null;
-      let rings   = null;
-      let areaSqm = null;
-      if (feat.geometry && feat.geometry.rings) {
-        rings = feat.geometry.rings.map(ring => ring.map(([x, y]) => [y, x]));
-        // Calculate area from rings using shoelace formula, converted to m² at Sydney's latitude
-        const metersPerDegLat = 111320;
-        const metersPerDegLng = 111320 * Math.cos(-33.87 * Math.PI / 180);
-        let area = 0;
-        for (const ring of feat.geometry.rings) {
-          let ringArea = 0;
-          for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-            ringArea += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
-          }
-          area += Math.abs(ringArea) / 2;
-        }
-        areaSqm = Math.round(area * metersPerDegLng * metersPerDegLat);
-      }
-      return { lotid, areaSqm, rings };
-    }
-  } catch (err) { clearTimeout(tid); }
-
-  return { lotid: null, areaSqm: null, rings: null };
+    if (!res.ok) return { lotid: null, areaSqm: null, rings: null };
+    return await res.json();
+  } catch (err) {
+    clearTimeout(tid);
+    return { lotid: null, areaSqm: null, rings: null };
+  }
 }
 
 // ─── Sidebar property card ────────────────────────────────────────────────────
@@ -1523,25 +1503,9 @@ async function drawEasementBuffers() {
 async function fetchAndDrawParcel(lat, lng) {
   if (parcelLayer) { map.removeLayer(parcelLayer); parcelLayer = null; }
   try {
-    const params = new URLSearchParams({
-      f:              'json',
-      geometry:       `${lng},${lat}`,
-      geometryType:   'esriGeometryPoint',
-      inSR:           '4326',
-      spatialRel:     'esriSpatialRelIntersects',
-      outFields:      'lotidstring',
-      returnGeometry: 'true',
-      outSR:          '4326',
-      resultRecordCount: '1'
-    });
-    const res  = await fetch(
-      'https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query?' + params
-    );
-    const json = await res.json();
-    const feat = (json.features || [])[0];
-    if (feat && feat.geometry && feat.geometry.rings) {
-      const rings = feat.geometry.rings.map(ring => ring.map(([x, y]) => [y, x]));
-      drawParcel(rings);
+    const cadastre = await fetchLotDP(lat, lng);
+    if (cadastre && cadastre.rings) {
+      drawParcel(cadastre.rings);
     }
   } catch (err) { console.warn('fetchAndDrawParcel error:', err); }
 }
@@ -2286,7 +2250,6 @@ runDomainSearch();
       f:           'json',
       maxSuggestions: '8',
       countryCode: 'AUS',
-      searchExtent: '149.5,-35.5,152.0,-32.5'  // Greater Sydney bbox
     });
 
     const sugRes  = await fetch(`${BASE}/suggest?${sugParams}`);
@@ -2314,11 +2277,12 @@ runDomainSearch();
       // For Australian addresses ArcGIS returns suburb in Neighborhood, City = LGA
       const suburb = attr.Neighborhood || '';
       const lga    = attr.City || '';
+      const state  = attr.Region || '';
       return {
         lat:          c.location.y,
         lon:          c.location.x,
         display_name: [attr.StAddr, suburb].filter(Boolean).join(', '),
-        _sub:         ['NSW', attr.Postal].filter(Boolean).join(' '),
+        _sub:         [state, attr.Postal].filter(Boolean).join(' '),
         _lga:         lga,
         _postcode:    attr.Postal || ''
       };
