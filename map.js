@@ -326,16 +326,58 @@ function detectAustralianState(lat, lng) {
   return 'NSW'; // default
 }
 
-// fetchLotDP — proxied via api/cadastre.js to avoid browser CORS on state ArcGIS servers
+// fetchLotDP — NSW queries sixmaps directly (no CORS restriction, faster).
+// Interstate queries go via api/cadastre.js proxy (state ArcGIS servers block browser CORS).
 async function fetchLotDP(lat, lng) {
   const state = detectAustralianState(lat, lng);
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), 10000);
+
   try {
-    const res  = await fetch(`/api/cadastre?state=${state}&lat=${lat}&lng=${lng}`, { signal: controller.signal });
-    clearTimeout(tid);
-    if (!res.ok) return { lotid: null, areaSqm: null, rings: null };
-    return await res.json();
+    let url;
+    if (state === 'NSW') {
+      // Direct browser call — sixmaps allows cross-origin requests
+      const params = new URLSearchParams({
+        f:              'json',
+        geometry:       `${lng},${lat}`,
+        geometryType:   'esriGeometryPoint',
+        inSR:           '4326',
+        spatialRel:     'esriSpatialRelIntersects',
+        outFields:      'lotidstring',
+        returnGeometry: 'true',
+        outSR:          '4326',
+      });
+      url = `https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Cadastre/MapServer/9/query?${params}`;
+      const res  = await fetch(url, { signal: controller.signal });
+      clearTimeout(tid);
+      const json = await res.json();
+      const feat = (json.features || [])[0];
+      if (!feat) return { lotid: null, areaSqm: null, rings: null };
+      const attrs = feat.attributes || {};
+      const lotid = attrs.lotidstring || null;
+      let rings = null, areaSqm = null;
+      if (feat.geometry && feat.geometry.rings) {
+        rings = feat.geometry.rings.map(ring => ring.map(([x, y]) => [y, x]));
+        const metersPerDegLat = 111320;
+        const metersPerDegLng = 111320 * Math.cos(lat * Math.PI / 180);
+        let area = 0;
+        for (const ring of feat.geometry.rings) {
+          let ringArea = 0;
+          for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            ringArea += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
+          }
+          area += Math.abs(ringArea) / 2;
+        }
+        areaSqm = Math.round(area * metersPerDegLng * metersPerDegLat);
+      }
+      return { lotid, areaSqm, rings };
+    } else {
+      // Interstate — proxy via api/cadastre.js (CORS restricted servers)
+      const res = await fetch(`/api/cadastre?state=${state}&lat=${lat}&lng=${lng}`, { signal: controller.signal });
+      clearTimeout(tid);
+      if (!res.ok) return { lotid: null, areaSqm: null, rings: null };
+      return await res.json();
+    }
   } catch (err) {
     clearTimeout(tid);
     return { lotid: null, areaSqm: null, rings: null };

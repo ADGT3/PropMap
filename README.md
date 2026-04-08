@@ -198,9 +198,10 @@ contact_properties (
 
 
 ### Cadastre — Parcel Boundary (`api/cadastre.js`)
-- Server-side proxy routes parcel boundary queries to the correct state cadastre service based on lat/lng
-- `map.js` calls `/api/cadastre?state=NSW&lat=...&lng=...` — no direct browser requests to state ArcGIS servers (CORS)
-- Address search and map clicks both use this proxy for boundary drawing and Lot/DP lookup
+- **NSW queries sixmaps directly from the browser** — sixmaps allows cross-origin requests so no proxy needed; this keeps NSW fast with no cold-start latency
+- **Interstate queries** go via `api/cadastre.js` server-side proxy — other state ArcGIS servers block browser CORS requests
+- `detectAustralianState(lat, lng)` in `map.js` routes to the correct path based on bounding box
+- Address search and map clicks both use this logic for boundary drawing and Lot/DP lookup
 
 | State | Boundary | Lot ID | Source |
 |---|---|---|---|
@@ -319,6 +320,6 @@ See `DEPLOY.md` for full setup guide.
 
 | Version | Notes |
 |---|---|
-| V63 | State-aware parcel boundary proxy (`api/cadastre.js`). NSW, QLD, VIC, WA boundaries working interstate. Address search works nationally. |
+| V63 | State-aware parcel boundary. NSW queries sixmaps directly (fast). Interstate via `api/cadastre.js` proxy. QLD, VIC, WA boundaries working. Address search works nationally. |
 | V62 | CRM module (contacts DB, collapsible modal section, Domain agent save). Timestamped notes with reverse-chronological history. Lot/DP async backfill. Agent/listingUrl stored on pipeline items. Address-string listing match (normalised, 3-pass). `runDomainSearchAt` for immediate post-search address lookup. Domain search debounce 5s→1.5s. `_suppressNextDomainSearch` flag. Listing panel highlight after address search. `api/contacts.js`, `api/db-setup.js`, `crm.js`, `crm-styles.css` added. |
 | V60 | Domain API live (no mock). Viewport geoWindow search, 1.5s debounce, 100 cap. `dd-risks.js` for DD automation. Topo = NSW VectorTile Hybrid via MapLibre GL. Tiles proxied via `api/tiles.js` query params. |
