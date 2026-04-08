@@ -2496,6 +2496,84 @@ runDomainSearch();
 
 })();
 
+// ─── Pipeline map pins ────────────────────────────────────────────────────────
+
+const PIPELINE_PIN_STAGES = new Set(['shortlisted', 'under-dd', 'offer', 'acquired']);
+const PIPELINE_PIN_COLOR  = '#7b2fbe'; // purple
+let _pipelinePinLayer = null;
+
+window._renderPipelinePins = function () {
+  // Remove existing pipeline pin layer
+  if (_pipelinePinLayer) { map.removeLayer(_pipelinePinLayer); _pipelinePinLayer = null; }
+
+  const pipelineData = window.getPipelineData ? window.getPipelineData() : null;
+  console.log('[pipeline pins] pipelineData:', pipelineData);
+  if (!pipelineData) return;
+
+  const stages = window.getPipelineStages ? window.getPipelineStages() : [];
+  const stageLabel = {};
+  stages.forEach(s => { stageLabel[s.id] = s.label; });
+
+  const markers = [];
+
+  Object.entries(pipelineData).forEach(([id, item]) => {
+    console.log('[pipeline pins] item', id, 'stage:', item?.stage, 'property:', item?.property);
+    if (!item?.property) return;
+    if (!PIPELINE_PIN_STAGES.has(item.stage)) return;
+
+    const p   = item.property;
+    // lat/lng stored on _parcels array, not directly on property
+    const firstParcel = (p._parcels && p._parcels.length > 0) ? p._parcels[0] : null;
+    const lat = firstParcel?.lat ?? null;
+    const lng = firstParcel?.lng ?? null;
+    console.log('[pipeline pins] id:', id, 'firstParcel:', firstParcel, 'lat:', lat, 'lng:', lng);
+    if (!lat || !lng) return;
+
+    const address = p.address || '';
+    const suburb  = p.suburb  || '';
+    const stage   = stageLabel[item.stage] || item.stage;
+
+    // Purple teardrop pin matching app style
+    const pinHtml = `<div style="
+      width:22px;height:22px;border-radius:50% 50% 50% 0;
+      transform:rotate(-45deg);background:${PIPELINE_PIN_COLOR};
+      border:2px solid rgba(255,255,255,0.8);
+      box-shadow:0 1px 4px rgba(0,0,0,0.35);
+    "></div>`;
+
+    const icon = L.divIcon({
+      html:      pinHtml,
+      iconSize:  [22, 22],
+      iconAnchor:[11, 22],
+      className: 'pipeline-map-pin',
+    });
+
+    const marker = L.marker([lat, lng], { icon, zIndexOffset: 500 });
+
+    marker.on('click', () => {
+      // Same behaviour as any other pin — selectPropertyAtPoint
+      const srlupEntry  = overlayRegistry['nsw-srlup'];
+      const zoningEntry = overlayRegistry['nsw-land-zoning'];
+      const floodEntry  = overlayRegistry['nsw-flood'];
+      const roadsEntry  = overlayRegistry['nsw-future-roads'];
+      selectPropertyAtPoint(
+        { lat, lng },
+        !!(srlupEntry  && srlupEntry.def.enabled),
+        !!(zoningEntry && zoningEntry.def.enabled),
+        !!(floodEntry  && floodEntry.def.enabled),
+        !!(roadsEntry  && roadsEntry.def.enabled),
+        null
+      );
+    });
+
+    markers.push(marker);
+  });
+
+  if (markers.length) {
+    _pipelinePinLayer = L.layerGroup(markers).addTo(map);
+  }
+};
+
 // ─── Public API for kanban ────────────────────────────────────────────────────
 // Called by kanban.js when the address link is clicked for a multi-parcel entry.
 window.matchListingByAddress = matchListingByAddress;
@@ -2792,4 +2870,26 @@ window.reSelectParcels = function(parcels) {
   }
 
   btn.addEventListener('click', showModePicker);
+})();
+
+// ─── Deferred pipeline pin render ────────────────────────────────────────────
+// kanban.js may load and call refreshPipelinePins before map.js registers
+// _renderPipelinePins. Poll briefly after load to catch that case.
+(function () {
+  let attempts = 0;
+  const interval = setInterval(() => {
+    attempts++;
+    const data = typeof window.getPipelineData === 'function' ? window.getPipelineData() : null;
+    console.log('[pipeline pins] attempt', attempts, 'data keys:', data ? Object.keys(data).length : 'null');
+    if (data && Object.keys(data).length > 0) {
+      console.log('[pipeline pins] pipeline loaded, rendering pins');
+      window._renderPipelinePins();
+      clearInterval(interval);
+    } else if (attempts > 40) {
+      // Pipeline loaded but empty — still try render (will just place no pins)
+      console.log('[pipeline pins] pipeline empty or timeout, rendering anyway');
+      if (typeof window._renderPipelinePins === 'function') window._renderPipelinePins();
+      clearInterval(interval);
+    }
+  }, 200);
 })();
