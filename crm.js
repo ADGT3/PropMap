@@ -2,20 +2,11 @@
  * crm.js
  * CRM Contact management for the Sydney Property Map.
  *
- * Manages contacts stored in the Neon `contacts` + `contact_properties` tables.
- * Rendered inside the Kanban card modal as a "Contacts" section.
+ * Renders inside the Kanban card modal as a collapsible "Contacts" section.
+ * Domain agent (if known) appears as the first read-only row.
+ * Additional contacts (referrers, buyer's agents) are stored in Neon DB.
  *
  * Exposes: window.CRM
- *
- * CONTACT ROLES
- *   listing_agent — agent marketing the property (on-market)
- *   referrer      — person who introduced the off-market deal
- *   buyer_agent   — buyer's agent acting for us
- *
- * INTEGRATION
- *   Called by kanban.js openCardModal() to render the contacts section.
- *   When a Domain agent is found (resolveFromDomain), kanban.js calls
- *   CRM.offerSaveAgent(modal, pipelineId, agentData) to show a save prompt.
  */
 
 const CRM_BASE = '/api/contacts';
@@ -23,7 +14,7 @@ const CRM_BASE = '/api/contacts';
 const ROLES = [
   { value: 'listing_agent', label: 'Listing Agent' },
   { value: 'referrer',      label: 'Referrer'       },
-  { value: 'buyer_agent',   label: 'Buyer\'s Agent' },
+  { value: 'buyer_agent',   label: "Buyer's Agent"  },
 ];
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
@@ -65,97 +56,195 @@ async function apiDelete(id) {
 
 function splitName(fullName = '') {
   const parts = fullName.trim().split(/\s+/);
-  return {
-    first_name: parts[0] || '',
-    last_name:  parts.slice(1).join(' ') || '',
-  };
+  return { first_name: parts[0] || '', last_name: parts.slice(1).join(' ') || '' };
 }
 
-function displayName(contact) {
-  return [contact.first_name, contact.last_name].filter(Boolean).join(' ') || '—';
+function displayName(c) {
+  return [c.first_name, c.last_name].filter(Boolean).join(' ') || '—';
 }
 
 // ─── Render contacts section ──────────────────────────────────────────────────
-// Returns an HTMLElement. Called by kanban.js and inserted into the modal body.
+// agentData: the Domain-sourced agent object from p._agent (may be null)
 
-async function renderContactsSection(pipelineId) {
+async function renderContactsSection(pipelineId, agentData) {
   const section = document.createElement('div');
   section.className = 'crm-section';
+
+  // ── Header row (collapsible toggle) ────────────────────────────────────────
   section.innerHTML = `
-    <div class="kb-section-label" style="margin-top:16px;display:flex;align-items:center;justify-content:space-between">
-      <span>Contacts</span>
-      <button class="crm-add-btn" title="Add contact">+ Add</button>
+    <div class="crm-header">
+      <button class="crm-toggle" aria-expanded="false">
+        <span class="crm-toggle-icon">▶</span>
+        <span class="kb-section-label" style="margin:0">Contacts</span>
+        <span class="crm-count"></span>
+      </button>
+      <button class="crm-add-btn" title="Add contact" style="display:none">+ Add</button>
     </div>
-    <div class="crm-list">
-      <div class="crm-loading">Loading…</div>
-    </div>
-    <div class="crm-form" style="display:none"></div>`;
+    <div class="crm-body" style="display:none">
+      <div class="crm-list"></div>
+      <div class="crm-form" style="display:none"></div>
+    </div>`;
 
-  const listEl = section.querySelector('.crm-list');
-  const formEl = section.querySelector('.crm-form');
-  const addBtn = section.querySelector('.crm-add-btn');
+  const toggleBtn = section.querySelector('.crm-toggle');
+  const toggleIcon = section.querySelector('.crm-toggle-icon');
+  const addBtn    = section.querySelector('.crm-add-btn');
+  const body      = section.querySelector('.crm-body');
+  const listEl    = section.querySelector('.crm-list');
+  const formEl    = section.querySelector('.crm-form');
+  const countEl   = section.querySelector('.crm-count');
 
-  // Load linked contacts
+  let expanded = false;
+
+  function setExpanded(val) {
+    expanded = val;
+    body.style.display    = expanded ? '' : 'none';
+    addBtn.style.display  = expanded ? '' : 'none';
+    toggleBtn.setAttribute('aria-expanded', expanded);
+    toggleIcon.textContent = expanded ? '▼' : '▶';
+  }
+
+  toggleBtn.addEventListener('click', () => setExpanded(!expanded));
+
+  // ── Load linked CRM contacts ────────────────────────────────────────────────
   async function reload() {
     listEl.innerHTML = '<div class="crm-loading">Loading…</div>';
+    let contacts = [];
     try {
-      const contacts = await apiGet({ pipeline_id: pipelineId });
-      renderList(contacts);
+      contacts = await apiGet({ pipeline_id: pipelineId });
     } catch (_) {
       listEl.innerHTML = '<div class="crm-empty">Could not load contacts</div>';
+      return;
     }
+    renderList(contacts);
+  }
+
+  function updateCount(crmCount) {
+    const agentCount = (agentData?.name || agentData?.email) ? 1 : 0;
+    const total = agentCount + crmCount;
+    countEl.textContent = total ? `(${total})` : '';
   }
 
   function renderList(contacts) {
-    if (!contacts.length) {
-      listEl.innerHTML = '<div class="crm-empty">No contacts linked</div>';
+    listEl.innerHTML = '';
+    updateCount(contacts.length);
+
+    // ── Domain agent row (read-only, always first) ──────────────────────────
+    if (agentData?.name || agentData?.email || agentData?.phone) {
+      const row = document.createElement('div');
+      row.className = 'crm-contact-row crm-domain-agent';
+      row.innerHTML = `
+        <div class="crm-contact-info">
+          <div class="crm-contact-name">
+            ${agentData.name || '—'}
+            <span class="crm-role-badge crm-role-listing_agent">Listing Agent</span>
+            <span class="crm-domain-badge">Domain</span>
+          </div>
+          <div class="crm-contact-meta">
+            ${agentData.agency ? `<span>${agentData.agency}</span>` : ''}
+            ${agentData.phone  ? `<a href="tel:${agentData.phone}" class="crm-link">${agentData.phone}</a>` : ''}
+            ${agentData.email  ? `<a href="mailto:${agentData.email}" class="crm-link">${agentData.email}</a>` : ''}
+          </div>
+        </div>
+        <div class="crm-contact-actions">
+          <button class="crm-save-domain-btn" title="Save to contacts">💾</button>
+        </div>`;
+
+      // Save Domain agent to CRM contacts
+      row.querySelector('.crm-save-domain-btn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.textContent = '…';
+        try {
+          const { first_name, last_name } = splitName(agentData.name || '');
+          // Check if already in contacts by email
+          const existing = agentData.email
+            ? (await apiGet({ search: agentData.email }).catch(() => [])).filter(c => c.email === agentData.email)
+            : [];
+          let contactId;
+          if (existing.length) {
+            contactId = existing[0].id;
+          } else {
+            const created = await apiPost({
+              first_name,
+              last_name,
+              mobile:    agentData.phone  || '',
+              email:     agentData.email  || '',
+              company:   agentData.agency || '',
+              source:    'domain_agent',
+              domain_id: String(pipelineId),
+            });
+            contactId = created.id;
+          }
+          await apiPost({ action: 'link', contact_id: contactId, pipeline_id: pipelineId, role: 'listing_agent' });
+          btn.textContent = '✓';
+          setTimeout(() => reload(), 800);
+        } catch (err) {
+          btn.textContent = '✕';
+          btn.disabled = false;
+          console.error('[CRM] save domain agent failed:', err);
+        }
+      });
+
+      listEl.appendChild(row);
+    }
+
+    // ── CRM contacts ────────────────────────────────────────────────────────
+    if (!contacts.length && !agentData?.name) {
+      const empty = document.createElement('div');
+      empty.className = 'crm-empty';
+      empty.textContent = 'No contacts linked';
+      listEl.appendChild(empty);
       return;
     }
-    listEl.innerHTML = '';
-    contacts.forEach(c => {
+
+    contacts.forEach(contact => {
       const row = document.createElement('div');
       row.className = 'crm-contact-row';
       row.innerHTML = `
         <div class="crm-contact-info">
           <div class="crm-contact-name">
-            ${displayName(c)}
-            <span class="crm-role-badge crm-role-${c.role}">${ROLES.find(r => r.value === c.role)?.label || c.role}</span>
+            ${displayName(contact)}
+            <span class="crm-role-badge crm-role-${contact.role}">${ROLES.find(r => r.value === contact.role)?.label || contact.role}</span>
           </div>
           <div class="crm-contact-meta">
-            ${c.company  ? `<span>${c.company}</span>` : ''}
-            ${c.mobile   ? `<a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a>` : ''}
-            ${c.email    ? `<a href="mailto:${c.email}" class="crm-link">${c.email}</a>` : ''}
+            ${contact.company ? `<span>${contact.company}</span>` : ''}
+            ${contact.mobile  ? `<a href="tel:${contact.mobile}" class="crm-link">${contact.mobile}</a>` : ''}
+            ${contact.email   ? `<a href="mailto:${contact.email}" class="crm-link">${contact.email}</a>` : ''}
           </div>
         </div>
         <div class="crm-contact-actions">
-          <button class="crm-edit-btn"   data-id="${c.id}" title="Edit contact">✎</button>
-          <button class="crm-unlink-btn" data-id="${c.id}" title="Remove from this property">✕</button>
+          <button class="crm-edit-btn"   data-id="${contact.id}" title="Edit">✎</button>
+          <button class="crm-unlink-btn" data-id="${contact.id}" title="Remove from property">✕</button>
         </div>`;
 
       row.querySelector('.crm-unlink-btn').addEventListener('click', async () => {
-        if (!confirm(`Remove ${displayName(c)} from this property?`)) return;
-        await apiPost({ action: 'unlink', contact_id: c.id, pipeline_id: pipelineId });
+        if (!confirm(`Remove ${displayName(contact)} from this property?`)) return;
+        await apiPost({ action: 'unlink', contact_id: contact.id, pipeline_id: pipelineId });
         reload();
       });
 
-      row.querySelector('.crm-edit-btn').addEventListener('click', () => {
-        showForm(c, c.role);
-      });
-
+      row.querySelector('.crm-edit-btn').addEventListener('click', () => showForm(contact, contact.role));
       listEl.appendChild(row);
     });
   }
 
-  // ── Contact form (create / edit) ──────────────────────────────────────────
+  // ── Contact form ────────────────────────────────────────────────────────────
   function showForm(prefill = {}, prefillRole = 'referrer') {
     formEl.style.display = 'block';
     addBtn.style.display = 'none';
-
     const isEdit = !!prefill.id;
 
     formEl.innerHTML = `
       <div class="crm-form-inner">
         <div class="crm-form-title">${isEdit ? 'Edit Contact' : 'Add Contact'}</div>
+
+        ${!isEdit ? `
+        <div style="margin-bottom:10px">
+          <label class="kb-field-label">Search existing contacts</label>
+          <input class="kb-input crm-search" type="text" placeholder="Name, company, email…">
+          <div class="crm-search-results"></div>
+        </div>
+        <div class="crm-form-divider">— or create new —</div>` : ''}
 
         <div class="crm-form-row">
           <div class="kb-field-wrap">
@@ -167,7 +256,6 @@ async function renderContactsSection(pipelineId) {
             <input class="kb-input crm-last" type="text" placeholder="Last" value="${prefill.last_name || ''}">
           </div>
         </div>
-
         <div class="crm-form-row">
           <div class="kb-field-wrap">
             <label class="kb-field-label">Mobile</label>
@@ -175,10 +263,9 @@ async function renderContactsSection(pipelineId) {
           </div>
           <div class="kb-field-wrap">
             <label class="kb-field-label">Email</label>
-            <input class="kb-input crm-email" type="text" placeholder="email@agency.com.au" value="${prefill.email || ''}">
+            <input class="kb-input crm-email" type="text" placeholder="email@domain.com" value="${prefill.email || ''}">
           </div>
         </div>
-
         <div class="crm-form-row">
           <div class="kb-field-wrap" style="flex:2">
             <label class="kb-field-label">Company</label>
@@ -192,41 +279,33 @@ async function renderContactsSection(pipelineId) {
           </div>
         </div>
 
-        ${isEdit ? '' : `
-        <div style="margin-top:6px">
-          <label class="kb-field-label">Or search existing contacts</label>
-          <input class="kb-input crm-search" type="text" placeholder="Search by name, company…">
-          <div class="crm-search-results"></div>
-        </div>`}
-
         <div class="crm-form-actions">
           <button class="crm-save-btn">${isEdit ? 'Save Changes' : 'Save & Link'}</button>
           <button class="crm-cancel-btn">Cancel</button>
-          ${isEdit ? `<button class="crm-delete-btn" style="margin-left:auto;color:#c0392b">Delete Contact</button>` : ''}
+          ${isEdit ? `<button class="crm-delete-btn">Delete Contact</button>` : ''}
         </div>
       </div>`;
 
-    // Search existing contacts
+    // Search existing
     const searchEl = formEl.querySelector('.crm-search');
     if (searchEl) {
-      let searchTimer;
+      let t;
       searchEl.addEventListener('input', () => {
-        clearTimeout(searchTimer);
+        clearTimeout(t);
         const q = searchEl.value.trim();
-        if (q.length < 2) { formEl.querySelector('.crm-search-results').innerHTML = ''; return; }
-        searchTimer = setTimeout(async () => {
+        const resultsEl = formEl.querySelector('.crm-search-results');
+        if (q.length < 2) { resultsEl.innerHTML = ''; return; }
+        t = setTimeout(async () => {
           const results = await apiGet({ search: q }).catch(() => []);
-          const resultsEl = formEl.querySelector('.crm-search-results');
           if (!results.length) { resultsEl.innerHTML = '<div class="crm-empty">No matches</div>'; return; }
           resultsEl.innerHTML = '';
-          results.forEach(c => {
+          results.forEach(ct => {
             const item = document.createElement('div');
             item.className = 'crm-search-item';
-            item.innerHTML = `<strong>${displayName(c)}</strong> ${c.company ? `· ${c.company}` : ''} ${c.mobile || c.email ? `· ${c.mobile || c.email}` : ''}`;
+            item.innerHTML = `<strong>${displayName(ct)}</strong>${ct.company ? ` · ${ct.company}` : ''}${ct.mobile || ct.email ? ` · ${ct.mobile || ct.email}` : ''}`;
             item.addEventListener('click', async () => {
-              // Link existing contact with selected role
               const role = formEl.querySelector('.crm-role').value;
-              await apiPost({ action: 'link', contact_id: c.id, pipeline_id: pipelineId, role });
+              await apiPost({ action: 'link', contact_id: ct.id, pipeline_id: pipelineId, role });
               hideForm();
               reload();
             });
@@ -239,8 +318,7 @@ async function renderContactsSection(pipelineId) {
     formEl.querySelector('.crm-save-btn').addEventListener('click', async () => {
       const first = formEl.querySelector('.crm-first').value.trim();
       if (!first) { formEl.querySelector('.crm-first').focus(); return; }
-
-      const contactData = {
+      const data = {
         first_name: first,
         last_name:  formEl.querySelector('.crm-last').value.trim(),
         mobile:     formEl.querySelector('.crm-mobile').value.trim(),
@@ -249,13 +327,11 @@ async function renderContactsSection(pipelineId) {
         source:     prefill.source || 'manual',
         domain_id:  prefill.domain_id || null,
       };
-
       const role = formEl.querySelector('.crm-role').value;
-
       if (isEdit) {
-        await apiPut({ id: prefill.id, ...contactData });
+        await apiPut({ id: prefill.id, ...data });
       } else {
-        const created = await apiPost(contactData);
+        const created = await apiPost(data);
         await apiPost({ action: 'link', contact_id: created.id, pipeline_id: pipelineId, role });
       }
       hideForm();
@@ -264,15 +340,12 @@ async function renderContactsSection(pipelineId) {
 
     formEl.querySelector('.crm-cancel-btn').addEventListener('click', hideForm);
 
-    const deleteBtn = formEl.querySelector('.crm-delete-btn');
-    if (deleteBtn) {
-      deleteBtn.addEventListener('click', async () => {
-        if (!confirm(`Delete ${displayName(prefill)} permanently from all properties?`)) return;
-        await apiDelete(prefill.id);
-        hideForm();
-        reload();
-      });
-    }
+    formEl.querySelector('.crm-delete-btn')?.addEventListener('click', async () => {
+      if (!confirm(`Delete ${displayName(prefill)} permanently?`)) return;
+      await apiDelete(prefill.id);
+      hideForm();
+      reload();
+    });
   }
 
   function hideForm() {
@@ -283,73 +356,10 @@ async function renderContactsSection(pipelineId) {
 
   addBtn.addEventListener('click', () => showForm());
 
-  // Initial load
-  reload();
+  await reload();
   return section;
-}
-
-// ─── "Save agent to contacts" prompt ─────────────────────────────────────────
-// Called by kanban.js when Domain agent data is resolved.
-// Inserts a subtle prompt under the header agent block.
-
-function offerSaveAgent(modal, pipelineId, agentData, domainId) {
-  if (!agentData?.name) return;
-  if (modal.querySelector('.crm-save-agent-prompt')) return; // already shown
-
-  const { first_name, last_name } = splitName(agentData.name);
-
-  const prompt = document.createElement('div');
-  prompt.className = 'crm-save-agent-prompt';
-  prompt.innerHTML = `<span style="font-size:11px;color:#888">Save agent to contacts?</span>
-    <button class="crm-save-agent-btn" style="font-size:11px;margin-left:6px;padding:2px 8px;border:1px solid #1a6b3a;border-radius:4px;background:none;color:#1a6b3a;cursor:pointer">Save</button>
-    <button class="crm-dismiss-btn" style="font-size:11px;margin-left:4px;padding:2px 6px;border:none;background:none;color:#aaa;cursor:pointer">✕</button>`;
-
-  prompt.querySelector('.crm-save-agent-btn').addEventListener('click', async () => {
-    try {
-      const existing = agentData.email ? await apiGet({ search: agentData.email }).catch(() => []) : [];
-      const match = existing.find(c => c.email === agentData.email);
-      if (match) {
-        // Already in contacts — just link
-        await apiPost({ action: 'link', contact_id: match.id, pipeline_id: pipelineId, role: 'listing_agent' });
-      } else {
-        const created = await apiPost({
-          first_name,
-          last_name,
-          mobile:    agentData.phone   || '',
-          email:     agentData.email   || '',
-          company:   agentData.agency  || '',
-          source:    'domain_agent',
-          domain_id: domainId          || null,
-        });
-        await apiPost({ action: 'link', contact_id: created.id, pipeline_id: pipelineId, role: 'listing_agent' });
-      }
-      prompt.innerHTML = '<span style="font-size:11px;color:#1a6b3a">✓ Saved to contacts</span>';
-      setTimeout(() => prompt.remove(), 2000);
-
-      // Refresh the crm section if visible
-      const crmSection = modal.querySelector('.crm-section');
-      if (crmSection) {
-        const newSection = await renderContactsSection(pipelineId);
-        crmSection.replaceWith(newSection);
-      }
-    } catch (err) {
-      prompt.querySelector('.crm-save-agent-btn').textContent = 'Error — retry';
-      console.error('[CRM] save agent failed:', err);
-    }
-  });
-
-  prompt.querySelector('.crm-dismiss-btn').addEventListener('click', () => prompt.remove());
-
-  // Insert after the header agent block
-  const headerAgent = modal.querySelector('.kb-header-agent');
-  if (headerAgent) headerAgent.insertAdjacentElement('afterend', prompt);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-window.CRM = {
-  renderContactsSection,
-  offerSaveAgent,
-  splitName,
-  displayName,
-};
+window.CRM = { renderContactsSection, splitName, displayName };

@@ -1,7 +1,43 @@
-/* ─── CRM Contact Section ─────────────────────────────────────────────────── */
+/* ─── CRM Contacts Section ────────────────────────────────────────────────── */
 
 .crm-section {
-  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+/* Collapsible header */
+.crm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.crm-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  color: inherit;
+  flex: 1;
+  text-align: left;
+}
+.crm-toggle:hover .kb-section-label { color: #1a6b3a; }
+
+.crm-toggle-icon {
+  font-size: 9px;
+  color: #aaa;
+  width: 10px;
+  display: inline-block;
+}
+
+.crm-count {
+  font-size: 11px;
+  color: #aaa;
+  font-weight: 400;
+  margin-left: 2px;
 }
 
 .crm-add-btn {
@@ -13,15 +49,26 @@
   color: #1a6b3a;
   cursor: pointer;
   font-weight: 600;
-  letter-spacing: 0.03em;
 }
 .crm-add-btn:hover { background: #1a6b3a; color: #fff; }
+
+/* Body */
+.crm-body {
+  padding-top: 4px;
+}
 
 .crm-loading,
 .crm-empty {
   font-size: 12px;
   color: #aaa;
-  padding: 6px 0;
+  padding: 4px 0;
+}
+
+.crm-form-divider {
+  font-size: 11px;
+  color: #bbb;
+  text-align: center;
+  margin: 8px 0;
 }
 
 /* Contact rows */
@@ -29,11 +76,20 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  padding: 8px 0;
+  padding: 7px 0;
   border-bottom: 1px solid #f0f0f0;
   gap: 8px;
 }
 .crm-contact-row:last-child { border-bottom: none; }
+
+/* Domain agent row — slightly different bg */
+.crm-domain-agent {
+  background: #f8fcf9;
+  margin: 0 -2px;
+  padding: 7px 2px;
+  border-radius: 4px;
+  border-bottom: 1px solid #e8f0ea;
+}
 
 .crm-contact-info { flex: 1; min-width: 0; }
 
@@ -43,7 +99,7 @@
   color: #222;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex-wrap: wrap;
 }
 
@@ -66,33 +122,50 @@
   display: flex;
   gap: 4px;
   flex-shrink: 0;
+  padding-top: 1px;
 }
+
 .crm-edit-btn,
-.crm-unlink-btn {
+.crm-unlink-btn,
+.crm-save-domain-btn {
   background: none;
   border: none;
   cursor: pointer;
   font-size: 13px;
-  color: #aaa;
+  color: #bbb;
   padding: 2px 4px;
   border-radius: 3px;
   line-height: 1;
 }
-.crm-edit-btn:hover   { color: #333; background: #f0f0f0; }
-.crm-unlink-btn:hover { color: #c0392b; background: #fdf0f0; }
+.crm-edit-btn:hover        { color: #333; background: #f0f0f0; }
+.crm-unlink-btn:hover      { color: #c0392b; background: #fdf0f0; }
+.crm-save-domain-btn:hover { color: #1a6b3a; background: #e8f5ee; }
 
 /* Role badges */
 .crm-role-badge {
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  padding: 2px 6px;
+  padding: 2px 5px;
   border-radius: 3px;
+  white-space: nowrap;
 }
 .crm-role-listing_agent { background: #e8f5ee; color: #1a6b3a; }
 .crm-role-referrer      { background: #e8f0fa; color: #1a4a8a; }
 .crm-role-buyer_agent   { background: #fdf3e8; color: #c4841a; }
+
+/* Domain source badge */
+.crm-domain-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: #e8f5ee;
+  color: #1ea765;
+}
 
 /* Form */
 .crm-form-inner {
@@ -104,11 +177,11 @@
 }
 
 .crm-form-title {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: #888;
+  color: #aaa;
   margin-bottom: 10px;
 }
 
@@ -124,6 +197,7 @@
   gap: 8px;
   margin-top: 12px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .crm-save-btn {
@@ -150,11 +224,13 @@
 .crm-cancel-btn:hover { background: #f0f0f0; }
 
 .crm-delete-btn {
+  margin-left: auto;
   padding: 6px 12px;
   background: none;
   border: 1px solid #e8b4b4;
   border-radius: 5px;
   font-size: 12px;
+  color: #c0392b;
   cursor: pointer;
 }
 .crm-delete-btn:hover { background: #fdf0f0; }
@@ -162,7 +238,7 @@
 /* Existing contact search */
 .crm-search-results {
   margin-top: 4px;
-  max-height: 140px;
+  max-height: 130px;
   overflow-y: auto;
   border: 1px solid #e8e8e8;
   border-radius: 4px;
@@ -171,17 +247,10 @@
 .crm-search-results:empty { display: none; }
 
 .crm-search-item {
-  padding: 7px 10px;
+  padding: 6px 10px;
   font-size: 12px;
   cursor: pointer;
   border-bottom: 1px solid #f4f4f4;
 }
 .crm-search-item:last-child { border-bottom: none; }
 .crm-search-item:hover { background: #f0f7f3; }
-
-/* Save agent prompt */
-.crm-save-agent-prompt {
-  display: flex;
-  align-items: center;
-  margin-top: 6px;
-}

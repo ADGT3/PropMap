@@ -565,21 +565,25 @@ function openCardModal(id) {
     if (changed) savePipeline(id);
     const modal = document.getElementById('kb-modal');
     if (!modal || modal.dataset.propertyId !== String(id)) return;
-    _renderHeaderAgent(modal, p);
+    // Update Domain link in header
     if (p._listingUrl && !modal.querySelector('.kb-domain-link')) {
-      const hdr = modal.querySelector('.kb-modal-address');
-      if (hdr) {
+      const lotEl = modal.querySelector('.kb-modal-lotdp');
+      if (lotEl) {
         const link = document.createElement('a');
         link.href = p._listingUrl; link.target = '_blank'; link.rel = 'noopener';
         link.className = 'kb-domain-link';
         link.style.cssText = 'display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none';
         link.textContent = '↗ View on Domain';
-        hdr.insertAdjacentElement('afterend', link);
+        lotEl.insertAdjacentElement('afterend', link);
       }
     }
-    // Offer to save Domain agent to CRM contacts
-    if (window.CRM && p._agent?.name) {
-      CRM.offerSaveAgent(modal, id, p._agent, hit.domainId || id);
+    // Refresh the contacts section so Domain agent row appears
+    if (window.CRM) {
+      const crmEl = modal.querySelector('.crm-section');
+      if (crmEl) {
+        const newCrm = await CRM.renderContactsSection(id, p._agent);
+        crmEl.replaceWith(newCrm);
+      }
     }
   }
   resolveFromDomain();
@@ -628,25 +632,6 @@ function openCardModal(id) {
 
   const dd = getDd(id);
 
-  const agentData      = p._agent || {};
-  const agentFromDomain = !!(p._agent?.name || p._agent?.email || p._agent?.phone);
-
-  function _renderHeaderAgent(modal, prop) {
-    const ag = prop._agent || {};
-    const fromDomain = !!(ag.name || ag.email || ag.phone);
-    const el = modal.querySelector('.kb-header-agent');
-    if (!el) return;
-    if (fromDomain) {
-      el.innerHTML = `
-        <div style="font-size:11px;color:#555;margin-top:6px;line-height:1.7">
-          ${ag.agency ? `<span style="font-weight:600;color:#333">${ag.agency}</span> · ` : ''}
-          ${ag.name   ? `<span>${ag.name}</span>` : ''}
-          ${ag.phone  ? ` · <a href="tel:${ag.phone}" style="color:#1a6b3a;text-decoration:none">${ag.phone}</a>` : ''}
-          ${ag.email  ? ` · <a href="mailto:${ag.email}" style="color:#1a6b3a;text-decoration:none">${ag.email}</a>` : ''}
-        </div>`;
-    }
-  }
-
   const overlay = document.createElement('div');
   overlay.id = 'kb-modal';
   overlay.className = 'kb-modal-overlay';
@@ -661,32 +646,14 @@ function openCardModal(id) {
             ? `<div class="kb-modal-lotdp" style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${p._lotDPs}</div>`
             : `<div class="kb-modal-lotdp" style="font-size:11px;color:#bbb;margin-top:3px">Lot/DP loading…</div>`}
           ${p._listingUrl ? `<a href="${p._listingUrl}" target="_blank" rel="noopener" class="kb-domain-link" style="display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none">↗ View on Domain</a>` : ''}
-          <div class="kb-header-agent">
-            ${agentFromDomain ? `
-              <div style="font-size:11px;color:#555;margin-top:6px;line-height:1.7">
-                ${agentData.agency ? `<span style="font-weight:600;color:#333">${agentData.agency}</span> · ` : ''}
-                ${agentData.name   ? `<span>${agentData.name}</span>` : ''}
-                ${agentData.phone  ? ` · <a href="tel:${agentData.phone}" style="color:#1a6b3a;text-decoration:none">${agentData.phone}</a>` : ''}
-                ${agentData.email  ? ` · <a href="mailto:${agentData.email}" style="color:#1a6b3a;text-decoration:none">${agentData.email}</a>` : ''}
-              </div>` : `
-              <div style="margin-top:8px">
-                <div style="font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#bbb;margin-bottom:4px">Listing Agent</div>
-                <div class="kb-terms-row" style="gap:6px">
-                  <input class="kb-input kb-agent-name" type="text" placeholder="First Last" value="${agentData.name || ''}" style="flex:2">
-                  <input class="kb-input kb-agent-agency" type="text" placeholder="Agency" value="${agentData.agency || ''}" style="flex:2">
-                </div>
-                <div class="kb-terms-row" style="gap:6px;margin-top:4px">
-                  <input class="kb-input kb-agent-email" type="text" placeholder="Email" value="${agentData.email || ''}">
-                  <input class="kb-input kb-agent-phone" type="text" placeholder="Mobile" value="${agentData.phone || ''}">
-                </div>
-              </div>`}
-          </div>
         </div>
         <button class="kb-modal-close" title="Close">✕</button>
       </div>
       <div class="kb-modal-body">
 
-        <div class="kb-section-label">Vendor Terms</div>
+        <div class="crm-section-placeholder"></div>
+
+        <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
         <div class="kb-terms">
           <div class="kb-terms-row">
             <div class="kb-field-wrap">
@@ -742,8 +709,6 @@ function openCardModal(id) {
         <div class="kb-section-label" style="margin-top:16px">Notes</div>
         <textarea class="kb-note" placeholder="Add a note…" rows="3">${item.note || ''}</textarea>
 
-        <div class="crm-section-placeholder" style="margin-top:4px"></div>
-
       </div>
     </div>
   `;
@@ -751,9 +716,9 @@ function openCardModal(id) {
   document.body.appendChild(overlay);
   const modal = overlay.querySelector('.kb-modal');
 
-  // Mount CRM contacts section
+  // Mount CRM contacts section (collapsed by default, passes stored agent for Domain row)
   if (window.CRM) {
-    CRM.renderContactsSection(id).then(crmEl => {
+    CRM.renderContactsSection(id, p._agent).then(crmEl => {
       const placeholder = modal.querySelector('.crm-section-placeholder');
       if (placeholder) placeholder.replaceWith(crmEl);
     });
@@ -765,27 +730,6 @@ function openCardModal(id) {
   document.addEventListener('keydown', function escClose(e) {
     if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escClose); }
   });
-
-  // Manual listing agent inputs (only when not from Domain)
-  if (!agentFromDomain) {
-    function syncAgent() {
-      if (!pipeline[id]) return;
-      if (!pipeline[id].property._agent) pipeline[id].property._agent = {};
-      const na = modal.querySelector('.kb-agent-name');
-      const aa = modal.querySelector('.kb-agent-agency');
-      const ea = modal.querySelector('.kb-agent-email');
-      const pa = modal.querySelector('.kb-agent-phone');
-      if (na) pipeline[id].property._agent.name   = na.value;
-      if (aa) pipeline[id].property._agent.agency = aa.value;
-      if (ea) pipeline[id].property._agent.email  = ea.value;
-      if (pa) pipeline[id].property._agent.phone  = pa.value;
-      savePipeline(id);
-    }
-    modal.querySelector('.kb-agent-name')?.addEventListener('input', syncAgent);
-    modal.querySelector('.kb-agent-agency')?.addEventListener('input', syncAgent);
-    modal.querySelector('.kb-agent-email')?.addEventListener('input', syncAgent);
-    modal.querySelector('.kb-agent-phone')?.addEventListener('input', syncAgent);
-  }
 
   // Note
   modal.querySelector('.kb-note').addEventListener('input', function () {
