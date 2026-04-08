@@ -814,6 +814,8 @@ function openCardModal(id) {
     contactTag.style.display = 'none';
     contactTag.innerHTML = '';
     contactSearch.style.display = '';
+    contactSearch.value = '';
+    contactResults.innerHTML = '';
   }
 
   let _contactSearchTimer;
