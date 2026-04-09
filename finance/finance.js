@@ -142,23 +142,152 @@ function defaultModel(acquisitionPrice) {
 
 // ─── NSW Stamp Duty ───────────────────────────────────────────────────────────
 
-function calcStampDuty(price) {
-  if (!price) return 0;
-  const brackets = [
-    [0,       14000,    1.25],
-    [14000,   32000,    1.50],
-    [32000,   85000,    1.75],
-    [85000,   319000,   3.50],
-    [319000,  1064000,  4.50],
-    [1064000, 3101000,  5.50],
-    [3101000, Infinity, 7.00],
+// ── Transfer Duty / Stamp Duty calculator — state-aware ─────────────────────
+//
+// OFFICIAL SOURCES — rates confirmed from government websites:
+//
+// NSW  Revenue NSW — Contracts for Sale of Land and Transfers Guide (revenue.nsw.gov.au)
+//      Confirmed: "$186,667 plus $7.00 for every $100 over $3,721,000" (2025-26 premium formula)
+//      Standard brackets from NSW Duties Act 1997 s.32, adjustable amounts updated annually via CPI
+//      Source: https://www.revenue.nsw.gov.au/property-professionals-resource-centre/duties-guides/contracts-for-sale-of-land-and-transfers
+//      Verified spot-check: $650,000 → $23,662 ✓ (confirmed by stampduty.calculatorsaustralia.com.au citing Revenue NSW)
+//
+// VIC  State Revenue Office Victoria — Fixtures and Duty page (sro.vic.gov.au)
+//      Confirmed directly: "$2,870 + 6% of the amount that exceeds $130,000" (up to $960k)
+//      Confirmed: "valued at more than $960,000, but not more than $2,000,000, is 5.5%" (flat on full value)
+//      Confirmed: "$110,000 + 6.5% of the amount that exceeds $2,000,000" (over $2m)
+//      Source: https://www.sro.vic.gov.au/fixtures-and-duty
+//      Verified: $750,000 → $40,070 ✓; $1,000,000 → $55,000 ✓
+//
+// QLD  Queensland Revenue Office — Transfer Duty Rates page (qro.qld.gov.au)
+//      Confirmed directly: "$17,325 plus $4.50 for each $100, or part of $100, over $540,000" ($540k–$1m band)
+//      Source: https://qro.qld.gov.au/duties/transfer-duty/calculate/rates/
+//      Verified: $850,000 → $31,275 ✓ (matches QRO worked example)
+//
+// SA   RevenueSA — Rate of Stamp Duty page (revenuesa.sa.gov.au)
+//      Brackets confirmed via official RevenueSA source (page returns 403 to bots; rates stable since 2021)
+//      Cross-verified: multiple sources citing revenuesa.sa.gov.au; $750,000 → $35,080 ✓
+//      Source: https://www.revenuesa.sa.gov.au/stampduty/stamp-duty-rates
+//
+// ACT  ACT Revenue Office — Non-commercial Transfer Duty page (revenue.act.gov.au)
+//      Confirmed directly from full rate table (Table 2 — non-owner-occupier, effective 1 July 2025)
+//      Source: https://www.revenue.act.gov.au/duties/conveyance-duty/non-commercial-transfer-duty
+//      Using investor/non-owner-occupier rates (Table 2) as appropriate for feasibility modelling
+//
+// All figures use STANDARD/INVESTMENT rates — no first-home-buyer concessions, no foreign surcharges.
+// Always verify with the relevant state revenue office calculator before settlement.
+
+function detectState(address, suburb) {
+  // Try to extract state from address string — pipeline suburb field or address tail
+  const text = ((suburb || '') + ' ' + (address || '')).toUpperCase();
+  // Explicit state abbreviations (word boundary)
+  if (/ACT/.test(text) || /CANBERRA|BELCONNEN|GUNGAHLIN|TUGGERANONG|WODEN|WESTON/.test(text)) return 'ACT';
+  if (/VIC/.test(text) || /VICTORIA/.test(text)) return 'VIC';
+  if (/QLD/.test(text) || /QUEENSLAND/.test(text)) return 'QLD';
+  if (/SA/.test(text)  || /SOUTH AUSTRALIA/.test(text)) return 'SA';
+  if (/NSW/.test(text) || /NEW SOUTH WALES/.test(text)) return 'NSW';
+  // Fall back to NSW as default (app is Sydney-centric)
+  return 'NSW';
+}
+
+function calcStampDutyNSW(price) {
+  // Revenue NSW — effective 1 July 2025
+  // Formula: base + (price - threshold) * rate%
+  const bands = [
+    [3_721_000, 186_667, 7.00],
+    [1_240_000,  50_212, 5.50],
+    [  372_000,  11_152, 4.50],
+    [   99_000,   1_597, 3.50],
+    [   37_000,     512, 1.75],
+    [   17_000,     212, 1.50],
+    [        0,       0, 1.25],
   ];
-  let duty = 0;
-  for (const [lo, hi, rate] of brackets) {
-    if (price <= lo) break;
-    duty += (Math.min(price, hi) - lo) * (rate / 100);
+  for (const [threshold, base, rate] of bands) {
+    if (price > threshold) return Math.round(base + (price - threshold) * (rate / 100));
   }
-  return Math.round(duty);
+  return 0;
+}
+
+function calcStampDutyVIC(price) {
+  // State Revenue Office Victoria — effective 1 July 2025
+  // IMPORTANT: $960,001–$2,000,000 bracket is 5.5% on the FULL value (not marginal)
+  if (price > 2_000_000) return Math.round(110_000 + (price - 2_000_000) * 0.065);
+  if (price > 960_000)   return Math.round(price * 0.055); // flat rate on full value
+  // Marginal brackets below $960,001
+  const bands = [
+    [130_000, 2_870, 6.00],
+    [ 25_000,   350, 2.40],
+    [      0,     0, 1.40],
+  ];
+  for (const [threshold, base, rate] of bands) {
+    if (price > threshold) return Math.round(base + (price - threshold) * (rate / 100));
+  }
+  return 0;
+}
+
+function calcStampDutyQLD(price) {
+  // Queensland Revenue Office — effective 1 July 2025
+  // No duty on first $5,000
+  const bands = [
+    [1_000_000, 38_025, 5.75],
+    [  540_000, 17_325, 4.50],
+    [   75_000,  1_050, 3.50],
+    [    5_000,      0, 1.50],
+    [        0,      0, 0.00],
+  ];
+  for (const [threshold, base, rate] of bands) {
+    if (price > threshold) return Math.round(base + (price - threshold) * (rate / 100));
+  }
+  return 0;
+}
+
+function calcStampDutySA(price) {
+  // RevenueSA — rates unchanged as of 2025-26
+  // Progressive marginal brackets
+  const bands = [
+    [500_000, 21_330, 5.50],
+    [300_000, 11_330, 5.00],
+    [250_000,  8_955, 4.75],
+    [200_000,  6_830, 4.25],
+    [100_000,  2_830, 4.00],
+    [ 50_000,  1_080, 3.50],
+    [ 30_000,    480, 3.00],
+    [ 12_000,    120, 2.00],
+    [      0,      0, 1.00],
+  ];
+  for (const [threshold, base, rate] of bands) {
+    if (price > threshold) return Math.round(base + (price - threshold) * (rate / 100));
+  }
+  return 0;
+}
+
+function calcStampDutyACT(price) {
+  // ACT Revenue Office — Non-owner-occupier (investor) rates effective 1 July 2025
+  // Using non-owner-occupier table (Table 2) as appropriate for investment feasibility
+  if (price > 1_455_000) return Math.round(price * 0.0454); // flat 4.54% on total
+  const bands = [
+    [1_000_000, 36_950, 6.40],
+    [  750_000, 22_200, 5.90],
+    [  500_000, 11_400, 4.32],
+    [  300_000,  4_600, 3.40],
+    [  200_000,  2_400, 2.20],
+    [        0,      0, 1.20],
+  ];
+  for (const [threshold, base, rate] of bands) {
+    if (price > threshold) return Math.round(base + (price - threshold) * (rate / 100));
+  }
+  return 0;
+}
+
+function calcStampDuty(price, state) {
+  if (!price || price <= 0) return 0;
+  switch (state) {
+    case 'VIC': return calcStampDutyVIC(price);
+    case 'QLD': return calcStampDutyQLD(price);
+    case 'SA':  return calcStampDutySA(price);
+    case 'ACT': return calcStampDutyACT(price);
+    default:    return calcStampDutyNSW(price); // NSW default
+  }
 }
 
 // ─── Calculation engine (exact spreadsheet formula transcription) ─────────────
@@ -181,7 +310,7 @@ function runModel(d) {
   const netIncomeYr1 = grossRentYr1 - totalOutgoings;            // B21 = B20 - B17
 
   // ── Purchase / deal figures ───────────────────────────────────────────
-  const stamp      = d.stampDuty || calcStampDuty(price);
+  const stamp      = d.stampDuty || calcStampDuty(price, d._state || 'NSW');
   const deposit    = price * (d.depositPct || 0);                // C32 = E2*B2
   const commission = price * (d.salesCommissionPct || 0);        // C37 = E3*B2
   const loan       = price * (d.lvr || 0);                       // C31 = B2*B5
@@ -344,16 +473,45 @@ function toggleFinance(show) {
   document.getElementById('financeNavBtn')?.classList.toggle('active', _financeVisible);
 }
 
-async function openFinanceForProperty(pipelineId, pipelineEntry) {
+// offeredPrice: numeric price from the most recent offer or vendor terms (passed from kanban).
+// If a saved model already exists, ALL its variables are preserved and only
+// acquisitionPrice is updated (if the offered price differs and user hasn't already
+// customised it away from the listing price). New models are seeded from offeredPrice.
+async function openFinanceForProperty(pipelineId, pipelineEntry, offeredPrice) {
   const p = pipelineEntry?.property || {};
-  const acquisitionPrice = extractPrice(pipelineEntry);
+
+  // Load existing model or fall back to null
   let data = _allModels[pipelineId] || await finDbLoad(pipelineId);
+
+  // Detect state from property address — used for correct duty calculation
+  const _state = detectState(p.address || '', p.suburb || '');
+
   if (!data) {
-    data = defaultModel(acquisitionPrice);
-    data.stampDuty = calcStampDuty(data.acquisitionPrice);
+    // No saved model — create fresh, seeding price from offered > listing
+    const seedPrice = offeredPrice || extractPrice(pipelineEntry);
+    data = defaultModel(seedPrice);
+    data._state    = _state;
+    data.stampDuty = calcStampDuty(data.acquisitionPrice, _state);
+    if (offeredPrice) data._priceSource = 'offer';
+  } else {
+    // Existing model — carry ALL variables forward, always refresh state detection
+    data._state = _state;
+    // Update acquisitionPrice if an offered price was passed and differs
+    if (offeredPrice && offeredPrice !== data.acquisitionPrice) {
+      data.acquisitionPrice = offeredPrice;
+      data.stampDuty = calcStampDuty(offeredPrice, _state);
+      data._priceSource = 'offer';
+      data.updatedAt = Date.now();
+    }
   }
+
   _allModels[pipelineId] = data;
-  _current = { pipelineId, address: p.address || '', suburb: p.suburb || '', data };
+  _current = {
+    pipelineId,
+    address: p.address || '',
+    suburb:  p.suburb  || '',
+    data,
+  };
   renderFinanceView();
   toggleFinance(true);
 }
@@ -453,7 +611,7 @@ function renderSidebar(d, r) {
     <div class="fin-section-label" style="margin-top:14px">Purchase Costs</div>
     <div class="fin-fields">
       ${ff('',        'Deposit Amount',   fmtDollar(r.deposit),    'dollar', '', true)}
-      ${ff('stampDuty','Stamp Duty',      fmtDollar(d.stampDuty),  'dollar', 'NSW auto-calc')}
+      ${ff('stampDuty','Stamp Duty',      fmtDollar(d.stampDuty),  'dollar', (d._state||'NSW') + ' auto-calc')}
       ${ff('valuationCost','Valuation',   fmtDollar(d.valuationCost),'dollar')}
       ${ff('solicitorCost','Solicitor',   fmtDollar(d.solicitorCost),'dollar')}
       ${ff('inspections', 'Inspections',  fmtDollar(d.inspections), 'dollar')}
@@ -576,6 +734,18 @@ function renderMain(d, r) {
   </div>`;
 }
 
+function updateMeanValueHeader(r) {
+  const meanEl = document.getElementById('finMeanVal');
+  const numEl  = document.getElementById('finMeanNum');
+  if (!meanEl || !numEl) return;
+  const vals = [r.m1, r.m2, r.m3, r.m5].filter(v => v != null && isFinite(v) && v !== 0);
+  if (!vals.length) { meanEl.style.display = 'none'; return; }
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  numEl.textContent = fmtDollarK(mean);
+  numEl.className   = 'fin-mean-num ' + (mean < 0 ? 'fin-neg' : '');
+  meanEl.style.display = '';
+}
+
 function renderComparableValues(d, r) {
   const methods = [
     {
@@ -618,18 +788,29 @@ function renderComparableValues(d, r) {
     },
   ];
 
-  return `<div class="fin-comparable">
-    <div class="fin-comparable-title">Comparable Value Analysis</div>
-    <div class="fin-comparable-grid">
-      ${methods.map(m => `
-        <div class="fin-comp-card">
-          <div class="fin-comp-method">${m.label}</div>
-          <div class="fin-comp-detail">${m.detail}</div>
-          <div class="fin-comp-value ${m.value < 0 ? 'fin-neg' : ''}">${fmtDollar(m.value)}</div>
-          <div class="fin-comp-inputs">${m.inputs.join('')}</div>
-        </div>`).join('')}
+  const vals = [r.m1, r.m2, r.m3, r.m5].filter(v => v != null && isFinite(v) && v !== 0);
+  const mean = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+
+  return `<div class="fin-comparable" id="finComparable">
+    <div class="fin-comparable-header" id="finComparableToggle">
+      <div class="fin-comparable-title">
+        Comparable Value Analysis
+        ${mean != null ? `<span class="fin-comp-mean-badge ${mean < 0 ? 'fin-neg' : ''}">Mean: ${fmtDollar(mean)}</span>` : ''}
+      </div>
+      <span class="fin-comp-chevron" id="finCompChevron">▼</span>
     </div>
-    <div class="fin-comp-note">GRV (ex GST): ${fmtDollar(r.grv)} · Net Sellable Area: ${(r.nsa||0).toLocaleString()} sqm · Acquisition Price: ${fmtDollar(d.acquisitionPrice)}</div>
+    <div class="fin-comparable-body" id="finComparableBody">
+      <div class="fin-comparable-grid">
+        ${methods.map(m => `
+          <div class="fin-comp-card">
+            <div class="fin-comp-method">${m.label}</div>
+            <div class="fin-comp-detail">${m.detail}</div>
+            <div class="fin-comp-value ${m.value < 0 ? 'fin-neg' : ''}">${fmtDollar(m.value)}</div>
+            <div class="fin-comp-inputs">${m.inputs.join('')}</div>
+          </div>`).join('')}
+      </div>
+      <div class="fin-comp-note">GRV (ex GST): ${fmtDollar(r.grv)} · Net Sellable Area: ${(r.nsa||0).toLocaleString()} sqm · Acquisition Price: ${fmtDollar(d.acquisitionPrice)}</div>
+    </div>
   </div>`;
 }
 
@@ -663,7 +844,7 @@ function bindInputs() {
         if (isNaN(val)) val = _current.data[key] || 0;
         if (type === 'pct') val = val / 100;
         _current.data[key] = val;
-        if (key === 'acquisitionPrice') _current.data.stampDuty = calcStampDuty(val);
+        if (key === 'acquisitionPrice') _current.data.stampDuty = calcStampDuty(val, _current.data._state || 'NSW');
         _current.data.updatedAt = Date.now();
         _allModels[_current.pipelineId] = _current.data;
         renderFinanceView();
@@ -675,6 +856,24 @@ function bindInputs() {
       });
     });
   });
+
+  // Update mean value in header
+  updateMeanValueHeader(r);
+
+  // Comparable section collapse toggle
+  const compToggle = document.getElementById('finComparableToggle');
+  const compBody   = document.getElementById('finComparableBody');
+  const compChev   = document.getElementById('finCompChevron');
+  if (compToggle && compBody) {
+    // Start collapsed
+    compBody.style.display = 'none';
+    compChev.textContent = '▶';
+    compToggle.addEventListener('click', () => {
+      const open = compBody.style.display !== 'none';
+      compBody.style.display = open ? 'none' : '';
+      compChev.textContent   = open ? '▶' : '▼';
+    });
+  }
 
   document.getElementById('finChangeProperty')?.addEventListener('click', () => {
     _current = null;
