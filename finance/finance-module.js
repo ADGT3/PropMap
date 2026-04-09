@@ -54,6 +54,7 @@ let _financeVisible    = false;
 let _allModels         = {};
 let _comparableOpen    = false;  // persists collapse state across re-renders
 let _financeInitDone   = false;  // guard against duplicate initFinance() calls
+let _saveTimer         = null;   // debounce timer for auto-save
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
@@ -631,7 +632,7 @@ function renderSidebar(d, r) {
     <div class="fin-section-body" data-section="purchase-costs" ${sec('purchase-costs')}>
       <div class="fin-fields">
         ${ff('',        'Deposit Amount',   fmtDollar(r.deposit),    'dollar', '', true)}
-        ${ff('stampDuty','Stamp Duty',      fmtDollar(d.stampDuty),  'dollar', (d._state||'NSW') + ' auto-calc')}
+        ${ff('stampDuty','Stamp Duty',      fmtDollar(d.stampDuty),  'dollar', (d._state||'NSW') + ' transfer duty')}
         ${ff('valuationCost','Valuation',   fmtDollar(d.valuationCost),'dollar')}
         ${ff('solicitorCost','Solicitor',   fmtDollar(d.solicitorCost),'dollar')}
         ${ff('inspections', 'Inspections',  fmtDollar(d.inspections), 'dollar')}
@@ -674,9 +675,7 @@ function renderSidebar(d, r) {
       </div>
     </div>
 
-    <div class="fin-actions">
-      <button class="fin-save-btn" id="finSaveBtn">Save Model</button>
-    </div>
+    <div class="fin-autosave-status" id="finSaveStatus"></div>
   </div>`;
 }
 
@@ -795,10 +794,13 @@ function renderMain(d, r) {
   return `<div class="fin-main">
 
     <div class="fin-kpis">
+      <div class="fin-kpi"><div class="fin-kpi-label">Acquisition Price</div><div class="fin-kpi-val">${fmtDollarK(d.acquisitionPrice)}</div></div>
       <div class="fin-kpi fin-kpi-mean"><div class="fin-kpi-label">Mean Comparable Value</div><div class="fin-kpi-val" id="finKpiMeanVal">${(() => { const vals=[r.m1,r.m2,r.m3,r.m5].filter(v=>v!=null&&isFinite(v)&&v!==0); return vals.length ? fmtDollarK(vals.reduce((a,b)=>a+b,0)/vals.length) : '—'; })()}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Total Loan</div><div class="fin-kpi-val">${fmtDollarK(r.loan)}</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Upfront)</div><div class="fin-kpi-val">${fmtDollarK(r.upfront)}</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Total)</div><div class="fin-kpi-val">${fmtDollarK(r.totalCashReqd)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Net Income (Yr 1)</div><div class="fin-kpi-val ${r.netIncomeYr1 < 0 ? 'fin-kpi-neg' : 'fin-kpi-pos'}">${fmtDollarK(r.netIncomeYr1)}</div></div>
-      <div class="fin-kpi"><div class="fin-kpi-label">First Cashflow</div><div class="fin-kpi-val ${(r.yr1Cashflow??0) < 0 ? 'fin-kpi-neg' : 'fin-kpi-pos'}">${fmtDollarK(r.yr1Cashflow)}</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-label">Cashflow (Yr 1)</div><div class="fin-kpi-val ${(r.yr1Cashflow??0) < 0 ? 'fin-kpi-neg' : 'fin-kpi-pos'}">${fmtDollarK(r.yr1Cashflow)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Asset Value (Exit)</div><div class="fin-kpi-val">${fmtDollarK(exit?.assetValue)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">NPV at Exit</div><div class="fin-kpi-val ${npvClass}">${fmtDollarK(exit?.npvAssetValue)}</div></div>
     </div>
@@ -819,7 +821,7 @@ function renderMain(d, r) {
 
     <div class="fin-footer">
       <span>Principal Paid = (Rent − Interest) × ${fmtPct(d.profitUsedForDebt)} profit to debt · ROE on Total Cash Required · Cost of Funds = Total Cash × CoC × (1+rg)^(yr−lag)</span>
-      <span>NSW Stamp Duty auto-calculated. All figures indicative only.</span>
+      <span>Transfer duty auto-calculated (${d._state||'NSW'} rates, 1 July 2025). All figures indicative only.</span>
     </div>
   </div>`;
 }
@@ -906,6 +908,22 @@ function renderComparableValues(d, r) {
 
 // ─── Input binding ────────────────────────────────────────────────────────────
 
+function autoSave() {
+  if (!_current) return;
+  clearTimeout(_saveTimer);
+  const statusEl = document.getElementById('finSaveStatus');
+  if (statusEl) statusEl.textContent = 'Saving…';
+  _saveTimer = setTimeout(async () => {
+    await finDbSave(_current.pipelineId, _current.data);
+    _allModels[_current.pipelineId] = _current.data;
+    const el = document.getElementById('finSaveStatus');
+    if (el) {
+      el.textContent = 'Saved';
+      setTimeout(() => { if (el) el.textContent = ''; }, 2000);
+    }
+  }, 1500);
+}
+
 function bindInputs(r) {
   const container = document.getElementById('financeContent');
   if (!container || !_current) return;
@@ -938,6 +956,7 @@ function bindInputs(r) {
         _current.data.updatedAt = Date.now();
         _allModels[_current.pipelineId] = _current.data;
         renderFinanceView();
+        autoSave();
       };
       input.addEventListener('blur', commit);
       input.addEventListener('keydown', e => {
@@ -981,16 +1000,8 @@ function bindInputs(r) {
     renderFinanceView();
   });
 
-  document.getElementById('finSaveBtn')?.addEventListener('click', async () => {
-    if (!_current) return;
-    const btn = document.getElementById('finSaveBtn');
-    btn.textContent = 'Saving…';
-    btn.disabled = true;
-    await finDbSave(_current.pipelineId, _current.data);
-    _allModels[_current.pipelineId] = _current.data;
-    btn.textContent = 'Saved ✓';
-    setTimeout(() => { btn.textContent = 'Save Model'; btn.disabled = false; }, 1800);
-  });
+  // Auto-save — triggered after every input commit with a 1.5s debounce
+  // Called from the commit() closure inside the editable input handler above
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
