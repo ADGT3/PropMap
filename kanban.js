@@ -711,10 +711,12 @@ function openCardModal(id) {
           <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
           <div class="kb-offer-deposits">${buildOfferDepositsHtml([{ amount: '', due: '', note: '' }])}</div>
           <button class="kb-offer-add-deposit">+ Add tranche</button>
-          <button class="kb-submit-offer">+ Submit Offer</button>
+          <div class="kb-offer-actions">
+            <button class="kb-submit-offer">+ Submit Offer</button>
+            <button class="kb-finance-btn" title="Open financial feasibility model for this property">📊 Finance</button>
+          </div>
         </div>
         <div class="kb-offers-list" id="kb-modal-offers-${id}">${buildOffersHtml(offers)}</div>
-        <button class="kb-finance-btn" title="Open financial feasibility model for this property">📊 Model this in Financial Feasibility</button>
 
         <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
         <div class="kb-dd">
