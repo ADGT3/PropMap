@@ -636,6 +636,47 @@ function openCardModal(id) {
       </div>`).join('');
   }
 
+  function buildFinancePickerHtml(offers, terms, prop) {
+    const rows = [];
+
+    // One row per submitted offer (newest first)
+    offers.forEach((o, i) => {
+      if (!o.price) return;
+      rows.push(`
+        <div class="kb-fin-pick-row" data-price="${o.price}" data-offer-id="${o.id}">
+          <span class="kb-fin-pick-label">Offer ${offers.length - i}${i === 0 ? ' <span class="kb-fin-pick-latest">latest</span>' : ''}</span>
+          <span class="kb-fin-pick-price">${o.price}</span>
+          <span class="kb-fin-pick-meta">${o.settlement ? o.settlement + ' settlement' : ''}</span>
+          <button class="kb-fin-pick-btn">📊 Model</button>
+        </div>`);
+    });
+
+    // Vendor terms row if price set
+    if (terms.price) {
+      rows.push(`
+        <div class="kb-fin-pick-row" data-price="${terms.price}" data-offer-id="vendor-terms">
+          <span class="kb-fin-pick-label">Vendor terms</span>
+          <span class="kb-fin-pick-price">${terms.price}</span>
+          <span class="kb-fin-pick-meta">${terms.settlement ? terms.settlement + ' settlement' : ''}</span>
+          <button class="kb-fin-pick-btn">📊 Model</button>
+        </div>`);
+    }
+
+    // Listing price fallback if no offers or terms
+    if (!rows.length) {
+      const listingPrice = formatKbPrice(prop.price, null);
+      rows.push(`
+        <div class="kb-fin-pick-row" data-price="" data-offer-id="listing">
+          <span class="kb-fin-pick-label">Listing price</span>
+          <span class="kb-fin-pick-price">${listingPrice}</span>
+          <span class="kb-fin-pick-meta">No offers submitted yet</span>
+          <button class="kb-fin-pick-btn">📊 Model</button>
+        </div>`);
+    }
+
+    return `<div class="kb-fin-pick-header">📊 Model in Financial Feasibility</div>${rows.join('')}`;
+  }
+
   function buildOffersHtml(offers) {
     if (!offers || offers.length === 0) return '<div class="kb-offers-empty">No offers submitted yet</div>';
     return offers.map(o => `
@@ -713,10 +754,10 @@ function openCardModal(id) {
           <button class="kb-offer-add-deposit">+ Add tranche</button>
           <div class="kb-offer-actions">
             <button class="kb-submit-offer">+ Submit Offer</button>
-            <button class="kb-finance-btn" title="Open financial feasibility model for this property">📊 Finance</button>
           </div>
         </div>
         <div class="kb-offers-list" id="kb-modal-offers-${id}">${buildOffersHtml(offers)}</div>
+        <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
 
         <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
         <div class="kb-dd">
@@ -766,26 +807,24 @@ function openCardModal(id) {
 
   // Close
   overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
-  overlay.querySelector('.kb-finance-btn').addEventListener('click', () => {
+  // Finance picker — delegate clicks on all .kb-fin-pick-btn rows
+  function parsePickerPrice(s) {
+    if (!s) return null;
+    const n = parseFloat(String(s).replace(/[^0-9.]/g, ''));
+    return (!isNaN(n) && n > 0) ? n : null;
+  }
+
+  function openFinanceFromPicker(priceStr) {
     overlay.remove();
     if (!window.FinanceModule) return;
+    window.FinanceModule.open(id, pipeline[id], parsePickerPrice(priceStr));
+  }
 
-    // Build price context: most recent offer → vendor terms → listing price
-    const _offers = getOffers(id);
-    const _terms  = getTerms(id);
-    const offerPrice = _offers.length ? _offers[0].price : null;  // newest first
-    const termsPrice = _terms.price || null;
-
-    // Parse whichever price string we find to a number
-    function parsePrice(s) {
-      if (!s) return null;
-      const n = parseFloat(String(s).replace(/[^0-9.]/g, ''));
-      return (!isNaN(n) && n > 0) ? n : null;
-    }
-
-    const offeredPrice = parsePrice(offerPrice) || parsePrice(termsPrice) || null;
-
-    window.FinanceModule.open(id, pipeline[id], offeredPrice);
+  overlay.querySelector(`#kb-finance-picker-${id}`)?.addEventListener('click', e => {
+    const btn = e.target.closest('.kb-fin-pick-btn');
+    if (!btn) return;
+    const row = btn.closest('.kb-fin-pick-row');
+    openFinanceFromPicker(row?.dataset.price || '');
   });
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
   document.addEventListener('keydown', function escClose(e) {
@@ -996,6 +1035,7 @@ function openCardModal(id) {
     modal.querySelector('.kb-offer-settlement').value = '';
     modal.querySelector('.kb-offer-deposits').innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }]);
     document.getElementById('kb-modal-offers-' + id).innerHTML = buildOffersHtml(getOffers(id));
+    document.getElementById(`kb-finance-picker-${id}`).innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
     const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (boardCard) refreshCardIndicators(boardCard, id);
     showKanbanToast('Offer recorded');
