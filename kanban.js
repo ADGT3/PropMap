@@ -316,6 +316,53 @@ function formatSettlement(val) {
   return days + ' days';
 }
 
+// Format a deposit amount — accepts "$50,000", "50000", or "5%"
+// Stores and displays as "$50,000 (5%)" when price is known
+// Price is read from pipeline terms.price or property price for % calculation
+function formatDepositAmount(val, price) {
+  if (!val) return '';
+  const s = String(val).trim();
+  // Already formatted with both $ and % — leave as-is
+  if (s.includes('$') && s.includes('%')) return s;
+  // Percentage input
+  if (s.includes('%')) {
+    const pct = parseFloat(s);
+    if (isNaN(pct)) return s;
+    if (price) {
+      const dollars = Math.round(price * pct / 100);
+      return '$' + dollars.toLocaleString() + ' (' + pct + '%)';
+    }
+    return pct + '%';
+  }
+  // Dollar input
+  const num = parseFloat(s.replace(/[^0-9.]/g, ''));
+  if (isNaN(num)) return s;
+  const dollars = Math.round(num);
+  if (price && price > 0) {
+    const pct = ((dollars / price) * 100).toFixed(2).replace(/\.?0+$/, '');
+    return '$' + dollars.toLocaleString() + ' (' + pct + '%)';
+  }
+  return '$' + dollars.toLocaleString();
+}
+
+// Parse raw stored deposit amount string back to a number
+function parseDepositAmountKanban(val, price) {
+  if (!val) return 0;
+  const s = String(val).trim();
+  if (s.includes('%') && !s.includes('$')) {
+    const pct = parseFloat(s) / 100;
+    return isNaN(pct) ? 0 : Math.round((price || 0) * pct);
+  }
+  const n = parseFloat(s.replace(/[^0-9.]/g, ''));
+  return isNaN(n) ? 0 : Math.round(n);
+}
+
+// Format due — same logic as settlement, converts to days
+// Due = days since previous deposit (or since contract for first tranche)
+function formatDepositDue(val) {
+  return formatSettlement(val); // reuse same logic — normalises to "X days"
+}
+
 function getTerms(id) {
   return pipeline[id]?.terms || { price: '', settlement: '', deposits: [{ amount: '', due: '', note: '' }] };
 }
@@ -616,8 +663,8 @@ function openCardModal(id) {
     return deps.map((d, i) => `
       <div class="kb-deposit-row" data-idx="${i}">
         <div class="kb-deposit-fields">
-          <input class="kb-input kb-dep-amount" type="text" placeholder="Amount e.g. $50,000" value="${d.amount || ''}" data-idx="${i}">
-          <input class="kb-input kb-dep-due" type="text" placeholder="Due e.g. 14 days" value="${d.due || ''}" data-idx="${i}">
+          <input class="kb-input kb-dep-amount" type="text" placeholder="$ or % e.g. 5% or $50,000" value="${d.amount || ''}" data-idx="${i}">
+          <input class="kb-input kb-dep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due || ''}" data-idx="${i}">
         </div>
         <input class="kb-input kb-dep-note" type="text" placeholder="Note e.g. on exchange" value="${d.note || ''}" data-idx="${i}">
         ${deps.length > 1 ? `<button class="kb-dep-remove" data-idx="${i}" title="Remove tranche">✕</button>` : ''}
@@ -628,8 +675,8 @@ function openCardModal(id) {
     return deps.map((d, i) => `
       <div class="kb-deposit-row kb-offer-dep-row" data-idx="${i}">
         <div class="kb-deposit-fields">
-          <input class="kb-input kb-odep-amount" type="text" placeholder="Amount e.g. $50,000" value="${d.amount || ''}" data-idx="${i}">
-          <input class="kb-input kb-odep-due" type="text" placeholder="Due e.g. 14 days" value="${d.due || ''}" data-idx="${i}">
+          <input class="kb-input kb-odep-amount" type="text" placeholder="$ or % e.g. 5% or $50,000" value="${d.amount || ''}" data-idx="${i}">
+          <input class="kb-input kb-odep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due || ''}" data-idx="${i}">
         </div>
         <input class="kb-input kb-odep-note" type="text" placeholder="Note e.g. on exchange" value="${d.note || ''}" data-idx="${i}">
         ${deps.length > 1 ? `<button class="kb-odep-remove" data-idx="${i}" title="Remove tranche">✕</button>` : ''}
@@ -970,6 +1017,18 @@ function openCardModal(id) {
   modal.querySelector('.kb-deposits').addEventListener('input', e => {
     if (e.target.matches('.kb-dep-amount, .kb-dep-due, .kb-dep-note')) syncDeposits();
   });
+  modal.querySelector('.kb-deposits').addEventListener('blur', e => {
+    const t = getTerms(id);
+    const price = parseDepositAmountKanban(t.price, null) || 0;
+    if (e.target.matches('.kb-dep-amount')) {
+      e.target.value = formatDepositAmount(e.target.value, price);
+      syncDeposits();
+    }
+    if (e.target.matches('.kb-dep-due')) {
+      e.target.value = formatDepositDue(e.target.value);
+      syncDeposits();
+    }
+  }, true);
   modal.querySelector('.kb-deposits').addEventListener('click', e => {
     const btn = e.target.closest('.kb-dep-remove');
     if (!btn) return;
@@ -993,6 +1052,16 @@ function openCardModal(id) {
   });
 
   // Offer deposits
+  modal.querySelector('.kb-offer-deposits').addEventListener('blur', e => {
+    const price = parseDepositAmountKanban(modal.querySelector('.kb-offer-price').value, null) || 0;
+    if (e.target.matches('.kb-odep-amount')) {
+      e.target.value = formatDepositAmount(e.target.value, price);
+    }
+    if (e.target.matches('.kb-odep-due')) {
+      e.target.value = formatDepositDue(e.target.value);
+    }
+  }, true);
+
   modal.querySelector('.kb-offer-add-deposit').addEventListener('click', () => {
     const el = modal.querySelector('.kb-offer-deposits');
     const current = Array.from(el.querySelectorAll('.kb-offer-dep-row')).map(row => ({
