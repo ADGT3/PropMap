@@ -620,3 +620,73 @@
   border-radius: 4px;
   padding: 1px 8px;
 }
+
+/* ── Transposed table (metrics as rows, years as columns) ───────────────────── */
+.fin-table-transposed th.fin-row-label-header,
+.fin-table-transposed th.fin-row-label {
+  text-align: left;
+  white-space: nowrap;
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 2;
+  min-width: 130px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 8px 12px;
+  border-right: 1px solid var(--border);
+}
+.fin-table-transposed thead tr th.fin-row-label-header {
+  background: var(--surface2);
+}
+.fin-table-transposed tbody tr:hover th.fin-row-label {
+  background: var(--surface2);
+}
+.fin-table-transposed td {
+  text-align: right;
+  min-width: 90px;
+  white-space: nowrap;
+}
+.fin-table-transposed th:not(.fin-row-label):not(.fin-row-label-header) {
+  text-align: right;
+  min-width: 90px;
+}
+.fin-lag-col { opacity: 0.5; font-style: italic; }
+.fin-lag-cell { opacity: 0.5; font-style: italic; }
+.fin-avg-col {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface)) !important;
+  font-weight: 600;
+  border-left: 1px solid var(--border);
+}
+.fin-table-transposed thead .fin-avg-col {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface2)) !important;
+}
+
+/* ── Collapsible sidebar sections ────────────────────────────────────────────── */
+.fin-section-toggle {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+.fin-section-toggle:hover { color: var(--text); }
+.fin-section-chevron {
+  font-size: 9px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.fin-section-body { margin-bottom: 4px; }
+
+/* ── Mean comparable KPI tile highlight ──────────────────────────────────────── */
+.fin-kpi-mean {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+.fin-kpi-mean .fin-kpi-label { color: var(--accent); }

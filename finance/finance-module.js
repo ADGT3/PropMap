@@ -585,7 +585,20 @@ function ff(key, label, display, type, hint, calc) {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
+function fsc(id, label) {
+  // Collapsible section header — toggled via CSS class + delegated click in bindInputs
+  return `<div class="fin-section-label fin-section-toggle" data-section="${id}">
+    <span>${label}</span><span class="fin-section-chevron">▼</span>
+  </div>`;
+}
+
+// Track which sidebar sections are collapsed (persists across re-renders)
+const _sectionCollapsed = {};
+
 function renderSidebar(d, r) {
+  function sec(id) {
+    return _sectionCollapsed[id] ? 'style="display:none"' : '';
+  }
   return `<div class="fin-sidebar">
     <div class="fin-property-bar">
       <div class="fin-property-info">
@@ -595,63 +608,70 @@ function renderSidebar(d, r) {
       <button class="fin-change-btn" id="finChangeProperty">Change</button>
     </div>
 
-    <div class="fin-section-label">Model Variables</div>
-    <div class="fin-fields">
-      ${ff('acquisitionPrice',   'Acquisition Price',           fmtDollar(d.acquisitionPrice),   'dollar')}
-      ${ff('interestRate',       'Loan Interest Rate (pa)',      fmtPct(d.interestRate),          'pct')}
-      ${ff('rentalGrowth',       'Rental Increase (pa)',         fmtPct(d.rentalGrowth),          'pct')}
-      ${ff('lvr',                'Assumed LVR (%)',              fmtPct(d.lvr),                   'pct')}
-      ${ff('capitalGrowth',      'Asset Value Growth (pa)',      fmtPct(d.capitalGrowth),         'pct')}
-      ${ff('holdDurationPreReval','Hold Duration Pre-Reval (yrs)', d.holdDurationPreReval+' yrs', 'int')}
-      ${ff('costOfCapital',      'Cost of Capital (%)',          fmtPct(d.costOfCapital),         'pct')}
-      ${ff('termOfOwnership',    'Term of Ownership (yrs)',      d.termOfOwnership+' yrs',        'int')}
-      ${ff('profitUsedForDebt',  '% Profit → Debt Reduction',   fmtPct(d.profitUsedForDebt),     'pct')}
-      ${ff('settlementLag',      'Settlement Lag (yrs)',         d.settlementLag+' yrs',          'int')}
-      ${ff('projectDuration',    'Project Duration (yrs)',       d.projectDuration+' yrs',        'int')}
-      ${ff('depositPct',         'Deposit (%)',                  fmtPct(d.depositPct),            'pct')}
-      ${ff('salesCommissionPct', 'Sales Commission (%)',         fmtPct(d.salesCommissionPct),    'pct')}
+    ${fsc('model-vars', 'Model Variables')}
+    <div class="fin-section-body" data-section="model-vars" ${sec('model-vars')}>
+      <div class="fin-fields">
+        ${ff('acquisitionPrice',   'Acquisition Price',           fmtDollar(d.acquisitionPrice),   'dollar')}
+        ${ff('interestRate',       'Loan Interest Rate (pa)',      fmtPct(d.interestRate),          'pct')}
+        ${ff('rentalGrowth',       'Rental Increase (pa)',         fmtPct(d.rentalGrowth),          'pct')}
+        ${ff('lvr',                'Assumed LVR (%)',              fmtPct(d.lvr),                   'pct')}
+        ${ff('capitalGrowth',      'Asset Value Growth (pa)',      fmtPct(d.capitalGrowth),         'pct')}
+        ${ff('holdDurationPreReval','Hold Duration Pre-Reval (yrs)', d.holdDurationPreReval+' yrs', 'int')}
+        ${ff('costOfCapital',      'Cost of Capital (%)',          fmtPct(d.costOfCapital),         'pct')}
+        ${ff('termOfOwnership',    'Term of Ownership (yrs)',      d.termOfOwnership+' yrs',        'int')}
+        ${ff('profitUsedForDebt',  '% Profit → Debt Reduction',   fmtPct(d.profitUsedForDebt),     'pct')}
+        ${ff('settlementLag',      'Settlement Lag (yrs)',         d.settlementLag+' yrs',          'int')}
+        ${ff('projectDuration',    'Project Duration (yrs)',       d.projectDuration+' yrs',        'int')}
+        ${ff('depositPct',         'Deposit (%)',                  fmtPct(d.depositPct),            'pct')}
+        ${ff('salesCommissionPct', 'Sales Commission (%)',         fmtPct(d.salesCommissionPct),    'pct')}
+      </div>
     </div>
 
-    <div class="fin-section-label" style="margin-top:14px">Purchase Costs</div>
-    <div class="fin-fields">
-      ${ff('',        'Deposit Amount',   fmtDollar(r.deposit),    'dollar', '', true)}
-      ${ff('stampDuty','Stamp Duty',      fmtDollar(d.stampDuty),  'dollar', (d._state||'NSW') + ' auto-calc')}
-      ${ff('valuationCost','Valuation',   fmtDollar(d.valuationCost),'dollar')}
-      ${ff('solicitorCost','Solicitor',   fmtDollar(d.solicitorCost),'dollar')}
-      ${ff('inspections', 'Inspections',  fmtDollar(d.inspections), 'dollar')}
-      ${ff('',        'Commission',       fmtDollar(r.commission),  'dollar', '', true)}
-    </div>
-    <div class="fin-summary-row fin-summary-highlight"><span>Total Loan</span><span class="fin-summary-val">${fmtDollar(r.loan)}</span></div>
-    <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Upfront)</span><span class="fin-summary-val">${fmtDollar(r.upfront)}</span></div>
-    <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Total)</span><span class="fin-summary-val">${fmtDollar(r.totalCashReqd)}</span></div>
-
-    <div class="fin-section-label" style="margin-top:14px">Revenue</div>
-    <div class="fin-fields">
-      ${ff('weeklyRent',  'Weekly Rent',        fmtDollar(d.weeklyRent),   'dollar', '×52 = annual')}
-      ${ff('',            'Gross Rent (Year 1)', fmtDollar(r.grossRentYr1), 'dollar', '', true)}
+    ${fsc('purchase-costs', 'Purchase Costs')}
+    <div class="fin-section-body" data-section="purchase-costs" ${sec('purchase-costs')}>
+      <div class="fin-fields">
+        ${ff('',        'Deposit Amount',   fmtDollar(r.deposit),    'dollar', '', true)}
+        ${ff('stampDuty','Stamp Duty',      fmtDollar(d.stampDuty),  'dollar', (d._state||'NSW') + ' auto-calc')}
+        ${ff('valuationCost','Valuation',   fmtDollar(d.valuationCost),'dollar')}
+        ${ff('solicitorCost','Solicitor',   fmtDollar(d.solicitorCost),'dollar')}
+        ${ff('inspections', 'Inspections',  fmtDollar(d.inspections), 'dollar')}
+        ${ff('',        'Commission',       fmtDollar(r.commission),  'dollar', '', true)}
+      </div>
     </div>
 
-    <div class="fin-section-label" style="margin-top:14px">Outgoings</div>
-    <div class="fin-fields">
-      ${ff('councilQuarterly', 'Council (per quarter)',  fmtDollar(d.councilQuarterly), 'dollar', '×4 = annual')}
-      ${ff('',                 'Council (annual)',        fmtDollar(r.council),           'dollar', '', true)}
-      ${ff('water',            'Water',                   fmtDollar(d.water),             'dollar')}
-      ${ff('cleaning',         'Cleaning',                fmtDollar(d.cleaning),          'dollar')}
-      ${ff('insurance',        'Insurance',               fmtDollar(d.insurance),         'dollar')}
-      ${ff('landTax',          'Land Tax',                fmtDollar(d.landTax),           'dollar')}
-      ${ff('managementFeePct', 'Management Fee (%)',      fmtPct(d.managementFeePct),     'pct',   '% of gross rent')}
-      ${ff('',                 'Management Fee ($)',       fmtDollar(r.management$),       'dollar', '', true)}
-      ${ff('commonPower',      'Common Power',            fmtDollar(d.commonPower),       'dollar')}
-      ${ff('fireServices',     'Fire Services',           fmtDollar(d.fireServices),      'dollar')}
-      ${ff('maintenanceMonthly','Maintenance (per month)',fmtDollar(d.maintenanceMonthly),'dollar','×12 = annual')}
-      ${ff('',                 'Maintenance (annual)',     fmtDollar(r.maintenance),       'dollar', '', true)}
-      ${ff('sinkingFundPct',   'Sinking Fund (% of val)', fmtPct(d.sinkingFundPct),       'pct',   '% of acq. price')}
-      ${ff('',                 'Sinking Fund ($)',         fmtDollar(r.sinkingFund),       'dollar', '', true)}
-      ${ff('other',            'Other',                   fmtDollar(d.other),             'dollar')}
+    ${fsc('revenue', 'Revenue')}
+    <div class="fin-section-body" data-section="revenue" ${sec('revenue')}>
+      <div class="fin-fields">
+        ${ff('weeklyRent',  'Weekly Rent',        fmtDollar(d.weeklyRent),   'dollar', '×52 = annual')}
+      </div>
+      <div class="fin-summary-row ${r.grossRentYr1 < 0 ? 'fin-summary-neg' : ''}">
+        <span>Gross Rent (Year 1)</span><span class="fin-summary-val">${fmtDollar(r.grossRentYr1)}</span>
+      </div>
     </div>
-    <div class="fin-summary-row"><span>Total Outgoings</span><span class="fin-summary-val">${fmtDollar(r.totalOutgoings)}</span></div>
-    <div class="fin-summary-row ${r.netIncomeYr1 < 0 ? 'fin-summary-neg' : ''}">
-      <span>Net Income (Year 1)</span><span class="fin-summary-val">${fmtDollar(r.netIncomeYr1)}</span>
+
+    ${fsc('outgoings', 'Outgoings')}
+    <div class="fin-section-body" data-section="outgoings" ${sec('outgoings')}>
+      <div class="fin-fields">
+        ${ff('councilQuarterly', 'Council (per quarter)',  fmtDollar(d.councilQuarterly), 'dollar', '×4 = annual')}
+        ${ff('',                 'Council (annual)',        fmtDollar(r.council),           'dollar', '', true)}
+        ${ff('water',            'Water',                   fmtDollar(d.water),             'dollar')}
+        ${ff('cleaning',         'Cleaning',                fmtDollar(d.cleaning),          'dollar')}
+        ${ff('insurance',        'Insurance',               fmtDollar(d.insurance),         'dollar')}
+        ${ff('landTax',          'Land Tax',                fmtDollar(d.landTax),           'dollar')}
+        ${ff('managementFeePct', 'Management Fee (%)',      fmtPct(d.managementFeePct),     'pct',   '% of gross rent')}
+        ${ff('',                 'Management Fee ($)',       fmtDollar(r.management$),       'dollar', '', true)}
+        ${ff('commonPower',      'Common Power',            fmtDollar(d.commonPower),       'dollar')}
+        ${ff('fireServices',     'Fire Services',           fmtDollar(d.fireServices),      'dollar')}
+        ${ff('maintenanceMonthly','Maintenance (per month)',fmtDollar(d.maintenanceMonthly),'dollar','×12 = annual')}
+        ${ff('',                 'Maintenance (annual)',     fmtDollar(r.maintenance),       'dollar', '', true)}
+        ${ff('sinkingFundPct',   'Sinking Fund (% of val)', fmtPct(d.sinkingFundPct),       'pct',   '% of acq. price')}
+        ${ff('',                 'Sinking Fund ($)',         fmtDollar(r.sinkingFund),       'dollar', '', true)}
+        ${ff('other',            'Other',                   fmtDollar(d.other),             'dollar')}
+      </div>
+      <div class="fin-summary-row"><span>Total Outgoings</span><span class="fin-summary-val">${fmtDollar(r.totalOutgoings)}</span></div>
+      <div class="fin-summary-row ${r.netIncomeYr1 < 0 ? 'fin-summary-neg' : ''}">
+        <span>Net Income (Year 1)</span><span class="fin-summary-val">${fmtDollar(r.netIncomeYr1)}</span>
+      </div>
     </div>
 
     <div class="fin-actions">
@@ -668,37 +688,105 @@ function renderMain(d, r) {
   const avg     = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
   const lag     = Math.round(d.settlementLag || 0);
 
-  const rows = years.map(y => `
-    <tr class="${y.yr < lag ? 'fin-lag-row' : ''}">
-      <td>Year ${y.yr}</td>
-      <td class="${y.rent < 0 ? 'fin-neg' : ''}">${fmtDollar(y.rent)}</td>
-      <td class="fin-pct-cell ${y.rent / (d.acquisitionPrice||1) < 0 ? 'fin-neg' : ''}">${d.acquisitionPrice ? fmtPct(y.rent / d.acquisitionPrice) : '—'}</td>
-      <td>${fmtDollar(y.principalStart)}</td>
-      <td>${fmtDollar(y.principalPaid)}</td>
-      <td>${fmtDollar(y.interest)}</td>
-      <td>${fmtDollar(y.principalEnd)}</td>
-      <td class="${y.cashflow < 0 ? 'fin-neg' : 'fin-pos'}">${fmtDollar(y.cashflow)}</td>
-      <td class="fin-pct-cell ${y.roe < 0 ? 'fin-neg' : 'fin-pos'}">${fmtPct(y.roe)}</td>
-      <td>${fmtDollar(y.assetValue)}</td>
-      <td class="fin-muted">${fmtDollar(y.costOfFunds)}</td>
-      <td class="${y.npvAssetValue < 0 ? 'fin-neg' : 'fin-pos'}">${fmtDollar(y.npvAssetValue)}</td>
+  // Transposed table — metrics as rows, years as columns
+  const allCols = [...years, holdYrs.length ? { yr: 'Avg' } : null].filter(Boolean);
+
+  function yearCells(fn) {
+    return years.map(y => fn(y)).join('') +
+      (holdYrs.length ? `<td class="fin-avg-col">${fn({ _avg: true, yr: 'Avg' }, holdYrs)}</td>` : '');
+  }
+
+  // Helper to render a single cell value or the average across holdYrs
+  function cell(y, holdYrs, valFn, cls = '') {
+    if (y._avg) {
+      const v = avg(holdYrs.map(valFn));
+      return `<td class="fin-avg-col ${cls}">${typeof v === 'string' ? v : fmtDollar(v)}</td>`;
+    }
+    const v = valFn(y);
+    return `<td class="${cls}">${v}</td>`;
+  }
+
+  const metricRows = [
+    {
+      label: 'Net Rent',
+      rows: years.map(y => {
+        const cls = (y.yr < lag ? 'fin-lag-cell ' : '') + (y.rent < 0 ? 'fin-neg' : '');
+        return `<td class="${cls}">${fmtDollar(y.rent)}</td>`;
+      }),
+      avg: fmtDollar(avg(holdYrs.map(y => y.rent))),
+      avgCls: avg(holdYrs.map(y => y.rent)) < 0 ? 'fin-neg' : '',
+    },
+    {
+      label: 'Yield',
+      rows: years.map(y => {
+        const v = d.acquisitionPrice ? y.rent / d.acquisitionPrice : 0;
+        return `<td class="fin-pct-cell ${v < 0 ? 'fin-neg' : ''}">${d.acquisitionPrice ? fmtPct(v) : '—'}</td>`;
+      }),
+      avg: d.acquisitionPrice ? fmtPct(avg(holdYrs.map(y => y.rent)) / d.acquisitionPrice) : '—',
+      avgCls: 'fin-pct-cell',
+    },
+    {
+      label: 'Principal (Start)',
+      rows: years.map(y => `<td>${fmtDollar(y.principalStart)}</td>`),
+      avg: '—', avgCls: '',
+    },
+    {
+      label: 'Principal Paid',
+      rows: years.map(y => `<td>${fmtDollar(y.principalPaid)}</td>`),
+      avg: fmtDollar(avg(holdYrs.map(y => y.principalPaid))),
+      avgCls: '',
+    },
+    {
+      label: 'Interest Paid',
+      rows: years.map(y => `<td>${fmtDollar(y.interest)}</td>`),
+      avg: fmtDollar(avg(holdYrs.map(y => y.interest))),
+      avgCls: '',
+    },
+    {
+      label: 'Principal (End)',
+      rows: years.map(y => `<td>${fmtDollar(y.principalEnd)}</td>`),
+      avg: '—', avgCls: '',
+    },
+    {
+      label: 'Cashflow',
+      rows: years.map(y => `<td class="${y.cashflow < 0 ? 'fin-neg' : 'fin-pos'}">${fmtDollar(y.cashflow)}</td>`),
+      avg: fmtDollar(avg(holdYrs.map(y => y.cashflow))),
+      avgCls: avg(holdYrs.map(y => y.cashflow)) < 0 ? 'fin-neg' : 'fin-pos',
+    },
+    {
+      label: 'ROE',
+      rows: years.map(y => `<td class="fin-pct-cell ${y.roe < 0 ? 'fin-neg' : 'fin-pos'}">${fmtPct(y.roe)}</td>`),
+      avg: fmtPct(avg(holdYrs.map(y => y.roe))),
+      avgCls: 'fin-pct-cell',
+    },
+    {
+      label: 'Asset Value',
+      rows: years.map(y => `<td>${fmtDollar(y.assetValue)}</td>`),
+      avg: fmtDollar(avg(holdYrs.map(y => y.assetValue))),
+      avgCls: '',
+    },
+    {
+      label: 'Cost of Funds',
+      rows: years.map(y => `<td class="fin-muted">${fmtDollar(y.costOfFunds)}</td>`),
+      avg: '—', avgCls: 'fin-muted',
+    },
+    {
+      label: 'NPV (Asset Val)',
+      rows: years.map(y => `<td class="${y.npvAssetValue < 0 ? 'fin-neg' : 'fin-pos'}">${fmtDollar(y.npvAssetValue)}</td>`),
+      avg: '—', avgCls: '',
+    },
+  ];
+
+  const tableRows = metricRows.map(m => `
+    <tr>
+      <th class="fin-row-label">${m.label}</th>
+      ${m.rows.join('')}
+      ${holdYrs.length ? `<td class="fin-avg-col ${m.avgCls}">${m.avg}</td>` : ''}
     </tr>`).join('');
 
-  const avgRow = holdYrs.length ? `
-    <tr class="fin-avg-row">
-      <td>Average</td>
-      <td class="${avg(holdYrs.map(y=>y.rent)) < 0 ? 'fin-neg' : ''}">${fmtDollar(avg(holdYrs.map(y=>y.rent)))}</td>
-      <td class="fin-pct-cell">${d.acquisitionPrice ? fmtPct(avg(holdYrs.map(y=>y.rent)) / d.acquisitionPrice) : '—'}</td>
-      <td>—</td>
-      <td>${fmtDollar(avg(holdYrs.map(y=>y.principalPaid)))}</td>
-      <td>${fmtDollar(avg(holdYrs.map(y=>y.interest)))}</td>
-      <td>—</td>
-      <td class="${avg(holdYrs.map(y=>y.cashflow)) < 0 ? 'fin-neg' : 'fin-pos'}">${fmtDollar(avg(holdYrs.map(y=>y.cashflow)))}</td>
-      <td class="fin-pct-cell">${fmtPct(avg(holdYrs.map(y=>y.roe)))}</td>
-      <td>${fmtDollar(avg(holdYrs.map(y=>y.assetValue)))}</td>
-      <td class="fin-muted">—</td>
-      <td>—</td>
-    </tr>` : '';
+  const yearHeaders = years.map(y =>
+    `<th class="${y.yr < lag ? 'fin-lag-col' : ''}">Yr ${y.yr}</th>`
+  ).join('') + (holdYrs.length ? '<th class="fin-avg-col">Avg</th>' : '');
 
   const exit     = years[years.length - 1];
   const firstActive = years.find(y => y.yr >= lag);
@@ -707,8 +795,8 @@ function renderMain(d, r) {
   return `<div class="fin-main">
 
     <div class="fin-kpis">
-      <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Upfront)</div><div class="fin-kpi-val">${fmtDollarK(r.upfront)}</div></div>
-      <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Total)</div><div class="fin-kpi-val">${fmtDollarK(r.totalCashReqd)}</div></div>
+      <div class="fin-kpi fin-kpi-mean"><div class="fin-kpi-label">Mean Comparable Value</div><div class="fin-kpi-val" id="finKpiMeanVal">${(() => { const vals=[r.m1,r.m2,r.m3,r.m5].filter(v=>v!=null&&isFinite(v)&&v!==0); return vals.length ? fmtDollarK(vals.reduce((a,b)=>a+b,0)/vals.length) : '—'; })()}</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-label">Total Loan</div><div class="fin-kpi-val">${fmtDollarK(r.loan)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Net Income (Yr 1)</div><div class="fin-kpi-val ${r.netIncomeYr1 < 0 ? 'fin-kpi-neg' : 'fin-kpi-pos'}">${fmtDollarK(r.netIncomeYr1)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">First Cashflow</div><div class="fin-kpi-val ${(r.yr1Cashflow??0) < 0 ? 'fin-kpi-neg' : 'fin-kpi-pos'}">${fmtDollarK(r.yr1Cashflow)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Asset Value (Exit)</div><div class="fin-kpi-val">${fmtDollarK(exit?.assetValue)}</div></div>
@@ -716,16 +804,14 @@ function renderMain(d, r) {
     </div>
 
     <div class="fin-table-wrap">
-      <table class="fin-table">
+      <table class="fin-table fin-table-transposed">
         <thead>
           <tr>
-            <th></th><th>Net Rent</th><th>Yield</th>
-            <th>Principal (Start)</th><th>Principal Paid</th><th>Interest Paid</th><th>Principal (End)</th>
-            <th>Cashflow</th><th>ROE</th><th>Asset Value</th>
-            <th>Cost of Funds</th><th>NPV (Asset Val)</th>
+            <th class="fin-row-label-header"></th>
+            ${yearHeaders}
           </tr>
         </thead>
-        <tbody>${rows}${avgRow}</tbody>
+        <tbody>${tableRows}</tbody>
       </table>
     </div>
 
@@ -861,9 +947,6 @@ function bindInputs(r) {
     });
   });
 
-  // Update mean value in header
-  updateMeanValueHeader(r);
-
   // Comparable section collapse — state tracked in _comparableOpen, applied after each render
   const compToggle = document.getElementById('finComparableToggle');
   const compBody   = document.getElementById('finComparableBody');
@@ -880,6 +963,18 @@ function bindInputs(r) {
       compChev.textContent   = _comparableOpen ? '▼' : '▶';
     });
   }
+
+  // Collapsible sidebar sections
+  document.querySelectorAll('.fin-section-toggle').forEach(toggle => {
+    toggle.addEventListener('click', () => {
+      const id = toggle.dataset.section;
+      _sectionCollapsed[id] = !_sectionCollapsed[id];
+      const body = document.querySelector(`.fin-section-body[data-section="${id}"]`);
+      const chev = toggle.querySelector('.fin-section-chevron');
+      if (body) body.style.display = _sectionCollapsed[id] ? 'none' : '';
+      if (chev) chev.textContent   = _sectionCollapsed[id] ? '▶' : '▼';
+    });
+  });
 
   document.getElementById('finChangeProperty')?.addEventListener('click', () => {
     _current = null;
