@@ -49,9 +49,11 @@
 
 const FIN_API = '/api/finance';
 
-let _current        = null;
-let _financeVisible = false;
-let _allModels      = {};
+let _current           = null;
+let _financeVisible    = false;
+let _allModels         = {};
+let _comparableOpen    = false;  // persists collapse state across re-renders
+let _financeInitDone   = false;  // guard against duplicate initFinance() calls
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
@@ -471,6 +473,8 @@ function toggleFinance(show) {
   _financeVisible = show !== undefined ? show : !_financeVisible;
   document.getElementById('financeView')?.classList.toggle('visible', _financeVisible);
   document.getElementById('financeNavBtn')?.classList.toggle('active', _financeVisible);
+  // Close kanban when finance opens (they occupy the same full-screen layer)
+  if (_financeVisible && typeof toggleKanban === 'function') toggleKanban(false);
 }
 
 // offeredPrice: numeric price from the most recent offer or vendor terms (passed from kanban).
@@ -860,18 +864,20 @@ function bindInputs() {
   // Update mean value in header
   updateMeanValueHeader(r);
 
-  // Comparable section collapse toggle
+  // Comparable section collapse — state tracked in _comparableOpen, applied after each render
   const compToggle = document.getElementById('finComparableToggle');
   const compBody   = document.getElementById('finComparableBody');
   const compChev   = document.getElementById('finCompChevron');
-  if (compToggle && compBody) {
-    // Start collapsed
-    compBody.style.display = 'none';
-    compChev.textContent = '▶';
+  if (compToggle && compBody && compChev) {
+    // Apply current state
+    compBody.style.display = _comparableOpen ? '' : 'none';
+    compChev.textContent   = _comparableOpen ? '▼' : '▶';
+    // Single listener — safe because bindInputs only runs after a full re-render
+    // which rebuilds the DOM, so the element is always fresh (no duplicate listeners)
     compToggle.addEventListener('click', () => {
-      const open = compBody.style.display !== 'none';
-      compBody.style.display = open ? 'none' : '';
-      compChev.textContent   = open ? '▶' : '▼';
+      _comparableOpen = !_comparableOpen;
+      compBody.style.display = _comparableOpen ? '' : 'none';
+      compChev.textContent   = _comparableOpen ? '▼' : '▶';
     });
   }
 
@@ -895,12 +901,20 @@ function bindInputs() {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 async function initFinance() {
+  // Guard — only wire DOM listeners once, even if called multiple times
+  if (!_financeInitDone) {
+    _financeInitDone = true;
+
+    document.getElementById('financeNavBtn')?.addEventListener('click', () => {
+      if (!_financeVisible) renderFinanceView();
+      toggleFinance();
+    });
+
+    document.getElementById('financeClose')?.addEventListener('click', () => toggleFinance(false));
+  }
+
+  // Always (re)load saved models — safe to call multiple times
   _allModels = await finDbLoadAll();
-  document.getElementById('financeNavBtn')?.addEventListener('click', () => {
-    if (!_financeVisible) renderFinanceView();
-    toggleFinance();
-  });
-  document.getElementById('financeClose')?.addEventListener('click', () => toggleFinance(false));
 }
 
 window.FinanceModule = {
