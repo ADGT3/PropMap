@@ -501,7 +501,7 @@ function runModel(d) {
   return {
     loan, deposit, commission, stamp,
     equity, bankDepositRequired,
-    offerDepositUpfront, offerDepositSettlement, totalOfferDeposits,
+    offerDeposits, offerDepositUpfront, offerDepositSettlement, totalOfferDeposits,
     purchaseCosts, upfront, cashAtSettlement,
     totalCashReqd, preCashflowSum,
     grossRentYr1, management$, sinkingFund,
@@ -692,41 +692,56 @@ function renderSidebar(d, r) {
       <button class="fin-change-btn" id="finChangeProperty">Change</button>
     </div>
 
-    ${fsc('model-vars', 'Model Variables')}
+    ${fsc('model-vars', 'Financial Inputs')}
     <div class="fin-section-body" data-section="model-vars" ${sec('model-vars')}>
       <div class="fin-fields">
         ${ff('acquisitionPrice',   'Acquisition Price',           fmtDollar(d.acquisitionPrice),   'dollar')}
+      </div>
+
+      ${/* Offer deposit tranches — read from selected offer in pipeline */ ''}
+      ${(() => {
+        const deps = r.offerDeposits;
+        if (!deps || !deps.length || !deps.some(dep => dep.amount)) {
+          return `<div class="fin-deposit-none">No offer deposits recorded — set in kanban</div>`;
+        }
+        return deps.filter(dep => dep.amount).map((dep, i) => `
+          <div class="fin-deposit-tranche">
+            <span class="fin-deposit-num">Deposit ${i + 1}</span>
+            <span class="fin-deposit-amount">${dep.amount || '—'}</span>
+            <span class="fin-deposit-due ${!dep.due ? 'fin-deposit-due-missing' : ''}">${dep.due || 'No date set'}</span>
+          </div>`).join('');
+      })()}
+
+      <div class="fin-summary-row">
+        <span>Funds To Complete</span>
+        <span class="fin-summary-val">${fmtDollar(r.purchaseCosts)}</span>
+      </div>
+
+      <div class="fin-fields" style="margin-top:8px">
         ${ff('interestRate',       'Loan Interest Rate (pa)',      fmtPct(d.interestRate),          'pct')}
         ${ff('rentalGrowth',       'Rental Increase (pa)',         fmtPct(d.rentalGrowth),          'pct')}
         ${ff('lvr',                'Assumed LVR (%)',              fmtPct(d.lvr),                   'pct')}
         ${ff('capitalGrowth',      'Asset Value Growth (pa)',      fmtPct(d.capitalGrowth),         'pct')}
-        ${ff('holdDurationPreReval','Hold Duration Pre-Reval (yrs)', d.holdDurationPreReval+' yrs', 'int')}
         ${ff('costOfCapital',      'Cost of Capital (%)',          fmtPct(d.costOfCapital),         'pct')}
-        ${ff('termOfOwnership',    'Term of Ownership (yrs)',      d.termOfOwnership+' yrs',        'int')}
         ${ff('profitUsedForDebt',  '% Profit → Debt Reduction',   fmtPct(d.profitUsedForDebt),     'pct')}
+        ${ff('holdDurationPreReval','Next Valuation (yrs)',        d.holdDurationPreReval+' yrs',   'int')}
+        ${ff('termOfOwnership',    'Term of Ownership (yrs)',      d.termOfOwnership+' yrs',        'int')}
         ${ff('settlementLag',      'Settlement Lag (yrs)',         d.settlementLag+' yrs',          'int')}
         ${ff('projectDuration',    'Project Duration (yrs)',       d.projectDuration+' yrs',        'int')}
-        ${ff('depositPct',         'Deposit (%)',                  fmtPct(d.depositPct),            'pct')}
-        ${ff('salesCommissionPct', 'Sales Commission (%)',         fmtPct(d.salesCommissionPct),    'pct')}
       </div>
     </div>
 
     ${fsc('purchase-costs', 'Purchase Costs')}
     <div class="fin-section-body" data-section="purchase-costs" ${sec('purchase-costs')}>
       <div class="fin-fields">
-        ${ff('stampDuty','Stamp Duty',      fmtDollar(d.stampDuty),  'dollar', (d._state||'NSW') + ' transfer duty')}
-        ${ff('valuationCost','Valuation',   fmtDollar(d.valuationCost),'dollar')}
-        ${ff('solicitorCost','Solicitor',   fmtDollar(d.solicitorCost),'dollar')}
-        ${ff('inspections', 'Inspections',  fmtDollar(d.inspections), 'dollar')}
-        ${ff('',        'Commission',       fmtDollar(r.commission),  'dollar', '', true)}
+        ${ff('stampDuty',        'Stamp Duty',          fmtDollar(d.stampDuty),          'dollar', (d._state||'NSW') + ' transfer duty')}
+        ${ff('valuationCost',    'Valuation',            fmtDollar(d.valuationCost),      'dollar')}
+        ${ff('solicitorCost',    'Solicitor',            fmtDollar(d.solicitorCost),      'dollar')}
+        ${ff('inspections',      'Inspections',          fmtDollar(d.inspections),        'dollar')}
+        ${ff('salesCommissionPct','Sales Commission (%)', fmtPct(d.salesCommissionPct),   'pct')}
+        ${ff('',                 'Commission ($)',        fmtDollar(r.commission),         'dollar', '', true)}
+        ${ff('',                 'Equity Contribution',  fmtDollar(r.bankDepositRequired),'dollar', 'Price × (1−LVR) − deposits', true)}
       </div>
-      ${r.offerDepositUpfront > 0 || r.offerDepositSettlement > 0 ? `
-      <div class="fin-summary-row"><span>Offer Deposit (Upfront)</span><span class="fin-summary-val">${fmtDollar(r.offerDepositUpfront)}</span></div>
-      <div class="fin-summary-row"><span>Offer Deposit (At Settlement)</span><span class="fin-summary-val">${fmtDollar(r.offerDepositSettlement)}</span></div>
-      <div class="fin-summary-row"><span>Bank Deposit Required</span><span class="fin-summary-val">${fmtDollar(r.bankDepositRequired)}</span></div>
-      ` : `
-      <div class="fin-summary-row fin-summary-neg"><span>No offer deposits recorded</span><span class="fin-summary-val" style="font-size:10px">Set in kanban</span></div>
-      `}
       <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Upfront)</span><span class="fin-summary-val">${fmtDollar(r.upfront)}</span></div>
       <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Settlement)</span><span class="fin-summary-val">${fmtDollar(r.cashAtSettlement)}</span></div>
     </div>
