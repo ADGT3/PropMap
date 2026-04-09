@@ -1,4 +1,4 @@
-# Sydney Property Map — V62
+# Sydney Property Map — V66
 
 A browser-based interactive property map overlaying live Domain.com.au listings with planning, environmental and infrastructure data across Sydney's growth corridors. Deployed on Vercel with a Neon Postgres database for persistent pipeline and CRM storage.
 
@@ -11,11 +11,15 @@ sydney-property-map/
 ├── api/
 │   ├── pipeline.js          — Pipeline CRUD (Neon Postgres)
 │   ├── contacts.js          — CRM Contacts CRUD (Neon Postgres)
+│   ├── finance.js           — Financial model CRUD (Neon Postgres, property_financials table)
 │   ├── db-setup.js          — One-time DB schema setup endpoint
 │   ├── domain-search.js     — Domain API proxy (keeps key server-side)
 │   ├── tiles.js             — NSW tile proxy (query params, not path segments)
 │   ├── topo-style.js        — NSW topo style proxy (CORS fix)
 │   └── health.js            — DB health check endpoint
+├── finance/
+│   ├── finance.js           — Financial feasibility calculator module (Phase 1)
+│   └── finance-styles.css   — Finance module styles + Tools dropdown styles
 ├── index.html               — Page structure and UI
 ├── styles.css               — All styling (includes timestamped notes styles)
 ├── crm.js                   — CRM contact management module
@@ -185,6 +189,13 @@ contact_notes (
   note_text   TEXT NOT NULL,
   created_at  TIMESTAMPTZ
 )
+
+-- Financial feasibility models (one per pipeline property)
+property_financials (
+  pipeline_id  TEXT PK,            -- matches pipeline.id
+  data         JSONB NOT NULL,     -- full model: assumptions, expenses, revenue
+  updated_at   TIMESTAMPTZ
+)
 ```
 
 ---
@@ -307,6 +318,25 @@ Grouped into: Zoning, Environmental, Transport, Services, Western Parkland City 
 - **Due Diligence**: per-item risk level and notes
 - **Notes**: timestamped entries in reverse-chronological order; Ctrl/Cmd+Enter to submit; individual note deletion
 
+### Finance Module (`finance/finance.js`)
+
+A dedicated financial feasibility calculator, isolated in its own `finance/` folder with no cross-dependencies on map or kanban code. Accessed via the **📊 Finance** nav tab or the **📊 Finance** button on any kanban card modal.
+
+**Phase 1 — Feasibility (current):**
+- Purchase price pre-filled from the property's last vendor terms offer (falls back to listing price)
+- Inputs: acquisition price, LVR, stamp duty (NSW brackets, auto-calculated), solicitor, valuation, inspections, other costs
+- Assumptions: interest rate, rental growth rate, capital growth rate, discount rate (NPV), holding period
+- Outgoings: council, water, cleaning, insurance, land tax, management fee, common power, fire services, maintenance, sinking fund, other
+- Outputs: 10-year year-by-year projection — net rent, gross yield, principal (start/paid/end), interest paid, cashflow, ROE, asset value; plus average row
+- KPI strip: Total Cash Required, Net Rent Yr 1, Gross Yield, Cashflow Yr 1, Asset Value at Exit, NPV
+- NPV uses discounted cashflow over holding period plus discounted exit equity, minus total cash required
+- All inputs inline-editable (click any value); stamp duty recalculates automatically on price change
+- **Save Model** persists the full model to Postgres (`property_financials` table) keyed by pipeline ID
+- Property selector shown when opened from nav — lists all pipeline properties with "Model saved" badge
+- Fully isolated: all finance code lives in `finance/` and `api/finance.js` — zero modifications to `map.js`, `domain-api.js`, or other modules
+
+**Phase 2 — Full Viability (planned):** Development scenarios, sensitivity analysis, IRR/NPV reporting, PDF export.
+
 ### Agent / Contact Data Flow
 - When a Domain listing is matched to a pipeline property, `_agent` (name, agency, phone, email) and `_listingUrl` are stored on `pipeline[id].property` and persisted to Neon
 - `resolveFromDomain()` runs async on modal open — tries address match against current listings, falls back to `runDomainSearchAt` if needed
@@ -324,5 +354,7 @@ See `DEPLOY.md` for full setup guide.
 
 | Version | Notes |
 |---|---|
+| V66 | **Finance module** (Phase 1 — Feasibility). New `finance/` folder with `finance.js` (calculator, DB persistence) and `finance-styles.css`. New `api/finance.js` (Postgres CRUD, `property_financials` table auto-created). 10-year cashflow projection matching NRS spreadsheet: net rent, yield, principal, interest, cashflow, ROE, asset value, NPV. NSW stamp duty auto-calculated from brackets. All inputs inline-editable. Purchase price pre-filled from last vendor terms offer. Save Model persists to Postgres per property. Nav updated: **Pipeline \| CRM \| Finance \| ⚙ Tools ▾** — Measure and Upload Map moved under Tools dropdown. `📊 Finance` button added to kanban card modal header. |
+| V65 | Extended contact schema (baseline for v66). |
 | V62 | CRM module (contacts DB, collapsible modal section, Domain agent save). Timestamped notes with reverse-chronological history. Lot/DP async backfill. Agent/listingUrl stored on pipeline items. Address-string listing match (normalised, 3-pass). `runDomainSearchAt` for immediate post-search address lookup. Domain search debounce 5s→1.5s. `_suppressNextDomainSearch` flag. Listing panel highlight after address search. `api/contacts.js`, `api/db-setup.js`, `crm.js`, `crm-styles.css` added. |
 | V60 | Domain API live (no mock). Viewport geoWindow search, 1.5s debounce, 100 cap. `dd-risks.js` for DD automation. Topo = NSW VectorTile Hybrid via MapLibre GL. Tiles proxied via `api/tiles.js` query params. |

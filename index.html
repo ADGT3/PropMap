@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css"/>
   <link rel="stylesheet" href="crm-styles.css"/>
+  <link rel="stylesheet" href="finance/finance-styles.css"/>
 </head>
 <body>
 
@@ -42,11 +43,20 @@
       <!-- Kanban pipeline toggle -->
       <button class="panel-btn kanban-toggle-btn" id="kanbanToggleBtn">⬡ Pipeline</button>
 
-      <!-- Measurement tool toggle -->
-      <button class="panel-btn" id="measureBtn">📐 Measure</button>
+      <!-- CRM toggle -->
+      <button class="panel-btn" id="crmNavBtn">👤 CRM</button>
 
-      <!-- Upload manager toggle -->
-      <button class="panel-btn" id="uploadPanelBtn">⬆ Upload Map</button>
+      <!-- Finance toggle -->
+      <button class="panel-btn" id="financeNavBtn">📊 Finance</button>
+
+      <!-- Tools dropdown -->
+      <div class="tools-dropdown-anchor" id="toolsAnchor">
+        <button class="panel-btn" id="toolsDropdownBtn">⚙ Tools ▾</button>
+        <div class="tools-dropdown-menu" id="toolsDropdownMenu">
+          <button class="tools-dropdown-item" id="measureBtn">📐 Measure</button>
+          <button class="tools-dropdown-item" id="uploadPanelBtn">⬆ Upload Map</button>
+        </div>
+      </div>
 
     </div>
   </header>
@@ -486,6 +496,19 @@
     </div>
   </div>
 
+
+  <!-- Finance module view -->
+  <div class="finance-view" id="financeView">
+    <div class="finance-header">
+      <div class="finance-title">
+        <span class="finance-title-icon">📊</span>
+        Financial Feasibility
+      </div>
+      <button class="panel-close" id="financeClose" title="Close">✕</button>
+    </div>
+    <div id="financeContent"></div>
+  </div>
+
   <!-- Kanban pipeline view -->
   <div class="kanban-view" id="kanbanView">
     <div class="kanban-header">
@@ -513,6 +536,30 @@
   <script src="crm.js"></script>
   <script src="map.js"></script>
   <script src="kanban.js"></script>
+  <script src="finance/finance.js"></script>
+  <script>
+    // ── Tools dropdown toggle ──────────────────────────────────────────────
+    (function() {
+      const btn  = document.getElementById('toolsDropdownBtn');
+      const menu = document.getElementById('toolsDropdownMenu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        menu.classList.toggle('open');
+      });
+      document.addEventListener('click', e => {
+        if (!e.target.closest('#toolsAnchor')) menu.classList.remove('open');
+      });
+      // Close menu when a tool item is clicked
+      menu.addEventListener('click', () => menu.classList.remove('open'));
+    })();
+
+    // ── Finance: open from kanban card ─────────────────────────────────────
+    // Kanban cards call window.openFinanceForProperty(id, pipelineEntry)
+    window.openFinanceForProperty = function(id, entry) {
+      if (window.FinanceModule) window.FinanceModule.open(id, entry);
+    };
+  </script>
 
 </body>
 </html>

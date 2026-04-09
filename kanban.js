@@ -671,7 +671,10 @@ function openCardModal(id) {
             : `<div class="kb-modal-lotdp" style="font-size:11px;color:#bbb;margin-top:3px">Lot/DP loading…</div>`}
           ${p._listingUrl ? `<a href="${p._listingUrl}" target="_blank" rel="noopener" class="kb-domain-link" style="display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none">↗ View on Domain</a>` : ''}
         </div>
-        <button class="kb-modal-close" title="Close">✕</button>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <button class="kb-finance-btn" title="Open financial model">📊 Finance</button>
+          <button class="kb-modal-close" title="Close">✕</button>
+        </div>
       </div>
       <div class="kb-modal-body">
 
@@ -761,6 +764,10 @@ function openCardModal(id) {
 
   // Close
   overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('.kb-finance-btn').addEventListener('click', () => {
+    overlay.remove();
+    if (window.FinanceModule) window.FinanceModule.open(id, pipeline[id]);
+  });
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
   document.addEventListener('keydown', function escClose(e) {
     if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escClose); }
