@@ -1,4 +1,4 @@
-# Sydney Property Map — V66
+# Sydney Property Map — V66.2
 
 A browser-based interactive property map overlaying live Domain.com.au listings with planning, environmental and infrastructure data across Sydney's growth corridors. Deployed on Vercel with a Neon Postgres database for persistent pipeline and CRM storage.
 
@@ -193,7 +193,7 @@ contact_notes (
 -- Financial feasibility models (one per pipeline property)
 property_financials (
   pipeline_id  TEXT PK,            -- matches pipeline.id
-  data         JSONB NOT NULL,     -- full model: assumptions, expenses, revenue
+  data         JSONB NOT NULL,     -- full model: assumptions, expenses, revenue, _state (detected state code)
   updated_at   TIMESTAMPTZ
 )
 ```
@@ -322,18 +322,21 @@ Grouped into: Zoning, Environmental, Transport, Services, Western Parkland City 
 
 A dedicated financial feasibility calculator, isolated in its own `finance/` folder with no cross-dependencies on map or kanban code. Accessed via the **📊 Finance** nav tab or the **📊 Finance** button on any kanban card modal.
 
-**Phase 1 — Feasibility (current):**
-- Purchase price pre-filled from the property's last vendor terms offer (falls back to listing price)
-- Inputs: acquisition price, LVR, stamp duty (NSW brackets, auto-calculated), solicitor, valuation, inspections, other costs
-- Assumptions: interest rate, rental growth rate, capital growth rate, discount rate (NPV), holding period
-- Outgoings: council, water, cleaning, insurance, land tax, management fee, common power, fire services, maintenance, sinking fund, other
-- Outputs: 10-year year-by-year projection — net rent, gross yield, principal (start/paid/end), interest paid, cashflow, ROE, asset value; plus average row
-- KPI strip: Total Cash Required, Net Rent Yr 1, Gross Yield, Cashflow Yr 1, Asset Value at Exit, NPV
-- NPV uses discounted cashflow over holding period plus discounted exit equity, minus total cash required
-- All inputs inline-editable (click any value); stamp duty recalculates automatically on price change
-- **Save Model** persists the full model to Postgres (`property_financials` table) keyed by pipeline ID
-- Property selector shown when opened from nav — lists all pipeline properties with "Model saved" badge
-- Fully isolated: all finance code lives in `finance/` and `api/finance.js` — zero modifications to `map.js`, `domain-api.js`, or other modules
+**Phase 1 — Feasibility (current, v66.2):**
+
+_Calculation engine matches `Feasibility_-82WPRL-v3.xlsx`:_
+- **Loan model**: interest-only by default; principal paid = (Rent − Interest) × `% profit used for debt reduction`. When 0% this is pure interest-only; when positive, profit above interest reduces principal each year
+- **Settlement lag**: configurable years (0..n) where rent and interest are both zero — property not yet settled; lag rows shown greyed/italic
+- **Cost of Funds**: upfront cash requirement compounded at cost of capital each year; NPV = Asset Value − Cost of Funds (not a DCF NPV)
+- **Cashflow** = Net Rent − Interest − Principal Paid; **ROE** = Cashflow ÷ Total Cash Required (Total)
+- **Dual cash totals**: Upfront (deposit + purchase costs) and Total (Upfront − cashflows before hold duration pre-revaluation)
+- **Inputs (grey cells)**: acquisition price, LVR, deposit %, sales commission %, interest rate, rental growth, capital growth, cost of capital, term of ownership, settlement lag, project duration, hold duration pre-revaluation, % profit to debt reduction; weekly rent (× 52), council quarterly (× 4), maintenance monthly (× 12), management fee %, sinking fund % — formula-driven inputs matching spreadsheet pattern
+- **Calculated fields**: gross rent, council annual, maintenance annual, management fee $, sinking fund $, stamp duty — shown in italic, not editable
+- **Comparable Value panel** (collapsible, collapsed by default): Method 1 Gross Area, Method 2 30% GRV, Method 3 Development TDC/lot, Method 5 Derived from Yield — all inputs editable inline; mean shown as badge in header
+- **Multi-state stamp duty**: state auto-detected from property address; formulas for NSW, VIC, QLD, SA, ACT sourced from official .gov.au pages; detected state shown in field hint
+- **Finance header**: phase chevron nav (Financial Feasibility › Acquisition → Delivery); Mean Comparable Value shown live in header, updates as inputs change
+- **Kanban integration**: Finance button sits below Terms Offered in kanban modal; passes most recent submitted offer price (falls back to vendor terms price, then listing price); existing model variables fully preserved on re-open — only acquisition price updates if offer has changed
+- **Save Model** persists to Postgres (`property_financials` table) keyed by pipeline ID; reloads on next visit
 
 **Phase 2 — Full Viability (planned):** Development scenarios, sensitivity analysis, IRR/NPV reporting, PDF export.
 
@@ -354,7 +357,8 @@ See `DEPLOY.md` for full setup guide.
 
 | Version | Notes |
 |---|---|
-| V66 | **Finance module** (Phase 1 — Feasibility). New `finance/` folder with `finance.js` (calculator, DB persistence) and `finance-styles.css`. New `api/finance.js` (Postgres CRUD, `property_financials` table auto-created). 10-year cashflow projection matching NRS spreadsheet: net rent, yield, principal, interest, cashflow, ROE, asset value, NPV. NSW stamp duty auto-calculated from brackets. All inputs inline-editable. Purchase price pre-filled from last vendor terms offer. Save Model persists to Postgres per property. Nav updated: **Pipeline \| CRM \| Finance \| ⚙ Tools ▾** — Measure and Upload Map moved under Tools dropdown. `📊 Finance` button added to kanban card modal header. |
+| V66.2 | **Finance module enhancements.** Calculation engine rewritten to match `Feasibility_-82WPRL-v3.xlsx`: interest-only loan driven by `% profit used for debt reduction` (principal paid = (Rent − Interest) × debt reduction %; 0% = pure interest-only), settlement lag (pre-settlement years show zero rent/interest), Cost of Funds row (upfront cash × cost of capital per year), NPV = Asset Value − Cost of Funds (per-year, not DCF). Dual cash totals: Upfront (deposit + purchase costs) and Total (upfront − pre-reval cashflows). Inputs correctly split into grey (editable) vs calculated display fields — weekly rent × 52, council quarterly × 4, maintenance monthly × 12, management fee % × gross rent, sinking fund % × acquisition price. Five comparable value methods (Gross Area, 30% GRV, Development TDC, Method 5 Yield-derived). **Multi-state stamp duty**: state auto-detected from property address; separate formula for NSW, VIC, QLD, SA, ACT — each sourced from official .gov.au pages (Revenue NSW contracts guide, SRO Vic fixtures page, QRO rates page, RevenueSA, ACT Revenue Office non-commercial table). NSW rates updated to 1 July 2025 CPI-adjusted thresholds. **Kanban modal**: Finance button moved from header to below Terms Offered section, restyled as full-width accent action link; passes most recent offer price (or vendor terms price) to finance module. **Price carry-forward**: new models seeded from offer price; existing models preserve all assumptions — only acquisitionPrice updates if offer differs. **Finance header**: phase chevron nav (Financial Feasibility › Acquisition → Delivery placeholder); Mean Comparable Value shown live in header. **Comparable section**: collapsed by default, mean value shown as badge in section header. |
+| V66 | **Finance module** (Phase 1 — Feasibility, initial). New `finance/` folder with `finance.js` and `finance-styles.css`. New `api/finance.js` (Postgres CRUD, `property_financials` table). Nav updated: **Pipeline \| CRM \| Finance \| ⚙ Tools ▾**. |
 | V65 | Extended contact schema (baseline for v66). |
 | V62 | CRM module (contacts DB, collapsible modal section, Domain agent save). Timestamped notes with reverse-chronological history. Lot/DP async backfill. Agent/listingUrl stored on pipeline items. Address-string listing match (normalised, 3-pass). `runDomainSearchAt` for immediate post-search address lookup. Domain search debounce 5s→1.5s. `_suppressNextDomainSearch` flag. Listing panel highlight after address search. `api/contacts.js`, `api/db-setup.js`, `crm.js`, `crm-styles.css` added. |
 | V60 | Domain API live (no mock). Viewport geoWindow search, 1.5s debounce, 100 cap. `dd-risks.js` for DD automation. Topo = NSW VectorTile Hybrid via MapLibre GL. Tiles proxied via `api/tiles.js` query params. |

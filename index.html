@@ -500,11 +500,27 @@
   <!-- Finance module view -->
   <div class="finance-view" id="financeView">
     <div class="finance-header">
-      <div class="finance-title">
+      <div class="finance-header-left">
         <span class="finance-title-icon">📊</span>
-        Financial Feasibility
+        <div class="fin-phase-nav">
+          <div class="fin-phase active" id="finPhaseAcquisition">
+            <span class="fin-phase-label">Financial Feasibility</span>
+            <span class="fin-phase-sub">Acquisition</span>
+          </div>
+          <span class="fin-phase-chevron">›</span>
+          <div class="fin-phase disabled" id="finPhaseDelivery" title="Coming soon">
+            <span class="fin-phase-label">Financial Feasibility</span>
+            <span class="fin-phase-sub">Delivery</span>
+          </div>
+        </div>
       </div>
-      <button class="panel-close" id="financeClose" title="Close">✕</button>
+      <div class="finance-header-right">
+        <div class="fin-mean-val" id="finMeanVal" style="display:none">
+          <span class="fin-mean-label">Mean Comparable Value</span>
+          <span class="fin-mean-num" id="finMeanNum">—</span>
+        </div>
+        <button class="panel-close" id="financeClose" title="Close">✕</button>
+      </div>
     </div>
     <div id="financeContent"></div>
   </div>

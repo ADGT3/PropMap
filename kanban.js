@@ -672,7 +672,6 @@ function openCardModal(id) {
           ${p._listingUrl ? `<a href="${p._listingUrl}" target="_blank" rel="noopener" class="kb-domain-link" style="display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none">↗ View on Domain</a>` : ''}
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-          <button class="kb-finance-btn" title="Open financial model">📊 Finance</button>
           <button class="kb-modal-close" title="Close">✕</button>
         </div>
       </div>
@@ -715,6 +714,7 @@ function openCardModal(id) {
           <button class="kb-submit-offer">+ Submit Offer</button>
         </div>
         <div class="kb-offers-list" id="kb-modal-offers-${id}">${buildOffersHtml(offers)}</div>
+        <button class="kb-finance-btn" title="Open financial feasibility model for this property">📊 Model this in Financial Feasibility</button>
 
         <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
         <div class="kb-dd">
@@ -766,7 +766,24 @@ function openCardModal(id) {
   overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
   overlay.querySelector('.kb-finance-btn').addEventListener('click', () => {
     overlay.remove();
-    if (window.FinanceModule) window.FinanceModule.open(id, pipeline[id]);
+    if (!window.FinanceModule) return;
+
+    // Build price context: most recent offer → vendor terms → listing price
+    const _offers = getOffers(id);
+    const _terms  = getTerms(id);
+    const offerPrice = _offers.length ? _offers[0].price : null;  // newest first
+    const termsPrice = _terms.price || null;
+
+    // Parse whichever price string we find to a number
+    function parsePrice(s) {
+      if (!s) return null;
+      const n = parseFloat(String(s).replace(/[^0-9.]/g, ''));
+      return (!isNaN(n) && n > 0) ? n : null;
+    }
+
+    const offeredPrice = parsePrice(offerPrice) || parsePrice(termsPrice) || null;
+
+    window.FinanceModule.open(id, pipeline[id], offeredPrice);
   });
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
   document.addEventListener('keydown', function escClose(e) {

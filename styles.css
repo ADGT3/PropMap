@@ -1835,20 +1835,26 @@ header {
 .kb-modal-close:hover { background: var(--surface2); color: var(--text); }
 
 .kb-finance-btn {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 5px;
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
   font-family: 'DM Sans', sans-serif;
   font-weight: 600;
-  color: var(--muted);
-  padding: 4px 10px;
+  color: var(--accent);
+  padding: 8px 12px;
   line-height: 1.4;
-  flex-shrink: 0;
-  transition: border-color 0.12s, color 0.12s;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
 }
-.kb-finance-btn:hover { border-color: var(--accent); color: var(--accent); }
+.kb-finance-btn:hover {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface2));
+  border-color: var(--accent);
+}
 
 .kb-modal-body {
   overflow-y: auto;
