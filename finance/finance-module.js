@@ -314,13 +314,90 @@ function runModel(d) {
 
   // ── Purchase / deal figures ───────────────────────────────────────────
   const stamp      = d.stampDuty || calcStampDuty(price, d._state || 'NSW');
-  const deposit    = price * (d.depositPct || 0);                // C32 = E2*B2
   const commission = price * (d.salesCommissionPct || 0);        // C37 = E3*B2
   const loan       = price * (d.lvr || 0);                       // C31 = B2*B5
+  const equity     = price - loan;                               // cash needed at settlement from buyer
 
-  // Total Cash Required (Upfront) = SUM(C32:C37)
-  const upfront = deposit + stamp + (d.valuationCost || 0) +
-                  (d.solicitorCost || 0) + (d.inspections || 0) + commission;
+  // ── Offer deposit tranches ────────────────────────────────────────────
+  // Pulled from the selected offer on the pipeline entry.
+  // depositTranches: [{ amount (number), due (string e.g. "on exchange", "90 days") }]
+  // We classify each tranche as either:
+  //   - upfront: paid before settlement (Year 0 / at exchange)
+  //   - atSettlement: paid at settlement
+  // Amounts are parsed from the offer deposit fields (formatted strings like "$50,000")
+  const entry    = _current?.pipelineEntry;
+  const offers   = entry?.offers || [];
+  const _offeredPrice = _current?.offeredPrice;
+  const selOffer = _offeredPrice
+    ? offers.find(o => { const n = parseFloat(String(o.price||'').replace(/[^0-9.]/g,'')); return Math.abs(n - _offeredPrice) < 1; })
+    : offers[0];
+  const offerDeposits = selOffer?.deposits || entry?.terms?.deposits || [];
+
+  function parseDepositAmount(s) {
+    if (!s) return 0;
+    // Handle both "$50,000" and "5%" style entries
+    const str = String(s).trim();
+    if (str.includes('%')) {
+      const pct = parseFloat(str) / 100;
+      return isNaN(pct) ? 0 : pct * price;
+    }
+    const n = parseFloat(str.replace(/[^0-9.]/g, ''));
+    return isNaN(n) ? 0 : n;
+  }
+
+  function isUpfrontDeposit(due) {
+    // Upfront = any deposit due BEFORE settlement
+    // Settlement occurs at settlementLag years
+    // Anything paid before that point is "upfront" — exchange, early tranches, etc.
+    // Only deposits explicitly due AT or AFTER settlement are excluded
+    if (!due) return true; // default to upfront if not specified
+    const s = String(due).toLowerCase();
+    // Explicit settlement keywords → not upfront (paid at settlement alongside bank)
+    if (/^at settlement$|^settlement$|^on settlement$/.test(s.trim())) return false;
+    // Everything else (on exchange, X days, X months up to settlement lag) → upfront
+    return true;
+  }
+
+  function parseDueDays(s) {
+    const m = s.match(/^(\d+(?:\.\d+)?)\s*(d|day|days|m|mo|month|months|y|yr|year|years)?/);
+    if (!m) return null;
+    const n = parseFloat(m[1]);
+    const u = (m[2] || 'd').toLowerCase();
+    if (/^y/.test(u)) return n * 365;
+    if (/^m/.test(u)) return n * 30;
+    return n;
+  }
+
+  let offerDepositUpfront    = 0;  // paid before settlement (at exchange)
+  let offerDepositSettlement = 0;  // paid at/near settlement but before loan draws
+
+  offerDeposits.forEach(dep => {
+    const amt = parseDepositAmount(dep.amount);
+    if (amt <= 0) return;
+    if (isUpfrontDeposit(dep.due || dep.note || '')) {
+      offerDepositUpfront += amt;
+    } else {
+      offerDepositSettlement += amt;
+    }
+  });
+
+  const totalOfferDeposits = offerDepositUpfront + offerDepositSettlement;
+
+  // Bank deposit = equity - offer deposits already paid (bank tops up the rest)
+  const bankDepositRequired = Math.max(0, equity - totalOfferDeposits);
+
+  // Purchase costs (non-deposit costs paid around settlement)
+  const purchaseCosts = stamp + (d.valuationCost || 0) +
+                        (d.solicitorCost || 0) + (d.inspections || 0) + commission;
+
+  // Cash Required (Upfront) = all offer deposits due before settlement + purchase costs
+  const upfront = offerDepositUpfront + purchaseCosts;
+
+  // Cash Required (At Settlement) = bank deposit shortfall + any deposits due at settlement
+  const cashAtSettlement = bankDepositRequired + offerDepositSettlement;
+
+  // Legacy 'deposit' for spreadsheet compatibility (total offer deposits)
+  const deposit = totalOfferDeposits || price * (d.depositPct || 0);
 
   // ── Year-by-year projection ───────────────────────────────────────────
   const lag    = Math.max(0, Math.round(d.settlementLag || 0));
@@ -365,12 +442,13 @@ function runModel(d) {
     principalStart = principalEnd;
   }
 
-  // ── Total Cash Required (Total) = Upfront - SUM(cashflows where yr < holdDuration) ──
-  // G31 = SUM(C32:C37) - SUMIF(B16:L16,"<"&B7, B23:L23)
+  // ── Total Cash Required (Total) ──────────────────────────────────────
+  // = Upfront + Cash at Settlement - sum(cashflows where yr < holdDurationPreReval)
+  // Negative cashflows during pre-reval period add to total cash required (funding gap)
   const preCashflowSum = years
     .filter(y => y.yr < hold)
     .reduce((s, y) => s + y.cashflow, 0);
-  const totalCashReqd = upfront - preCashflowSum;
+  const totalCashReqd = upfront + cashAtSettlement - preCashflowSum;
 
   // ── ROE uses totalCashReqd (G31) ─────────────────────────────────────
   years.forEach(y => {
@@ -421,7 +499,10 @@ function runModel(d) {
   const yr1Cashflow = years.find(y => y.yr === lag)?.cashflow ?? 0;
 
   return {
-    loan, deposit, commission, stamp, upfront,
+    loan, deposit, commission, stamp,
+    equity, bankDepositRequired,
+    offerDepositUpfront, offerDepositSettlement, totalOfferDeposits,
+    purchaseCosts, upfront, cashAtSettlement,
     totalCashReqd, preCashflowSum,
     grossRentYr1, management$, sinkingFund,
     council, maintenance,
@@ -513,9 +594,11 @@ async function openFinanceForProperty(pipelineId, pipelineEntry, offeredPrice) {
   _allModels[pipelineId] = data;
   _current = {
     pipelineId,
-    address: p.address || '',
-    suburb:  p.suburb  || '',
+    address:       p.address || '',
+    suburb:        p.suburb  || '',
     data,
+    pipelineEntry, // full pipeline entry — needed for offer deposit tranches
+    offeredPrice,  // which offer was selected
   };
   renderFinanceView();
   toggleFinance(true);
@@ -631,13 +714,21 @@ function renderSidebar(d, r) {
     ${fsc('purchase-costs', 'Purchase Costs')}
     <div class="fin-section-body" data-section="purchase-costs" ${sec('purchase-costs')}>
       <div class="fin-fields">
-        ${ff('',        'Deposit Amount',   fmtDollar(r.deposit),    'dollar', '', true)}
         ${ff('stampDuty','Stamp Duty',      fmtDollar(d.stampDuty),  'dollar', (d._state||'NSW') + ' transfer duty')}
         ${ff('valuationCost','Valuation',   fmtDollar(d.valuationCost),'dollar')}
         ${ff('solicitorCost','Solicitor',   fmtDollar(d.solicitorCost),'dollar')}
         ${ff('inspections', 'Inspections',  fmtDollar(d.inspections), 'dollar')}
         ${ff('',        'Commission',       fmtDollar(r.commission),  'dollar', '', true)}
       </div>
+      ${r.offerDepositUpfront > 0 || r.offerDepositSettlement > 0 ? `
+      <div class="fin-summary-row"><span>Offer Deposit (Upfront)</span><span class="fin-summary-val">${fmtDollar(r.offerDepositUpfront)}</span></div>
+      <div class="fin-summary-row"><span>Offer Deposit (At Settlement)</span><span class="fin-summary-val">${fmtDollar(r.offerDepositSettlement)}</span></div>
+      <div class="fin-summary-row"><span>Bank Deposit Required</span><span class="fin-summary-val">${fmtDollar(r.bankDepositRequired)}</span></div>
+      ` : `
+      <div class="fin-summary-row fin-summary-neg"><span>No offer deposits recorded</span><span class="fin-summary-val" style="font-size:10px">Set in kanban</span></div>
+      `}
+      <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Upfront)</span><span class="fin-summary-val">${fmtDollar(r.upfront)}</span></div>
+      <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Settlement)</span><span class="fin-summary-val">${fmtDollar(r.cashAtSettlement)}</span></div>
     </div>
 
     ${fsc('revenue', 'Revenue')}
@@ -798,7 +889,7 @@ function renderMain(d, r) {
       <div class="fin-kpi fin-kpi-mean"><div class="fin-kpi-label">Mean Comparable Value</div><div class="fin-kpi-val" id="finKpiMeanVal">${(() => { const vals=[r.m1,r.m2,r.m3,r.m5].filter(v=>v!=null&&isFinite(v)&&v!==0); return vals.length ? fmtDollarK(vals.reduce((a,b)=>a+b,0)/vals.length) : '—'; })()}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Total Loan</div><div class="fin-kpi-val">${fmtDollarK(r.loan)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Upfront)</div><div class="fin-kpi-val">${fmtDollarK(r.upfront)}</div></div>
-      <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Total)</div><div class="fin-kpi-val">${fmtDollarK(r.totalCashReqd)}</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Settlement)</div><div class="fin-kpi-val">${fmtDollarK(r.cashAtSettlement)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Net Income (Yr 1)</div><div class="fin-kpi-val ${r.netIncomeYr1 < 0 ? 'fin-kpi-neg' : 'fin-kpi-pos'}">${fmtDollarK(r.netIncomeYr1)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Cashflow (Yr 1)</div><div class="fin-kpi-val ${(r.yr1Cashflow??0) < 0 ? 'fin-kpi-neg' : 'fin-kpi-pos'}">${fmtDollarK(r.yr1Cashflow)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Asset Value (Exit)</div><div class="fin-kpi-val">${fmtDollarK(exit?.assetValue)}</div></div>
