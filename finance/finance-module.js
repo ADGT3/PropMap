@@ -295,6 +295,36 @@ function calcStampDuty(price, state) {
 
 // ─── Calculation engine (exact spreadsheet formula transcription) ─────────────
 
+// ─── Deposit helpers (module scope — used by both runModel and renderSidebar) ──
+
+function parseDueDays(s) {
+  const m = String(s).match(/(\d+(?:\.\d+)?)\s*(d|day|days|m|mo|month|months|y|yr|year|years)?/i);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  const u = (m[2] || 'd').toLowerCase();
+  if (/^y/.test(u)) return n * 365;
+  if (/^m/.test(u)) return n * 30;
+  return n;
+}
+
+function parseDepositAmount(s, price) {
+  if (!s) return 0;
+  const str = String(s).trim();
+  if (str.includes('%')) {
+    const pct = parseFloat(str) / 100;
+    return isNaN(pct) ? 0 : pct * (price || 0);
+  }
+  const n = parseFloat(str.replace(/[^0-9.]/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+function isUpfrontDeposit(due) {
+  if (!due) return true;
+  const s = String(due).toLowerCase().trim();
+  if (/^at settlement$|^settlement$|^on settlement$/.test(s)) return false;
+  return true;
+}
+
 function runModel(d) {
   const price = d.acquisitionPrice || 0;
 
@@ -333,46 +363,14 @@ function runModel(d) {
     : offers[0];
   const offerDeposits = selOffer?.deposits || entry?.terms?.deposits || [];
 
-  function parseDepositAmount(s) {
-    if (!s) return 0;
-    // Handle both "$50,000" and "5%" style entries
-    const str = String(s).trim();
-    if (str.includes('%')) {
-      const pct = parseFloat(str) / 100;
-      return isNaN(pct) ? 0 : pct * price;
-    }
-    const n = parseFloat(str.replace(/[^0-9.]/g, ''));
-    return isNaN(n) ? 0 : n;
-  }
-
-  function isUpfrontDeposit(due) {
-    // Upfront = any deposit due BEFORE settlement
-    // Settlement occurs at settlementLag years
-    // Anything paid before that point is "upfront" — exchange, early tranches, etc.
-    // Only deposits explicitly due AT or AFTER settlement are excluded
-    if (!due) return true; // default to upfront if not specified
-    const s = String(due).toLowerCase();
-    // Explicit settlement keywords → not upfront (paid at settlement alongside bank)
-    if (/^at settlement$|^settlement$|^on settlement$/.test(s.trim())) return false;
-    // Everything else (on exchange, X days, X months up to settlement lag) → upfront
-    return true;
-  }
-
-  function parseDueDays(s) {
-    const m = s.match(/^(\d+(?:\.\d+)?)\s*(d|day|days|m|mo|month|months|y|yr|year|years)?/);
-    if (!m) return null;
-    const n = parseFloat(m[1]);
-    const u = (m[2] || 'd').toLowerCase();
-    if (/^y/.test(u)) return n * 365;
-    if (/^m/.test(u)) return n * 30;
-    return n;
-  }
+  // Deposit helpers — module-scope functions, but need price for % parsing
+  function parseAmt(s) { return parseDepositAmount(s, price); }
 
   let offerDepositUpfront    = 0;  // paid before settlement (at exchange)
   let offerDepositSettlement = 0;  // paid at/near settlement but before loan draws
 
   offerDeposits.forEach(dep => {
-    const amt = parseDepositAmount(dep.amount);
+    const amt = parseAmt(dep.amount);
     if (amt <= 0) return;
     if (isUpfrontDeposit(dep.due || dep.note || '')) {
       offerDepositUpfront += amt;
@@ -704,12 +702,25 @@ function renderSidebar(d, r) {
         if (!deps || !deps.length || !deps.some(dep => dep.amount)) {
           return `<div class="fin-deposit-none">No offer deposits recorded — set in kanban</div>`;
         }
-        return deps.filter(dep => dep.amount).map((dep, i) => `
+        let cumulativeDays = 0;
+        return deps.filter(dep => dep.amount).map((dep, i) => {
+          const amt    = parseDepositAmount(dep.amount, d.acquisitionPrice);
+          const pct    = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(2).replace(/\.?0+$/, '') : null;
+          // due = days since previous deposit (or since contract for first)
+          const dueDays = parseDueDays(dep.due || '');
+          cumulativeDays += dueDays !== null ? dueDays : 0;
+          const dueLabel = dep.due
+            ? (i === 0
+                ? dep.due + ' from contract'
+                : dep.due + ' after Deposit ' + i)
+            : (dep.note || 'No date set');
+          return \`
           <div class="fin-deposit-tranche">
-            <span class="fin-deposit-num">Deposit ${i + 1}</span>
-            <span class="fin-deposit-amount">${dep.amount || '—'}</span>
-            <span class="fin-deposit-due ${!dep.due ? 'fin-deposit-due-missing' : ''}">${dep.due || 'No date set'}</span>
-          </div>`).join('');
+            <span class="fin-deposit-num">Deposit \${i + 1}</span>
+            <span class="fin-deposit-amount">\${amt > 0 ? fmtDollar(amt) : dep.amount}\${pct ? \` <span class="fin-deposit-pct">(\${pct}%)</span>\` : ''}</span>
+            <span class="fin-deposit-due \${!dep.due && !dep.note ? 'fin-deposit-due-missing' : ''}">\${dueLabel}</span>
+          </div>\`;
+        }).join('');
       })()}
 
       <div class="fin-summary-row">
@@ -882,12 +893,49 @@ function renderMain(d, r) {
     },
   ];
 
+  // ── Deposit tranche rows in table ─────────────────────────────────────
+  // Each deposit tranche gets its own row, placed in the year it falls due.
+  // Due = cumulative days from contract (first tranche) or since previous (subsequent).
+  const depositRows = (() => {
+    const entry = _current?.pipelineEntry;
+    const offers = entry?.offers || [];
+    const _offeredPrice = _current?.offeredPrice;
+    const selOffer = _offeredPrice
+      ? offers.find(o => { const n = parseFloat(String(o.price||'').replace(/[^0-9.]/g,'')); return Math.abs(n - _offeredPrice) < 1; })
+      : offers[0];
+    const deps = (selOffer?.deposits || entry?.terms?.deposits || []).filter(dep => dep.amount);
+    if (!deps.length) return '';
+
+    let cumulativeDays = 0;
+    return deps.map((dep, i) => {
+      const amt = parseDepositAmount(dep.amount, d.acquisitionPrice);
+      if (amt <= 0) return '';
+      const dueDays = parseDueDays(dep.due || '');
+      cumulativeDays += dueDays !== null ? dueDays : 0;
+      // Convert cumulative days to year index
+      const dueYear = Math.floor(cumulativeDays / 365);
+      const pct = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(1) + '%' : '';
+      const dueLabel = dep.due
+        ? (i === 0 ? dep.due + ' from contract' : dep.due + ' after Deposit ' + i)
+        : (dep.note || '');
+      const cells = years.map(y => {
+        if (y.yr === dueYear) return `<td class="fin-deposit-cell fin-neg">${fmtDollar(-amt)}${pct ? ' <span class="fin-deposit-pct-cell">'+pct+'</span>' : ''}</td>`;
+        return '<td>—</td>';
+      }).join('');
+      return `<tr class="fin-deposit-row">
+        <th class="fin-row-label">Deposit ${i + 1}${dueLabel ? ' <span class="fin-deposit-due-label">' + dueLabel + '</span>' : ''}</th>
+        ${cells}
+        ${holdYrs.length ? '<td class="fin-avg-col">—</td>' : ''}
+      </tr>`;
+    }).join('');
+  })();
+
   const tableRows = metricRows.map(m => `
     <tr>
       <th class="fin-row-label">${m.label}</th>
       ${m.rows.join('')}
       ${holdYrs.length ? `<td class="fin-avg-col ${m.avgCls}">${m.avg}</td>` : ''}
-    </tr>`).join('');
+    </tr>`).join('') + depositRows;
 
   const yearHeaders = years.map(y =>
     `<th class="${y.yr < lag ? 'fin-lag-col' : ''}">Yr ${y.yr}</th>`
