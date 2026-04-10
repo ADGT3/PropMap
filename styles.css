@@ -1834,6 +1834,34 @@ header {
 }
 .kb-modal-close:hover { background: var(--surface2); color: var(--text); }
 
+.kb-offer-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.kb-submit-offer {
+  flex: 1;
+}
+.kb-finance-btn {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 6px 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+  flex-shrink: 0;
+}
+.kb-finance-btn:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface2));
+  border-color: var(--accent);
+}
+
 .kb-modal-body {
   overflow-y: auto;
   padding: 20px;
@@ -2066,3 +2094,162 @@ header {
   font-size: 10px;
   font-weight: 600;
 }
+
+/* ── Finance picker (in kanban modal) ───────────────────────────────────────── */
+.kb-finance-picker {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.kb-fin-pick-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 8px 12px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+}
+.kb-fin-pick-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.kb-fin-pick-row:last-child { border-bottom: none; }
+.kb-fin-pick-main { flex: 1; min-width: 0; }
+.kb-fin-pick-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.kb-fin-pick-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.kb-fin-pick-date {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.kb-fin-pick-latest {
+  font-size: 9px;
+  font-weight: 600;
+  background: var(--green);
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 4px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.kb-fin-pick-detail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+.kb-fin-pick-price {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.kb-fin-pick-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+.kb-fin-pick-deps {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+.kb-fin-pick-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.kb-fin-pick-btn {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 4px 10px;
+  white-space: nowrap;
+  transition: background 0.12s;
+}
+.kb-fin-pick-btn:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface2));
+}
+.kb-fin-pick-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: color 0.12s, background 0.12s;
+}
+.kb-fin-pick-delete:hover {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, var(--surface2));
+}
+
+.kb-dep-note-inline {
+  flex: 0 1 120px;
+  font-size: 11px;
+}
+
+/* ── Add Offer button in picker header ───────────────────────────────────────── */
+.kb-fin-pick-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.kb-add-offer-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+  flex-shrink: 0;
+}
+.kb-add-offer-btn:hover { opacity: 0.85; }
+
+/* ── Offer popup (inside finance picker) ─────────────────────────────────────── */
+.kb-offer-popup {
+  border-top: 1px solid var(--border);
+  background: var(--surface2);
+}
+.kb-offer-popup-inner {
+  padding: 12px;
+}
+.kb-offer-popup-cancel {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.kb-offer-popup-cancel:hover { color: var(--text); border-color: var(--text); }

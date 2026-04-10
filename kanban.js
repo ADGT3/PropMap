@@ -112,7 +112,7 @@ function toggleKanban(show) {
   document.getElementById('kanbanView').classList.toggle('visible', kanbanVisible);
   const btn = document.getElementById('kanbanToggleBtn');
   btn.classList.toggle('active', kanbanVisible);
-  btn.innerHTML = `<span class="dot"></span> ${kanbanVisible ? '⬢' : '⬡'} Pipeline`;
+ 
   if (kanbanVisible) renderBoard();
 }
 
@@ -1174,6 +1174,7 @@ ${rows.join('')}`;
   // Submit offer
   overlay.addEventListener('click', e => {
     if (!e.target.closest('.kb-submit-offer')) return;
+
     const _offerPrice = parseDepositAmountKanban(overlay.querySelector('.kb-offer-price')?.value || '', null) || 0;
     const offerDeposits = Array.from(overlay.querySelectorAll('.kb-offer-dep-row')).map(row => ({
       amount: parseDepositAmountKanban(row.querySelector('.kb-odep-amount').value, _offerPrice),

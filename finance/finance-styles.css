@@ -1,0 +1,870 @@
+/* ─── Finance Module Styles ─────────────────────────────────────────────────── */
+/* Inherits CSS variables from styles.css: --bg, --surface, --surface2,
+   --border, --text, --muted, --accent, --green, --red, --blue              */
+
+/* ── Full-screen view (same pattern as kanban-view) ──────────────────────── */
+.finance-view {
+  display: none;
+  position: fixed;
+  inset: 56px 0 0 0;   /* below header */
+  background: var(--bg);
+  z-index: 1600;  /* above kanban (1500) */
+  flex-direction: column;
+  overflow: hidden;
+}
+.finance-view.visible { display: flex; }
+
+.finance-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 48px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.finance-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.finance-title-icon { font-size: 18px; }
+
+/* ── Layout: sidebar (inputs) + main (projection) ────────────────────────── */
+.fin-layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── Left sidebar ──────────────────────────────────────────────────────────── */
+.fin-sidebar {
+  width: 300px;
+  min-width: 260px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+  padding: 16px;
+  flex-shrink: 0;
+}
+
+.fin-property-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+}
+.fin-property-address {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+.fin-property-id {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.fin-change-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.fin-change-btn:hover { color: var(--text); border-color: var(--accent); }
+
+.fin-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 6px;
+  margin-top: 4px;
+}
+
+/* ── Input fields ──────────────────────────────────────────────────────────── */
+.fin-fields { margin-bottom: 4px; }
+
+.fin-field {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+.fin-field:last-child { border-bottom: none; }
+
+.fin-field-label {
+  font-size: 12px;
+  color: var(--muted);
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.fin-field-hint {
+  font-size: 9px;
+  color: var(--muted);
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.fin-editable {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  transition: background 0.12s;
+  min-width: 80px;
+  text-align: right;
+}
+.fin-editable:hover { background: var(--surface2); }
+
+.fin-inline-input {
+  width: 90px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  padding: 2px 6px;
+  text-align: right;
+  outline: none;
+}
+
+/* ── Summary rows ──────────────────────────────────────────────────────────── */
+.fin-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--surface2);
+  border-radius: 5px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.fin-summary-val {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* ── Auto-save status indicator ─────────────────────────────────────────────── */
+.fin-autosave-status {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: right;
+  padding: 8px 0 4px;
+  min-height: 20px;
+  font-style: italic;
+}
+
+/* ── Right main area ────────────────────────────────────────────────────────── */
+.fin-main {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── KPI strip ──────────────────────────────────────────────────────────────── */
+.fin-kpis {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 5px;
+}
+
+.fin-kpi {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 6px;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.fin-kpi-label {
+  font-size: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  line-height: 1.3;
+  margin-bottom: 4px;
+  word-break: break-word;
+  flex: 1;
+}
+.fin-kpi-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.3px;
+  word-break: break-all;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+.fin-kpi-pos { color: var(--green); }
+.fin-kpi-neg { color: var(--red); }
+
+/* ── Projection table ───────────────────────────────────────────────────────── */
+.fin-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.fin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fin-table thead tr {
+  background: var(--surface2);
+}
+.fin-table th {
+  padding: 9px 12px;
+  text-align: right;
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.fin-table th:first-child { text-align: left; }
+
+.fin-table td {
+  padding: 8px 12px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.fin-table td:first-child {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+}
+.fin-table tbody tr:last-child td { border-bottom: none; }
+.fin-table tbody tr:hover { background: var(--surface2); }
+
+.fin-avg-row td {
+  font-weight: 600;
+  color: var(--text) !important;
+  background: var(--surface2);
+  border-top: 2px solid var(--border);
+}
+
+.fin-pct-cell { color: var(--muted); }
+.fin-pos { color: var(--green); }
+.fin-neg { color: var(--red); }
+
+/* ── Footer note ────────────────────────────────────────────────────────────── */
+.fin-footer {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+  padding: 4px 0;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-style: italic;
+}
+
+/* ── Property selector (no model loaded) ────────────────────────────────────── */
+.fin-selector {
+  padding: 24px;
+  max-width: 600px;
+}
+.fin-selector-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 14px;
+  color: var(--text);
+}
+.fin-selector-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fin-selector-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+  position: relative;
+}
+.fin-selector-card:hover {
+  border-color: var(--accent);
+  background: var(--surface2);
+}
+.fin-sel-addr {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fin-sel-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.fin-sel-badge {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 10px;
+  background: var(--green);
+  color: #fff;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-weight: 600;
+}
+
+/* ── Empty state ────────────────────────────────────────────────────────────── */
+.fin-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--muted);
+  text-align: center;
+  padding: 40px;
+}
+.fin-empty-icon { font-size: 40px; opacity: 0.4; }
+.fin-empty-title { font-size: 16px; font-weight: 600; color: var(--text); }
+.fin-empty-sub { font-size: 13px; max-width: 340px; line-height: 1.5; }
+
+/* ── Finance content area ───────────────────────────────────────────────────── */
+#financeContent {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+}
+#financeContent > * { flex: 1; }
+
+/* ── Tools dropdown ──────────────────────────────────────────────────────────── */
+.tools-dropdown-anchor {
+  position: relative;
+}
+.tools-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 2000;
+  min-width: 160px;
+  overflow: hidden;
+}
+.tools-dropdown-menu.open { display: block; }
+.tools-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  width: 100%;
+  text-align: left;
+  font-family: 'DM Sans', sans-serif;
+  transition: background 0.1s;
+}
+.tools-dropdown-item:last-child { border-bottom: none; }
+.tools-dropdown-item:hover { background: var(--surface2); }
+
+/* ── Settlement lag rows (pre-settlement, zeroed) ───────────────────────────── */
+.fin-lag-row td { opacity: 0.45; font-style: italic; }
+
+/* ── Summary row variants ────────────────────────────────────────────────────── */
+.fin-summary-highlight { background: color-mix(in srgb, var(--accent) 10%, var(--surface2)); }
+.fin-summary-neg .fin-summary-val { color: var(--red); }
+.fin-muted { color: var(--muted) !important; }
+
+/* ── Comparable Value Analysis ───────────────────────────────────────────────── */
+.fin-comparable {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+}
+.fin-comparable-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+.fin-comparable-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.fin-comp-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.fin-comp-method {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.fin-comp-detail {
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.fin-comp-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.3px;
+  margin-bottom: 10px;
+}
+.fin-comp-inputs .fin-field {
+  padding: 3px 0;
+  font-size: 11px;
+}
+.fin-comp-inputs .fin-field-label { font-size: 11px; }
+.fin-comp-inputs .fin-editable { font-size: 11px; min-width: 60px; }
+.fin-comp-note {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 12px;
+  font-style: italic;
+}
+
+/* ── Calculated (non-editable) field values ──────────────────────────────────── */
+.fin-field-calc { opacity: 0.75; }
+.fin-calc-val {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 2px 6px;
+  min-width: 80px;
+  text-align: right;
+  white-space: nowrap;
+  font-style: italic;
+}
+
+/* ── Phase chevron nav (header) ──────────────────────────────────────────────── */
+.finance-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  height: 52px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  gap: 16px;
+}
+.finance-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.finance-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+.fin-phase-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.fin-phase {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: default;
+  line-height: 1.2;
+}
+.fin-phase.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.fin-phase.disabled {
+  opacity: 0.35;
+}
+.fin-phase-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.fin-phase.active .fin-phase-label { color: var(--accent); }
+.fin-phase-sub {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fin-phase.active .fin-phase-sub { color: var(--accent); }
+.fin-phase-chevron {
+  font-size: 20px;
+  color: var(--border);
+  margin: 0 2px;
+  line-height: 1;
+}
+
+/* ── Mean comparable value in header ─────────────────────────────────────────── */
+.fin-mean-val {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+.fin-mean-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  font-weight: 600;
+}
+.fin-mean-num {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+
+/* ── Collapsible comparable section ──────────────────────────────────────────── */
+.fin-comparable-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  padding: 12px 20px;
+  border-radius: 8px;
+  transition: background 0.12s;
+}
+.fin-comparable-header:hover { background: var(--surface2); }
+.fin-comparable-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+.fin-comp-chevron {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.fin-comparable-body { padding: 0 0 4px; }
+.fin-comp-mean-badge {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.2px;
+  text-transform: none;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 8px;
+}
+
+/* ── Transposed table (metrics as rows, years as columns) ───────────────────── */
+.fin-table-transposed th.fin-row-label-header,
+.fin-table-transposed th.fin-row-label {
+  text-align: left;
+  white-space: nowrap;
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 2;
+  min-width: 130px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 8px 12px;
+  border-right: 1px solid var(--border);
+}
+.fin-table-transposed thead tr th.fin-row-label-header {
+  background: var(--surface2);
+}
+.fin-table-transposed tbody tr:hover th.fin-row-label {
+  background: var(--surface2);
+}
+.fin-table-transposed td {
+  text-align: right;
+  min-width: 90px;
+  white-space: nowrap;
+}
+.fin-table-transposed th:not(.fin-row-label):not(.fin-row-label-header) {
+  text-align: right;
+  min-width: 90px;
+}
+.fin-lag-col { opacity: 0.5; font-style: italic; }
+.fin-lag-cell { opacity: 0.5; font-style: italic; }
+.fin-avg-col {
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface)) !important;
+  font-weight: 600;
+  border-left: 1px solid var(--border);
+}
+.fin-table-transposed thead .fin-avg-col {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface2)) !important;
+}
+
+/* ── Collapsible sidebar sections ────────────────────────────────────────────── */
+.fin-section-toggle {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+.fin-section-toggle:hover { color: var(--text); }
+.fin-section-chevron {
+  font-size: 9px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.fin-section-body { margin-bottom: 4px; }
+
+/* ── Mean comparable KPI tile highlight ──────────────────────────────────────── */
+.fin-kpi-mean {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+.fin-kpi-mean .fin-kpi-label { color: var(--accent); }
+
+/* ── Offer deposit tranches in Model Variables ───────────────────────────────── */
+.fin-deposit-none {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  padding: 4px 0 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.fin-deposit-tranche {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.fin-deposit-tranche:last-of-type { margin-bottom: 4px; }
+.fin-deposit-num {
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 60px;
+  flex-shrink: 0;
+}
+.fin-deposit-amount {
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+.fin-deposit-due {
+  font-size: 11px;
+  color: var(--muted);
+  flex: 1;
+  text-align: right;
+}
+.fin-deposit-due-missing {
+  color: var(--red);
+  font-style: italic;
+}
+
+/* ── Deposit tranche % display ───────────────────────────────────────────────── */
+.fin-deposit-pct {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* ── Deposit rows in projection table ───────────────────────────────────────── */
+.fin-deposit-row { background: color-mix(in srgb, var(--red) 4%, var(--surface)); }
+.fin-deposit-row th.fin-row-label { color: var(--red); }
+.fin-deposit-cell { color: var(--red); font-weight: 600; }
+.fin-deposit-pct-cell {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.7;
+}
+.fin-deposit-due-label {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+/* ── Funds to Complete section in table ──────────────────────────────────────── */
+.fin-costs-header-row th {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface2));
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-top: 2px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+.fin-costs-header-row td {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface2));
+  border-top: 2px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+.fin-costs-row { background: color-mix(in srgb, var(--accent) 3%, var(--surface)); }
+.fin-costs-label { font-weight: 500; font-size: 11px; color: var(--muted); }
+.fin-costs-cell { font-weight: 400; }
+.fin-deposit-row.fin-costs-row { background: color-mix(in srgb, var(--red) 4%, var(--surface)); }
+.fin-deposit-row.fin-costs-row .fin-costs-label { color: var(--red); }
+.fin-bank-dep-row .fin-costs-label { color: var(--accent); }
+
+/* Separator before metric rows */
+.fin-costs-row:last-of-type td,
+.fin-costs-row:last-of-type th {
+  border-bottom: 2px solid var(--border);
+}
+
+/* ── Deposit inline error styles ─────────────────────────────────────────────── */
+.fin-deposit-tranche.fin-deposit-error .fin-deposit-amount {
+  color: var(--red);
+  font-weight: 600;
+  font-style: italic;
+}
+.fin-deposit-error-row .fin-costs-label { color: var(--red); font-style: italic; }
+.fin-deposit-error-cell {
+  color: var(--red);
+  font-size: 11px;
+  font-style: italic;
+  font-weight: 500;
+  text-align: center !important;
+}
+
+/* ── Funds to Complete toggle ────────────────────────────────────────────────── */
+.fin-costs-header-row { cursor: pointer; user-select: none; }
+.fin-costs-header-row:hover th,
+.fin-costs-header-row:hover td {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface2));
+}
+.fin-funds-toggle {
+  font-size: 9px;
+  margin-right: 5px;
+  color: var(--accent);
+}
+
+/* ── Deposit fields in sidebar — match editable field appearance ─────────────── */
+.fin-field-deposit { opacity: 1; }  /* override fin-field-calc opacity */
+.fin-deposit-val {
+  cursor: default;
+  pointer-events: none;
+}
+.fin-deposit-val:hover { background: transparent; }
+
+/* ── Property bar clickable links ────────────────────────────────────────────── */
+.fin-property-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent) 50%, transparent);
+  cursor: pointer;
+}
+.fin-property-link:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.fin-property-id-link {
+  font-size: 10px;
+  opacity: 0.7;
+}
+.fin-property-id-link:hover { opacity: 1; }
+
+/* ── Funds to Complete header checkbox ──────────────────────────────────────── */
+.fin-costs-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fin-costs-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+  margin-left: auto;
+}
+.fin-costs-checkbox { cursor: pointer; accent-color: var(--accent); margin: 0; }
+.fin-costs-checkbox-label { user-select: none; }
+
+/* ── Subsection label within a collapsed section ─────────────────────────────── */
+.fin-subsection-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 6px 0 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+  opacity: 0.8;
+}
