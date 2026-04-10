@@ -668,9 +668,8 @@ function openCardModal(id) {
       </div>`).join('');
   }
 
-  function buildOfferDepositsHtml(deps) {
-    const offerPriceRaw = modal.querySelector('.kb-offer-price')?.value || '';
-    const offerPrice = parseDepositAmountKanban(offerPriceRaw, null) || 0;
+  function buildOfferDepositsHtml(deps, offerPrice) {
+    offerPrice = offerPrice || 0;
     return deps.map((d, i) => `
       <div class="kb-deposit-row kb-offer-dep-row" data-idx="${i}">
         <div class="kb-deposit-fields">
@@ -1105,7 +1104,7 @@ function openCardModal(id) {
     addOffer(id, offer);
     modal.querySelector('.kb-offer-price').value = '';
     modal.querySelector('.kb-offer-settlement').value = '';
-    modal.querySelector('.kb-offer-deposits').innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }]);
+    modal.querySelector('.kb-offer-deposits').innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }], 0);
     document.getElementById('kb-modal-offers-' + id).innerHTML = buildOffersHtml(getOffers(id));
     document.getElementById(`kb-finance-picker-${id}`).innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
     const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
