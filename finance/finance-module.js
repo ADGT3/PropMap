@@ -665,7 +665,7 @@ async function openFinanceForProperty(pipelineId, pipelineEntry, offeredPrice) {
     // Update acquisitionPrice if an offered price was passed and differs
     if (offeredPrice && offeredPrice !== data.acquisitionPrice) {
       data.acquisitionPrice = offeredPrice;
-      data.stampDuty = calcStampDuty(offeredPrice, _state);
+      // Do NOT recalculate stampDuty — preserve any manual changes
       data._priceSource = 'offer';
       data.updatedAt = Date.now();
     }
@@ -1261,7 +1261,7 @@ function bindInputs(r) {
         }
         if (type === 'pct') val = val / 100;
         _current.data[key] = val;
-        if (key === 'acquisitionPrice') _current.data.stampDuty = calcStampDuty(val, _current.data._state || 'NSW');
+        if (key === 'acquisitionPrice') _current.data._state = detectState(_current.address, _current.suburb); // refresh state only
         _current.data.updatedAt = Date.now();
         _allModels[_current.pipelineId] = _current.data;
         renderFinanceView();
