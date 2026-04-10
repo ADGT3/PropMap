@@ -704,22 +704,20 @@ function renderSidebar(d, r) {
         }
         let cumulativeDays = 0;
         return deps.filter(dep => dep.amount).map((dep, i) => {
-          const amt    = parseDepositAmount(dep.amount, d.acquisitionPrice);
-          const pct    = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(2).replace(/\.?0+$/, '') : null;
-          // due = days since previous deposit (or since contract for first)
+          const amt     = parseDepositAmount(dep.amount, d.acquisitionPrice);
+          const pct     = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(2).replace(/\.?0+$/, '') : null;
           const dueDays = parseDueDays(dep.due || '');
           cumulativeDays += dueDays !== null ? dueDays : 0;
-          const dueLabel = dep.due
-            ? (i === 0
-                ? dep.due + ' from contract'
-                : dep.due + ' after Deposit ' + i)
+          const dueLabel   = dep.due
+            ? (i === 0 ? dep.due + ' from contract' : dep.due + ' after Deposit ' + i)
             : (dep.note || 'No date set');
-          return \`
-          <div class="fin-deposit-tranche">
-            <span class="fin-deposit-num">Deposit \${i + 1}</span>
-            <span class="fin-deposit-amount">\${amt > 0 ? fmtDollar(amt) : dep.amount}\${pct ? \` <span class="fin-deposit-pct">(\${pct}%)</span>\` : ''}</span>
-            <span class="fin-deposit-due \${!dep.due && !dep.note ? 'fin-deposit-due-missing' : ''}">\${dueLabel}</span>
-          </div>\`;
+          const pctSpan    = pct ? ' <span class="fin-deposit-pct">(' + pct + '%)</span>' : '';
+          const missingCls = (!dep.due && !dep.note) ? 'fin-deposit-due-missing' : '';
+          return '<div class="fin-deposit-tranche">'
+            + '<span class="fin-deposit-num">Deposit ' + (i + 1) + '</span>'
+            + '<span class="fin-deposit-amount">' + (amt > 0 ? fmtDollar(amt) : dep.amount) + pctSpan + '</span>'
+            + '<span class="fin-deposit-due ' + missingCls + '">' + dueLabel + '</span>'
+            + '</div>';
         }).join('');
       })()}
 
