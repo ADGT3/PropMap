@@ -114,18 +114,19 @@ function defaultModel(acquisitionPrice) {
     // ── Expenses sheet inputs ─────────────────────────────────────────────
     managementFeePct:        0,                        // B2 Expenses
     sinkingFundPct:          0,                        // B3 Expenses
-    councilQuarterly:        1500,                     // B6 = 1500*4 → user sets quarterly rate
+    council:                 6000,                     // annual (was 1500/quarter × 4)
     water:                   500,                      // B7
     cleaning:                0,                        // B8
     insurance:               3000,                     // B9
     landTax:                 80000,                    // B10
     commonPower:             0,                        // B12
     fireServices:            0,                        // B13
-    maintenanceMonthly:      500,                      // B14 = 500*12 → user sets monthly rate
+    maintenance:             6000,                     // annual (was 500/month × 12)
     other:                   0,                        // B16
 
     // ── Revenue ───────────────────────────────────────────────────────────
-    weeklyRent:              550,                      // B20 = 550*52 → user sets weekly rent
+    weeklyRent:              28600,                    // annual gross rent (was 550/week × 52)
+    revenueOther:            0,                         // other annual revenue
 
     // ── Comparable value inputs ───────────────────────────────────────────
     netDevelopableAreaAcres: 3.089,                    // I3 = 12500/4046
@@ -329,20 +330,43 @@ function isUpfrontDeposit(due) {
   return true;
 }
 
+// Parse a cost input to an annual figure.
+// Accepts: "$400/w" "$400/m" "$400/y" "$400" "400" "400/week" "400/month" "400/year"
+// Default (no suffix) = annual
+function parseAnnual(val) {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return val; // already stored as annual
+  const s = String(val).trim().toLowerCase();
+  const m = s.match(/^\$?([\d,]+(?:\.\d+)?)\s*\/?\s*(w|week|wk|m|mo|month|mth|y|yr|year|pa|annual)?/);
+  if (!m) return 0;
+  const n = parseFloat(m[1].replace(/,/g, ''));
+  if (isNaN(n)) return 0;
+  const u = m[2] || 'y';
+  if (/^w/.test(u)) return Math.round(n * 52);
+  if (/^m/.test(u)) return Math.round(n * 12);
+  return Math.round(n); // annual
+}
+
+// Format a stored annual amount back to display string
+function fmtAnnualDisplay(annualVal) {
+  if (!annualVal) return fmtDollar(0);
+  return fmtDollar(annualVal) + '/y';
+}
+
 function runModel(d) {
   const price = d.acquisitionPrice || 0;
 
-  // ── Derived outgoings (calculated, not inputs) ────────────────────────
-  const council       = (d.councilQuarterly || 0) * 4;          // B6 = 1500*4
-  const maintenance   = (d.maintenanceMonthly || 0) * 12;        // B14 = 500*12
-  const grossRentYr1  = (d.weeklyRent || 0) * 52;               // B20 = 550*52
+  // ── Derived outgoings — all stored as annual figures now ─────────────
+  const council       = d.council || 0;                          // stored as annual
+  const maintenance   = d.maintenance || 0;                      // stored as annual
+  const grossRentYr1  = (d.weeklyRent || 0) + (d.revenueOther || 0); // total annual revenue
   const management$   = (d.managementFeePct || 0) * grossRentYr1; // B11 = B2*B20
   const sinkingFund   = (d.sinkingFundPct || 0) * price;         // B15 = B3 * Feasibility!B25(=B2)
 
   const totalOutgoings = council + (d.water || 0) + (d.cleaning || 0) +
     (d.insurance || 0) + (d.landTax || 0) + management$ +
     (d.commonPower || 0) + (d.fireServices || 0) + maintenance +
-    sinkingFund + (d.other || 0);
+    sinkingFund + (d.other || 0); // all annual
 
   const netIncomeYr1 = grossRentYr1 - totalOutgoings;            // B21 = B20 - B17
 
@@ -811,7 +835,8 @@ function renderSidebar(d, r) {
     ${fsc('revenue', 'Revenue')}
     <div class="fin-section-body" data-section="revenue" ${sec('revenue')}>
       <div class="fin-fields">
-        ${ff('weeklyRent',  'Weekly Rent',        fmtDollar(d.weeklyRent),   'dollar', '×52 = annual')}
+        ${ff('weeklyRent',    'Rent',  fmtDollar(d.weeklyRent),    'dollar', '/w, /m or /y')}
+        ${ff('revenueOther',  'Other', fmtDollar(d.revenueOther),  'dollar', '/w, /m or /y')}
       </div>
       <div class="fin-summary-row ${r.grossRentYr1 < 0 ? 'fin-summary-neg' : ''}">
         <span>Gross Rent (Year 1)</span><span class="fin-summary-val">${fmtDollar(r.grossRentYr1)}</span>
@@ -834,21 +859,19 @@ function renderSidebar(d, r) {
       <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Settlement)</span><span class="fin-summary-val">${fmtDollar(r.cashAtSettlement)}</span></div>
       <div class="fin-fields" style="margin-top:8px">
         <div class="fin-subsection-label">Running Costs</div>
-        ${ff('councilQuarterly', 'Council (per quarter)',  fmtDollar(d.councilQuarterly), 'dollar', '×4 = annual')}
-        ${ff('',                 'Council (annual)',        fmtDollar(r.council),           'dollar', '', true)}
-        ${ff('water',            'Water',                   fmtDollar(d.water),             'dollar')}
-        ${ff('cleaning',         'Cleaning',                fmtDollar(d.cleaning),          'dollar')}
-        ${ff('insurance',        'Insurance',               fmtDollar(d.insurance),         'dollar')}
-        ${ff('landTax',          'Land Tax',                fmtDollar(d.landTax),           'dollar')}
+        ${ff('council',          'Council',                 fmtDollar(d.council),           'dollar', '/w, /m or /y')}
+        ${ff('water',            'Water',                   fmtDollar(d.water),             'dollar', '/w, /m or /y')}
+        ${ff('cleaning',         'Cleaning',                fmtDollar(d.cleaning),          'dollar', '/w, /m or /y')}
+        ${ff('insurance',        'Insurance',               fmtDollar(d.insurance),         'dollar', '/w, /m or /y')}
+        ${ff('landTax',          'Land Tax',                fmtDollar(d.landTax),           'dollar', '/w, /m or /y')}
         ${ff('managementFeePct', 'Management Fee (%)',      fmtPct(d.managementFeePct),     'pct',   '% of gross rent')}
         ${ff('',                 'Management Fee ($)',       fmtDollar(r.management$),       'dollar', '', true)}
-        ${ff('commonPower',      'Common Power',            fmtDollar(d.commonPower),       'dollar')}
-        ${ff('fireServices',     'Fire Services',           fmtDollar(d.fireServices),      'dollar')}
-        ${ff('maintenanceMonthly','Maintenance (per month)',fmtDollar(d.maintenanceMonthly),'dollar','×12 = annual')}
-        ${ff('',                 'Maintenance (annual)',     fmtDollar(r.maintenance),       'dollar', '', true)}
+        ${ff('commonPower',      'Common Power',            fmtDollar(d.commonPower),       'dollar', '/w, /m or /y')}
+        ${ff('fireServices',     'Fire Services',           fmtDollar(d.fireServices),      'dollar', '/w, /m or /y')}
+        ${ff('maintenance',      'Maintenance',             fmtDollar(d.maintenance),       'dollar', '/w, /m or /y')}
         ${ff('sinkingFundPct',   'Sinking Fund (% of val)', fmtPct(d.sinkingFundPct),       'pct',   '% of acq. price')}
         ${ff('',                 'Sinking Fund ($)',         fmtDollar(r.sinkingFund),       'dollar', '', true)}
-        ${ff('other',            'Other',                   fmtDollar(d.other),             'dollar')}
+        ${ff('other',            'Other',                   fmtDollar(d.other),             'dollar', '/w, /m or /y')}
       </div>
       <div class="fin-summary-row"><span>Total Outgoings</span><span class="fin-summary-val">${fmtDollar(r.totalOutgoings)}</span></div>
       <div class="fin-summary-row ${r.netIncomeYr1 < 0 ? 'fin-summary-neg' : ''}">
@@ -1222,8 +1245,15 @@ function bindInputs(r) {
       input.focus();
       input.select();
       const commit = () => {
-        let val = parseFloat(input.value.replace(/[^0-9.-]/g, ''));
-        if (isNaN(val)) val = _current.data[key] || 0;
+        const annualFields = ['council','water','cleaning','insurance','landTax',
+          'commonPower','fireServices','maintenance','other','weeklyRent','revenueOther'];
+        let val;
+        if (annualFields.includes(key)) {
+          val = parseAnnual(input.value);
+        } else {
+          val = parseFloat(input.value.replace(/[^0-9.-]/g, ''));
+          if (isNaN(val)) val = _current.data[key] || 0;
+        }
         if (type === 'pct') val = val / 100;
         _current.data[key] = val;
         if (key === 'acquisitionPrice') _current.data.stampDuty = calcStampDuty(val, _current.data._state || 'NSW');

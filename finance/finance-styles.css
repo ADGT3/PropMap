@@ -855,3 +855,16 @@
 }
 .fin-costs-checkbox { cursor: pointer; accent-color: var(--accent); margin: 0; }
 .fin-costs-checkbox-label { user-select: none; }
+
+/* ── Subsection label within a collapsed section ─────────────────────────────── */
+.fin-subsection-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 6px 0 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+  opacity: 0.8;
+}
