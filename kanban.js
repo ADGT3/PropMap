@@ -112,9 +112,11 @@ function toggleKanban(show) {
   document.getElementById('kanbanView').classList.toggle('visible', kanbanVisible);
   const btn = document.getElementById('kanbanToggleBtn');
   btn.classList.toggle('active', kanbanVisible);
-  // Update just the text node, preserving the dot span
-  const textNode = Array.from(btn.childNodes).find(n => n.nodeType === 3);
-  if (textNode) textNode.textContent = ` ${kanbanVisible ? '⬢' : '⬡'} Pipeline`;
+  // Update label after the dot span without touching the dot itself
+  Array.from(btn.childNodes)
+    .filter(n => n.nodeType === 3)
+    .forEach(n => n.remove());
+  btn.appendChild(document.createTextNode(` ${kanbanVisible ? '⬢' : '⬡'} Pipeline`));
   if (kanbanVisible) renderBoard();
 }
 
