@@ -112,8 +112,6 @@ function toggleKanban(show) {
   document.getElementById('kanbanView').classList.toggle('visible', kanbanVisible);
   const btn = document.getElementById('kanbanToggleBtn');
   btn.classList.toggle('active', kanbanVisible);
-  const icon = document.getElementById('kanbanToggleIcon');
-  if (icon) icon.textContent = kanbanVisible ? '⬢' : '⬡';
   if (kanbanVisible) renderBoard();
 }
 
