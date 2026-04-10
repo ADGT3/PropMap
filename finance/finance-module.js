@@ -690,8 +690,16 @@ function renderSidebar(d, r) {
   return `<div class="fin-sidebar">
     <div class="fin-property-bar">
       <div class="fin-property-info">
-        <div class="fin-property-address">${_current.address}, ${_current.suburb} NSW</div>
-        <div class="fin-property-id">Pipeline ID: ${_current.pipelineId}</div>
+        <div class="fin-property-address">
+          <a class="fin-property-link" id="finOpenKanban" href="#" title="Open in pipeline">
+            ${_current.address}, ${_current.suburb} NSW
+          </a>
+        </div>
+        <div class="fin-property-id">
+          <a class="fin-property-link fin-property-id-link" id="finOpenKanban2" href="#" title="Open in pipeline">
+            Pipeline ID: ${_current.pipelineId}
+          </a>
+        </div>
       </div>
       <button class="fin-change-btn" id="finChangeProperty">Change</button>
     </div>
@@ -723,9 +731,9 @@ function renderSidebar(d, r) {
           const display  = hasError ? '⚠️ re-enter in kanban' : (amt > 0 ? fmtDollar(amt) + pct : '—');
           const hint     = hasError ? '' : dueLabel;
           const depLabel = 'Deposit ' + (i + 1) + (hint ? '<span class="fin-field-hint">' + hint + '</span>' : '');
-          return '<div class="fin-field fin-field-calc' + (hasError ? ' fin-deposit-error' : '') + '" data-key="" data-type="dollar">'
+          return '<div class="fin-field fin-field-deposit' + (hasError ? ' fin-deposit-error' : '') + '" data-key="" data-type="dollar">'
             + '<span class="fin-field-label">' + depLabel + '</span>'
-            + '<span class="fin-calc-val' + (hasError ? ' fin-neg' : '') + '">' + display + '</span>'
+            + '<span class="fin-editable fin-deposit-val' + (hasError ? ' fin-neg' : '') + '">' + display + '</span>'
             + '</div>';
         }).join('');
       })()}
@@ -1209,6 +1217,21 @@ function bindInputs(r) {
     _current = null;
     renderFinanceView();
   });
+
+  // Property address / pipeline ID — click to open kanban modal for this property
+  function openInPipeline(e) {
+    e.preventDefault();
+    if (!_current?.pipelineId) return;
+    const id = _current.pipelineId;
+    toggleFinance(false);
+    // Open kanban if not visible, then open the card modal
+    if (typeof toggleKanban === 'function' && !kanbanVisible) toggleKanban(true);
+    setTimeout(() => {
+      if (typeof openCardModal === 'function') openCardModal(id);
+    }, kanbanVisible ? 0 : 300);
+  }
+  document.getElementById('finOpenKanban')?.addEventListener('click', openInPipeline);
+  document.getElementById('finOpenKanban2')?.addEventListener('click', openInPipeline);
 
   // Auto-save — triggered after every input commit with a 1.5s debounce
   // Called from the commit() closure inside the editable input handler above
