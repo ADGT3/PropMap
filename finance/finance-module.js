@@ -358,7 +358,9 @@ function runModel(d) {
   //   - upfront: paid before settlement (Year 0 / at exchange)
   //   - atSettlement: paid at settlement
   // Amounts are parsed from the offer deposit fields (formatted strings like "$50,000")
-  const entry    = _current?.pipelineEntry;
+  // Always read fresh from live pipeline — _current.pipelineEntry may be stale
+  const _livePipeline = window.getPipelineData ? window.getPipelineData() : {};
+  const entry    = _livePipeline[_current?.pipelineId] || _current?.pipelineEntry;
   const offers   = entry?.offers || [];
   const _offeredPrice = _current?.offeredPrice;
   const selOffer = _offeredPrice
@@ -908,7 +910,9 @@ function renderMain(d, r) {
   // Purchase costs + deposit tranches, each placed in the year they fall due.
   // Year 0 = contract/exchange. Settlement lag year = when bank draws.
   const fundsToCompleteRows = (() => {
-    const entry = _current?.pipelineEntry;
+    // Always read fresh from live pipeline
+    const _lp = window.getPipelineData ? window.getPipelineData() : {};
+    const entry = _lp[_current?.pipelineId] || _current?.pipelineEntry;
     const offers = entry?.offers || [];
     const _offeredPrice = _current?.offeredPrice;
     const selOffer = _offeredPrice
