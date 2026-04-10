@@ -974,12 +974,13 @@ function renderMain(d, r) {
     const ftcOpen = !_sectionCollapsed['fin-funds-complete'];
     rows.push('<tr class="fin-costs-header-row" id="finFundsHeader">'
       + '<th class="fin-row-label fin-costs-header">'
+      + '<span class="fin-funds-toggle" id="finFundsToggle">' + (ftcOpen ? '▼' : '▶') + '</span>'
+      + ' Funds to Complete'
       + '<label class="fin-costs-toggle-label" title="Include in cashflow">'
       + '<input type="checkbox" id="finCostsInCashflow" class="fin-costs-checkbox"' + (_costsInCashflow ? ' checked' : '') + '>'
       + '<span class="fin-costs-checkbox-label">Include in cashflow</span>'
       + '</label>'
-      + '<span class="fin-funds-toggle" id="finFundsToggle">' + (ftcOpen ? '▼' : '▶') + '</span>'
-      + ' Funds to Complete</th>'
+      + '</th>'
       + years.map(() => '<td></td>').join('')
       + (holdYrs.length ? '<td class="fin-avg-col"></td>' : '')
       + '</tr>');
@@ -992,7 +993,7 @@ function renderMain(d, r) {
       if (d.solicitorCost)       rows.push(singleYearRow('Solicitor',     settlementYr, d.solicitorCost));
       if (d.inspections)         rows.push(singleYearRow('Inspections',   settlementYr, d.inspections));
       if (r.commission)          rows.push(singleYearRow('Commission',    settlementYr, r.commission));
-      if (r.bankDepositRequired) rows.push(singleYearRow('Bank Deposit',  settlementYr, r.bankDepositRequired, 'fin-costs-row fin-bank-dep-row'));
+      if (r.bankDepositRequired) rows.push(singleYearRow('Equity Contribution', settlementYr, r.bankDepositRequired, 'fin-costs-row fin-bank-dep-row'));
 
       // Deposit tranches — each in their computed year
       let cumulativeDays = 0;

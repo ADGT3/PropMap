@@ -843,7 +843,7 @@
   text-transform: none;
   letter-spacing: 0;
   white-space: nowrap;
-  margin-right: 4px;
+  margin-left: auto;
 }
 .fin-costs-checkbox { cursor: pointer; accent-color: var(--accent); margin: 0; }
 .fin-costs-checkbox-label { user-select: none; }
