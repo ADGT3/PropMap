@@ -197,16 +197,17 @@
 /* ── KPI strip ──────────────────────────────────────────────────────────────── */
 .fin-kpis {
   display: flex;
-  gap: 9px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
 }
 
 .fin-kpi {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 9px 12px;
-  min-width: 105px;
+  padding: 9px 8px;
+  min-width: 84px;
   flex: 1;
 }
 .fin-kpi-label {
