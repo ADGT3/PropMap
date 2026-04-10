@@ -962,6 +962,7 @@ function renderMain(d, r) {
       let cumulativeDays = 0;
       deps.forEach((dep, i) => {
         const amt = parseDepositAmount(dep.amount, d.acquisitionPrice);
+        console.log('[Finance deposit debug] dep', i, '| amount:', dep.amount, '| due:', dep.due, '| typeof due:', typeof dep.due, '| amt:', amt);
         if (isNaN(amt)) {
           // Bad data — show error row spanning all year columns
           rows.push('<tr class="fin-costs-row fin-deposit-row fin-deposit-error-row">'
@@ -975,6 +976,7 @@ function renderMain(d, r) {
         const dueDays = parseDueDays(dep.due);
         cumulativeDays += dueDays !== null ? dueDays : 0;
         const dueYear = Math.min(Math.floor(cumulativeDays / 365), lag);
+        console.log('[Finance deposit debug] dep', i, '| dueDays:', dueDays, '| cumulativeDays:', cumulativeDays, '| dueYear:', dueYear, '| lag:', lag);
         const pct = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(1) + '%' : '';
         const dueStr   = typeof dep.due === 'number' ? dep.due + ' days' : (dep.due || '');
         const dueLabel = dueStr
