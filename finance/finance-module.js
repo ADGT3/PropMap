@@ -823,12 +823,19 @@ function renderSidebar(d, r) {
         <div class="fin-subsection-label">Purchase Costs</div>
         ${/* Offer deposit tranches */ ''}
         ${(() => {
-          const deps = r.offerDeposits;
-          if (!deps || !deps.length || !deps.some(dep => dep.amount)) {
+          const _lp2 = window.getPipelineData ? window.getPipelineData() : {};
+          const _entry2 = _lp2[_current?.pipelineId] || _current?.pipelineEntry;
+          const _offers2 = _entry2?.offers || [];
+          const _op2 = _current?.offeredPrice;
+          const _sel2 = _op2
+            ? _offers2.find(o => { const n = parseFloat(String(o.price||'').replace(/[^0-9.]/g,'')); return Math.abs(n - _op2) < 1; })
+            : _offers2[0];
+          const deps = (_sel2?.deposits || _entry2?.terms?.deposits || []).filter(dep => dep.amount);
+          if (!deps.length) {
             return '<div class="fin-deposit-none">No offer deposits — set in kanban</div>';
           }
           let cumulativeDays = 0;
-          return deps.filter(dep => dep.amount !== undefined && dep.amount !== '').map((dep, i) => {
+          return deps.map((dep, i) => {
             const amt      = parseDepositAmount(dep.amount, d.acquisitionPrice);
             const hasError = isNaN(amt);
             const dueDays  = parseDueDays(dep.due);
