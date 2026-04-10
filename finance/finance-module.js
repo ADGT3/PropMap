@@ -830,7 +830,10 @@ function renderSidebar(d, r) {
           const _sel2 = _op2
             ? _offers2.find(o => { const n = parseFloat(String(o.price||'').replace(/[^0-9.]/g,'')); return Math.abs(n - _op2) < 1; })
             : _offers2[0];
-          const deps = (_sel2?.deposits || _entry2?.terms?.deposits || []).filter(dep => dep.amount);
+          const allDeps = _sel2?.deposits || _entry2?.terms?.deposits || [];
+          console.log('[Finance deposits debug] offeredPrice:', _op2, '| selOffer:', _sel2?.id, '| raw deposits:', JSON.stringify(allDeps));
+          const deps = allDeps.filter(dep => dep.amount);
+          console.log('[Finance deposits debug] filtered deps:', JSON.stringify(deps));
           if (!deps.length) {
             return '<div class="fin-deposit-none">No offer deposits — set in kanban</div>';
           }
