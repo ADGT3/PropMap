@@ -2211,3 +2211,45 @@ header {
   flex: 0 1 120px;
   font-size: 11px;
 }
+
+/* ── Add Offer button in picker header ───────────────────────────────────────── */
+.kb-fin-pick-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.kb-add-offer-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+  flex-shrink: 0;
+}
+.kb-add-offer-btn:hover { opacity: 0.85; }
+
+/* ── Offer popup (inside finance picker) ─────────────────────────────────────── */
+.kb-offer-popup {
+  border-top: 1px solid var(--border);
+  background: var(--surface2);
+}
+.kb-offer-popup-inner {
+  padding: 12px;
+}
+.kb-offer-popup-cancel {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.kb-offer-popup-cancel:hover { color: var(--text); border-color: var(--text); }

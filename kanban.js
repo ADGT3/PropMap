@@ -779,7 +779,7 @@ function openCardModal(id) {
         </div>`);
     }
 
-    return `<div class="kb-fin-pick-header">Submitted Offers &amp; Financial Feasibility</div>${rows.join('')}`;
+    return `<div class="kb-fin-pick-header"><span>Submitted Offers &amp; Financial Feasibility</span><button class="kb-add-offer-btn" id="kb-add-offer-btn-${id}">+ Add Offer</button></div>${rows.join('')}`;
   }
 
   function buildOffersHtml(offers) {
@@ -846,26 +846,30 @@ function openCardModal(id) {
           <button class="kb-add-deposit">+ Add tranche</button>
         </div>
 
-        <div class="kb-section-label" style="margin-top:16px">Terms Offered</div>
-        <div class="kb-offer-form">
-          <div class="kb-terms-row">
-            <div class="kb-field-wrap">
-              <label class="kb-field-label">Price</label>
-              <input class="kb-input kb-offer-price" type="text" placeholder="e.g. $1,200,000">
+        <div class="kb-finance-picker" id="kb-finance-picker-${id}">
+          ${buildFinancePickerHtml(offers, terms, p)}
+          <div class="kb-offer-popup" id="kb-offer-popup-${id}" style="display:none">
+            <div class="kb-offer-popup-inner">
+              <div class="kb-terms-row">
+                <div class="kb-field-wrap">
+                  <label class="kb-field-label">Price</label>
+                  <input class="kb-input kb-offer-price" type="text" placeholder="e.g. $1,200,000">
+                </div>
+                <div class="kb-field-wrap">
+                  <label class="kb-field-label">Settlement</label>
+                  <input class="kb-input kb-offer-settlement" type="text" placeholder="e.g. 90, 3 months, 1 year">
+                </div>
+              </div>
+              <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
+              <div class="kb-offer-deposits">${buildOfferDepositsHtml([{ amount: '', due: '', note: '' }])}</div>
+              <button class="kb-offer-add-deposit">+ Add tranche</button>
+              <div class="kb-offer-actions">
+                <button class="kb-submit-offer">+ Submit Offer</button>
+                <button class="kb-offer-popup-cancel">Cancel</button>
+              </div>
             </div>
-            <div class="kb-field-wrap">
-              <label class="kb-field-label">Settlement</label>
-              <input class="kb-input kb-offer-settlement" type="text" placeholder="e.g. 90, 3 months, 1 year">
-            </div>
-          </div>
-          <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
-          <div class="kb-offer-deposits">${buildOfferDepositsHtml([{ amount: '', due: '', note: '' }])}</div>
-          <button class="kb-offer-add-deposit">+ Add tranche</button>
-          <div class="kb-offer-actions">
-            <button class="kb-submit-offer">+ Submit Offer</button>
           </div>
         </div>
-        <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
 
         <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
         <div class="kb-dd">
@@ -929,11 +933,27 @@ function openCardModal(id) {
     window.FinanceModule.open(id, pipeline[id], parsePickerPrice(priceStr));
   }
 
-  overlay.querySelector(`#kb-finance-picker-${id}`)?.addEventListener('click', e => {
-    const btn = e.target.closest('.kb-fin-pick-btn');
-    if (!btn) return;
-    const row = btn.closest('.kb-fin-pick-row');
-    openFinanceFromPicker(row?.dataset.price || '');
+  // Finance picker — delegated click handler for Model btn, delete btn, add offer, cancel
+  overlay.addEventListener('click', e => {
+    // + Add Offer toggle
+    if (e.target.closest(`#kb-add-offer-btn-${id}`)) {
+      const popup = overlay.querySelector(`#kb-offer-popup-${id}`);
+      if (popup) popup.style.display = popup.style.display === 'none' ? '' : 'none';
+      return;
+    }
+    // Cancel popup
+    if (e.target.closest('.kb-offer-popup-cancel')) {
+      const popup = overlay.querySelector(`#kb-offer-popup-${id}`);
+      if (popup) popup.style.display = 'none';
+      return;
+    }
+    // Model button
+    const modelBtn = e.target.closest('.kb-fin-pick-btn');
+    if (modelBtn) {
+      const row = modelBtn.closest('.kb-fin-pick-row');
+      if (row) openFinanceFromPicker(row.dataset.price || '');
+      return;
+    }
   });
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
   document.addEventListener('keydown', function escClose(e) {
@@ -1109,18 +1129,16 @@ function openCardModal(id) {
     modal.querySelector('.kb-deposits').innerHTML = buildDepositsHtml(getTerms(id).deposits);
   });
 
-  // Offer price/settlement formatting on blur
-  modal.querySelector('.kb-offer-price').addEventListener('blur', function() {
-    this.value = formatInputPrice(this.value);
-  });
-  modal.querySelector('.kb-offer-settlement').addEventListener('blur', function() {
-    this.value = formatSettlement(this.value);
-  });
-
-  // Offer deposits
-  modal.querySelector('.kb-offer-deposits').addEventListener('blur', e => {
-    const price = parseDepositAmountKanban(modal.querySelector('.kb-offer-price').value, null) || 0;
+  // Offer form — delegated on overlay so handlers survive picker HTML rebuilds
+  overlay.addEventListener('blur', e => {
+    if (e.target.matches('.kb-offer-price')) {
+      e.target.value = formatInputPrice(e.target.value);
+    }
+    if (e.target.matches('.kb-offer-settlement')) {
+      e.target.value = formatSettlement(e.target.value);
+    }
     if (e.target.matches('.kb-odep-amount')) {
+      const price = parseDepositAmountKanban(overlay.querySelector('.kb-offer-price')?.value || '', null) || 0;
       const num = parseDepositAmountKanban(e.target.value, price);
       e.target.value = num ? formatDepositAmount(num, price) : '';
     }
@@ -1129,8 +1147,9 @@ function openCardModal(id) {
     }
   }, true);
 
-  modal.querySelector('.kb-offer-add-deposit').addEventListener('click', () => {
-    const el = modal.querySelector('.kb-offer-deposits');
+  overlay.addEventListener('click', e => {
+    if (!e.target.matches('.kb-offer-add-deposit') && !e.target.closest('.kb-offer-add-deposit')) return;
+    const el = overlay.querySelector('.kb-offer-deposits');
     const current = Array.from(el.querySelectorAll('.kb-offer-dep-row')).map(row => ({
       amount: row.querySelector('.kb-odep-amount').value,
       due:    parseSettlementDays(row.querySelector('.kb-odep-due').value),
@@ -1139,10 +1158,11 @@ function openCardModal(id) {
     current.push({ amount: '', due: '', note: '' });
     el.innerHTML = buildOfferDepositsHtml(current);
   });
-  modal.querySelector('.kb-offer-deposits').addEventListener('click', e => {
+  overlay.addEventListener('click', e => {
+    if (!e.target.closest('.kb-offer-deposits')) return;
     const btn = e.target.closest('.kb-odep-remove');
     if (!btn) return;
-    const el = modal.querySelector('.kb-offer-deposits');
+    const el = overlay.querySelector('.kb-offer-deposits');
     const current = Array.from(el.querySelectorAll('.kb-offer-dep-row')).map(row => ({
       amount: row.querySelector('.kb-odep-amount').value,
       due:    parseSettlementDays(row.querySelector('.kb-odep-due').value),
@@ -1153,25 +1173,46 @@ function openCardModal(id) {
     el.innerHTML = buildOfferDepositsHtml(current);
   });
 
+  function refreshFinancePicker() {
+    // Rebuild only the picker rows, preserving the popup DOM
+    const pickerEl = document.getElementById(`kb-finance-picker-${id}`);
+    if (!pickerEl) return;
+    // Remove existing rows/header (not the popup)
+    Array.from(pickerEl.children).forEach(child => {
+      if (!child.classList.contains('kb-offer-popup')) child.remove();
+    });
+    // Insert fresh header+rows before the popup
+    const popup = pickerEl.querySelector('.kb-offer-popup');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
+    Array.from(tmp.children).forEach(child => pickerEl.insertBefore(child, popup));
+    // Close popup after submit
+    if (popup) popup.style.display = 'none';
+  }
+
   // Submit offer
-  modal.querySelector('.kb-submit-offer').addEventListener('click', () => {
-    const _offerPrice = parseDepositAmountKanban(modal.querySelector('.kb-offer-price').value, null) || 0;
-    const offerDeposits = Array.from(modal.querySelectorAll('.kb-offer-dep-row')).map(row => ({
+  overlay.addEventListener('click', e => {
+    if (!e.target.closest('.kb-submit-offer')) return;
+    const _offerPrice = parseDepositAmountKanban(overlay.querySelector('.kb-offer-price')?.value || '', null) || 0;
+    const offerDeposits = Array.from(overlay.querySelectorAll('.kb-offer-dep-row')).map(row => ({
       amount: parseDepositAmountKanban(row.querySelector('.kb-odep-amount').value, _offerPrice),
       due:    parseSettlementDays(row.querySelector('.kb-odep-due').value),
       note:   row.querySelector('.kb-odep-note').value,
     })).filter(d => d.amount || d.due);
     const offer = {
-      price:      formatInputPrice(modal.querySelector('.kb-offer-price').value.trim()),
-      settlement: parseSettlementDays(modal.querySelector('.kb-offer-settlement').value.trim()),
+      price:      formatInputPrice(overlay.querySelector('.kb-offer-price')?.value.trim() || ''),
+      settlement: parseSettlementDays(overlay.querySelector('.kb-offer-settlement')?.value.trim() || ''),
       deposits:   offerDeposits,
     };
     if (!offer.price && !offer.settlement && !offerDeposits.length) return;
     addOffer(id, offer);
-    modal.querySelector('.kb-offer-price').value = '';
-    modal.querySelector('.kb-offer-settlement').value = '';
-    modal.querySelector('.kb-offer-deposits').innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }], 0);
-    document.getElementById(`kb-finance-picker-${id}`).innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
+    const _priceEl = overlay.querySelector('.kb-offer-price');
+    const _settleEl = overlay.querySelector('.kb-offer-settlement');
+    const _depsEl = overlay.querySelector('.kb-offer-deposits');
+    if (_priceEl) _priceEl.value = '';
+    if (_settleEl) _settleEl.value = '';
+    if (_depsEl) _depsEl.innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }], 0);
+    refreshFinancePicker();
     const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (boardCard) refreshCardIndicators(boardCard, id);
     showKanbanToast('Offer recorded');
@@ -1182,7 +1223,7 @@ function openCardModal(id) {
     const btn = e.target.closest('.kb-fin-pick-delete');
     if (!btn) return;
     deleteOffer(id, btn.dataset.offerId);
-    document.getElementById(`kb-finance-picker-${id}`).innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
+    refreshFinancePicker();
     const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (boardCard) refreshCardIndicators(boardCard, id);
   });
