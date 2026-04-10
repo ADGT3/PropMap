@@ -441,13 +441,11 @@ function runModel(d) {
     _addFtc(Math.floor(_cumDepDays / 365), amt);
   });
 
-  // Cash Required (Upfront) = all FTC items in years BEFORE settlementYr
-  const upfront = Object.entries(_ftcByYear)
-    .filter(([yr]) => parseInt(yr) < _settlementYr)
-    .reduce((s, [, v]) => s + v, 0);
+  // Cash Required (Upfront) = all FTC items EXCEPT commission and equity contribution
+  const upfront = purchaseCosts - commission - bankDepositRequired;
 
-  // Cash Required (Settlement) = all FTC items IN settlementYr
-  const cashAtSettlement = _ftcByYear[_settlementYr] || 0;
+  // Cash Required (Settlement) = commission + equity contribution
+  const cashAtSettlement = commission + bankDepositRequired;
 
   // Total Purchase Costs = all FTC items (deposits + purchase costs)
   const purchaseCosts = Object.values(_ftcByYear).reduce((s, v) => s + v, 0);
