@@ -609,6 +609,17 @@ async function openFinanceForProperty(pipelineId, pipelineEntry, offeredPrice) {
   // Detect state from property address — used for correct duty calculation
   const _state = detectState(p.address || '', p.suburb || '');
 
+  // Find the selected offer to read its settlement days
+  const offers = pipelineEntry?.offers || [];
+  const selOffer = offeredPrice
+    ? offers.find(o => { const n = parseFloat(String(o.price||'').replace(/[^0-9.]/g,'')); return Math.abs(n - offeredPrice) < 1; })
+    : offers[0];
+  const offerSettlementDays = selOffer?.settlement || pipelineEntry?.terms?.settlement || 0;
+  // Convert settlement days to years (rounded to 1 decimal, capped at termOfOwnership)
+  const offerSettlementYrs = offerSettlementDays > 0
+    ? Math.max(0, Math.round((parseDueDays(offerSettlementDays) / 365) * 10) / 10)
+    : 0;
+
   if (!data) {
     // No saved model — create fresh, seeding price from offered > listing
     const seedPrice = offeredPrice || extractPrice(pipelineEntry);
@@ -626,6 +637,11 @@ async function openFinanceForProperty(pipelineId, pipelineEntry, offeredPrice) {
       data._priceSource = 'offer';
       data.updatedAt = Date.now();
     }
+  }
+
+  // Always sync settlementLag from the offer's actual settlement — rent starts at settlement
+  if (offerSettlementYrs >= 0) {
+    data.settlementLag = offerSettlementYrs;
   }
 
   _allModels[pipelineId] = data;
@@ -714,7 +730,13 @@ function fsc(id, label) {
 }
 
 // Track which sidebar sections are collapsed (persists across re-renders)
-const _sectionCollapsed = {};
+const _sectionCollapsed = {
+  'model-vars':      true,
+  'purchase-costs':  true,
+  'revenue':         true,
+  'outgoings':       true,
+  'fin-funds-complete': true,
+};
 
 function renderSidebar(d, r) {
   function sec(id) {
@@ -786,21 +808,6 @@ function renderSidebar(d, r) {
       </div>
     </div>
 
-    ${fsc('purchase-costs', 'Purchase Costs')}
-    <div class="fin-section-body" data-section="purchase-costs" ${sec('purchase-costs')}>
-      <div class="fin-fields">
-        ${ff('stampDuty',        'Stamp Duty',          fmtDollar(d.stampDuty),          'dollar', (d._state||'NSW') + ' transfer duty')}
-        ${ff('valuationCost',    'Valuation',            fmtDollar(d.valuationCost),      'dollar')}
-        ${ff('solicitorCost',    'Solicitor',            fmtDollar(d.solicitorCost),      'dollar')}
-        ${ff('inspections',      'Inspections',          fmtDollar(d.inspections),        'dollar')}
-        ${ff('salesCommissionPct','Sales Commission (%)', fmtPct(d.salesCommissionPct),   'pct')}
-        ${ff('',                 'Commission ($)',        fmtDollar(r.commission),         'dollar', '', true)}
-        ${ff('',                 'Equity Contribution',  fmtDollar(r.bankDepositRequired),'dollar', 'Price × (1−LVR) − deposits', true)}
-      </div>
-      <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Upfront)</span><span class="fin-summary-val">${fmtDollar(r.upfront)}</span></div>
-      <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Settlement)</span><span class="fin-summary-val">${fmtDollar(r.cashAtSettlement)}</span></div>
-    </div>
-
     ${fsc('revenue', 'Revenue')}
     <div class="fin-section-body" data-section="revenue" ${sec('revenue')}>
       <div class="fin-fields">
@@ -814,6 +821,19 @@ function renderSidebar(d, r) {
     ${fsc('outgoings', 'Outgoings')}
     <div class="fin-section-body" data-section="outgoings" ${sec('outgoings')}>
       <div class="fin-fields">
+        <div class="fin-subsection-label">Purchase Costs</div>
+        ${ff('stampDuty',        'Stamp Duty',          fmtDollar(d.stampDuty),          'dollar', (d._state||'NSW') + ' transfer duty')}
+        ${ff('valuationCost',    'Valuation',            fmtDollar(d.valuationCost),      'dollar')}
+        ${ff('solicitorCost',    'Solicitor',            fmtDollar(d.solicitorCost),      'dollar')}
+        ${ff('inspections',      'Inspections',          fmtDollar(d.inspections),        'dollar')}
+        ${ff('salesCommissionPct','Sales Commission (%)', fmtPct(d.salesCommissionPct),   'pct')}
+        ${ff('',                 'Commission ($)',        fmtDollar(r.commission),         'dollar', '', true)}
+        ${ff('',                 'Equity Contribution',  fmtDollar(r.bankDepositRequired),'dollar', 'Price × (1−LVR) − deposits', true)}
+      </div>
+      <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Upfront)</span><span class="fin-summary-val">${fmtDollar(r.upfront)}</span></div>
+      <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Settlement)</span><span class="fin-summary-val">${fmtDollar(r.cashAtSettlement)}</span></div>
+      <div class="fin-fields" style="margin-top:8px">
+        <div class="fin-subsection-label">Running Costs</div>
         ${ff('councilQuarterly', 'Council (per quarter)',  fmtDollar(d.councilQuarterly), 'dollar', '×4 = annual')}
         ${ff('',                 'Council (annual)',        fmtDollar(r.council),           'dollar', '', true)}
         ${ff('water',            'Water',                   fmtDollar(d.water),             'dollar')}
