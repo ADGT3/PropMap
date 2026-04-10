@@ -763,7 +763,7 @@
 }
 .fin-costs-row { background: color-mix(in srgb, var(--accent) 3%, var(--surface)); }
 .fin-costs-label { font-weight: 500; font-size: 11px; color: var(--muted); }
-.fin-costs-cell { font-weight: 600; }
+.fin-costs-cell { font-weight: 400; }
 .fin-deposit-row.fin-costs-row { background: color-mix(in srgb, var(--red) 4%, var(--surface)); }
 .fin-deposit-row.fin-costs-row .fin-costs-label { color: var(--red); }
 .fin-bank-dep-row .fin-costs-label { color: var(--accent); }
@@ -825,3 +825,25 @@
   opacity: 0.7;
 }
 .fin-property-id-link:hover { opacity: 1; }
+
+/* ── Funds to Complete header checkbox ──────────────────────────────────────── */
+.fin-costs-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fin-costs-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+  white-space: nowrap;
+  margin-right: 4px;
+}
+.fin-costs-checkbox { cursor: pointer; accent-color: var(--accent); margin: 0; }
+.fin-costs-checkbox-label { user-select: none; }

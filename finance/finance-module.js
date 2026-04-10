@@ -55,6 +55,7 @@ let _allModels         = {};
 let _comparableOpen    = false;  // persists collapse state across re-renders
 let _financeInitDone   = false;  // guard against duplicate initFinance() calls
 let _saveTimer         = null;   // debounce timer for auto-save
+let _costsInCashflow   = false;  // whether Funds to Complete costs are included in cashflow
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
@@ -435,6 +436,7 @@ function runModel(d) {
     const principalPaid = (rent - interest) * pdPct;                 // B20 = (B17-B21)*G36
     const principalEnd  = principalStart - principalPaid;            // B22 = B19 - B20
     const cashflow      = rent - interest - principalPaid;           // B23 = B17-B21-B20
+    // _costsAdjustment applied below after years array is built
     const assetValue    = yr === 0 ? price : price * Math.pow(1 + cg, yr); // B25, then *(1+B6)
 
     years.push({
@@ -445,6 +447,35 @@ function runModel(d) {
 
     // Carry principal end forward as next year's start
     principalStart = principalEnd;
+  }
+
+  // ── Apply Funds to Complete costs to cashflow when toggled on ──────
+  if (_costsInCashflow) {
+    // Build per-year cost map
+    const costsByYear = {};
+    // Purchase costs at settlement year
+    const _syr = lag;
+    const _purchaseCosts = [
+      d.stampDuty, d.valuationCost, d.solicitorCost, d.inspections,
+      price * (d.salesCommissionPct || 0)
+    ];
+    _purchaseCosts.forEach(c => { if (c) costsByYear[_syr] = (costsByYear[_syr] || 0) + c; });
+    // Bank deposit at settlement year
+    if (bankDepositRequired > 0) costsByYear[_syr] = (costsByYear[_syr] || 0) + bankDepositRequired;
+    // Offer deposit tranches at their computed year
+    let _cumDays = 0;
+    offerDeposits.forEach(dep => {
+      const _a = parseAmt(dep.amount);
+      if (!_a || isNaN(_a) || _a <= 0) return;
+      const _dd = parseDueDays(dep.due);
+      _cumDays += _dd !== null ? _dd : 0;
+      const _yr = Math.floor(_cumDays / 365);
+      costsByYear[_yr] = (costsByYear[_yr] || 0) + _a;
+    });
+    // Subtract from cashflow in each year
+    years.forEach(y => {
+      if (costsByYear[y.yr]) y.cashflow -= costsByYear[y.yr];
+    });
   }
 
   // ── Total Cash Required (Total) ──────────────────────────────────────
@@ -942,8 +973,13 @@ function renderMain(d, r) {
     // Section header row
     const ftcOpen = !_sectionCollapsed['fin-funds-complete'];
     rows.push('<tr class="fin-costs-header-row" id="finFundsHeader">'
-      + '<th class="fin-row-label fin-costs-header"><span class="fin-funds-toggle" id="finFundsToggle">'
-      + (ftcOpen ? '▼' : '▶') + '</span> Funds to Complete</th>'
+      + '<th class="fin-row-label fin-costs-header">'
+      + '<label class="fin-costs-toggle-label" title="Include in cashflow">'
+      + '<input type="checkbox" id="finCostsInCashflow" class="fin-costs-checkbox"' + (_costsInCashflow ? ' checked' : '') + '>'
+      + '<span class="fin-costs-checkbox-label">Include in cashflow</span>'
+      + '</label>'
+      + '<span class="fin-funds-toggle" id="finFundsToggle">' + (ftcOpen ? '▼' : '▶') + '</span>'
+      + ' Funds to Complete</th>'
       + years.map(() => '<td></td>').join('')
       + (holdYrs.length ? '<td class="fin-avg-col"></td>' : '')
       + '</tr>');
@@ -1195,8 +1231,15 @@ function bindInputs(r) {
     });
   }
 
-  // Funds to Complete table toggle
-  document.getElementById('finFundsToggle')?.closest('tr')?.addEventListener('click', () => {
+  // Funds to Complete — checkbox toggles inclusion in cashflow
+  document.getElementById('finCostsInCashflow')?.addEventListener('change', e => {
+    _costsInCashflow = e.target.checked;
+    renderFinanceView();
+  });
+
+  // Funds to Complete — chevron toggles row visibility (don't fire when clicking checkbox)
+  document.getElementById('finFundsToggle')?.addEventListener('click', e => {
+    e.stopPropagation();
     _sectionCollapsed['fin-funds-complete'] = !_sectionCollapsed['fin-funds-complete'];
     renderFinanceView();
   });
