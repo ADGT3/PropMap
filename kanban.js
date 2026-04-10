@@ -360,7 +360,11 @@ function formatDepositDue(val) {
 }
 
 function getTerms(id) {
-  return pipeline[id]?.terms || { price: '', settlement: '', deposits: [{ amount: '', due: '', note: '' }] };
+  const t = pipeline[id]?.terms || {};
+  if (!Array.isArray(t.deposits) || t.deposits.length === 0) {
+    t.deposits = [{ amount: '', due: '', note: '' }];
+  }
+  return { price: '', settlement: '', ...t };
 }
 
 function addDeposit(id) {
@@ -606,6 +610,34 @@ function renderBoard() {
 
 // ─── Card detail modal ────────────────────────────────────────────────────────
 
+function buildDepositsHtml(deps, termsPrice) {
+  termsPrice = termsPrice || 0;
+  if (!Array.isArray(deps) || !deps.length) deps = [{ amount: '', due: '', note: '' }];
+  return deps.map((d, i) => `
+    <div class="kb-deposit-row" data-idx="${i}">
+      <div class="kb-deposit-fields">
+        <input class="kb-input kb-dep-amount" type="text" placeholder="$ or % e.g. 5% or $50,000" value="${d.amount ? formatDepositAmount(d.amount, termsPrice) : ''}" data-idx="${i}">
+        <input class="kb-input kb-dep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due || ''}" data-idx="${i}">
+        <input class="kb-input kb-dep-note kb-dep-note-inline" type="text" placeholder="Note" value="${d.note || ''}" data-idx="${i}">
+        ${deps.length > 1 ? `<button class="kb-dep-remove" data-idx="${i}" title="Remove tranche">✕</button>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+function buildOfferDepositsHtml(deps, offerPrice) {
+  offerPrice = offerPrice || 0;
+  if (!Array.isArray(deps) || !deps.length) deps = [{ amount: '', due: '', note: '' }];
+  return deps.map((d, i) => `
+    <div class="kb-deposit-row kb-offer-dep-row" data-idx="${i}">
+      <div class="kb-deposit-fields">
+        <input class="kb-input kb-odep-amount" type="text" placeholder="$ or % e.g. 5% or $50,000" value="${d.amount ? formatDepositAmount(d.amount, offerPrice) : ''}" data-idx="${i}">
+        <input class="kb-input kb-odep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due || ''}" data-idx="${i}">
+        <input class="kb-input kb-odep-note kb-dep-note-inline" type="text" placeholder="Note" value="${d.note || ''}" data-idx="${i}">
+        ${deps.length > 1 ? `<button class="kb-odep-remove" data-idx="${i}" title="Remove tranche">✕</button>` : ''}
+      </div>
+    </div>`).join('');
+}
+
 function openCardModal(id) {
   const item = pipeline[id];
   if (!item) return;
@@ -655,31 +687,7 @@ function openCardModal(id) {
   }
   resolveFromDomain();
 
-  function buildDepositsHtml(deps) {
-    const termsPrice = parseDepositAmountKanban(getTerms(id).price, null) || 0;
-    return deps.map((d, i) => `
-      <div class="kb-deposit-row" data-idx="${i}">
-        <div class="kb-deposit-fields">
-          <input class="kb-input kb-dep-amount" type="text" placeholder="$ or % e.g. 5% or $50,000" value="${d.amount ? formatDepositAmount(d.amount, termsPrice) : ''}" data-idx="${i}">
-          <input class="kb-input kb-dep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due || ''}" data-idx="${i}">
-          <input class="kb-input kb-dep-note kb-dep-note-inline" type="text" placeholder="Note" value="${d.note || ''}" data-idx="${i}">
-          ${deps.length > 1 ? `<button class="kb-dep-remove" data-idx="${i}" title="Remove tranche">✕</button>` : ''}
-        </div>
-      </div>`).join('');
-  }
 
-  function buildOfferDepositsHtml(deps, offerPrice) {
-    offerPrice = offerPrice || 0;
-    return deps.map((d, i) => `
-      <div class="kb-deposit-row kb-offer-dep-row" data-idx="${i}">
-        <div class="kb-deposit-fields">
-          <input class="kb-input kb-odep-amount" type="text" placeholder="$ or % e.g. 5% or $50,000" value="${d.amount ? formatDepositAmount(d.amount, offerPrice) : ''}" data-idx="${i}">
-          <input class="kb-input kb-odep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due || ''}" data-idx="${i}">
-          <input class="kb-input kb-odep-note kb-dep-note-inline" type="text" placeholder="Note" value="${d.note || ''}" data-idx="${i}">
-          ${deps.length > 1 ? `<button class="kb-odep-remove" data-idx="${i}" title="Remove tranche">✕</button>` : ''}
-        </div>
-      </div>`).join('');
-  }
 
   function buildFinancePickerHtml(offers, terms, prop) {
     const rows = [];
@@ -746,7 +754,7 @@ function openCardModal(id) {
   overlay.id = 'kb-modal';
   overlay.className = 'kb-modal-overlay';
   overlay.dataset.propertyId = String(id);
-  overlay.innerHTML = `
+  try { overlay.innerHTML = `
     <div class="kb-modal">
       <div class="kb-modal-header">
         <div style="flex:1;min-width:0">
@@ -778,7 +786,7 @@ function openCardModal(id) {
             </div>
           </div>
           <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
-          <div class="kb-deposits">${buildDepositsHtml(terms.deposits)}</div>
+          <div class="kb-deposits">${buildDepositsHtml(terms.deposits, parseDepositAmountKanban(terms.price, null) || 0)}</div>
           <button class="kb-add-deposit">+ Add tranche</button>
         </div>
 
@@ -839,6 +847,7 @@ function openCardModal(id) {
     </div>
   `;
 
+  } catch(e) { console.error('[Kanban] Modal build error:', e); return; }
   document.body.appendChild(overlay);
   const modal = overlay.querySelector('.kb-modal');
 
