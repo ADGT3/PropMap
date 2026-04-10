@@ -324,9 +324,10 @@ function parseDepositAmountKanban(val, price) {
   if (val === null || val === undefined || val === '') return 0;
   if (typeof val === 'number') return Math.round(val);
   const s = String(val).trim();
-  // Already formatted "$50,000 (5%)" or "$50,000" — extract first number
+  // Already formatted "$50,000 (5%)" — extract dollar amount before the parenthesis
   if (s.includes('$')) {
-    const n = parseFloat(s.replace(/[^0-9.]/g, ''));
+    const dollarPart = s.split('(')[0]; // take only "$50,000 " before "(5%)"
+    const n = parseFloat(dollarPart.replace(/[^0-9.]/g, ''));
     return isNaN(n) ? 0 : Math.round(n);
   }
   // Pure percentage e.g. "5%"
@@ -352,6 +353,21 @@ function formatDepositAmount(numOrStr, price) {
 }
 
 
+
+// Parse a settlement string to a plain integer number of days for storage.
+// e.g. "90 days" -> 90, "3 months" -> 90, "1 year" -> 365, "90" -> 90
+function parseSettlementDays(val) {
+  if (!val && val !== 0) return 0;
+  if (typeof val === 'number') return Math.round(val);
+  const s = String(val).trim().toLowerCase();
+  const match = s.match(/^(\d+(?:\.\d+)?)\s*(d|day|days|m|mo|month|months|y|yr|year|years)?/);
+  if (!match) return 0;
+  const num  = parseFloat(match[1]);
+  const unit = match[2] || 'd';
+  if (/^y/.test(unit)) return Math.round(num * 365);
+  if (/^m/.test(unit)) return Math.round(num * 30);
+  return Math.round(num);
+}
 
 // Format due — same logic as settlement, converts to days
 // Due = days since previous deposit (or since contract for first tranche)
@@ -699,7 +715,7 @@ function openCardModal(id) {
         <div class="kb-fin-pick-row" data-price="${o.price}" data-offer-id="${o.id}">
           <span class="kb-fin-pick-label">Offer ${offers.length - i}${i === 0 ? ' <span class="kb-fin-pick-latest">latest</span>' : ''}</span>
           <span class="kb-fin-pick-price">${o.price}</span>
-          <span class="kb-fin-pick-meta">${o.settlement ? o.settlement + ' settlement' : ''}</span>
+          <span class="kb-fin-pick-meta">${o.settlement ? formatSettlement(String(o.settlement)) + ' settlement' : ''}</span>
           <button class="kb-fin-pick-btn">📊 Model</button>
         </div>`);
     });
@@ -709,8 +725,8 @@ function openCardModal(id) {
       rows.push(`
         <div class="kb-fin-pick-row" data-price="${terms.price}" data-offer-id="vendor-terms">
           <span class="kb-fin-pick-label">Vendor terms</span>
-          <span class="kb-fin-pick-price">${terms.price}</span>
-          <span class="kb-fin-pick-meta">${terms.settlement ? terms.settlement + ' settlement' : ''}</span>
+          <span class="kb-fin-pick-price">${formatInputPrice(String(terms.price))}</span>
+          <span class="kb-fin-pick-meta">${terms.settlement ? formatSettlement(String(terms.settlement)) + ' settlement' : ''}</span>
           <button class="kb-fin-pick-btn">📊 Model</button>
         </div>`);
     }
@@ -740,7 +756,7 @@ function openCardModal(id) {
         </div>
         <div class="kb-offer-fields">
           <span class="kb-offer-field"><span class="kb-offer-lbl">Price</span> ${o.price || '—'}</span>
-          <span class="kb-offer-field"><span class="kb-offer-lbl">Settlement</span> ${o.settlement || '—'}</span>
+          <span class="kb-offer-field"><span class="kb-offer-lbl">Settlement</span> ${o.settlement ? formatSettlement(String(o.settlement)) : '—'}</span>
         </div>
         ${o.deposits && o.deposits.length ? `
           <div class="kb-offer-deps-label">Deposit structure</div>
@@ -782,11 +798,11 @@ function openCardModal(id) {
           <div class="kb-terms-row">
             <div class="kb-field-wrap">
               <label class="kb-field-label">Price</label>
-              <input class="kb-input kb-terms-price" type="text" placeholder="e.g. $1,250,000" value="${terms.price || ''}">
+              <input class="kb-input kb-terms-price" type="text" placeholder="e.g. $1,250,000" value="${terms.price ? formatInputPrice(String(terms.price)) : ''}">
             </div>
             <div class="kb-field-wrap">
               <label class="kb-field-label">Settlement</label>
-              <input class="kb-input kb-terms-settlement" type="text" placeholder="e.g. 90, 3 months, 1 year" value="${terms.settlement || ''}">
+              <input class="kb-input kb-terms-settlement" type="text" placeholder="e.g. 90, 3 months, 1 year" value="${terms.settlement ? formatSettlement(String(terms.settlement)) : ''}">
             </div>
           </div>
           <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
@@ -998,8 +1014,10 @@ function openCardModal(id) {
   // Terms
   function syncTerms() {
     const t = getTerms(id);
-    t.price      = modal.querySelector('.kb-terms-price').value;
-    t.settlement = modal.querySelector('.kb-terms-settlement').value;
+    // Store price as plain number, settlement as normalised string
+    const rawPrice = modal.querySelector('.kb-terms-price').value;
+    t.price      = parseDepositAmountKanban(rawPrice, null) || 0;
+    t.settlement = parseSettlementDays(modal.querySelector('.kb-terms-settlement').value);
     saveTerms(id, t);
     const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (boardCard) refreshCardIndicators(boardCard, id);
@@ -1110,7 +1128,7 @@ function openCardModal(id) {
     })).filter(d => d.amount || d.due);
     const offer = {
       price:      formatInputPrice(modal.querySelector('.kb-offer-price').value.trim()),
-      settlement: formatSettlement(modal.querySelector('.kb-offer-settlement').value.trim()),
+      settlement: parseSettlementDays(modal.querySelector('.kb-offer-settlement').value.trim()),
       deposits:   offerDeposits,
     };
     if (!offer.price && !offer.settlement && !offerDeposits.length) return;
