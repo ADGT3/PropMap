@@ -2114,19 +2114,29 @@ header {
 }
 .kb-fin-pick-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
 .kb-fin-pick-row:last-child { border-bottom: none; }
+.kb-fin-pick-main { flex: 1; min-width: 0; }
+.kb-fin-pick-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
 .kb-fin-pick-label {
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
-  min-width: 80px;
-  flex-shrink: 0;
+}
+.kb-fin-pick-date {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: auto;
 }
 .kb-fin-pick-latest {
   font-size: 9px;
@@ -2138,16 +2148,33 @@ header {
   vertical-align: middle;
   margin-left: 4px;
 }
+.kb-fin-pick-detail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
 .kb-fin-pick-price {
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
-  flex: 1;
 }
 .kb-fin-pick-meta {
   font-size: 11px;
   color: var(--muted);
-  flex: 1;
+}
+.kb-fin-pick-deps {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+.kb-fin-pick-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
 }
 .kb-fin-pick-btn {
   background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
@@ -2161,10 +2188,23 @@ header {
   padding: 4px 10px;
   white-space: nowrap;
   transition: background 0.12s;
-  flex-shrink: 0;
 }
 .kb-fin-pick-btn:hover {
   background: color-mix(in srgb, var(--accent) 16%, var(--surface2));
+}
+.kb-fin-pick-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: color 0.12s, background 0.12s;
+}
+.kb-fin-pick-delete:hover {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, var(--surface2));
 }
 
 .kb-dep-note-inline {

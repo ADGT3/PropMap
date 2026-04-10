@@ -108,6 +108,7 @@ let kanbanVisible = false;
 
 function toggleKanban(show) {
   kanbanVisible = show !== undefined ? show : !kanbanVisible;
+  window.kanbanVisible = kanbanVisible;  // expose for finance module
   document.getElementById('kanbanView').classList.toggle('visible', kanbanVisible);
   const btn = document.getElementById('kanbanToggleBtn');
   btn.classList.toggle('active', kanbanVisible);
@@ -415,7 +416,7 @@ function addOffer(id, offer) {
 
 function deleteOffer(propertyId, offerId) {
   if (!pipeline[propertyId]) return;
-  pipeline[propertyId].offers = (pipeline[propertyId].offers || []).filter(o => o.id !== offerId);
+  pipeline[propertyId].offers = (pipeline[propertyId].offers || []).filter(o => String(o.id) !== String(offerId));
   savePipeline(propertyId);
 }
 
@@ -708,42 +709,77 @@ function openCardModal(id) {
   function buildFinancePickerHtml(offers, terms, prop) {
     const rows = [];
 
-    // One row per submitted offer (newest first)
+    // One row per submitted offer (newest first) — full details + delete + model
     offers.forEach((o, i) => {
       if (!o.price) return;
+      const depSummary = (o.deposits || [])
+        .filter(d => d.amount)
+        .map((d, di) => {
+          const price = parseDepositAmountKanban(o.price, null) || 0;
+          return formatDepositAmount(d.amount, price) + (d.due ? ' · ' + formatSettlement(String(d.due)) : '') + (d.note ? ' · ' + d.note : '');
+        }).join('<br>');
       rows.push(`
         <div class="kb-fin-pick-row" data-price="${o.price}" data-offer-id="${o.id}">
-          <span class="kb-fin-pick-label">Offer ${offers.length - i}${i === 0 ? ' <span class="kb-fin-pick-latest">latest</span>' : ''}</span>
-          <span class="kb-fin-pick-price">${o.price}</span>
-          <span class="kb-fin-pick-meta">${o.settlement ? formatSettlement(String(o.settlement)) + ' settlement' : ''}</span>
-          <button class="kb-fin-pick-btn">📊 Model</button>
+          <div class="kb-fin-pick-main">
+            <div class="kb-fin-pick-top">
+              <span class="kb-fin-pick-label">Offer ${offers.length - i}${i === 0 ? ' <span class="kb-fin-pick-latest">latest</span>' : ''}</span>
+              <span class="kb-fin-pick-date">${formatOfferDate(o.date)}</span>
+            </div>
+            <div class="kb-fin-pick-detail">
+              <span class="kb-fin-pick-price">${formatInputPrice(String(o.price))}</span>
+              ${o.settlement ? `<span class="kb-fin-pick-meta">${formatSettlement(String(o.settlement))} settlement</span>` : ''}
+            </div>
+            ${depSummary ? `<div class="kb-fin-pick-deps">${depSummary}</div>` : ''}
+          </div>
+          <div class="kb-fin-pick-actions">
+            <button class="kb-fin-pick-btn">📊 Model</button>
+            <button class="kb-fin-pick-delete" data-offer-id="${o.id}" title="Delete offer">✕</button>
+          </div>
         </div>`);
     });
 
     // Vendor terms row if price set
     if (terms.price) {
+      const termsDepSummary = (terms.deposits || [])
+        .filter(d => d.amount)
+        .map(d => {
+          const price = parseDepositAmountKanban(terms.price, null) || 0;
+          return formatDepositAmount(d.amount, price) + (d.due ? ' · ' + formatSettlement(String(d.due)) : '') + (d.note ? ' · ' + d.note : '');
+        }).join('<br>');
       rows.push(`
         <div class="kb-fin-pick-row" data-price="${terms.price}" data-offer-id="vendor-terms">
-          <span class="kb-fin-pick-label">Vendor terms</span>
-          <span class="kb-fin-pick-price">${formatInputPrice(String(terms.price))}</span>
-          <span class="kb-fin-pick-meta">${terms.settlement ? formatSettlement(String(terms.settlement)) + ' settlement' : ''}</span>
-          <button class="kb-fin-pick-btn">📊 Model</button>
+          <div class="kb-fin-pick-main">
+            <div class="kb-fin-pick-top">
+              <span class="kb-fin-pick-label">Vendor terms</span>
+            </div>
+            <div class="kb-fin-pick-detail">
+              <span class="kb-fin-pick-price">${formatInputPrice(String(terms.price))}</span>
+              ${terms.settlement ? `<span class="kb-fin-pick-meta">${formatSettlement(String(terms.settlement))} settlement</span>` : ''}
+            </div>
+            ${termsDepSummary ? `<div class="kb-fin-pick-deps">${termsDepSummary}</div>` : ''}
+          </div>
+          <div class="kb-fin-pick-actions">
+            <button class="kb-fin-pick-btn">📊 Model</button>
+          </div>
         </div>`);
     }
 
-    // Listing price fallback if no offers or terms
+    // Listing price fallback
     if (!rows.length) {
-      const listingPrice = formatKbPrice(prop.price, null);
       rows.push(`
         <div class="kb-fin-pick-row" data-price="" data-offer-id="listing">
-          <span class="kb-fin-pick-label">Listing price</span>
-          <span class="kb-fin-pick-price">${listingPrice}</span>
-          <span class="kb-fin-pick-meta">No offers submitted yet</span>
-          <button class="kb-fin-pick-btn">📊 Model</button>
+          <div class="kb-fin-pick-main">
+            <span class="kb-fin-pick-label">Listing price</span>
+            <span class="kb-fin-pick-price">${formatKbPrice(prop.price, null)}</span>
+            <span class="kb-fin-pick-meta">No offers submitted yet</span>
+          </div>
+          <div class="kb-fin-pick-actions">
+            <button class="kb-fin-pick-btn">📊 Model</button>
+          </div>
         </div>`);
     }
 
-    return `<div class="kb-fin-pick-header">📊 Model in Financial Feasibility</div>${rows.join('')}`;
+    return `<div class="kb-fin-pick-header">Submitted Offers &amp; Financial Feasibility</div>${rows.join('')}`;
   }
 
   function buildOffersHtml(offers) {
@@ -829,7 +865,6 @@ function openCardModal(id) {
             <button class="kb-submit-offer">+ Submit Offer</button>
           </div>
         </div>
-        <div class="kb-offers-list" id="kb-modal-offers-${id}">${buildOffersHtml(offers)}</div>
         <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
 
         <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
@@ -1136,19 +1171,18 @@ function openCardModal(id) {
     modal.querySelector('.kb-offer-price').value = '';
     modal.querySelector('.kb-offer-settlement').value = '';
     modal.querySelector('.kb-offer-deposits').innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }], 0);
-    document.getElementById('kb-modal-offers-' + id).innerHTML = buildOffersHtml(getOffers(id));
     document.getElementById(`kb-finance-picker-${id}`).innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
     const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (boardCard) refreshCardIndicators(boardCard, id);
     showKanbanToast('Offer recorded');
   });
 
-  // Delete offer
-  modal.querySelector('.kb-offers-list').addEventListener('click', e => {
-    const btn = e.target.closest('.kb-offer-delete');
+  // Delete offer — handled in finance picker
+  modal.querySelector(`#kb-finance-picker-${id}`).addEventListener('click', e => {
+    const btn = e.target.closest('.kb-fin-pick-delete');
     if (!btn) return;
-    deleteOffer(id, Number(btn.dataset.offerId));
-    document.getElementById('kb-modal-offers-' + id).innerHTML = buildOffersHtml(getOffers(id));
+    deleteOffer(id, btn.dataset.offerId);
+    document.getElementById(`kb-finance-picker-${id}`).innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
     const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (boardCard) refreshCardIndicators(boardCard, id);
   });
