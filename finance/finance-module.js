@@ -792,39 +792,6 @@ function renderSidebar(d, r) {
         ${ff('acquisitionPrice',   'Acquisition Price',           fmtDollar(d.acquisitionPrice),   'dollar')}
       </div>
 
-      ${/* Offer deposit tranches — read from selected offer in pipeline */ ''}
-      ${(() => {
-        const deps = r.offerDeposits;
-        if (!deps || !deps.length || !deps.some(dep => dep.amount)) {
-          return `<div class="fin-deposit-none">No offer deposits recorded — set in kanban</div>`;
-        }
-        let cumulativeDays = 0;
-        return deps.filter(dep => dep.amount !== undefined && dep.amount !== '').map((dep, i) => {
-          const amt      = parseDepositAmount(dep.amount, d.acquisitionPrice);
-          const hasError = isNaN(amt);
-          const dueDays  = parseDueDays(dep.due);
-          cumulativeDays += dueDays !== null ? dueDays : 0;
-          const dueStr   = typeof dep.due === 'number' ? dep.due + ' days' : (dep.due || '');
-          const dueLabel = dueStr
-            ? (i === 0 ? dueStr + ' from contract' : dueStr + ' after Deposit ' + i)
-            : (dep.note || 'No date set');
-          const pct      = !hasError && d.acquisitionPrice > 0 && amt > 0
-            ? ' (' + ((amt / d.acquisitionPrice) * 100).toFixed(2).replace(/\.?0+$/, '') + '%)' : '';
-          const display  = hasError ? '⚠️ re-enter in kanban' : (amt > 0 ? fmtDollar(amt) + pct : '—');
-          const hint     = hasError ? '' : dueLabel;
-          const depLabel = 'Deposit ' + (i + 1) + (hint ? '<span class="fin-field-hint">' + hint + '</span>' : '');
-          return '<div class="fin-field fin-field-deposit' + (hasError ? ' fin-deposit-error' : '') + '" data-key="" data-type="dollar">'
-            + '<span class="fin-field-label">' + depLabel + '</span>'
-            + '<span class="fin-editable fin-deposit-val' + (hasError ? ' fin-neg' : '') + '">' + display + '</span>'
-            + '</div>';
-        }).join('');
-      })()}
-
-      <div class="fin-summary-row">
-        <span>Funds To Complete</span>
-        <span class="fin-summary-val">${fmtDollar(r.purchaseCosts)}</span>
-      </div>
-
       <div class="fin-fields" style="margin-top:8px">
         ${ff('interestRate',       'Loan Interest Rate (pa)',      fmtPct(d.interestRate),          'pct')}
         ${ff('rentalGrowth',       'Rental Increase (pa)',         fmtPct(d.rentalGrowth),          'pct')}
@@ -854,6 +821,33 @@ function renderSidebar(d, r) {
     <div class="fin-section-body" data-section="outgoings" ${sec('outgoings')}>
       <div class="fin-fields">
         <div class="fin-subsection-label">Purchase Costs</div>
+        ${/* Offer deposit tranches */ ''}
+        ${(() => {
+          const deps = r.offerDeposits;
+          if (!deps || !deps.length || !deps.some(dep => dep.amount)) {
+            return '<div class="fin-deposit-none">No offer deposits — set in kanban</div>';
+          }
+          let cumulativeDays = 0;
+          return deps.filter(dep => dep.amount !== undefined && dep.amount !== '').map((dep, i) => {
+            const amt      = parseDepositAmount(dep.amount, d.acquisitionPrice);
+            const hasError = isNaN(amt);
+            const dueDays  = parseDueDays(dep.due);
+            cumulativeDays += dueDays !== null ? dueDays : 0;
+            const dueStr   = typeof dep.due === 'number' ? dep.due + ' days' : (dep.due || '');
+            const dueLabel = dueStr
+              ? (i === 0 ? dueStr + ' from contract' : dueStr + ' after Deposit ' + i)
+              : (dep.note || 'No date set');
+            const pct      = !hasError && d.acquisitionPrice > 0 && amt > 0
+              ? ' (' + ((amt / d.acquisitionPrice) * 100).toFixed(2).replace(/\.?0+$/, '') + '%)' : '';
+            const display  = hasError ? '⚠️ re-enter in kanban' : (amt > 0 ? fmtDollar(amt) + pct : '—');
+            const hint     = hasError ? '' : dueLabel;
+            const depLabel = 'Deposit ' + (i + 1) + (hint ? '<span class="fin-field-hint">' + hint + '</span>' : '');
+            return '<div class="fin-field fin-field-deposit' + (hasError ? ' fin-deposit-error' : '') + '" data-key="" data-type="dollar">'
+              + '<span class="fin-field-label">' + depLabel + '</span>'
+              + '<span class="fin-editable fin-deposit-val' + (hasError ? ' fin-neg' : '') + '">' + display + '</span>'
+              + '</div>';
+          }).join('');
+        })()}
         ${ff('stampDuty',        'Stamp Duty',          fmtDollar(d.stampDuty),          'dollar', (d._state||'NSW') + ' transfer duty')}
         ${ff('valuationCost',    'Valuation',            fmtDollar(d.valuationCost),      'dollar')}
         ${ff('solicitorCost',    'Solicitor',            fmtDollar(d.solicitorCost),      'dollar')}
