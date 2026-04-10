@@ -1174,6 +1174,8 @@ ${rows.join('')}`;
   // Submit offer
   overlay.addEventListener('click', e => {
     if (!e.target.closest('.kb-submit-offer')) return;
+    // Force blur all inputs so any unblurred values are committed before we read them
+    overlay.querySelectorAll('.kb-offer-price, .kb-offer-settlement, .kb-odep-amount, .kb-odep-due, .kb-odep-note').forEach(el => el.blur());
     const _offerPrice = parseDepositAmountKanban(overlay.querySelector('.kb-offer-price')?.value || '', null) || 0;
     const offerDeposits = Array.from(overlay.querySelectorAll('.kb-offer-dep-row')).map(row => ({
       amount: parseDepositAmountKanban(row.querySelector('.kb-odep-amount').value, _offerPrice),
