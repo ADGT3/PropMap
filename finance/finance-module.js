@@ -416,22 +416,45 @@ function runModel(d) {
   // Bank deposit = equity - offer deposits already paid (bank tops up the rest)
   const bankDepositRequired = Math.max(0, equity - totalOfferDeposits);
 
-  // Purchase costs split by timing:
-  // Upfront costs = paid before/at exchange (stamp, valuation, solicitor, inspections)
-  const upfrontCosts = stamp + (d.valuationCost || 0) +
-                       (d.solicitorCost || 0) + (d.inspections || 0);
+  // Settlement year — from actual offer settlement days
+  const _offerSettlementDays = selOffer?.settlement || entry?.terms?.settlement || 0;
+  const _settlementYr = _offerSettlementDays > 0
+    ? Math.floor((typeof _offerSettlementDays === 'number' ? _offerSettlementDays : parseDueDays(_offerSettlementDays)) / 365)
+    : Math.max(0, Math.round(d.settlementLag || 0));
 
-  // Settlement costs = commission and equity contribution (due at settlement)
-  const settlementCosts = commission + bankDepositRequired;
+  // Build per-year cost map matching the Funds to Complete table
+  // Fixed costs all go to settlementYr; deposit tranches go to their computed year
+  const _ftcByYear = {};
+  const _addFtc = (yr, amt) => { if (amt) _ftcByYear[yr] = (_ftcByYear[yr] || 0) + amt; };
+  _addFtc(_settlementYr, d.stampDuty || 0);
+  _addFtc(_settlementYr, d.valuationCost || 0);
+  _addFtc(_settlementYr, d.solicitorCost || 0);
+  _addFtc(_settlementYr, d.inspections || 0);
+  _addFtc(_settlementYr, commission);
+  _addFtc(_settlementYr, bankDepositRequired);
+  let _cumDepDays = 0;
+  offerDeposits.forEach(dep => {
+    const amt = parseDepositAmount(dep.amount, price);
+    if (!amt || isNaN(amt) || amt <= 0) return;
+    const dd = parseDueDays(dep.due);
+    _cumDepDays += dd !== null ? dd : 0;
+    _addFtc(Math.floor(_cumDepDays / 365), amt);
+  });
 
-  // Total purchase costs (all non-deposit costs)
-  const purchaseCosts = upfrontCosts + settlementCosts;
+  // Cash Required (Upfront) = all FTC items in years BEFORE settlementYr
+  const upfront = Object.entries(_ftcByYear)
+    .filter(([yr]) => parseInt(yr) < _settlementYr)
+    .reduce((s, [, v]) => s + v, 0);
 
-  // Cash Required (Upfront) = exchange deposits + upfront purchase costs (excl commission & equity)
-  const upfront = offerDepositUpfront + upfrontCosts;
+  // Cash Required (Settlement) = all FTC items IN settlementYr
+  const cashAtSettlement = _ftcByYear[_settlementYr] || 0;
 
-  // Cash Required (At Settlement) = bank deposit + commission + settlement-stage offer deposits
-  const cashAtSettlement = bankDepositRequired + commission + offerDepositSettlement;
+  // Total Purchase Costs = all FTC items (deposits + purchase costs)
+  const purchaseCosts = Object.values(_ftcByYear).reduce((s, v) => s + v, 0);
+
+  // Legacy upfrontCosts / settlementCosts for compatibility
+  const upfrontCosts = upfront;
+  const settlementCosts = cashAtSettlement;
 
   // Legacy 'deposit' for spreadsheet compatibility (total offer deposits)
   const deposit = totalOfferDeposits || price * (d.depositPct || 0);
@@ -482,30 +505,9 @@ function runModel(d) {
 
   // ── Apply Funds to Complete costs to cashflow when toggled on ──────
   if (_costsInCashflow) {
-    // Build per-year cost map
-    const costsByYear = {};
-    // Purchase costs at settlement year
-    const _syr = lag;
-    const _purchaseCosts = [
-      d.stampDuty, d.valuationCost, d.solicitorCost, d.inspections,
-      price * (d.salesCommissionPct || 0)
-    ];
-    _purchaseCosts.forEach(c => { if (c) costsByYear[_syr] = (costsByYear[_syr] || 0) + c; });
-    // Bank deposit at settlement year
-    if (bankDepositRequired > 0) costsByYear[_syr] = (costsByYear[_syr] || 0) + bankDepositRequired;
-    // Offer deposit tranches at their computed year
-    let _cumDays = 0;
-    offerDeposits.forEach(dep => {
-      const _a = parseAmt(dep.amount);
-      if (!_a || isNaN(_a) || _a <= 0) return;
-      const _dd = parseDueDays(dep.due);
-      _cumDays += _dd !== null ? _dd : 0;
-      const _yr = Math.floor(_cumDays / 365);
-      costsByYear[_yr] = (costsByYear[_yr] || 0) + _a;
-    });
-    // Subtract from cashflow in each year
+    // Reuse _ftcByYear which already has all costs correctly placed by year
     years.forEach(y => {
-      if (costsByYear[y.yr]) y.cashflow -= costsByYear[y.yr];
+      if (_ftcByYear[y.yr]) y.cashflow -= _ftcByYear[y.yr];
     });
   }
 
@@ -571,6 +573,7 @@ function runModel(d) {
     equity, bankDepositRequired,
     offerDeposits, offerDepositUpfront, offerDepositSettlement, totalOfferDeposits,
     purchaseCosts, upfront, cashAtSettlement,
+    settlementYr: _settlementYr, ftcByYear: _ftcByYear,
     totalCashReqd, preCashflowSum,
     grossRentYr1, management$, sinkingFund,
     council, maintenance,
@@ -1038,12 +1041,8 @@ function renderMain(d, r) {
 
     // Purchase costs + deposits — only rendered when section is open
     if (ftcOpen) {
-      // Settlement year from actual offer settlement days, not model lag
-      // selOffer.settlement is stored as numeric days
-      const offerSettlementDays = selOffer?.settlement || entry?.terms?.settlement || 0;
-      const settlementYr = offerSettlementDays > 0
-        ? Math.floor(parseDueDays(offerSettlementDays) / 365)
-        : lag;
+      // Use settlementYr computed in runModel (consistent with KPI tiles)
+      const settlementYr = r.settlementYr;
       if (d.stampDuty)           rows.push(singleYearRow('Stamp Duty',    settlementYr, d.stampDuty));
       if (d.valuationCost)       rows.push(singleYearRow('Valuation',     settlementYr, d.valuationCost));
       if (d.solicitorCost)       rows.push(singleYearRow('Solicitor',     settlementYr, d.solicitorCost));
@@ -1104,8 +1103,8 @@ function renderMain(d, r) {
       <div class="fin-kpi"><div class="fin-kpi-label">Total Loan</div><div class="fin-kpi-val">${fmtDollarK(r.loan)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Upfront)</div><div class="fin-kpi-val">${fmtDollarK(r.upfront)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Settlement)</div><div class="fin-kpi-val">${fmtDollarK(r.cashAtSettlement)}</div></div>
+      <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Total)</div><div class="fin-kpi-val">${fmtDollarK(r.upfront + r.cashAtSettlement)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Net Income (Yr 1)</div><div class="fin-kpi-val ${r.netIncomeYr1 < 0 ? 'fin-kpi-neg' : 'fin-kpi-pos'}">${fmtDollarK(r.netIncomeYr1)}</div></div>
-      <div class="fin-kpi"><div class="fin-kpi-label">Cashflow (Yr 1)</div><div class="fin-kpi-val ${(r.yr1Cashflow??0) < 0 ? 'fin-kpi-neg' : 'fin-kpi-pos'}">${fmtDollarK(r.yr1Cashflow)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Asset Value (Exit)</div><div class="fin-kpi-val">${fmtDollarK(exit?.assetValue)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">NPV at Exit</div><div class="fin-kpi-val ${npvClass}">${fmtDollarK(exit?.npvAssetValue)}</div></div>
     </div>
