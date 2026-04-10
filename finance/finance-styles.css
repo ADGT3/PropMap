@@ -744,3 +744,57 @@
   color: var(--muted);
   margin-left: 4px;
 }
+
+/* ── Funds to Complete section in table ──────────────────────────────────────── */
+.fin-costs-header-row th {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface2));
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-top: 2px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+.fin-costs-header-row td {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface2));
+  border-top: 2px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+.fin-costs-row { background: color-mix(in srgb, var(--accent) 3%, var(--surface)); }
+.fin-costs-label { font-weight: 500; font-size: 11px; color: var(--muted); }
+.fin-costs-cell { font-weight: 600; }
+.fin-deposit-row.fin-costs-row { background: color-mix(in srgb, var(--red) 4%, var(--surface)); }
+.fin-deposit-row.fin-costs-row .fin-costs-label { color: var(--red); }
+.fin-bank-dep-row .fin-costs-label { color: var(--accent); }
+
+/* Separator before metric rows */
+.fin-costs-row:last-of-type td,
+.fin-costs-row:last-of-type th {
+  border-bottom: 2px solid var(--border);
+}
+
+/* ── Deposit data error banner ───────────────────────────────────────────────── */
+.fin-data-error-banner {
+  background: color-mix(in srgb, var(--red) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--border));
+  border-radius: 6px;
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 14px;
+  margin: 0 0 12px;
+}
+.fin-data-error-banner strong { font-weight: 700; }
+
+/* ── Funds to Complete toggle ────────────────────────────────────────────────── */
+.fin-costs-header-row { cursor: pointer; user-select: none; }
+.fin-costs-header-row:hover th,
+.fin-costs-header-row:hover td {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface2));
+}
+.fin-funds-toggle {
+  font-size: 9px;
+  margin-right: 5px;
+  color: var(--accent);
+}

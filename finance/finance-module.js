@@ -307,15 +307,15 @@ function parseDueDays(s) {
   return n;
 }
 
+// Returns the numeric deposit amount.
+// If a string is received (old/corrupt data) returns NaN so callers can detect and warn.
 function parseDepositAmount(s, price) {
-  if (!s) return 0;
-  const str = String(s).trim();
-  if (str.includes('%')) {
-    const pct = parseFloat(str) / 100;
-    return isNaN(pct) ? 0 : pct * (price || 0);
-  }
-  const n = parseFloat(str.replace(/[^0-9.]/g, ''));
-  return isNaN(n) ? 0 : n;
+  if (s === null || s === undefined || s === '') return 0;
+  if (typeof s === 'number') return s;
+  // String received — this is bad data; log and return NaN to surface the problem
+  console.error('[Finance] Deposit amount is a string, expected number:', s,
+    '— re-enter deposit in the kanban modal to fix.');
+  return NaN;
 }
 
 function isUpfrontDeposit(due) {
@@ -369,8 +369,10 @@ function runModel(d) {
   let offerDepositUpfront    = 0;  // paid before settlement (at exchange)
   let offerDepositSettlement = 0;  // paid at/near settlement but before loan draws
 
+  let _depositDataError = false;
   offerDeposits.forEach(dep => {
     const amt = parseAmt(dep.amount);
+    if (isNaN(amt)) { _depositDataError = true; return; }
     if (amt <= 0) return;
     if (isUpfrontDeposit(dep.due || dep.note || '')) {
       offerDepositUpfront += amt;
@@ -497,6 +499,7 @@ function runModel(d) {
   const yr1Cashflow = years.find(y => y.yr === lag)?.cashflow ?? 0;
 
   return {
+    depositDataError: _depositDataError,
     loan, deposit, commission, stamp,
     equity, bankDepositRequired,
     offerDeposits, offerDepositUpfront, offerDepositSettlement, totalOfferDeposits,
@@ -615,6 +618,13 @@ function renderFinanceView() {
   const d = _current.data;
   const r = runModel(d);
   container.innerHTML = `<div class="fin-layout">${renderSidebar(d, r)}${renderMain(d, r)}</div>`;
+  if (r.depositDataError) {
+    const banner = document.createElement('div');
+    banner.className = 'fin-data-error-banner';
+    banner.innerHTML = '⚠️ One or more deposit amounts are stored as text rather than numbers — calculations may be wrong. '
+      + 'Please re-open the <strong>kanban modal</strong> for this property, re-enter the deposit amounts, and submit the offer again.';
+    container.querySelector('.fin-layout').prepend(banner);
+  }
   bindInputs(r);
 }
 
@@ -705,17 +715,19 @@ function renderSidebar(d, r) {
         let cumulativeDays = 0;
         return deps.filter(dep => dep.amount).map((dep, i) => {
           const amt     = parseDepositAmount(dep.amount, d.acquisitionPrice);
-          const pct     = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(2).replace(/\.?0+$/, '') : null;
           const dueDays = parseDueDays(dep.due || '');
           cumulativeDays += dueDays !== null ? dueDays : 0;
           const dueLabel   = dep.due
             ? (i === 0 ? dep.due + ' from contract' : dep.due + ' after Deposit ' + i)
             : (dep.note || 'No date set');
-          const pctSpan    = pct ? ' <span class="fin-deposit-pct">(' + pct + '%)</span>' : '';
+          const pct        = d.acquisitionPrice > 0 && amt > 0
+            ? ((amt / d.acquisitionPrice) * 100).toFixed(2).replace(/\.?0+$/, '') + '%'
+            : null;
+          const displayAmt = amt > 0 ? fmtDollar(amt) + (pct ? ' (' + pct + ')' : '') : '—';
           const missingCls = (!dep.due && !dep.note) ? 'fin-deposit-due-missing' : '';
           return '<div class="fin-deposit-tranche">'
             + '<span class="fin-deposit-num">Deposit ' + (i + 1) + '</span>'
-            + '<span class="fin-deposit-amount">' + (amt > 0 ? fmtDollar(amt) : dep.amount) + pctSpan + '</span>'
+            + '<span class="fin-deposit-amount">' + displayAmt + '</span>'
             + '<span class="fin-deposit-due ' + missingCls + '">' + dueLabel + '</span>'
             + '</div>';
         }).join('');
@@ -891,10 +903,10 @@ function renderMain(d, r) {
     },
   ];
 
-  // ── Deposit tranche rows in table ─────────────────────────────────────
-  // Each deposit tranche gets its own row, placed in the year it falls due.
-  // Due = cumulative days from contract (first tranche) or since previous (subsequent).
-  const depositRows = (() => {
+  // ── Funds to Complete section rows ────────────────────────────────────
+  // Purchase costs + deposit tranches, each placed in the year they fall due.
+  // Year 0 = contract/exchange. Settlement lag year = when bank draws.
+  const fundsToCompleteRows = (() => {
     const entry = _current?.pipelineEntry;
     const offers = entry?.offers || [];
     const _offeredPrice = _current?.offeredPrice;
@@ -902,38 +914,71 @@ function renderMain(d, r) {
       ? offers.find(o => { const n = parseFloat(String(o.price||'').replace(/[^0-9.]/g,'')); return Math.abs(n - _offeredPrice) < 1; })
       : offers[0];
     const deps = (selOffer?.deposits || entry?.terms?.deposits || []).filter(dep => dep.amount);
-    if (!deps.length) return '';
 
-    let cumulativeDays = 0;
-    return deps.map((dep, i) => {
-      const amt = parseDepositAmount(dep.amount, d.acquisitionPrice);
-      if (amt <= 0) return '';
-      const dueDays = parseDueDays(dep.due || '');
-      cumulativeDays += dueDays !== null ? dueDays : 0;
-      // Convert cumulative days to year index
-      const dueYear = Math.floor(cumulativeDays / 365);
-      const pct = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(1) + '%' : '';
-      const dueLabel = dep.due
-        ? (i === 0 ? dep.due + ' from contract' : dep.due + ' after Deposit ' + i)
-        : (dep.note || '');
+    // Helper: one table row with a value in one specific year, dashes elsewhere
+    function singleYearRow(label, yr, amt, cls, hint) {
+      const rowCls = cls || 'fin-costs-row';
       const cells = years.map(y => {
-        if (y.yr === dueYear) return `<td class="fin-deposit-cell fin-neg">${fmtDollar(-amt)}${pct ? ' <span class="fin-deposit-pct-cell">'+pct+'</span>' : ''}</td>`;
-        return '<td>—</td>';
+        if (y.yr === yr) return '<td class="fin-neg fin-costs-cell">' + fmtDollar(-Math.abs(amt)) + '</td>';
+        return '<td></td>';
       }).join('');
-      return `<tr class="fin-deposit-row">
-        <th class="fin-row-label">Deposit ${i + 1}${dueLabel ? ' <span class="fin-deposit-due-label">' + dueLabel + '</span>' : ''}</th>
-        ${cells}
-        ${holdYrs.length ? '<td class="fin-avg-col">—</td>' : ''}
-      </tr>`;
-    }).join('');
+      const labelHtml = hint
+        ? label + ' <span class="fin-deposit-due-label">' + hint + '</span>'
+        : label;
+      return '<tr class="' + rowCls + '">'
+        + '<th class="fin-row-label fin-costs-label">' + labelHtml + '</th>'
+        + cells
+        + (holdYrs.length ? '<td class="fin-avg-col"></td>' : '')
+        + '</tr>';
+    }
+
+    const rows = [];
+
+    // Section header row
+    const ftcOpen = !_sectionCollapsed['fin-funds-complete'];
+    rows.push('<tr class="fin-costs-header-row" id="finFundsHeader">'
+      + '<th class="fin-row-label fin-costs-header"><span class="fin-funds-toggle" id="finFundsToggle">'
+      + (ftcOpen ? '▼' : '▶') + '</span> Funds to Complete</th>'
+      + years.map(() => '<td></td>').join('')
+      + (holdYrs.length ? '<td class="fin-avg-col"></td>' : '')
+      + '</tr>');
+
+    // Purchase costs + deposits — only rendered when section is open
+    if (ftcOpen) {
+      const settlementYr = lag;
+      if (d.stampDuty)           rows.push(singleYearRow('Stamp Duty',    settlementYr, d.stampDuty));
+      if (d.valuationCost)       rows.push(singleYearRow('Valuation',     settlementYr, d.valuationCost));
+      if (d.solicitorCost)       rows.push(singleYearRow('Solicitor',     settlementYr, d.solicitorCost));
+      if (d.inspections)         rows.push(singleYearRow('Inspections',   settlementYr, d.inspections));
+      if (r.commission)          rows.push(singleYearRow('Commission',    settlementYr, r.commission));
+      if (r.bankDepositRequired) rows.push(singleYearRow('Bank Deposit',  settlementYr, r.bankDepositRequired, 'fin-costs-row fin-bank-dep-row'));
+
+      // Deposit tranches — each in their computed year
+      let cumulativeDays = 0;
+      deps.forEach((dep, i) => {
+        const amt = parseDepositAmount(dep.amount, d.acquisitionPrice);
+        if (!amt || isNaN(amt) || amt <= 0) return;
+        const dueDays = parseDueDays(dep.due || '');
+        cumulativeDays += dueDays !== null ? dueDays : 0;
+        const dueYear = Math.min(Math.floor(cumulativeDays / 365), lag);
+        const pct = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(1) + '%' : '';
+        const dueLabel = dep.due
+          ? (i === 0 ? dep.due + ' from contract' : dep.due + ' after Deposit ' + i)
+          : (dep.note || '');
+        const hint = (pct ? pct + (dueLabel ? ' · ' + dueLabel : '') : dueLabel);
+        rows.push(singleYearRow('Deposit ' + (i + 1), dueYear, amt, 'fin-costs-row fin-deposit-row', hint));
+      });
+    }
+
+    return rows.join('');
   })();
 
-  const tableRows = metricRows.map(m => `
+  const tableRows = fundsToCompleteRows + metricRows.map(m => `
     <tr>
       <th class="fin-row-label">${m.label}</th>
       ${m.rows.join('')}
       ${holdYrs.length ? `<td class="fin-avg-col ${m.avgCls}">${m.avg}</td>` : ''}
-    </tr>`).join('') + depositRows;
+    </tr>`).join('');
 
   const yearHeaders = years.map(y =>
     `<th class="${y.yr < lag ? 'fin-lag-col' : ''}">Yr ${y.yr}</th>`
@@ -1134,6 +1179,12 @@ function bindInputs(r) {
       compChev.textContent   = _comparableOpen ? '▼' : '▶';
     });
   }
+
+  // Funds to Complete table toggle
+  document.getElementById('finFundsToggle')?.closest('tr')?.addEventListener('click', () => {
+    _sectionCollapsed['fin-funds-complete'] = !_sectionCollapsed['fin-funds-complete'];
+    renderFinanceView();
+  });
 
   // Collapsible sidebar sections
   document.querySelectorAll('.fin-section-toggle').forEach(toggle => {
