@@ -212,7 +212,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  box-sizing: border-box;
 }
 .fin-kpi-label {
   font-size: 8px;
@@ -222,7 +222,9 @@
   color: var(--muted);
   margin-bottom: 3px;
   white-space: normal;
+  word-break: break-word;
   line-height: 1.3;
+  flex-shrink: 0;
 }
 .fin-kpi-val {
   font-size: 15px;
@@ -230,7 +232,7 @@
   color: var(--text);
   letter-spacing: -0.4px;
   white-space: nowrap;
-  margin-top: auto;
+  flex-shrink: 0;
 }
 .fin-kpi-pos { color: var(--green); }
 .fin-kpi-neg { color: var(--red); }
