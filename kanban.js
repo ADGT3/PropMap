@@ -744,7 +744,11 @@ function openCardModal(id) {
         </div>
         ${o.deposits && o.deposits.length ? `
           <div class="kb-offer-deps-label">Deposit structure</div>
-          <div class="kb-offer-deposits-list">${o.deposits.map(d=>`<span class="kb-offer-dep">${[d.amount,d.due,d.note].filter(Boolean).join(' · ')}</span>`).join('')}</div>` : ''}
+          <div class="kb-offer-deposits-list">${o.deposits.map(d => {
+            const price = parseDepositAmountKanban(o.price, null) || 0;
+            const amtDisplay = d.amount ? formatDepositAmount(d.amount, price) : '';
+            return `<span class="kb-offer-dep">${[amtDisplay, d.due, d.note].filter(Boolean).join(' · ')}</span>`;
+          }).join('')}</div>` : ''}
       </div>`).join('');
   }
 
