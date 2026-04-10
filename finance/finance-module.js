@@ -987,7 +987,12 @@ function renderMain(d, r) {
 
     // Purchase costs + deposits — only rendered when section is open
     if (ftcOpen) {
-      const settlementYr = lag;
+      // Settlement year from actual offer settlement days, not model lag
+      // selOffer.settlement is stored as numeric days
+      const offerSettlementDays = selOffer?.settlement || entry?.terms?.settlement || 0;
+      const settlementYr = offerSettlementDays > 0
+        ? Math.floor(parseDueDays(offerSettlementDays) / 365)
+        : lag;
       if (d.stampDuty)           rows.push(singleYearRow('Stamp Duty',    settlementYr, d.stampDuty));
       if (d.valuationCost)       rows.push(singleYearRow('Valuation',     settlementYr, d.valuationCost));
       if (d.solicitorCost)       rows.push(singleYearRow('Solicitor',     settlementYr, d.solicitorCost));
