@@ -197,31 +197,31 @@
 /* ── KPI strip ──────────────────────────────────────────────────────────────── */
 .fin-kpis {
   display: flex;
-  gap: 12px;
+  gap: 9px;
   flex-wrap: wrap;
 }
 
 .fin-kpi {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 16px;
-  min-width: 140px;
+  border-radius: 6px;
+  padding: 9px 12px;
+  min-width: 105px;
   flex: 1;
 }
 .fin-kpi-label {
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 .fin-kpi-val {
-  font-size: 20px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
-  letter-spacing: -0.5px;
+  letter-spacing: -0.4px;
 }
 .fin-kpi-pos { color: var(--green); }
 .fin-kpi-neg { color: var(--red); }
