@@ -690,13 +690,9 @@ function renderSidebar(d, r) {
   return `<div class="fin-sidebar">
     <div class="fin-property-bar">
       <div class="fin-property-info">
-        <div class="fin-property-address">
-          <a class="fin-property-link" id="finOpenKanban" href="#" title="Open in pipeline">
-            ${_current.address}, ${_current.suburb} NSW
-          </a>
-        </div>
+        <div class="fin-property-address">${_current.address}, ${_current.suburb} NSW</div>
         <div class="fin-property-id">
-          <a class="fin-property-link fin-property-id-link" id="finOpenKanban2" href="#" title="Open in pipeline">
+          <a class="fin-property-link fin-property-id-link" id="finOpenKanban" href="#" title="Open in pipeline">
             Pipeline ID: ${_current.pipelineId}
           </a>
         </div>
@@ -1231,7 +1227,6 @@ function bindInputs(r) {
     }, kanbanVisible ? 0 : 300);
   }
   document.getElementById('finOpenKanban')?.addEventListener('click', openInPipeline);
-  document.getElementById('finOpenKanban2')?.addEventListener('click', openInPipeline);
 
   // Auto-save — triggered after every input commit with a 1.5s debounce
   // Called from the commit() closure inside the editable input handler above
