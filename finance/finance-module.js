@@ -55,7 +55,7 @@ let _allModels         = {};
 let _comparableOpen    = false;  // persists collapse state across re-renders
 let _financeInitDone   = false;  // guard against duplicate initFinance() calls
 let _saveTimer         = null;   // debounce timer for auto-save
-let _costsInCashflow   = false;  // whether Funds to Complete costs are included in cashflow
+let _costsInCashflow   = true;   // whether Funds to Complete costs are included in cashflow
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
@@ -1044,7 +1044,7 @@ function renderMain(d, r) {
 
     <div class="fin-kpis">
       <div class="fin-kpi"><div class="fin-kpi-label">Acquisition Price</div><div class="fin-kpi-val">${fmtDollarK(d.acquisitionPrice)}</div></div>
-      <div class="fin-kpi fin-kpi-mean"><div class="fin-kpi-label">Mean Comparable Value</div><div class="fin-kpi-val" id="finKpiMeanVal">${(() => { const vals=[r.m1,r.m2,r.m3,r.m5].filter(v=>v!=null&&isFinite(v)&&v!==0); return vals.length ? fmtDollarK(vals.reduce((a,b)=>a+b,0)/vals.length) : '—'; })()}</div></div>
+      <div class="fin-kpi fin-kpi-mean"><div class="fin-kpi-label">Comparable Value</div><div class="fin-kpi-val" id="finKpiMeanVal">${(() => { const vals=[r.m1,r.m2,r.m3,r.m5].filter(v=>v!=null&&isFinite(v)&&v!==0); return vals.length ? fmtDollarK(vals.reduce((a,b)=>a+b,0)/vals.length) : '—'; })()}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Total Loan</div><div class="fin-kpi-val">${fmtDollarK(r.loan)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Upfront)</div><div class="fin-kpi-val">${fmtDollarK(r.upfront)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Settlement)</div><div class="fin-kpi-val">${fmtDollarK(r.cashAtSettlement)}</div></div>
