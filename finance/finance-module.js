@@ -416,15 +416,22 @@ function runModel(d) {
   // Bank deposit = equity - offer deposits already paid (bank tops up the rest)
   const bankDepositRequired = Math.max(0, equity - totalOfferDeposits);
 
-  // Purchase costs (non-deposit costs paid around settlement)
-  const purchaseCosts = stamp + (d.valuationCost || 0) +
-                        (d.solicitorCost || 0) + (d.inspections || 0) + commission;
+  // Purchase costs split by timing:
+  // Upfront costs = paid before/at exchange (stamp, valuation, solicitor, inspections)
+  const upfrontCosts = stamp + (d.valuationCost || 0) +
+                       (d.solicitorCost || 0) + (d.inspections || 0);
 
-  // Cash Required (Upfront) = all offer deposits due before settlement + purchase costs
-  const upfront = offerDepositUpfront + purchaseCosts;
+  // Settlement costs = commission and equity contribution (due at settlement)
+  const settlementCosts = commission + bankDepositRequired;
 
-  // Cash Required (At Settlement) = bank deposit shortfall + any deposits due at settlement
-  const cashAtSettlement = bankDepositRequired + offerDepositSettlement;
+  // Total purchase costs (all non-deposit costs)
+  const purchaseCosts = upfrontCosts + settlementCosts;
+
+  // Cash Required (Upfront) = exchange deposits + upfront purchase costs (excl commission & equity)
+  const upfront = offerDepositUpfront + upfrontCosts;
+
+  // Cash Required (At Settlement) = bank deposit + commission + settlement-stage offer deposits
+  const cashAtSettlement = bankDepositRequired + commission + offerDepositSettlement;
 
   // Legacy 'deposit' for spreadsheet compatibility (total offer deposits)
   const deposit = totalOfferDeposits || price * (d.depositPct || 0);
@@ -855,8 +862,7 @@ function renderSidebar(d, r) {
         ${ff('',                 'Commission ($)',        fmtDollar(r.commission),         'dollar', '', true)}
         ${ff('',                 'Equity Contribution',  fmtDollar(r.bankDepositRequired),'dollar', 'Price × (1−LVR) − deposits', true)}
       </div>
-      <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Upfront)</span><span class="fin-summary-val">${fmtDollar(r.upfront)}</span></div>
-      <div class="fin-summary-row fin-summary-highlight"><span>Cash Required (Settlement)</span><span class="fin-summary-val">${fmtDollar(r.cashAtSettlement)}</span></div>
+      <div class="fin-summary-row fin-summary-highlight"><span>Total Purchase Costs</span><span class="fin-summary-val">${fmtDollar(r.purchaseCosts)}</span></div>
       <div class="fin-fields" style="margin-top:8px">
         <div class="fin-subsection-label">Running Costs</div>
         ${ff('council',          'Council',                 fmtDollar(d.council),           'dollar', '/w, /m or /y')}
@@ -873,7 +879,7 @@ function renderSidebar(d, r) {
         ${ff('',                 'Sinking Fund ($)',         fmtDollar(r.sinkingFund),       'dollar', '', true)}
         ${ff('other',            'Other',                   fmtDollar(d.other),             'dollar', '/w, /m or /y')}
       </div>
-      <div class="fin-summary-row"><span>Total Outgoings</span><span class="fin-summary-val">${fmtDollar(r.totalOutgoings)}</span></div>
+      <div class="fin-summary-row fin-summary-highlight"><span>Total Running Costs</span><span class="fin-summary-val">${fmtDollar(r.totalOutgoings)}</span></div>
       <div class="fin-summary-row ${r.netIncomeYr1 < 0 ? 'fin-summary-neg' : ''}">
         <span>Net Income (Year 1)</span><span class="fin-summary-val">${fmtDollar(r.netIncomeYr1)}</span>
       </div>
