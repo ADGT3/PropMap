@@ -1,4 +1,4 @@
-# Sydney Property Map — V66.2
+# Sydney Property Map — V67
 
 A browser-based interactive property map overlaying live Domain.com.au listings with planning, environmental and infrastructure data across Sydney's growth corridors. Deployed on Vercel with a Neon Postgres database for persistent pipeline and CRM storage.
 
@@ -11,15 +11,15 @@ sydney-property-map/
 ├── api/
 │   ├── pipeline.js          — Pipeline CRUD (Neon Postgres)
 │   ├── contacts.js          — CRM Contacts CRUD (Neon Postgres)
-│   ├── finance.js           — Financial model CRUD (Neon Postgres, property_financials table)
+│   ├── finance-api.js       — Financial model CRUD (Neon Postgres, property_financials table)
 │   ├── db-setup.js          — One-time DB schema setup endpoint
 │   ├── domain-search.js     — Domain API proxy (keeps key server-side)
 │   ├── tiles.js             — NSW tile proxy (query params, not path segments)
 │   ├── topo-style.js        — NSW topo style proxy (CORS fix)
 │   └── health.js            — DB health check endpoint
 ├── finance/
-│   ├── finance.js           — Financial feasibility calculator module (Phase 1)
-│   └── finance-styles.css   — Finance module styles + Tools dropdown styles
+│   ├── finance-module.js    — Financial feasibility calculator, UI, DB persistence
+│   └── finance-styles.css   — Finance module styles
 ├── index.html               — Page structure and UI
 ├── styles.css               — All styling (includes timestamped notes styles)
 ├── crm.js                   — CRM contact management module
@@ -357,6 +357,7 @@ See `DEPLOY.md` for full setup guide.
 
 | Version | Notes |
 |---|---|
+| V67 | **Finance module — Phase 2 (Data Integrity & UX).** Files renamed: `finance/finance.js` → `finance/finance-module.js`, `api/finance.js` → `api/finance-api.js`. **Data integrity**: all pipeline monetary values (offer price, vendor terms price, settlement, deposit amounts, deposit due days) now stored as plain numbers — never strings. `parseDepositAmountKanban` and `parseSettlementDays` normalise inputs at save time; display-only formatting applied on render. Finance module shows inline error on any deposit tranche still stored as legacy string, directing user to re-enter in kanban. **Kanban modal redesign**: "Terms Offered" and "Model in Financial Feasibility" sections merged into a single **Submitted Offers & Financial Feasibility** section. Each submitted offer row shows full details (price, settlement, deposit tranches with amounts and due days) plus a **📊 Model** button and **✕** delete button. **+ Add Offer** button in section header reveals an inline popup form directly below the heading. Vendor terms row included with same detail. **Finance table**: transposed (metrics as rows, years as columns). **Funds to Complete** section at top of table shows stamp duty, valuation, solicitor, inspections, commission, equity contribution, and each offer deposit tranche in the year it falls due (cumulative days from contract ÷ 365). **Include in cashflow** checkbox (default on) subtracts all costs from cashflow in their respective years. Toggle ▶/▼ to collapse/expand detail rows. **KPI strip** reduced to 75% size, single-row grid layout. Tiles: Acquisition Price · Comparable Value · Total Loan · Cash Required (Upfront) · Cash Required (Settlement) · Net Income (Yr 1) · Cashflow (Yr 1) · Asset Value (Exit) · NPV at Exit. **Sidebar**: Financial Inputs, Purchase Costs, Revenue, Outgoings — all collapsible. Deposit tranches shown inline with amount ($X, Y%), due days from contract/previous tranche. Funds To Complete summary row. Equity Contribution line in Purchase Costs. Sales Commission moved into Purchase Costs. **Pipeline ID link** in finance header navigates back to pipeline modal for that property. **Stamp duty**: field hint shows detected state name (`NSW transfer duty`, `VIC transfer duty` etc). |
 | V66.2 | **Finance module enhancements.** Calculation engine rewritten to match `Feasibility_-82WPRL-v3.xlsx`: interest-only loan driven by `% profit used for debt reduction` (principal paid = (Rent − Interest) × debt reduction %; 0% = pure interest-only), settlement lag (pre-settlement years show zero rent/interest), Cost of Funds row (upfront cash × cost of capital per year), NPV = Asset Value − Cost of Funds (per-year, not DCF). Dual cash totals: Upfront (deposit + purchase costs) and Total (upfront − pre-reval cashflows). Inputs correctly split into grey (editable) vs calculated display fields — weekly rent × 52, council quarterly × 4, maintenance monthly × 12, management fee % × gross rent, sinking fund % × acquisition price. Five comparable value methods (Gross Area, 30% GRV, Development TDC, Method 5 Yield-derived). **Multi-state stamp duty**: state auto-detected from property address; separate formula for NSW, VIC, QLD, SA, ACT — each sourced from official .gov.au pages (Revenue NSW contracts guide, SRO Vic fixtures page, QRO rates page, RevenueSA, ACT Revenue Office non-commercial table). NSW rates updated to 1 July 2025 CPI-adjusted thresholds. **Kanban modal**: Finance button moved from header to below Terms Offered section, restyled as full-width accent action link; passes most recent offer price (or vendor terms price) to finance module. **Price carry-forward**: new models seeded from offer price; existing models preserve all assumptions — only acquisitionPrice updates if offer differs. **Finance header**: phase chevron nav (Financial Feasibility › Acquisition → Delivery placeholder); Mean Comparable Value shown live in header. **Comparable section**: collapsed by default, mean value shown as badge in section header. |
 | V66 | **Finance module** (Phase 1 — Feasibility, initial). New `finance/` folder with `finance.js` and `finance-styles.css`. New `api/finance.js` (Postgres CRUD, `property_financials` table). Nav updated: **Pipeline \| CRM \| Finance \| ⚙ Tools ▾**. |
 | V65 | Extended contact schema (baseline for v66). |
