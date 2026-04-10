@@ -779,7 +779,23 @@ function openCardModal(id) {
         </div>`);
     }
 
-    return `<div class="kb-fin-pick-header"><span>Submitted Offers &amp; Financial Feasibility</span><button class="kb-add-offer-btn" id="kb-add-offer-btn-${id}">+ Add Offer</button></div>${rows.join('')}`;
+    return `<div class="kb-fin-pick-header"><span>Submitted Offers &amp; Financial Feasibility</span><button class="kb-add-offer-btn" id="kb-add-offer-btn-${id}">+ Add Offer</button></div>
+<div class="kb-offer-popup" id="kb-offer-popup-${id}" style="display:none">
+  <div class="kb-offer-popup-inner">
+    <div class="kb-terms-row">
+      <div class="kb-field-wrap"><label class="kb-field-label">Price</label><input class="kb-input kb-offer-price" type="text" placeholder="e.g. $1,200,000"></div>
+      <div class="kb-field-wrap"><label class="kb-field-label">Settlement</label><input class="kb-input kb-offer-settlement" type="text" placeholder="e.g. 90, 3 months, 1 year"></div>
+    </div>
+    <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
+    <div class="kb-offer-deposits">${buildOfferDepositsHtml([{ amount: '', due: '', note: '' }])}</div>
+    <button class="kb-offer-add-deposit">+ Add tranche</button>
+    <div class="kb-offer-actions">
+      <button class="kb-submit-offer">+ Submit Offer</button>
+      <button class="kb-offer-popup-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+${rows.join('')}`;
   }
 
   function buildOffersHtml(offers) {
@@ -846,30 +862,7 @@ function openCardModal(id) {
           <button class="kb-add-deposit">+ Add tranche</button>
         </div>
 
-        <div class="kb-finance-picker" id="kb-finance-picker-${id}">
-          ${buildFinancePickerHtml(offers, terms, p)}
-          <div class="kb-offer-popup" id="kb-offer-popup-${id}" style="display:none">
-            <div class="kb-offer-popup-inner">
-              <div class="kb-terms-row">
-                <div class="kb-field-wrap">
-                  <label class="kb-field-label">Price</label>
-                  <input class="kb-input kb-offer-price" type="text" placeholder="e.g. $1,200,000">
-                </div>
-                <div class="kb-field-wrap">
-                  <label class="kb-field-label">Settlement</label>
-                  <input class="kb-input kb-offer-settlement" type="text" placeholder="e.g. 90, 3 months, 1 year">
-                </div>
-              </div>
-              <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
-              <div class="kb-offer-deposits">${buildOfferDepositsHtml([{ amount: '', due: '', note: '' }])}</div>
-              <button class="kb-offer-add-deposit">+ Add tranche</button>
-              <div class="kb-offer-actions">
-                <button class="kb-submit-offer">+ Submit Offer</button>
-                <button class="kb-offer-popup-cancel">Cancel</button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
 
         <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
         <div class="kb-dd">
@@ -1174,20 +1167,8 @@ function openCardModal(id) {
   });
 
   function refreshFinancePicker() {
-    // Rebuild only the picker rows, preserving the popup DOM
     const pickerEl = document.getElementById(`kb-finance-picker-${id}`);
-    if (!pickerEl) return;
-    // Remove existing rows/header (not the popup)
-    Array.from(pickerEl.children).forEach(child => {
-      if (!child.classList.contains('kb-offer-popup')) child.remove();
-    });
-    // Insert fresh header+rows before the popup
-    const popup = pickerEl.querySelector('.kb-offer-popup');
-    const tmp = document.createElement('div');
-    tmp.innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
-    Array.from(tmp.children).forEach(child => pickerEl.insertBefore(child, popup));
-    // Close popup after submit
-    if (popup) popup.style.display = 'none';
+    if (pickerEl) pickerEl.innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
   }
 
   // Submit offer
