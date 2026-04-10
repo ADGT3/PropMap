@@ -2166,3 +2166,8 @@ header {
 .kb-fin-pick-btn:hover {
   background: color-mix(in srgb, var(--accent) 16%, var(--surface2));
 }
+
+.kb-dep-note-inline {
+  flex: 0 1 120px;
+  font-size: 11px;
+}
