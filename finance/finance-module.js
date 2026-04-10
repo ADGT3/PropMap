@@ -1268,11 +1268,11 @@ function bindInputs(r) {
     if (!_current?.pipelineId) return;
     const id = _current.pipelineId;
     toggleFinance(false);
-    // Open kanban if not visible, then open the card modal
-    if (typeof toggleKanban === 'function' && !kanbanVisible) toggleKanban(true);
+    const alreadyOpen = window.kanbanVisible;
+    if (typeof toggleKanban === 'function' && !alreadyOpen) toggleKanban(true);
     setTimeout(() => {
       if (typeof openCardModal === 'function') openCardModal(id);
-    }, kanbanVisible ? 0 : 300);
+    }, alreadyOpen ? 0 : 300);
   }
   document.getElementById('finOpenKanban')?.addEventListener('click', openInPipeline);
 
