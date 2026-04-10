@@ -633,7 +633,7 @@ function buildDepositsHtml(deps, termsPrice) {
     <div class="kb-deposit-row" data-idx="${i}">
       <div class="kb-deposit-fields">
         <input class="kb-input kb-dep-amount" type="text" placeholder="$ or % e.g. 5% or $50,000" value="${d.amount ? formatDepositAmount(d.amount, termsPrice) : ''}" data-idx="${i}">
-        <input class="kb-input kb-dep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due || ''}" data-idx="${i}">
+        <input class="kb-input kb-dep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due != null && d.due !== '' ? formatSettlement(String(d.due)) : ''}" data-idx="${i}">
         <input class="kb-input kb-dep-note kb-dep-note-inline" type="text" placeholder="Note" value="${d.note || ''}" data-idx="${i}">
         ${deps.length > 1 ? `<button class="kb-dep-remove" data-idx="${i}" title="Remove tranche">✕</button>` : ''}
       </div>
@@ -647,7 +647,7 @@ function buildOfferDepositsHtml(deps, offerPrice) {
     <div class="kb-deposit-row kb-offer-dep-row" data-idx="${i}">
       <div class="kb-deposit-fields">
         <input class="kb-input kb-odep-amount" type="text" placeholder="$ or % e.g. 5% or $50,000" value="${d.amount ? formatDepositAmount(d.amount, offerPrice) : ''}" data-idx="${i}">
-        <input class="kb-input kb-odep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due || ''}" data-idx="${i}">
+        <input class="kb-input kb-odep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due != null && d.due !== '' ? formatSettlement(String(d.due)) : ''}" data-idx="${i}">
         <input class="kb-input kb-odep-note kb-dep-note-inline" type="text" placeholder="Note" value="${d.note || ''}" data-idx="${i}">
         ${deps.length > 1 ? `<button class="kb-odep-remove" data-idx="${i}" title="Remove tranche">✕</button>` : ''}
       </div>
@@ -1039,7 +1039,7 @@ function openCardModal(id) {
     const price = parseDepositAmountKanban(t.price, null) || 0;
     t.deposits = Array.from(modal.querySelectorAll('.kb-deposits .kb-deposit-row')).map(row => ({
       amount: parseDepositAmountKanban(row.querySelector('.kb-dep-amount').value, price),
-      due:    row.querySelector('.kb-dep-due').value,
+      due:    parseSettlementDays(row.querySelector('.kb-dep-due').value),
       note:   row.querySelector('.kb-dep-note').value,
     }));
     saveTerms(id, t);
@@ -1098,7 +1098,7 @@ function openCardModal(id) {
     const el = modal.querySelector('.kb-offer-deposits');
     const current = Array.from(el.querySelectorAll('.kb-offer-dep-row')).map(row => ({
       amount: row.querySelector('.kb-odep-amount').value,
-      due:    row.querySelector('.kb-odep-due').value,
+      due:    parseSettlementDays(row.querySelector('.kb-odep-due').value),
       note:   row.querySelector('.kb-odep-note').value,
     }));
     current.push({ amount: '', due: '', note: '' });
@@ -1110,7 +1110,7 @@ function openCardModal(id) {
     const el = modal.querySelector('.kb-offer-deposits');
     const current = Array.from(el.querySelectorAll('.kb-offer-dep-row')).map(row => ({
       amount: row.querySelector('.kb-odep-amount').value,
-      due:    row.querySelector('.kb-odep-due').value,
+      due:    parseSettlementDays(row.querySelector('.kb-odep-due').value),
       note:   row.querySelector('.kb-odep-note').value,
     }));
     current.splice(parseInt(btn.dataset.idx, 10), 1);
@@ -1123,7 +1123,7 @@ function openCardModal(id) {
     const _offerPrice = parseDepositAmountKanban(modal.querySelector('.kb-offer-price').value, null) || 0;
     const offerDeposits = Array.from(modal.querySelectorAll('.kb-offer-dep-row')).map(row => ({
       amount: parseDepositAmountKanban(row.querySelector('.kb-odep-amount').value, _offerPrice),
-      due:    row.querySelector('.kb-odep-due').value,
+      due:    parseSettlementDays(row.querySelector('.kb-odep-due').value),
       note:   row.querySelector('.kb-odep-note').value,
     })).filter(d => d.amount || d.due);
     const offer = {
