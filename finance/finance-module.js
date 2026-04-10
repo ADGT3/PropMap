@@ -298,6 +298,9 @@ function calcStampDuty(price, state) {
 // ─── Deposit helpers (module scope — used by both runModel and renderSidebar) ──
 
 function parseDueDays(s) {
+  if (s === null || s === undefined || s === '') return null;
+  // Already a number (new storage format — days as integer)
+  if (typeof s === 'number') return s;
   const m = String(s).match(/(\d+(?:\.\d+)?)\s*(d|day|days|m|mo|month|months|y|yr|year|years)?/i);
   if (!m) return null;
   const n = parseFloat(m[1]);
@@ -618,13 +621,6 @@ function renderFinanceView() {
   const d = _current.data;
   const r = runModel(d);
   container.innerHTML = `<div class="fin-layout">${renderSidebar(d, r)}${renderMain(d, r)}</div>`;
-  if (r.depositDataError) {
-    const banner = document.createElement('div');
-    banner.className = 'fin-data-error-banner';
-    banner.innerHTML = '⚠️ One or more deposit amounts are stored as text rather than numbers — calculations may be wrong. '
-      + 'Please re-open the <strong>kanban modal</strong> for this property, re-enter the deposit amounts, and submit the offer again.';
-    container.querySelector('.fin-layout').prepend(banner);
-  }
   bindInputs(r);
 }
 
@@ -713,22 +709,23 @@ function renderSidebar(d, r) {
           return `<div class="fin-deposit-none">No offer deposits recorded — set in kanban</div>`;
         }
         let cumulativeDays = 0;
-        return deps.filter(dep => dep.amount).map((dep, i) => {
-          const amt     = parseDepositAmount(dep.amount, d.acquisitionPrice);
-          const dueDays = parseDueDays(dep.due || '');
+        return deps.filter(dep => dep.amount !== undefined && dep.amount !== '').map((dep, i) => {
+          const amt      = parseDepositAmount(dep.amount, d.acquisitionPrice);
+          const hasError = isNaN(amt);
+          const dueDays  = parseDueDays(dep.due);
           cumulativeDays += dueDays !== null ? dueDays : 0;
-          const dueLabel   = dep.due
-            ? (i === 0 ? dep.due + ' from contract' : dep.due + ' after Deposit ' + i)
+          const dueStr   = typeof dep.due === 'number' ? dep.due + ' days' : (dep.due || '');
+          const dueLabel = dueStr
+            ? (i === 0 ? dueStr + ' from contract' : dueStr + ' after Deposit ' + i)
             : (dep.note || 'No date set');
-          const pct        = d.acquisitionPrice > 0 && amt > 0
-            ? ((amt / d.acquisitionPrice) * 100).toFixed(2).replace(/\.?0+$/, '') + '%'
-            : null;
-          const displayAmt = amt > 0 ? fmtDollar(amt) + (pct ? ' (' + pct + ')' : '') : '—';
-          const missingCls = (!dep.due && !dep.note) ? 'fin-deposit-due-missing' : '';
-          return '<div class="fin-deposit-tranche">'
-            + '<span class="fin-deposit-num">Deposit ' + (i + 1) + '</span>'
-            + '<span class="fin-deposit-amount">' + displayAmt + '</span>'
-            + '<span class="fin-deposit-due ' + missingCls + '">' + dueLabel + '</span>'
+          const pct      = !hasError && d.acquisitionPrice > 0 && amt > 0
+            ? ' (' + ((amt / d.acquisitionPrice) * 100).toFixed(2).replace(/\.?0+$/, '') + '%)' : '';
+          const display  = hasError ? '⚠️ re-enter in kanban' : (amt > 0 ? fmtDollar(amt) + pct : '—');
+          const hint     = hasError ? '' : dueLabel;
+          const depLabel = 'Deposit ' + (i + 1) + (hint ? '<span class="fin-field-hint">' + hint + '</span>' : '');
+          return '<div class="fin-field fin-field-calc' + (hasError ? ' fin-deposit-error' : '') + '" data-key="" data-type="dollar">'
+            + '<span class="fin-field-label">' + depLabel + '</span>'
+            + '<span class="fin-calc-val' + (hasError ? ' fin-neg' : '') + '">' + display + '</span>'
             + '</div>';
         }).join('');
       })()}
@@ -957,13 +954,23 @@ function renderMain(d, r) {
       let cumulativeDays = 0;
       deps.forEach((dep, i) => {
         const amt = parseDepositAmount(dep.amount, d.acquisitionPrice);
-        if (!amt || isNaN(amt) || amt <= 0) return;
-        const dueDays = parseDueDays(dep.due || '');
+        if (isNaN(amt)) {
+          // Bad data — show error row spanning all year columns
+          rows.push('<tr class="fin-costs-row fin-deposit-row fin-deposit-error-row">'
+            + '<th class="fin-row-label fin-costs-label">Deposit ' + (i + 1) + '</th>'
+            + years.map(() => '<td class="fin-deposit-error-cell" colspan="1">⚠️ re-enter in kanban</td>').join('')
+            + (holdYrs.length ? '<td class="fin-avg-col"></td>' : '')
+            + '</tr>');
+          return;
+        }
+        if (!amt || amt <= 0) return;
+        const dueDays = parseDueDays(dep.due);
         cumulativeDays += dueDays !== null ? dueDays : 0;
         const dueYear = Math.min(Math.floor(cumulativeDays / 365), lag);
         const pct = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(1) + '%' : '';
-        const dueLabel = dep.due
-          ? (i === 0 ? dep.due + ' from contract' : dep.due + ' after Deposit ' + i)
+        const dueStr   = typeof dep.due === 'number' ? dep.due + ' days' : (dep.due || '');
+        const dueLabel = dueStr
+          ? (i === 0 ? dueStr + ' from contract' : dueStr + ' after Deposit ' + i)
           : (dep.note || '');
         const hint = (pct ? pct + (dueLabel ? ' · ' + dueLabel : '') : dueLabel);
         rows.push(singleYearRow('Deposit ' + (i + 1), dueYear, amt, 'fin-costs-row fin-deposit-row', hint));
