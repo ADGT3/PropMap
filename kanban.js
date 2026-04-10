@@ -112,7 +112,7 @@ function toggleKanban(show) {
   document.getElementById('kanbanView').classList.toggle('visible', kanbanVisible);
   const btn = document.getElementById('kanbanToggleBtn');
   btn.classList.toggle('active', kanbanVisible);
-  btn.innerHTML = (kanbanVisible ? '⬢' : '⬡') + ' Pipeline';
+  btn.innerHTML = `<span class="dot"></span> ${kanbanVisible ? '⬢' : '⬡'} Pipeline`;
   if (kanbanVisible) renderBoard();
 }
 
@@ -296,9 +296,9 @@ function formatKbPrice(price, termsPrice) {
 
 // Formats a raw input price (from terms/offer fields) as whole dollars
 function formatInputPrice(val) {
-  if (!val) return '';
+  if (val === null || val === undefined || val === '') return '';
   const num = parseFloat(String(val).replace(/[^0-9.]/g, ''));
-  return isNaN(num) ? val : '$' + Math.round(num).toLocaleString();
+  return isNaN(num) || num === 0 ? '' : '$' + Math.round(num).toLocaleString();
 }
 
 // Converts settlement entry (days, months or years) to days
@@ -541,7 +541,7 @@ function renderBoard() {
       const ddHigh   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
       const ddPoss   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
       const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
-      const hasTerms = terms.price || terms.settlement;
+      const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
 
       const stageOptions = STAGES.map(s =>
         `<option value="${s.id}" ${s.id === item.stage ? 'selected' : ''}>${s.label}</option>`
@@ -1062,20 +1062,20 @@ ${rows.join('')}`;
   // Terms
   function syncTerms() {
     const t = getTerms(id);
-    // Store price as plain number, settlement as normalised string
     const rawPrice = modal.querySelector('.kb-terms-price').value;
-    t.price      = parseDepositAmountKanban(rawPrice, null) || 0;
-    t.settlement = parseSettlementDays(modal.querySelector('.kb-terms-settlement').value);
+    const rawSettlement = modal.querySelector('.kb-terms-settlement').value;
+    const parsedPrice = parseDepositAmountKanban(rawPrice, null);
+    t.price      = parsedPrice || null;  // null not 0 — so falsy check works correctly
+    t.settlement = parseSettlementDays(rawSettlement) || null;
     saveTerms(id, t);
     const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (boardCard) refreshCardIndicators(boardCard, id);
   }
-  modal.querySelector('.kb-terms-price').addEventListener('input', syncTerms);
+  // Sync only on blur so price is fully typed before parsing
   modal.querySelector('.kb-terms-price').addEventListener('blur', function() {
     this.value = formatInputPrice(this.value);
     syncTerms();
   });
-  modal.querySelector('.kb-terms-settlement').addEventListener('input', syncTerms);
   modal.querySelector('.kb-terms-settlement').addEventListener('blur', function() {
     this.value = formatSettlement(this.value);
     syncTerms();
@@ -1244,7 +1244,7 @@ function refreshCardIndicators(card, id) {
   const ddHigh  = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
   const ddPoss  = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
   const ddClass = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
-  const hasTerms = terms.price || terms.settlement;
+  const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
 
   // Update price (may now show terms price as fallback)
   const priceEl = card.querySelector('.kb-card-price');
