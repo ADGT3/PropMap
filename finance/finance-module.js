@@ -1267,7 +1267,11 @@ function bindInputs(r) {
     e.preventDefault();
     if (!_current?.pipelineId) return;
     const id = _current.pipelineId;
-    toggleFinance(false);
+    // Hide finance view directly without triggering toggleKanban(false)
+    _financeVisible = false;
+    document.getElementById('financeView')?.classList.remove('visible');
+    document.getElementById('financeNavBtn')?.classList.remove('active');
+    // Open pipeline board then card modal
     const alreadyOpen = window.kanbanVisible;
     if (typeof toggleKanban === 'function' && !alreadyOpen) toggleKanban(true);
     setTimeout(() => {
