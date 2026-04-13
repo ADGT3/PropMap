@@ -863,8 +863,8 @@ ${rows.join('')}`;
 
         <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
 
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px">
-          <div class="kb-section-label" style="margin-top:0">Due Diligence</div>
+        <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
+        <div style="display:flex;justify-content:flex-end;margin-bottom:4px">
           <button class="kb-rerun-dd-btn kb-add-offer-btn" data-id="${id}" title="Re-run Auto DD">↻ Auto DD</button>
         </div>
         <div class="kb-dd">
