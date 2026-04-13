@@ -57,7 +57,39 @@ export default async function handler(req, res) {
 
       // ── GET ──────────────────────────────────────────────────────────────────
       case 'GET': {
-        const { id, search, pipeline_id, check_duplicate, orgs, org_search, notes, contact_id, note_id } = req.query;
+        const { id, search, pipeline_id, check_duplicate, orgs, org_search, notes, contact_id, all, all_orgs, contact_properties, offset, limit } = req.query;
+
+        // All organisations with contact count
+        if (all_orgs) {
+          const q = org_search ? `%${org_search}%` : null;
+          const rows = q
+            ? await sql`
+                SELECT o.*, COUNT(c.id)::int AS contact_count
+                FROM organisations o
+                LEFT JOIN contacts c ON c.organisation_id = o.id
+                WHERE o.name ILIKE ${q}
+                GROUP BY o.id ORDER BY o.name`
+            : await sql`
+                SELECT o.*, COUNT(c.id)::int AS contact_count
+                FROM organisations o
+                LEFT JOIN contacts c ON c.organisation_id = o.id
+                GROUP BY o.id ORDER BY o.name`;
+          return res.status(200).json(rows);
+        }
+
+        // Properties linked to a contact (for CRM detail drawer)
+        if (contact_properties) {
+          if (!contact_id) return res.status(400).json({ error: 'contact_id required' });
+          const rows = await sql`
+            SELECT cp.pipeline_id, cp.role,
+              COALESCE(p.data->>'address', cp.pipeline_id) AS address,
+              p.data->>'suburb' AS suburb
+            FROM contact_properties cp
+            LEFT JOIN pipeline p ON p.id = cp.pipeline_id
+            WHERE cp.contact_id = ${parseInt(contact_id)}
+            ORDER BY cp.created_at DESC`;
+          return res.status(200).json(rows);
+        }
 
         // List / search organisations
         if (orgs) {
@@ -73,6 +105,7 @@ export default async function handler(req, res) {
 
         // Notes
         if (notes) {
+          const { note_id } = req.query;
           if (contact_id) {
             const rows = await sql`
               SELECT n.*, p.data->>'address' AS property_address
@@ -144,7 +177,49 @@ export default async function handler(req, res) {
           return res.status(200).json(rows);
         }
 
-        // Search
+        // All contacts — paginated, for CRM view
+        if (all) {
+          const lim = Math.min(parseInt(limit) || 30, 100);
+          const off = parseInt(offset) || 0;
+          if (search) {
+            const q = `%${search}%`;
+            const [rows, countRows] = await Promise.all([
+              sql`
+                SELECT c.*, o.name AS org_name,
+                  COUNT(DISTINCT cp.pipeline_id)::int AS property_count
+                FROM contacts c
+                LEFT JOIN organisations o ON o.id = c.organisation_id
+                LEFT JOIN contact_properties cp ON cp.contact_id = c.id
+                WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
+                   OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
+                GROUP BY c.id, o.id
+                ORDER BY c.last_name, c.first_name
+                LIMIT ${lim} OFFSET ${off}`,
+              sql`
+                SELECT COUNT(DISTINCT c.id)::int AS total
+                FROM contacts c
+                LEFT JOIN organisations o ON o.id = c.organisation_id
+                WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
+                   OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}`,
+            ]);
+            return res.status(200).json({ contacts: rows, total: countRows[0].total });
+          }
+          const [rows, countRows] = await Promise.all([
+            sql`
+              SELECT c.*, o.name AS org_name,
+                COUNT(DISTINCT cp.pipeline_id)::int AS property_count
+              FROM contacts c
+              LEFT JOIN organisations o ON o.id = c.organisation_id
+              LEFT JOIN contact_properties cp ON cp.contact_id = c.id
+              GROUP BY c.id, o.id
+              ORDER BY c.last_name, c.first_name
+              LIMIT ${lim} OFFSET ${off}`,
+            sql`SELECT COUNT(*)::int AS total FROM contacts`,
+          ]);
+          return res.status(200).json({ contacts: rows, total: countRows[0].total });
+        }
+
+        // List all (unpaginated — used by existing search/link flows)
         if (search) {
           const q = `%${search}%`;
           const rows = await sql`
@@ -244,7 +319,18 @@ export default async function handler(req, res) {
 
       // ── PUT ──────────────────────────────────────────────────────────────────
       case 'PUT': {
-        const { id, first_name, last_name, mobile, email, organisation_id, source, domain_id } = req.body;
+        const { id, org_id, first_name, last_name, mobile, email, organisation_id, source, domain_id, name } = req.body;
+
+        // Update organisation
+        if (org_id) {
+          if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+          const rows = await sql`
+            UPDATE organisations SET name = ${name.trim()}
+            WHERE id = ${parseInt(org_id)} RETURNING *`;
+          if (!rows.length) return res.status(404).json({ error: 'Not found' });
+          return res.status(200).json(rows[0]);
+        }
+
         if (!id) return res.status(400).json({ error: 'id required' });
         const rows = await sql`
           UPDATE contacts SET
@@ -264,9 +350,13 @@ export default async function handler(req, res) {
 
       // ── DELETE ───────────────────────────────────────────────────────────────
       case 'DELETE': {
-        const { id, note_id } = req.query;
+        const { id, note_id, org_id } = req.query;
         if (note_id) {
           await sql`DELETE FROM contact_notes WHERE id = ${parseInt(note_id)}`;
+          return res.status(200).json({ ok: true });
+        }
+        if (org_id) {
+          await sql`DELETE FROM organisations WHERE id = ${parseInt(org_id)}`;
           return res.status(200).json({ ok: true });
         }
         if (!id) return res.status(400).json({ error: 'id required' });
