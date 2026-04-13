@@ -1793,10 +1793,17 @@ function restoreFilters() {
   // Clear all
   clearBtn.addEventListener('click', () => {
     panel.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-    // Re-set Sale as default
     document.querySelector('#filterListingType [data-value="Sale"]').classList.add('active');
     panel.querySelectorAll('select').forEach(s => s.value = '');
     panel.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = false);
+    _activeFilters = {
+      propertyTypes: [], listingType: 'Sale',
+      minBeds: null, maxBeds: null, minBaths: null, minCars: null,
+      minPrice: null, maxPrice: null, minLand: null, maxLand: null,
+      features: [], listingAttributes: [], establishedType: null,
+      excludePriceWithheld: false, excludeDepositTaken: true, newDevOnly: false,
+    };
+    saveFilters();
     updateActiveCount();
   });
 
@@ -1809,6 +1816,7 @@ function restoreFilters() {
     activeCount.textContent = count > 0 ? count : '';
     activeCount.style.display = count > 0 ? 'inline' : 'none';
   }
+  updateActiveCount(); // sync badge with any restored state
 
   // Apply filters → read state, store in _activeFilters, trigger search
   applyBtn.addEventListener('click', () => {
@@ -1839,6 +1847,7 @@ function restoreFilters() {
     };
 
     updateActiveCount();
+    saveFilters();
     panel.classList.remove('open');
     runDomainSearch();
   });
