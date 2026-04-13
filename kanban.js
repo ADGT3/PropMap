@@ -1327,6 +1327,32 @@ function showKanbanToast(msg) {
 document.getElementById('kanbanToggleBtn').addEventListener('click', () => toggleKanban());
 document.getElementById('kanbanClose').addEventListener('click', () => toggleKanban(false));
 
+// ─── CRM View ─────────────────────────────────────────────────────────────────
+
+let crmVisible = false;
+
+function toggleCRM(show) {
+  crmVisible = show !== undefined ? show : !crmVisible;
+  const view = document.getElementById('crmView');
+  const btn  = document.getElementById('crmNavBtn');
+  if (!view || !btn) return;
+  view.classList.toggle('visible', crmVisible);
+  btn.classList.toggle('active', crmVisible);
+  if (crmVisible && window.CRM?.renderCRMView) {
+    const container = document.getElementById('crmViewContent');
+    if (container && !container.dataset.rendered) {
+      container.dataset.rendered = '1';
+      CRM.renderCRMView(container);
+    }
+  }
+}
+
+const crmNavBtn = document.getElementById('crmNavBtn');
+if (crmNavBtn) crmNavBtn.addEventListener('click', () => toggleCRM());
+
+const crmClose = document.getElementById('crmClose');
+if (crmClose) crmClose.addEventListener('click', () => toggleCRM(false));
+
 // Patch renderListings to always refresh add buttons after render
 const _origRenderListings = renderListings;
 window.renderListings = function () {
