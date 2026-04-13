@@ -55,6 +55,10 @@ const map = L.map('map', {
   zoomControl: true
 });
 
+// Custom pane for hillshade so it sits below the MapLibre GL vector layer
+map.createPane('hillshade');
+map.getPane('hillshade').style.zIndex = 150; // below tilePane (200) and MapLibre canvas
+
 // ─── Restore last viewport from localStorage ──────────────────────────────────
 (function restoreViewport() {
   try {
@@ -65,10 +69,6 @@ const map = L.map('map', {
     }
   } catch (e) { /* ignore */ }
 })();
-
-// Custom pane for hillshade so it sits below the MapLibre GL vector layer
-map.createPane('hillshade');
-map.getPane('hillshade').style.zIndex = 150; // below tilePane (200) and MapLibre canvas
 
 const baseLayers = {
   map: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
@@ -1723,9 +1723,7 @@ function selectListing(id, clickLatLng = null) {
 const FILTER_KEY = 'propmap_filters';
 
 function saveFilters() {
-  try {
-    localStorage.setItem(FILTER_KEY, JSON.stringify(_activeFilters));
-  } catch (e) { /* ignore */ }
+  try { localStorage.setItem(FILTER_KEY, JSON.stringify(_activeFilters)); } catch (e) { /* ignore */ }
 }
 
 function restoreFilters() {
@@ -1733,44 +1731,27 @@ function restoreFilters() {
     const saved = localStorage.getItem(FILTER_KEY);
     if (!saved) return;
     const f = JSON.parse(saved);
-
-    // Restore _activeFilters object
     Object.assign(_activeFilters, f);
-
-    // Restore chip UI
     function setChips(containerId, values) {
       document.getElementById(containerId).querySelectorAll('.filter-chip').forEach(chip => {
         chip.classList.toggle('active', values.includes(chip.dataset.value));
       });
     }
-    // Listing type (single-select)
     document.getElementById('filterListingType').querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
     const ltChip = document.querySelector(`#filterListingType [data-value="${f.listingType || 'Sale'}"]`);
     if (ltChip) ltChip.classList.add('active');
-
     setChips('filterPropertyTypes', f.propertyTypes || []);
     setChips('filterFeatures',      f.features || []);
     setChips('filterAttributes',    f.listingAttributes || []);
-    if (f.establishedType) {
-      setChips('filterEstablished', [f.establishedType]);
-    }
-
-    // Restore selects
+    if (f.establishedType) setChips('filterEstablished', [f.establishedType]);
     const setSelect = (id, val) => { if (val != null) document.getElementById(id).value = String(val); };
-    setSelect('filterMinBeds',  f.minBeds);
-    setSelect('filterMaxBeds',  f.maxBeds);
-    setSelect('filterMinBaths', f.minBaths);
-    setSelect('filterMinCars',  f.minCars);
-    setSelect('filterMinPrice', f.minPrice);
-    setSelect('filterMaxPrice', f.maxPrice);
-    setSelect('filterMinLand',  f.minLand);
-    setSelect('filterMaxLand',  f.maxLand);
-
-    // Restore checkboxes
-    const setCheck = (id, val) => { document.getElementById(id).checked = !!val; };
-    setCheck('filterExcludePriceWithheld', f.excludePriceWithheld);
-    setCheck('filterExcludeDepositTaken',  f.excludeDepositTaken);
-    setCheck('filterNewDevOnly',           f.newDevOnly);
+    setSelect('filterMinBeds',  f.minBeds);  setSelect('filterMaxBeds',  f.maxBeds);
+    setSelect('filterMinBaths', f.minBaths); setSelect('filterMinCars',  f.minCars);
+    setSelect('filterMinPrice', f.minPrice); setSelect('filterMaxPrice', f.maxPrice);
+    setSelect('filterMinLand',  f.minLand);  setSelect('filterMaxLand',  f.maxLand);
+    document.getElementById('filterExcludePriceWithheld').checked = !!f.excludePriceWithheld;
+    document.getElementById('filterExcludeDepositTaken').checked  = !!f.excludeDepositTaken;
+    document.getElementById('filterNewDevOnly').checked           = !!f.newDevOnly;
   } catch (e) { /* ignore */ }
 }
 
@@ -1782,9 +1763,7 @@ function restoreFilters() {
   const applyBtn    = document.getElementById('filterApplyBtn');
   const activeCount = document.getElementById('filterActiveCount');
 
-  // Restore persisted filter state (chips, selects, checkboxes) before binding events
   restoreFilters();
-  // Badge count update deferred until updateActiveCount is defined below
 
   // Toggle panel open/close
   toggleBtn.addEventListener('click', () => {
@@ -1819,15 +1798,6 @@ function restoreFilters() {
     panel.querySelectorAll('select').forEach(s => s.value = '');
     panel.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = false);
     updateActiveCount();
-    // Reset _activeFilters to defaults and persist
-    _activeFilters = {
-      propertyTypes: [], listingType: 'Sale',
-      minBeds: null, maxBeds: null, minBaths: null, minCars: null,
-      minPrice: null, maxPrice: null, minLand: null, maxLand: null,
-      features: [], listingAttributes: [], establishedType: null,
-      excludePriceWithheld: false, excludeDepositTaken: true, newDevOnly: false,
-    };
-    saveFilters();
   });
 
   // Count active filters for badge
@@ -1839,8 +1809,6 @@ function restoreFilters() {
     activeCount.textContent = count > 0 ? count : '';
     activeCount.style.display = count > 0 ? 'inline' : 'none';
   }
-  // Sync badge with any restored filter state
-  updateActiveCount();
 
   // Apply filters → read state, store in _activeFilters, trigger search
   applyBtn.addEventListener('click', () => {
@@ -1872,7 +1840,6 @@ function restoreFilters() {
 
     updateActiveCount();
     panel.classList.remove('open');
-    saveFilters();
     runDomainSearch();
   });
 })();
@@ -2726,7 +2693,56 @@ window.reSelectParcels = function(parcels) {
   let tooltip       = null;
   let segmentLabels = [];
 
-  const btn = document.getElementById('measureBtn');
+  // ── Wire up tools dropdown items directly ──
+  // measureBtn opens a sub-picker; instead we replace it with direct distance/area
+  // buttons injected into the tools dropdown menu.
+  (function wireToolsMenu() {
+    const menu = document.getElementById('toolsDropdownMenu');
+    if (!menu) return;
+
+    // Replace the measureBtn item with two direct action items
+    const measureItem = document.getElementById('measureBtn');
+    if (measureItem) {
+      const distBtn = document.createElement('button');
+      distBtn.className = 'tools-dropdown-item';
+      distBtn.id = 'measureDistanceBtn';
+      distBtn.innerHTML = '📏 Measure Distance';
+
+      const areaBtn = document.createElement('button');
+      areaBtn.className = 'tools-dropdown-item';
+      areaBtn.id = 'measureAreaBtn';
+      areaBtn.innerHTML = '⬡ Measure Area';
+
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'tools-dropdown-item';
+      clearBtn.id = 'measureClearBtn';
+      clearBtn.style.color = '#c0392b';
+      clearBtn.innerHTML = '✕ Clear Measurement';
+      clearBtn.style.display = 'none';
+
+      measureItem.replaceWith(distBtn);
+      distBtn.insertAdjacentElement('afterend', areaBtn);
+      areaBtn.insertAdjacentElement('afterend', clearBtn);
+
+      distBtn.addEventListener('click', () => {
+        menu.classList.remove('open');
+        startMeasure('distance');
+      });
+      areaBtn.addEventListener('click', () => {
+        menu.classList.remove('open');
+        startMeasure('area');
+      });
+      clearBtn.addEventListener('click', () => {
+        menu.classList.remove('open');
+        clearMeasure();
+      });
+
+      // Show/hide clear button based on active state
+      window._updateMeasureClearBtn = function(active) {
+        clearBtn.style.display = active ? '' : 'none';
+      };
+    }
+  })();
 
   // ── Haversine distance between two latlngs (metres) ──
   function haversine(a, b) {
@@ -2767,51 +2783,13 @@ window.reSelectParcels = function(parcels) {
     return Math.round(m2) + ' m²';
   }
 
-  // ── Show mode picker popup ──
-  function showModePicker() {
-    const existing = document.getElementById('measurePicker');
-    if (existing) { existing.remove(); return; }
-
-    const picker = document.createElement('div');
-    picker.id = 'measurePicker';
-    picker.style.cssText = `
-      position:absolute;top:calc(100% + 6px);right:0;
-      background:var(--surface);border:1px solid var(--border);
-      border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);
-      z-index:3000;padding:8px;display:flex;flex-direction:column;gap:6px;
-      min-width:160px;font-family:'DM Sans',sans-serif;
-    `;
-    picker.innerHTML = `
-      <button id="modeDistance" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;font-size:13px;text-align:left;">📏 Measure Distance</button>
-      <button id="modeArea"     style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;font-size:13px;text-align:left;">⬡ Measure Area</button>
-      ${measureActive ? '<button id="modeClear" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);cursor:pointer;font-size:13px;text-align:left;color:#c0392b;">✕ Clear</button>' : ''}
-    `;
-
-    btn.parentElement.style.position = 'relative';
-    btn.parentElement.appendChild(picker);
-
-    picker.querySelector('#modeDistance').onclick = () => { picker.remove(); startMeasure('distance'); };
-    picker.querySelector('#modeArea').onclick     = () => { picker.remove(); startMeasure('area'); };
-    if (measureActive) picker.querySelector('#modeClear').onclick = () => { picker.remove(); clearMeasure(); };
-
-    // Close on outside click
-    setTimeout(() => {
-      document.addEventListener('click', function handler(e) {
-        if (!picker.contains(e.target) && e.target !== btn) {
-          picker.remove();
-          document.removeEventListener('click', handler);
-        }
-      });
-    }, 10);
-  }
-
   function startMeasure(mode) {
     clearMeasure();
     measureMode   = mode;
     measureActive = true;
     window._measureActive = true;
-    btn.classList.add('active');
     map.getContainer().style.cursor = 'crosshair';
+    if (window._updateMeasureClearBtn) window._updateMeasureClearBtn(true);
 
     // Tooltip
     tooltip = L.tooltip({ permanent: true, direction: 'top', className: 'measure-tooltip' })
@@ -2928,7 +2906,7 @@ window.reSelectParcels = function(parcels) {
     map.getContainer().style.cursor = '';
     measureActive = false;
     window._measureActive = false;
-    btn.classList.remove('active');
+    if (window._updateMeasureClearBtn) window._updateMeasureClearBtn(false);
   }
 
   function clearMeasure() {
@@ -2947,10 +2925,8 @@ window.reSelectParcels = function(parcels) {
     measureActive = false;
     measureMode   = null;
     window._measureActive = false;
-    btn.classList.remove('active');
+    if (window._updateMeasureClearBtn) window._updateMeasureClearBtn(false);
   }
-
-  btn.addEventListener('click', showModePicker);
 })();
 
 // ─── Deferred pipeline pin render ────────────────────────────────────────────
