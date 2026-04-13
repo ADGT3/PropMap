@@ -466,7 +466,7 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
       popupAnchor: [0, -30]
     })
   })
-  .bindPopup(popupHtml('<span style="color:#888;font-size:12px">Loading…</span>'), { minWidth: 210 })
+  .bindPopup(popupHtml('<span style="color:#888;font-size:12px">Loading…</span>'), { minWidth: 210, autoPan: false })
   .addTo(map)
   .openPopup();
 
