@@ -77,8 +77,26 @@ export default async function handler(req, res) {
           return res.status(200).json(rows);
         }
 
-        // Properties linked to a contact (for CRM detail drawer)
-        if (contact_properties) {
+        // Contacts belonging to an organisation
+        if (req.query.org_contacts) {
+          const orgId = parseInt(req.query.org_contacts);
+          const rows = await sql`
+            SELECT c.*, o.name AS org_name
+            FROM contacts c
+            LEFT JOIN organisations o ON o.id = c.organisation_id
+            WHERE c.organisation_id = ${orgId}
+            ORDER BY c.last_name, c.first_name`;
+          return res.status(200).json(rows);
+        }
+
+        // All pipeline properties for note association dropdown
+        if (req.query.pipeline_list) {
+          const rows = await sql`
+            SELECT id, data->>'address' AS address, data->>'suburb' AS suburb
+            FROM pipeline
+            ORDER BY data->>'address'`;
+          return res.status(200).json(rows);
+        }
           if (!contact_id) return res.status(400).json({ error: 'contact_id required' });
           const rows = await sql`
             SELECT cp.pipeline_id, cp.role,
@@ -275,6 +293,16 @@ export default async function handler(req, res) {
             return res.status(200).json(existing[0]);
           }
           return res.status(201).json(rows[0]);
+        }
+
+        // Set organisation on a contact
+        if (body.action === 'set_org') {
+          const { contact_id, organisation_id } = body;
+          if (!contact_id) return res.status(400).json({ error: 'contact_id required' });
+          const rows = await sql`
+            UPDATE contacts SET organisation_id = ${organisation_id || null}, updated_at = now()
+            WHERE id = ${parseInt(contact_id)} RETURNING *`;
+          return res.status(200).json(rows[0]);
         }
 
         // Link
