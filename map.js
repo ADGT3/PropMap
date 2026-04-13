@@ -55,6 +55,17 @@ const map = L.map('map', {
   zoomControl: true
 });
 
+// ─── Restore last viewport from localStorage ──────────────────────────────────
+(function restoreViewport() {
+  try {
+    const saved = localStorage.getItem('propmap_viewport');
+    if (saved) {
+      const { lat, lng, zoom } = JSON.parse(saved);
+      if (lat && lng && zoom) map.setView([lat, lng], zoom, { animate: false });
+    }
+  } catch (e) { /* ignore */ }
+})();
+
 // Custom pane for hillshade so it sits below the MapLibre GL vector layer
 map.createPane('hillshade');
 map.getPane('hillshade').style.zIndex = 150; // below tilePane (200) and MapLibre canvas
@@ -1708,6 +1719,61 @@ function selectListing(id, clickLatLng = null) {
 
 // ─── Filter panel ─────────────────────────────────────────────────────────────
 
+// ─── Filter persistence ───────────────────────────────────────────────────────
+const FILTER_KEY = 'propmap_filters';
+
+function saveFilters() {
+  try {
+    localStorage.setItem(FILTER_KEY, JSON.stringify(_activeFilters));
+  } catch (e) { /* ignore */ }
+}
+
+function restoreFilters() {
+  try {
+    const saved = localStorage.getItem(FILTER_KEY);
+    if (!saved) return;
+    const f = JSON.parse(saved);
+
+    // Restore _activeFilters object
+    Object.assign(_activeFilters, f);
+
+    // Restore chip UI
+    function setChips(containerId, values) {
+      document.getElementById(containerId).querySelectorAll('.filter-chip').forEach(chip => {
+        chip.classList.toggle('active', values.includes(chip.dataset.value));
+      });
+    }
+    // Listing type (single-select)
+    document.getElementById('filterListingType').querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    const ltChip = document.querySelector(`#filterListingType [data-value="${f.listingType || 'Sale'}"]`);
+    if (ltChip) ltChip.classList.add('active');
+
+    setChips('filterPropertyTypes', f.propertyTypes || []);
+    setChips('filterFeatures',      f.features || []);
+    setChips('filterAttributes',    f.listingAttributes || []);
+    if (f.establishedType) {
+      setChips('filterEstablished', [f.establishedType]);
+    }
+
+    // Restore selects
+    const setSelect = (id, val) => { if (val != null) document.getElementById(id).value = String(val); };
+    setSelect('filterMinBeds',  f.minBeds);
+    setSelect('filterMaxBeds',  f.maxBeds);
+    setSelect('filterMinBaths', f.minBaths);
+    setSelect('filterMinCars',  f.minCars);
+    setSelect('filterMinPrice', f.minPrice);
+    setSelect('filterMaxPrice', f.maxPrice);
+    setSelect('filterMinLand',  f.minLand);
+    setSelect('filterMaxLand',  f.maxLand);
+
+    // Restore checkboxes
+    const setCheck = (id, val) => { document.getElementById(id).checked = !!val; };
+    setCheck('filterExcludePriceWithheld', f.excludePriceWithheld);
+    setCheck('filterExcludeDepositTaken',  f.excludeDepositTaken);
+    setCheck('filterNewDevOnly',           f.newDevOnly);
+  } catch (e) { /* ignore */ }
+}
+
 (function initFilterPanel() {
   const toggleBtn   = document.getElementById('filterToggleBtn');
   const panel       = document.getElementById('filterPanel');
@@ -1715,6 +1781,10 @@ function selectListing(id, clickLatLng = null) {
   const clearBtn    = document.getElementById('filterClearBtn');
   const applyBtn    = document.getElementById('filterApplyBtn');
   const activeCount = document.getElementById('filterActiveCount');
+
+  // Restore persisted filter state (chips, selects, checkboxes) before binding events
+  restoreFilters();
+  // Badge count update deferred until updateActiveCount is defined below
 
   // Toggle panel open/close
   toggleBtn.addEventListener('click', () => {
@@ -1749,6 +1819,15 @@ function selectListing(id, clickLatLng = null) {
     panel.querySelectorAll('select').forEach(s => s.value = '');
     panel.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = false);
     updateActiveCount();
+    // Reset _activeFilters to defaults and persist
+    _activeFilters = {
+      propertyTypes: [], listingType: 'Sale',
+      minBeds: null, maxBeds: null, minBaths: null, minCars: null,
+      minPrice: null, maxPrice: null, minLand: null, maxLand: null,
+      features: [], listingAttributes: [], establishedType: null,
+      excludePriceWithheld: false, excludeDepositTaken: true, newDevOnly: false,
+    };
+    saveFilters();
   });
 
   // Count active filters for badge
@@ -1760,6 +1839,8 @@ function selectListing(id, clickLatLng = null) {
     activeCount.textContent = count > 0 ? count : '';
     activeCount.style.display = count > 0 ? 'inline' : 'none';
   }
+  // Sync badge with any restored filter state
+  updateActiveCount();
 
   // Apply filters → read state, store in _activeFilters, trigger search
   applyBtn.addEventListener('click', () => {
@@ -1791,6 +1872,7 @@ function selectListing(id, clickLatLng = null) {
 
     updateActiveCount();
     panel.classList.remove('open');
+    saveFilters();
     runDomainSearch();
   });
 })();
@@ -2087,6 +2169,11 @@ map.on('moveend zoomend', () => {
   if (elecEntry && elecEntry.def.enabled) drawEasementBuffers();
   // Re-fetch Domain listings for the new viewport
   if (showListings && window.DomainAPI) debouncedDomainSearch();
+  // Persist viewport
+  try {
+    const c = map.getCenter();
+    localStorage.setItem('propmap_viewport', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }));
+  } catch (e) { /* ignore */ }
 });
 
 // Move overlay panel inside its anchor for relative positioning
