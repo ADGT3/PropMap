@@ -865,7 +865,7 @@ ${rows.join('')}`;
 
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px">
           <div class="kb-section-label" style="margin-top:0">Due Diligence</div>
-          <button class="kb-rerun-dd-btn kb-add-deposit" data-id="${id}" title="Re-run Auto DD">↻ Auto DD</button>
+          <button class="kb-rerun-dd-btn kb-add-offer-btn" data-id="${id}" title="Re-run Auto DD">↻ Auto DD</button>
         </div>
         <div class="kb-dd">
           ${DD_ITEMS.map(ddItem => {
