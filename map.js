@@ -59,8 +59,8 @@ const map = L.map('map', {
 map.createPane('hillshade');
 map.getPane('hillshade').style.zIndex = 150; // below tilePane (200) and MapLibre canvas
 
-// ─── Restore last viewport from localStorage ──────────────────────────────────
-(function restoreViewport() {
+// ─── Restore last viewport from localStorage (deferred to after layout) ───────
+window.addEventListener('load', function restoreViewport() {
   try {
     const saved = localStorage.getItem('propmap_viewport');
     if (saved) {
@@ -68,7 +68,7 @@ map.getPane('hillshade').style.zIndex = 150; // below tilePane (200) and MapLibr
       if (lat && lng && zoom) map.setView([lat, lng], zoom, { animate: false });
     }
   } catch (e) { /* ignore */ }
-})();
+});
 
 const baseLayers = {
   map: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
@@ -1694,7 +1694,7 @@ function selectListing(id, clickLatLng = null) {
   if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
 
   _suppressNextDomainSearch = true;
-  map.setView([listing.lat, listing.lng], 15, { animate: false });
+  if (!clickLatLng) map.setView([listing.lat, listing.lng], 15, { animate: false });
 
   // Use actual click coordinates for cadastre query if available (listing coords are
   // approximate dummy data — real coords arrive with the Domain API key).
