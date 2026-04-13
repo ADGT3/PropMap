@@ -101,10 +101,12 @@ export default async function handler(req, res) {
               LIMIT 500`;
             return res.status(200).json(rows);
           } catch (e) {
-            // pipeline table may not exist or have different schema
             return res.status(200).json([]);
           }
         }
+
+        // Properties linked to a contact
+        if (contact_properties) {
           if (!contact_id) return res.status(400).json({ error: 'contact_id required' });
           const rows = await sql`
             SELECT cp.pipeline_id, cp.role,
@@ -214,40 +216,29 @@ export default async function handler(req, res) {
           const off = parseInt(offset) || 0;
           if (search) {
             const q = `%${search}%`;
-            const [rows, countRows] = await Promise.all([
-              sql`
-                SELECT c.*, o.name AS org_name,
-                  COUNT(DISTINCT cp.pipeline_id)::int AS property_count
-                FROM contacts c
-                LEFT JOIN organisations o ON o.id = c.organisation_id
-                LEFT JOIN contact_properties cp ON cp.contact_id = c.id
-                WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
-                   OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
-                GROUP BY c.id, o.id
-                ORDER BY c.last_name, c.first_name
-                LIMIT ${lim} OFFSET ${off}`,
-              sql`
-                SELECT COUNT(DISTINCT c.id)::int AS total
-                FROM contacts c
-                LEFT JOIN organisations o ON o.id = c.organisation_id
-                WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
-                   OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}`,
-            ]);
-            return res.status(200).json({ contacts: rows, total: countRows[0].total });
-          }
-          const [rows, countRows] = await Promise.all([
-            sql`
+            const rows = await sql`
               SELECT c.*, o.name AS org_name,
                 COUNT(DISTINCT cp.pipeline_id)::int AS property_count
               FROM contacts c
               LEFT JOIN organisations o ON o.id = c.organisation_id
               LEFT JOIN contact_properties cp ON cp.contact_id = c.id
+              WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
+                 OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
               GROUP BY c.id, o.id
-              ORDER BY c.last_name, c.first_name
-              LIMIT ${lim} OFFSET ${off}`,
-            sql`SELECT COUNT(*)::int AS total FROM contacts`,
-          ]);
-          return res.status(200).json({ contacts: rows, total: countRows[0].total });
+              ORDER BY c.last_name, c.first_name`;
+            const total = rows.length;
+            return res.status(200).json({ contacts: rows.slice(off, off + lim), total });
+          }
+          const rows = await sql`
+            SELECT c.*, o.name AS org_name,
+              COUNT(DISTINCT cp.pipeline_id)::int AS property_count
+            FROM contacts c
+            LEFT JOIN organisations o ON o.id = c.organisation_id
+            LEFT JOIN contact_properties cp ON cp.contact_id = c.id
+            GROUP BY c.id, o.id
+            ORDER BY c.last_name, c.first_name`;
+          const total = rows.length;
+          return res.status(200).json({ contacts: rows.slice(off, off + lim), total });
         }
 
         // List all (unpaginated — used by existing search/link flows)
