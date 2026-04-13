@@ -112,7 +112,6 @@ function toggleKanban(show) {
   document.getElementById('kanbanView').classList.toggle('visible', kanbanVisible);
   const btn = document.getElementById('kanbanToggleBtn');
   btn.classList.toggle('active', kanbanVisible);
- 
   if (kanbanVisible) renderBoard();
 }
 
@@ -864,7 +863,10 @@ ${rows.join('')}`;
 
         <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
 
-        <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px">
+          <div class="kb-section-label" style="margin-top:0">Due Diligence</div>
+          <button class="kb-rerun-dd-btn" data-id="${id}" title="Re-run Auto DD" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text-secondary);cursor:pointer;font-family:'DM Sans',sans-serif;">↻ Auto DD</button>
+        </div>
         <div class="kb-dd">
           ${DD_ITEMS.map(ddItem => {
             const key    = ddItem.toLowerCase();
@@ -951,6 +953,35 @@ ${rows.join('')}`;
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
   document.addEventListener('keydown', function escClose(e) {
     if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escClose); }
+  });
+
+  // Re-run Auto DD
+  modal.querySelector('.kb-rerun-dd-btn').addEventListener('click', () => {
+    const p       = pipeline[id]?.property;
+    const parcels = p?._parcels || [];
+    const lat     = p?.lat ?? parcels[0]?.lat ?? null;
+    const lng     = p?.lng ?? parcels[0]?.lng ?? null;
+    if (!lat || !lng || !window.queryDDRisks) {
+      console.warn('[DD] Re-run skipped — no coordinates or queryDDRisks unavailable');
+      return;
+    }
+    const btn = modal.querySelector('.kb-rerun-dd-btn');
+    btn.textContent = '↻ Running…';
+    btn.disabled = true;
+    queryDDRisks(lat, lng).then(dd => {
+      if (!pipeline[id]) return;
+      Object.entries(dd).forEach(([key, val]) => {
+        if (!pipeline[id].dd[key]?.status) pipeline[id].dd[key] = val;
+      });
+      savePipeline(id);
+      refreshModalDd(id);
+      btn.textContent = '↻ Auto DD';
+      btn.disabled = false;
+    }).catch(err => {
+      console.warn('[DD] Re-run failed:', err);
+      btn.textContent = '↻ Auto DD';
+      btn.disabled = false;
+    });
   });
 
   // Notes
@@ -1174,7 +1205,8 @@ ${rows.join('')}`;
   // Submit offer
   overlay.addEventListener('click', e => {
     if (!e.target.closest('.kb-submit-offer')) return;
-
+    // Force blur all inputs so any unblurred values are committed before we read them
+    overlay.querySelectorAll('.kb-offer-price, .kb-offer-settlement, .kb-odep-amount, .kb-odep-due, .kb-odep-note').forEach(el => el.blur());
     const _offerPrice = parseDepositAmountKanban(overlay.querySelector('.kb-offer-price')?.value || '', null) || 0;
     const offerDeposits = Array.from(overlay.querySelectorAll('.kb-offer-dep-row')).map(row => ({
       amount: parseDepositAmountKanban(row.querySelector('.kb-odep-amount').value, _offerPrice),
