@@ -865,7 +865,7 @@ ${rows.join('')}`;
 
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:16px">
           <div class="kb-section-label" style="margin-top:0">Due Diligence</div>
-          <button class="kb-rerun-dd-btn" data-id="${id}" title="Re-run Auto DD" style="font-size:11px;padding:3px 8px;border:1px solid var(--border);border-radius:4px;background:var(--surface2);color:var(--text-secondary);cursor:pointer;font-family:'DM Sans',sans-serif;">↻ Auto DD</button>
+          <button class="kb-rerun-dd-btn kb-add-deposit" data-id="${id}" title="Re-run Auto DD">↻ Auto DD</button>
         </div>
         <div class="kb-dd">
           ${DD_ITEMS.map(ddItem => {
@@ -971,7 +971,7 @@ ${rows.join('')}`;
     queryDDRisks(lat, lng).then(dd => {
       if (!pipeline[id]) return;
       Object.entries(dd).forEach(([key, val]) => {
-        if (!pipeline[id].dd[key]?.status) pipeline[id].dd[key] = val;
+        pipeline[id].dd[key] = val;
       });
       savePipeline(id);
       refreshModalDd(id);
