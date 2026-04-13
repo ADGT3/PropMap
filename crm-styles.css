@@ -632,3 +632,23 @@
 .crm-drawer-note-input { margin-bottom: 8px; }
 .crm-drawer-note-text { width: 100%; resize: vertical; }
 .crm-drawer-edit-btn { font-size: 12px; padding: 4px 10px; }
+
+/* ── Property row actions in contact detail ─────────────────────────────────── */
+.crm-prop-unlink-btn, .crm-org-contact-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: #ccc;
+  padding: 2px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.crm-prop-unlink-btn:hover, .crm-org-contact-remove:hover { color: #c0392b; background: #fdf0f0; }
+
+.crm-prop-role-sel {
+  font-size: 11px !important;
+  padding: 2px 4px !important;
+  height: auto !important;
+  width: auto !important;
+}

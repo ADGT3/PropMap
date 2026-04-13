@@ -716,20 +716,20 @@ function renderCRMView(container) {
   async function renderContactDetail(drawer, contactId, onDone) {
     drawer.innerHTML = '<div class="crm-drawer-loading">Loading…</div>';
     try {
-      const [contactData, notes, props] = await Promise.all([
+      const [contactData, notes, props, allPipeline] = await Promise.all([
         apiGet({ id: contactId }),
         apiGet({ notes: '1', contact_id: contactId }),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
+        apiGet({ pipeline_list: '1' }).catch(() => []),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { drawer.innerHTML = '<div class="crm-drawer-loading">Not found</div>'; return; }
 
-      const roleLabel = ROLES.find(r => r.value === c.role)?.label || c.role || '—';
       drawer.innerHTML = `
         <div class="crm-drawer-header">
           <div>
             <div class="crm-drawer-title">${displayName(c)}</div>
-            <div class="crm-drawer-subtitle">${c.org_name || ''}${c.org_name && roleLabel ? ' · ' : ''}${roleLabel}</div>
+            <div class="crm-drawer-subtitle">${[c.org_name, c.mobile, c.email].filter(Boolean).join(" · ")}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <button class="crm-drawer-edit-btn kb-add-offer-btn">✎ Edit</button>
@@ -737,35 +737,60 @@ function renderCRMView(container) {
           </div>
         </div>
         <div class="crm-drawer-body">
+
           <div class="crm-drawer-section">
             <div class="crm-drawer-section-title">Contact Details</div>
             <div class="crm-detail-grid">
-              ${c.mobile ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ''}
-              ${c.email  ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ''}
-              ${c.org_name ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ''}
-              <div class="crm-detail-label">Source</div><div>${c.source || 'manual'}</div>
+              ${c.mobile   ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
+              ${c.email    ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
+              ${c.org_name ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
+              <div class="crm-detail-label">Source</div><div>${c.source || "manual"}</div>
             </div>
           </div>
 
-          ${props.length ? `
           <div class="crm-drawer-section">
-            <div class="crm-drawer-section-title">Linked Properties (${props.length})</div>
-            ${props.map(p => `
-              <div class="crm-prop-row">
-                <span class="crm-prop-address">${p.address || p.pipeline_id}</span>
-                <span class="crm-role-badge crm-role-${(p.role||'').replace(/[^a-z0-9]/gi,'_')}">${ROLES.find(r=>r.value===p.role)?.label||p.role||'—'}</span>
-              </div>`).join('')}
-          </div>` : ''}
+            <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+              Linked Properties
+              <button class="crm-detail-add-prop-btn kb-add-offer-btn">+ Link Property</button>
+            </div>
+            <div id="crmDetailPropsList">
+              ${props.length ? props.map(p => `
+                <div class="crm-prop-row" data-pipeline-id="${p.pipeline_id}">
+                  <span class="crm-prop-address">${p.address || p.pipeline_id}${p.suburb ? ", " + p.suburb : ""}</span>
+                  <select class="crm-prop-role-sel kb-input" data-pipeline-id="${p.pipeline_id}" style="font-size:11px;padding:2px 4px;width:auto">
+                    ${ROLES.map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
+                  </select>
+                  <button class="crm-prop-unlink-btn" data-pipeline-id="${p.pipeline_id}" title="Remove">✕</button>
+                </div>`).join("") : "<div class=\"crm-empty\">No linked properties</div>"}
+            </div>
+            <div class="crm-detail-add-prop-form" style="display:none;margin-top:8px">
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <select class="kb-input crm-prop-select" style="flex:2;font-size:12px">
+                  <option value="">Select property…</option>
+                  ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
+                </select>
+                <select class="kb-input crm-prop-role-new" style="font-size:12px">
+                  ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                </select>
+                <button class="crm-prop-link-save kb-add-offer-btn">Link</button>
+                <button class="crm-prop-link-cancel">Cancel</button>
+              </div>
+            </div>
+          </div>
 
           <div class="crm-drawer-section">
             <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
-              Notes
+              Notes <span style="font-weight:400;color:var(--text-secondary)">(${notes.length})</span>
               <button class="crm-drawer-add-note-btn kb-add-offer-btn">+ Add Note</button>
             </div>
-            <div class="crm-drawer-note-input" style="display:none;margin-bottom:8px">
-              <textarea class="kb-input crm-drawer-note-text" rows="2" placeholder="Add a note…" style="width:100%;resize:vertical"></textarea>
-              <div style="display:flex;gap:6px;margin-top:4px">
-                <button class="crm-drawer-note-save kb-add-offer-btn">Save</button>
+            <div class="crm-drawer-note-input" style="display:none;margin-bottom:10px">
+              <textarea class="kb-input crm-drawer-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+              <div style="display:flex;gap:6px;margin-top:4px;align-items:center;flex-wrap:wrap">
+                <select class="kb-input crm-drawer-note-prop" style="flex:1;font-size:12px;min-width:140px">
+                  <option value="">No property</option>
+                  ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
+                </select>
+                <button class="crm-drawer-note-save kb-add-offer-btn">Save Note</button>
                 <button class="crm-drawer-note-cancel">Cancel</button>
               </div>
             </div>
@@ -773,46 +798,75 @@ function renderCRMView(container) {
               ${notes.length ? notes.map(n => `
                 <div class="crm-note-entry" data-note-id="${n.id}">
                   <div class="crm-note-meta">
-                    <span class="crm-note-date">${formatNoteDate(n.created_at)}${n.property_address ? ` · <span class="crm-note-prop">${n.property_address}</span>` : ''}</span>
+                    <span class="crm-note-date">${formatNoteDate(n.created_at)}${n.property_address ? ` · <span class="crm-note-prop">${n.property_address}</span>` : ""}</span>
                     <button class="crm-note-delete" data-id="${n.id}">✕</button>
                   </div>
                   <div class="crm-note-text">${n.note_text}</div>
-                </div>`).join('') : '<div class="crm-empty">No notes yet</div>'}
+                </div>`).join("") : "<div class=\"crm-empty\">No notes yet</div>"}
             </div>
           </div>
+
         </div>`;
 
-      drawer.querySelector('.crm-drawer-close').addEventListener('click', onDone);
-      drawer.querySelector('.crm-drawer-edit-btn').addEventListener('click', () => {
+      drawer.querySelector(".crm-drawer-close").addEventListener("click", onDone);
+      drawer.querySelector(".crm-drawer-edit-btn").addEventListener("click", () => {
         renderContactDrawer(drawer, c, () => renderContactDetail(drawer, contactId, onDone));
       });
 
-      // Note add toggle
-      const addNoteBtn  = drawer.querySelector('.crm-drawer-add-note-btn');
-      const noteInput   = drawer.querySelector('.crm-drawer-note-input');
-      addNoteBtn.addEventListener('click', () => { noteInput.style.display = ''; addNoteBtn.style.display = 'none'; drawer.querySelector('.crm-drawer-note-text').focus(); });
-      drawer.querySelector('.crm-drawer-note-cancel').addEventListener('click', () => { noteInput.style.display = 'none'; addNoteBtn.style.display = ''; });
-      drawer.querySelector('.crm-drawer-note-save').addEventListener('click', async () => {
-        const text = drawer.querySelector('.crm-drawer-note-text').value.trim();
-        if (!text) return;
-        await apiPost({ action: 'add_note', contact_id: contactId, note_text: text });
+      // Property management
+      const addPropBtn  = drawer.querySelector(".crm-detail-add-prop-btn");
+      const addPropForm = drawer.querySelector(".crm-detail-add-prop-form");
+      const propsList   = drawer.querySelector("#crmDetailPropsList");
+
+      addPropBtn.addEventListener("click", () => { addPropForm.style.display = ""; addPropBtn.style.display = "none"; });
+      drawer.querySelector(".crm-prop-link-cancel").addEventListener("click", () => { addPropForm.style.display = "none"; addPropBtn.style.display = ""; });
+      drawer.querySelector(".crm-prop-link-save").addEventListener("click", async () => {
+        const pipelineId = drawer.querySelector(".crm-prop-select").value;
+        const role       = drawer.querySelector(".crm-prop-role-new").value;
+        if (!pipelineId) return;
+        await apiPost({ action: "link", contact_id: contactId, pipeline_id: pipelineId, role });
         renderContactDetail(drawer, contactId, onDone);
       });
+      propsList.querySelectorAll(".crm-prop-role-sel").forEach(sel => {
+        sel.addEventListener("change", async () => {
+          await apiPost({ action: "link", contact_id: contactId, pipeline_id: sel.dataset.pipelineId, role: sel.value });
+        });
+      });
+      propsList.querySelectorAll(".crm-prop-unlink-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Remove this property link?")) return;
+          await apiPost({ action: "unlink", contact_id: contactId, pipeline_id: btn.dataset.pipelineId });
+          renderContactDetail(drawer, contactId, onDone);
+        });
+      });
 
-      // Note delete
-      drawer.querySelectorAll('.crm-note-delete').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          if (!confirm('Delete this note?')) return;
+      // Notes
+      const addNoteBtn = drawer.querySelector(".crm-drawer-add-note-btn");
+      const noteInput  = drawer.querySelector(".crm-drawer-note-input");
+      addNoteBtn.addEventListener("click", () => { noteInput.style.display = ""; addNoteBtn.style.display = "none"; drawer.querySelector(".crm-drawer-note-text").focus(); });
+      drawer.querySelector(".crm-drawer-note-cancel").addEventListener("click", () => { noteInput.style.display = "none"; addNoteBtn.style.display = ""; });
+      drawer.querySelector(".crm-drawer-note-save").addEventListener("click", async () => {
+        const text       = drawer.querySelector(".crm-drawer-note-text").value.trim();
+        const pipelineId = drawer.querySelector(".crm-drawer-note-prop").value || null;
+        if (!text) return;
+        await apiPost({ action: "add_note", contact_id: contactId, pipeline_id: pipelineId, note_text: text });
+        renderContactDetail(drawer, contactId, onDone);
+      });
+      drawer.querySelectorAll(".crm-note-delete").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Delete this note?")) return;
           await apiDelete({ note_id: btn.dataset.id });
           renderContactDetail(drawer, contactId, onDone);
         });
       });
+
     } catch (err) {
+      console.error("[CRM] renderContactDetail failed:", err);
       drawer.innerHTML = `<div class="crm-drawer-loading">Error loading contact</div>`;
     }
   }
 
-  // ── Contact edit/create drawer ─────────────────────────────────────────────
+    // ── Contact edit/create drawer ─────────────────────────────────────────────
 
   function renderContactDrawer(drawer, prefill, onDone) {
     const isEdit = !!prefill?.id;
@@ -982,37 +1036,112 @@ function renderCRMView(container) {
     fetchOrgs();
   }
 
-  function renderOrgDrawer(drawer, prefill, onDone) {
+  async function renderOrgDrawer(drawer, prefill, onDone) {
     const isEdit = !!prefill?.id;
-    drawer.innerHTML = `
-      <div class="crm-drawer-header">
-        <div class="crm-drawer-title">${isEdit ? 'Edit Organisation' : 'New Organisation'}</div>
-        <button class="crm-drawer-close">✕</button>
-      </div>
-      <div class="crm-drawer-body">
-        <div class="crm-form-inner">
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">Organisation Name *</label>
-            <input class="kb-input crm-org-name" type="text" placeholder="e.g. Ray White Parramatta" value="${prefill?.name || ''}">
-          </div>
-          <div class="crm-form-actions" style="margin-top:12px">
-            <button class="crm-save-btn kb-add-offer-btn">${isEdit ? 'Save Changes' : 'Create'}</button>
-            <button class="crm-cancel-btn">Cancel</button>
-          </div>
+
+    async function render() {
+      drawer.innerHTML = '<div class="crm-drawer-loading">Loading…</div>';
+
+      const [orgContacts, allContacts] = isEdit ? await Promise.all([
+        apiGet({ org_contacts: prefill.id }).catch(() => []),
+        apiGet({ all: '1', limit: 200 }).then(d => d.contacts || d).catch(() => []),
+      ]) : [[], []];
+
+      // Contacts not already in this org
+      const orgContactIds = new Set(orgContacts.map(c => c.id));
+      const available = Array.isArray(allContacts) ? allContacts.filter(c => !orgContactIds.has(c.id)) : [];
+
+      drawer.innerHTML = `
+        <div class="crm-drawer-header">
+          <div class="crm-drawer-title">${isEdit ? prefill.name : 'New Organisation'}</div>
+          <button class="crm-drawer-close">✕</button>
         </div>
-      </div>`;
-    drawer.querySelector('.crm-drawer-close').addEventListener('click', onDone);
-    drawer.querySelector('.crm-cancel-btn').addEventListener('click', onDone);
-    drawer.querySelector('.crm-save-btn').addEventListener('click', async () => {
-      const name = drawer.querySelector('.crm-org-name').value.trim();
-      if (!name) { drawer.querySelector('.crm-org-name').focus(); return; }
-      if (isEdit) {
-        await apiPut({ org_id: prefill.id, name });
-      } else {
-        await apiPost({ action: 'create_org', name });
-      }
-      onDone();
-    });
+        <div class="crm-drawer-body">
+          <div class="crm-drawer-section">
+            <div class="crm-drawer-section-title">Organisation Name</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input class="kb-input crm-org-name" type="text" placeholder="e.g. Ray White Parramatta" value="${prefill?.name || ''}" style="flex:1">
+              <button class="crm-org-save-btn kb-add-offer-btn">${isEdit ? 'Save' : 'Create'}</button>
+            </div>
+          </div>
+
+          ${isEdit ? `
+          <div class="crm-drawer-section">
+            <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+              Contacts (${orgContacts.length})
+              <button class="crm-org-add-contact-btn kb-add-offer-btn">+ Add Contact</button>
+            </div>
+            <div class="crm-org-add-contact-form" style="display:none;margin-bottom:8px">
+              <div style="display:flex;gap:6px;align-items:center">
+                <select class="kb-input crm-org-contact-select" style="flex:1;font-size:12px">
+                  <option value="">Select contact…</option>
+                  ${available.map(c => `<option value="${c.id}">${displayName(c)}${c.org_name ? ' · ' + c.org_name : ''}</option>`).join('')}
+                </select>
+                <button class="crm-org-contact-link-save kb-add-offer-btn">Add</button>
+                <button class="crm-org-contact-link-cancel">Cancel</button>
+              </div>
+            </div>
+            <div id="crmOrgContactsList">
+              ${orgContacts.length ? orgContacts.map(c => `
+                <div class="crm-prop-row" data-contact-id="${c.id}">
+                  <span class="crm-prop-address" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px" data-contact-id="${c.id}">${displayName(c)}</span>
+                  <span style="font-size:11px;color:var(--text-secondary)">${c.mobile || c.email || ''}</span>
+                  <button class="crm-org-contact-remove" data-contact-id="${c.id}" title="Remove from org">✕</button>
+                </div>`).join('') : '<div class="crm-empty">No contacts in this organisation</div>'}
+            </div>
+          </div>` : ''}
+
+        </div>`;
+
+      drawer.querySelector('.crm-drawer-close').addEventListener('click', onDone);
+
+      // Save org name
+      drawer.querySelector('.crm-org-save-btn').addEventListener('click', async () => {
+        const name = drawer.querySelector('.crm-org-name').value.trim();
+        if (!name) { drawer.querySelector('.crm-org-name').focus(); return; }
+        if (isEdit) {
+          await apiPut({ org_id: prefill.id, name });
+          prefill.name = name;
+          drawer.querySelector('.crm-drawer-title').textContent = name;
+        } else {
+          const created = await apiPost({ action: 'create_org', name });
+          onDone();
+          return;
+        }
+      });
+
+      if (!isEdit) return;
+
+      // Add contact to org
+      const addContactBtn  = drawer.querySelector('.crm-org-add-contact-btn');
+      const addContactForm = drawer.querySelector('.crm-org-add-contact-form');
+      addContactBtn.addEventListener('click', () => { addContactForm.style.display = ''; addContactBtn.style.display = 'none'; });
+      drawer.querySelector('.crm-org-contact-link-cancel').addEventListener('click', () => { addContactForm.style.display = 'none'; addContactBtn.style.display = ''; });
+      drawer.querySelector('.crm-org-contact-link-save').addEventListener('click', async () => {
+        const contactId = drawer.querySelector('.crm-org-contact-select').value;
+        if (!contactId) return;
+        await apiPost({ action: 'set_org', contact_id: parseInt(contactId), organisation_id: prefill.id });
+        render();
+      });
+
+      // Remove contact from org
+      drawer.querySelectorAll('.crm-org-contact-remove').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Remove this contact from the organisation?')) return;
+          await apiPost({ action: 'set_org', contact_id: parseInt(btn.dataset.contactId), organisation_id: null });
+          render();
+        });
+      });
+
+      // Click contact name → open contact detail
+      drawer.querySelectorAll('.crm-prop-address[data-contact-id]').forEach(el => {
+        el.addEventListener('click', () => {
+          renderContactDetail(drawer, parseInt(el.dataset.contactId), () => render());
+        });
+      });
+    }
+
+    render();
   }
 
   // Initial load
