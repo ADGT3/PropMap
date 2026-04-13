@@ -91,11 +91,19 @@ export default async function handler(req, res) {
 
         // All pipeline properties for note association dropdown
         if (req.query.pipeline_list) {
-          const rows = await sql`
-            SELECT id, data->>'address' AS address, data->>'suburb' AS suburb
-            FROM pipeline
-            ORDER BY data->>'address'`;
-          return res.status(200).json(rows);
+          try {
+            const rows = await sql`
+              SELECT id,
+                COALESCE(data->>'address', id::text) AS address,
+                COALESCE(data->>'suburb', '') AS suburb
+              FROM pipeline
+              ORDER BY data->>'address' NULLS LAST
+              LIMIT 500`;
+            return res.status(200).json(rows);
+          } catch (e) {
+            // pipeline table may not exist or have different schema
+            return res.status(200).json([]);
+          }
         }
           if (!contact_id) return res.status(400).json({ error: 'contact_id required' });
           const rows = await sql`
@@ -148,22 +156,27 @@ export default async function handler(req, res) {
         // Duplicate check
         if (check_duplicate) {
           const { first_name, last_name, email, mobile } = req.query;
-          const conditions = [];
-          if (email?.trim()) conditions.push(sql`c.email ILIKE ${email.trim()}`);
-          if (mobile?.trim()) conditions.push(sql`c.mobile ILIKE ${mobile.trim()}`);
-          if (first_name?.trim() && last_name?.trim()) {
-            conditions.push(sql`(c.first_name ILIKE ${first_name.trim()} AND c.last_name ILIKE ${last_name.trim()})`);
+          if (!email?.trim() && !mobile?.trim() && !(first_name?.trim() && last_name?.trim())) {
+            return res.status(200).json([]);
           }
-          if (!conditions.length) return res.status(200).json([]);
-          const rows = await sql`
-            SELECT c.*, o.name AS org_name
-            FROM contacts c
-            LEFT JOIN organisations o ON o.id = c.organisation_id
-            WHERE ${conditions[0]}
-            ${conditions[1] ? sql`OR ${conditions[1]}` : sql``}
-            ${conditions[2] ? sql`OR ${conditions[2]}` : sql``}
-            LIMIT 5`;
-          return res.status(200).json(rows);
+          // Build safe OR conditions using parameterised sub-queries
+          const results = new Map();
+          const addResults = (rows) => rows.forEach(r => results.set(r.id, r));
+          await Promise.all([
+            email?.trim() ? sql`
+              SELECT c.*, o.name AS org_name FROM contacts c
+              LEFT JOIN organisations o ON o.id = c.organisation_id
+              WHERE c.email ILIKE ${email.trim()} LIMIT 5`.then(addResults) : null,
+            mobile?.trim() ? sql`
+              SELECT c.*, o.name AS org_name FROM contacts c
+              LEFT JOIN organisations o ON o.id = c.organisation_id
+              WHERE c.mobile ILIKE ${mobile.trim()} LIMIT 5`.then(addResults) : null,
+            (first_name?.trim() && last_name?.trim()) ? sql`
+              SELECT c.*, o.name AS org_name FROM contacts c
+              LEFT JOIN organisations o ON o.id = c.organisation_id
+              WHERE c.first_name ILIKE ${first_name.trim()} AND c.last_name ILIKE ${last_name.trim()} LIMIT 5`.then(addResults) : null,
+          ].filter(Boolean));
+          return res.status(200).json([...results.values()].slice(0, 5));
         }
 
         // Single contact
