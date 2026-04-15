@@ -1026,13 +1026,23 @@ function buildLeafletLayer(def) {
     fetch(def.vectorUrl)
       .then(r => r.json())
       .then(gj => {
-        const styles = def.vectorStyle || {};
         L.geoJSON(gj, {
           style: feat => {
-            const s = styles[feat.properties.zone] || {};
+            const p = feat.properties;
+            // Support both vectorStyle (keyed by zone) and vectorStyleMap (keyed by a property)
+            let s = {};
+            if (def.vectorStyleMap && def.vectorStyleProp) {
+              s = def.vectorStyleMap[p[def.vectorStyleProp]] || {};
+            } else if (def.vectorStyle) {
+              s = def.vectorStyle[p.zone] || {};
+            } else {
+              // Fall back to inline fill/stroke from GeoJSON properties
+              s = { color: p.stroke || '#666', fillColor: p.fill || '#aaa',
+                    fillOpacity: p['fill-opacity'] ?? 0.5, weight: p['stroke-width'] ?? 1 };
+            }
             return {
-              color:       s.color       || '#7d3c98',
-              fillColor:   s.fillColor   || '#bb8fce',
+              color:       s.color       || '#666',
+              fillColor:   s.fillColor   || s.color || '#aaa',
               fillOpacity: (s.fillOpacity ?? 0.5) * (def.opacity ?? 1),
               weight:      s.weight      || 1.5,
               opacity:     def.opacity   ?? 0.9
@@ -1040,7 +1050,9 @@ function buildLeafletLayer(def) {
           },
           onEachFeature: (feat, layer) => {
             const p = feat.properties;
-            layer.bindPopup(`<b>${p.zone}</b> — ${p.name}`);
+            const label = p.zone || p.elevation || p.flood_depth || p.road || p.name || '';
+            const name  = p.name || '';
+            layer.bindPopup(`<b>${label}</b>${name && label !== name ? '<br>' + name : ''}`);
           }
         }).addTo(layerGroup);
       })
