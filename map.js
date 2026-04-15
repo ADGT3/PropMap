@@ -1052,12 +1052,12 @@ function buildLeafletLayer(def) {
           },
           onEachFeature: (feat, layer) => {
             const p = feat.properties;
-            const label  = p.zone || p.elevation || p.flood_depth || p.road || p.name || '';
-            const name   = p.name || '';
-            const source = def.source || '';
+            const label       = p.name || p.zone || p.elevation || p.flood_depth || p.road || '';
+            const description = p.description || '';
+            const source      = p.source || def.source || '';
             layer.bindPopup(
               `<b>${label}</b>` +
-              (name && label !== name ? `<br>${name}` : '') +
+              (description ? `<br>${description}` : '') +
               (source ? `<br><small style="color:#888">${source}</small>` : '')
             );
           }
