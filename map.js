@@ -1040,12 +1040,14 @@ function buildLeafletLayer(def) {
               s = { color: p.stroke || '#666', fillColor: p.fill || '#aaa',
                     fillOpacity: p['fill-opacity'] ?? 0.5, weight: p['stroke-width'] ?? 1 };
             }
+            const noFill = s.fillColor === 'none' || s.fillOpacity === 0;
             return {
-              color:       s.color       || '#666',
-              fillColor:   s.fillColor   || s.color || '#aaa',
-              fillOpacity: (s.fillOpacity ?? 0.5) * (def.opacity ?? 1),
-              weight:      s.weight      || 1.5,
-              opacity:     def.opacity   ?? 0.9
+              color:       s.color       || p.stroke || '#666',
+              fillColor:   noFill ? '#000' : (s.fillColor || s.color || '#aaa'),
+              fillOpacity: noFill ? 0 : (s.fillOpacity ?? 0.5) * (def.opacity ?? 1),
+              fill:        !noFill,
+              weight:      s.weight      || p['stroke-width'] || 1.5,
+              opacity:     s.opacity     ?? def.opacity ?? 0.9
             };
           },
           onEachFeature: (feat, layer) => {
