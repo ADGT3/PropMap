@@ -59,8 +59,10 @@ const map = L.map('map', {
 map.createPane('hillshade');
 map.getPane('hillshade').style.zIndex = 150; // below tilePane (200) and MapLibre canvas
 
-// ─── Restore last viewport from localStorage (deferred to after layout) ───────
-window.addEventListener('load', function restoreViewport() {
+// ─── Restore last viewport from localStorage ──────────────────────────────────
+// Run immediately (not deferred) so the map starts at the right position
+// before the first Domain search fires.
+(function restoreViewport() {
   try {
     const saved = localStorage.getItem('propmap_viewport');
     if (saved) {
@@ -68,7 +70,7 @@ window.addEventListener('load', function restoreViewport() {
       if (lat && lng && zoom) map.setView([lat, lng], zoom, { animate: false });
     }
   } catch (e) { /* ignore */ }
-});
+})();
 
 const baseLayers = {
   map: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
@@ -1018,6 +1020,52 @@ function buildLeafletLayer(def) {
     // If not enabled by default, remove it straight away
     if (!def.enabled) map.removeLayer(geoJsonLayer);
     return geoJsonLayer;
+  }
+
+  // Vector GeoJSON overlay — fetched from a URL (planning proposals etc.)
+  if (def.vector && def.vectorUrl) {
+    const layerGroup = L.layerGroup();
+    fetch(def.vectorUrl)
+      .then(r => r.json())
+      .then(gj => {
+        L.geoJSON(gj, {
+          style: feat => {
+            const p = feat.properties;
+            let s = {};
+            if (def.vectorStyleMap && def.vectorStyleProp) {
+              s = def.vectorStyleMap[p[def.vectorStyleProp]] || {};
+            } else if (def.vectorStyle) {
+              s = def.vectorStyle[p.zone] || {};
+            } else {
+              s = { color: p.stroke || '#666', fillColor: p.fill || '#aaa',
+                    fillOpacity: p['fill-opacity'] ?? 0.5, weight: p['stroke-width'] ?? 1 };
+            }
+            return {
+              color:       s.color       || '#666',
+              fillColor:   s.fillColor   || s.color || '#aaa',
+              fillOpacity: (s.fillOpacity ?? 0.5) * (def.opacity ?? 1),
+              weight:      s.weight      || 1.5,
+              opacity:     def.opacity   ?? 0.9
+            };
+          },
+          onEachFeature: (feat, layer) => {
+            const p = feat.properties;
+            const label  = p.zone || p.elevation || p.flood_depth || p.road || p.name || '';
+            const name   = p.name || '';
+            const source = def.source || '';
+            layer.bindPopup(
+              `<b>${label}</b>` +
+              (name && label !== name ? `<br>${name}` : '') +
+              (source ? `<br><small style="color:#888">${source}</small>` : '')
+            );
+          }
+        }).addTo(layerGroup);
+      })
+      .catch(err => console.error(`[overlay] failed to load "${def.id}":`, err));
+    layerGroup.setOpacity = function(v) {
+      this.eachLayer(l => { if (l.setStyle) l.setStyle({ opacity: v, fillOpacity: v * 0.6 }); });
+    };
+    return layerGroup;
   }
 
   // GeoTIFF image overlay

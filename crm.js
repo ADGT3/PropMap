@@ -438,7 +438,6 @@ async function renderContactsSection(pipelineId, agentData) {
         <div class="crm-form-actions">
           <button class="crm-save-btn">${isEdit ? 'Save Changes' : 'Save & Link'}</button>
           <button class="crm-cancel-btn">Cancel</button>
-          ${isEdit ? `<button class="crm-delete-btn">Delete Contact</button>` : ''}
         </div>
       </div>`;
 
@@ -527,13 +526,6 @@ async function renderContactsSection(pipelineId, agentData) {
     });
 
     formEl.querySelector('.crm-cancel-btn').addEventListener('click', hideForm);
-
-    formEl.querySelector('.crm-delete-btn')?.addEventListener('click', async () => {
-      if (!confirm(`Delete ${displayName(prefill)} permanently?`)) return;
-      await apiDelete({ id: prefill.id });
-      hideForm();
-      reload();
-    });
   }
 
   function hideForm() {
@@ -551,4 +543,607 @@ async function renderContactsSection(pipelineId, agentData) {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-window.CRM = { renderContactsSection, splitName, displayName };
+window.CRM = { renderContactsSection, splitName, displayName, renderCRMView };
+
+// ─── Standalone CRM View ──────────────────────────────────────────────────────
+
+function renderCRMView(container) {
+  container.innerHTML = `
+    <div class="crm-view-wrap">
+      <div class="crm-view-header">
+        <div class="crm-view-tabs">
+          <button class="crm-tab active" data-tab="contacts">👤 Contacts</button>
+          <button class="crm-tab" data-tab="organisations">🏢 Organisations</button>
+        </div>
+        <button class="crm-view-add-btn" id="crmViewAddBtn">+ New Contact</button>
+      </div>
+      <div class="crm-view-body">
+        <div class="crm-tab-pane active" id="crm-pane-contacts"></div>
+        <div class="crm-tab-pane" id="crm-pane-organisations"></div>
+      </div>
+    </div>
+    <div class="crm-drawer-overlay" id="crmDrawerOverlay" style="display:none">
+      <div class="crm-drawer" id="crmDrawer"></div>
+    </div>`;
+
+  // Tab switching
+  container.querySelectorAll('.crm-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      container.querySelectorAll('.crm-tab').forEach(t => t.classList.remove('active'));
+      container.querySelectorAll('.crm-tab-pane').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      container.querySelector(`#crm-pane-${tab.dataset.tab}`).classList.add('active');
+      if (tab.dataset.tab === 'contacts') loadContactsPane();
+      if (tab.dataset.tab === 'organisations') loadOrgsPane();
+    });
+  });
+
+  // Drawer helpers
+  function openDrawer(renderFn) {
+    const overlay = container.querySelector('#crmDrawerOverlay');
+    const drawer  = container.querySelector('#crmDrawer');
+    overlay.style.display = '';
+    renderFn(drawer);
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeDrawer(); }, { once: true });
+  }
+  function closeDrawer() {
+    const overlay = container.querySelector('#crmDrawerOverlay');
+    overlay.style.display = 'none';
+    container.querySelector('#crmDrawer').innerHTML = '';
+  }
+  window._crmCloseDrawer = closeDrawer;
+
+  // + New Contact button
+  container.querySelector('#crmViewAddBtn').addEventListener('click', () => {
+    openDrawer(drawer => renderContactDrawer(drawer, null, () => { closeDrawer(); loadContactsPane(); }));
+  });
+
+  // ── Contacts pane ──────────────────────────────────────────────────────────
+
+  let contactSearch = '';
+  let contactPage   = 0;
+  const PAGE_SIZE   = 30;
+
+  async function loadContactsPane() {
+    const pane = container.querySelector('#crm-pane-contacts');
+    pane.innerHTML = `
+      <div class="crm-pane-toolbar">
+        <input class="kb-input crm-view-search" placeholder="Search contacts…" value="${contactSearch}">
+      </div>
+      <div class="crm-contact-table-wrap">
+        <table class="crm-contact-table">
+          <thead><tr>
+            <th>Name</th><th>Organisation</th><th>Role</th><th>Mobile</th><th>Email</th><th>Properties</th><th></th>
+          </tr></thead>
+          <tbody id="crmContactTableBody"><tr><td colspan="7" class="crm-loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="crm-pane-pagination" id="crmContactPagination"></div>`;
+
+    pane.querySelector('.crm-view-search').addEventListener('input', e => {
+      contactSearch = e.target.value;
+      contactPage   = 0;
+      fetchContacts();
+    });
+
+    fetchContacts();
+  }
+
+  async function fetchContacts() {
+    const pane   = container.querySelector('#crm-pane-contacts');
+    const tbody  = pane?.querySelector('#crmContactTableBody');
+    const pagEl  = pane?.querySelector('#crmContactPagination');
+    if (!tbody) return;
+
+    tbody.innerHTML = `<tr><td colspan="7" class="crm-loading">Loading…</td></tr>`;
+    try {
+      const params = { all: '1', offset: contactPage * PAGE_SIZE, limit: PAGE_SIZE };
+      if (contactSearch) params.search = contactSearch;
+      const data = await apiGet(params);
+      const contacts = Array.isArray(data) ? data : (data.contacts || []);
+      const total    = data.total ?? contacts.length;
+
+      if (!contacts.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="crm-empty">No contacts found</td></tr>`;
+        if (pagEl) pagEl.innerHTML = '';
+        return;
+      }
+
+      tbody.innerHTML = '';
+      contacts.forEach(c => {
+        const tr = document.createElement('tr');
+        tr.className = 'crm-contact-tr';
+        const roleLabel = ROLES.find(r => r.value === c.role)?.label || c.role || '—';
+        const propCount = c.property_count ?? 0;
+        tr.innerHTML = `
+          <td class="crm-td-name"><strong>${displayName(c)}</strong></td>
+          <td>${c.org_name || '—'}</td>
+          <td><span class="crm-role-badge crm-role-${(c.role||'').replace(/[^a-z0-9]/gi,'_')}">${roleLabel}</span></td>
+          <td>${c.mobile ? `<a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a>` : '—'}</td>
+          <td>${c.email  ? `<a href="mailto:${c.email}" class="crm-link">${c.email}</a>` : '—'}</td>
+          <td>${propCount ? `<span class="crm-prop-count">${propCount}</span>` : '—'}</td>
+          <td class="crm-td-actions">
+            <button class="crm-view-edit-btn" title="Edit">✎</button>
+            <button class="crm-view-delete-btn" title="Delete" style="color:#c0392b">🗑</button>
+          </td>`;
+
+        tr.querySelector('.crm-td-name').addEventListener('click', () => {
+          openDrawer(drawer => renderContactDetail(drawer, c.id, () => { closeDrawer(); fetchContacts(); }));
+        });
+        tr.querySelector('.crm-view-edit-btn').addEventListener('click', e => {
+          e.stopPropagation();
+          openDrawer(drawer => renderContactDrawer(drawer, c, () => { closeDrawer(); fetchContacts(); }));
+        });
+        tr.querySelector('.crm-view-delete-btn').addEventListener('click', async e => {
+          e.stopPropagation();
+          if (!confirm(`Permanently delete ${displayName(c)}? This cannot be undone.`)) return;
+          await apiDelete({ id: c.id });
+          fetchContacts();
+        });
+
+        tbody.appendChild(tr);
+      });
+
+      // Pagination
+      if (pagEl) {
+        const totalPages = Math.ceil(total / PAGE_SIZE);
+        if (totalPages <= 1) { pagEl.innerHTML = ''; return; }
+        pagEl.innerHTML = '';
+        const prev = document.createElement('button');
+        prev.className = 'crm-page-btn';
+        prev.textContent = '← Prev';
+        prev.disabled = contactPage === 0;
+        prev.addEventListener('click', () => { contactPage--; fetchContacts(); });
+        const next = document.createElement('button');
+        next.className = 'crm-page-btn';
+        next.textContent = 'Next →';
+        next.disabled = contactPage >= totalPages - 1;
+        next.addEventListener('click', () => { contactPage++; fetchContacts(); });
+        const info = document.createElement('span');
+        info.className = 'crm-page-info';
+        info.textContent = `Page ${contactPage + 1} of ${totalPages} (${total} contacts)`;
+        pagEl.appendChild(prev);
+        pagEl.appendChild(info);
+        pagEl.appendChild(next);
+      }
+    } catch (err) {
+      if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="crm-empty">Error loading contacts</td></tr>`;
+    }
+  }
+
+  // ── Contact detail drawer ──────────────────────────────────────────────────
+
+  async function renderContactDetail(drawer, contactId, onDone) {
+    drawer.innerHTML = '<div class="crm-drawer-loading">Loading…</div>';
+    try {
+      const [contactData, notes, props, allPipeline] = await Promise.all([
+        apiGet({ id: contactId }),
+        apiGet({ notes: '1', contact_id: contactId }),
+        apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
+        apiGet({ pipeline_list: '1' }).catch(() => []),
+      ]);
+      const c = Array.isArray(contactData) ? contactData[0] : contactData;
+      if (!c) { drawer.innerHTML = '<div class="crm-drawer-loading">Not found</div>'; return; }
+
+      drawer.innerHTML = `
+        <div class="crm-drawer-header">
+          <div>
+            <div class="crm-drawer-title">${displayName(c)}</div>
+            <div class="crm-drawer-subtitle">${[c.org_name, c.mobile, c.email].filter(Boolean).join(" · ")}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="crm-drawer-edit-btn kb-add-offer-btn">✎ Edit</button>
+            <button class="crm-drawer-close">✕</button>
+          </div>
+        </div>
+        <div class="crm-drawer-body">
+
+          <div class="crm-drawer-section">
+            <div class="crm-drawer-section-title">Contact Details</div>
+            <div class="crm-detail-grid">
+              ${c.mobile   ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
+              ${c.email    ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
+              ${c.org_name ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
+              <div class="crm-detail-label">Source</div><div>${c.source || "manual"}</div>
+            </div>
+          </div>
+
+          <div class="crm-drawer-section">
+            <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+              Linked Properties
+              <button class="crm-detail-add-prop-btn kb-add-offer-btn">+ Link Property</button>
+            </div>
+            <div id="crmDetailPropsList">
+              ${props.length ? props.map(p => `
+                <div class="crm-prop-row" data-pipeline-id="${p.pipeline_id}">
+                  <span class="crm-prop-address">${p.address || p.pipeline_id}${p.suburb ? ", " + p.suburb : ""}</span>
+                  <select class="crm-prop-role-sel kb-input" data-pipeline-id="${p.pipeline_id}" style="font-size:11px;padding:2px 4px;width:auto">
+                    ${ROLES.map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
+                  </select>
+                  <button class="crm-prop-unlink-btn" data-pipeline-id="${p.pipeline_id}" title="Remove">✕</button>
+                </div>`).join("") : "<div class=\"crm-empty\">No linked properties</div>"}
+            </div>
+            <div class="crm-detail-add-prop-form" style="display:none;margin-top:8px">
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <select class="kb-input crm-prop-select" style="flex:2;font-size:12px">
+                  <option value="">Select property…</option>
+                  ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
+                </select>
+                <select class="kb-input crm-prop-role-new" style="font-size:12px">
+                  ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                </select>
+                <button class="crm-prop-link-save kb-add-offer-btn">Link</button>
+                <button class="crm-prop-link-cancel">Cancel</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="crm-drawer-section">
+            <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+              Notes <span style="font-weight:400;color:var(--text-secondary)">(${notes.length})</span>
+              <button class="crm-drawer-add-note-btn kb-add-offer-btn">+ Add Note</button>
+            </div>
+            <div class="crm-drawer-note-input" style="display:none;margin-bottom:10px">
+              <textarea class="kb-input crm-drawer-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+              <div style="display:flex;gap:6px;margin-top:4px;align-items:center;flex-wrap:wrap">
+                <select class="kb-input crm-drawer-note-prop" style="flex:1;font-size:12px;min-width:140px">
+                  <option value="">No property</option>
+                  ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
+                </select>
+                <button class="crm-drawer-note-save kb-add-offer-btn">Save Note</button>
+                <button class="crm-drawer-note-cancel">Cancel</button>
+              </div>
+            </div>
+            <div class="crm-drawer-notes-list">
+              ${notes.length ? notes.map(n => `
+                <div class="crm-note-entry" data-note-id="${n.id}">
+                  <div class="crm-note-meta">
+                    <span class="crm-note-date">${formatNoteDate(n.created_at)}${n.property_address ? ` · <span class="crm-note-prop">${n.property_address}</span>` : ""}</span>
+                    <button class="crm-note-delete" data-id="${n.id}">✕</button>
+                  </div>
+                  <div class="crm-note-text">${n.note_text}</div>
+                </div>`).join("") : "<div class=\"crm-empty\">No notes yet</div>"}
+            </div>
+          </div>
+
+        </div>`;
+
+      drawer.querySelector(".crm-drawer-close").addEventListener("click", onDone);
+      drawer.querySelector(".crm-drawer-edit-btn").addEventListener("click", () => {
+        renderContactDrawer(drawer, c, () => renderContactDetail(drawer, contactId, onDone));
+      });
+
+      // Property management
+      const addPropBtn  = drawer.querySelector(".crm-detail-add-prop-btn");
+      const addPropForm = drawer.querySelector(".crm-detail-add-prop-form");
+      const propsList   = drawer.querySelector("#crmDetailPropsList");
+
+      addPropBtn.addEventListener("click", () => { addPropForm.style.display = ""; addPropBtn.style.display = "none"; });
+      drawer.querySelector(".crm-prop-link-cancel").addEventListener("click", () => { addPropForm.style.display = "none"; addPropBtn.style.display = ""; });
+      drawer.querySelector(".crm-prop-link-save").addEventListener("click", async () => {
+        const pipelineId = drawer.querySelector(".crm-prop-select").value;
+        const role       = drawer.querySelector(".crm-prop-role-new").value;
+        if (!pipelineId) return;
+        await apiPost({ action: "link", contact_id: contactId, pipeline_id: pipelineId, role });
+        renderContactDetail(drawer, contactId, onDone);
+      });
+      propsList.querySelectorAll(".crm-prop-role-sel").forEach(sel => {
+        sel.addEventListener("change", async () => {
+          await apiPost({ action: "link", contact_id: contactId, pipeline_id: sel.dataset.pipelineId, role: sel.value });
+        });
+      });
+      propsList.querySelectorAll(".crm-prop-unlink-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Remove this property link?")) return;
+          await apiPost({ action: "unlink", contact_id: contactId, pipeline_id: btn.dataset.pipelineId });
+          renderContactDetail(drawer, contactId, onDone);
+        });
+      });
+
+      // Notes
+      const addNoteBtn = drawer.querySelector(".crm-drawer-add-note-btn");
+      const noteInput  = drawer.querySelector(".crm-drawer-note-input");
+      addNoteBtn.addEventListener("click", () => { noteInput.style.display = ""; addNoteBtn.style.display = "none"; drawer.querySelector(".crm-drawer-note-text").focus(); });
+      drawer.querySelector(".crm-drawer-note-cancel").addEventListener("click", () => { noteInput.style.display = "none"; addNoteBtn.style.display = ""; });
+      drawer.querySelector(".crm-drawer-note-save").addEventListener("click", async () => {
+        const text       = drawer.querySelector(".crm-drawer-note-text").value.trim();
+        const pipelineId = drawer.querySelector(".crm-drawer-note-prop").value || null;
+        if (!text) return;
+        await apiPost({ action: "add_note", contact_id: contactId, pipeline_id: pipelineId, note_text: text });
+        renderContactDetail(drawer, contactId, onDone);
+      });
+      drawer.querySelectorAll(".crm-note-delete").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("Delete this note?")) return;
+          await apiDelete({ note_id: btn.dataset.id });
+          renderContactDetail(drawer, contactId, onDone);
+        });
+      });
+
+    } catch (err) {
+      console.error("[CRM] renderContactDetail failed:", err);
+      drawer.innerHTML = `<div class="crm-drawer-loading">Error loading contact</div>`;
+    }
+  }
+
+    // ── Contact edit/create drawer ─────────────────────────────────────────────
+
+  function renderContactDrawer(drawer, prefill, onDone) {
+    const isEdit = !!prefill?.id;
+    drawer.innerHTML = `
+      <div class="crm-drawer-header">
+        <div class="crm-drawer-title">${isEdit ? 'Edit Contact' : 'New Contact'}</div>
+        <button class="crm-drawer-close">✕</button>
+      </div>
+      <div class="crm-drawer-body">
+        <div class="crm-form-inner">
+          <div class="crm-form-row">
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">First Name *</label>
+              <input class="kb-input crm-first" type="text" placeholder="First" value="${prefill?.first_name || ''}">
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Last Name</label>
+              <input class="kb-input crm-last" type="text" placeholder="Last" value="${prefill?.last_name || ''}">
+            </div>
+          </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Mobile</label>
+              <input class="kb-input crm-mobile" type="text" placeholder="04xx xxx xxx" value="${prefill?.mobile || ''}">
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Email</label>
+              <input class="kb-input crm-email" type="text" placeholder="email@domain.com" value="${prefill?.email || ''}">
+            </div>
+          </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:2">
+              <label class="kb-field-label">Organisation</label>
+              <div class="crm-org-wrap"></div>
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Role</label>
+              <select class="kb-input crm-role">
+                ${ROLES.map(r => `<option value="${r.value}" ${r.value === (prefill?.role || 'vendor') ? 'selected' : ''}>${r.label}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="crm-duplicate-warning-wrap"></div>
+          <div class="crm-form-actions">
+            <button class="crm-save-btn kb-add-offer-btn">${isEdit ? 'Save Changes' : 'Create Contact'}</button>
+            <button class="crm-cancel-btn">Cancel</button>
+            ${isEdit ? `<button class="crm-delete-btn" style="color:#c0392b;margin-left:auto">🗑 Delete</button>` : ''}
+          </div>
+        </div>
+      </div>`;
+
+    drawer.querySelector('.crm-drawer-close').addEventListener('click', onDone);
+    drawer.querySelector('.crm-cancel-btn').addEventListener('click', onDone);
+
+    // Org typeahead
+    let selectedOrgId = prefill?.organisation_id || null;
+    const orgTA = buildOrgTypeahead(drawer.querySelector('.crm-org-wrap'), (id) => { selectedOrgId = id; });
+    if (prefill?.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
+
+    // Duplicate detection (new only)
+    if (!isEdit) {
+      const dupWrap = drawer.querySelector('.crm-duplicate-warning-wrap');
+      let dupTimer;
+      const checkDups = () => {
+        clearTimeout(dupTimer);
+        dupTimer = setTimeout(async () => {
+          const first  = drawer.querySelector('.crm-first').value.trim();
+          const last   = drawer.querySelector('.crm-last').value.trim();
+          const email  = drawer.querySelector('.crm-email').value.trim();
+          const mobile = drawer.querySelector('.crm-mobile').value.trim();
+          const dups   = await checkDuplicates(first, last, email, mobile);
+          renderDuplicateWarning(dupWrap, dups, existing => {
+            if (!confirm(`Link existing contact "${displayName(existing)}" instead?`)) return;
+            onDone();
+          });
+        }, 500);
+      };
+      ['crm-first','crm-last','crm-email','crm-mobile'].forEach(cls => {
+        drawer.querySelector(`.${cls}`)?.addEventListener('input', checkDups);
+      });
+    }
+
+    // Save
+    drawer.querySelector('.crm-save-btn').addEventListener('click', async () => {
+      const first = drawer.querySelector('.crm-first').value.trim();
+      if (!first) { drawer.querySelector('.crm-first').focus(); return; }
+      const data = {
+        first_name:      first,
+        last_name:       drawer.querySelector('.crm-last').value.trim(),
+        mobile:          drawer.querySelector('.crm-mobile').value.trim(),
+        email:           drawer.querySelector('.crm-email').value.trim(),
+        organisation_id: selectedOrgId,
+        source:          prefill?.source || 'manual',
+      };
+      if (isEdit) {
+        await apiPut({ id: prefill.id, ...data });
+      } else {
+        await apiPost(data);
+      }
+      onDone();
+    });
+
+    // Delete (edit only)
+    drawer.querySelector('.crm-delete-btn')?.addEventListener('click', async () => {
+      if (!confirm(`Permanently delete ${displayName(prefill)}? This cannot be undone.`)) return;
+      await apiDelete({ id: prefill.id });
+      onDone();
+    });
+  }
+
+  // ── Organisations pane ─────────────────────────────────────────────────────
+
+  async function loadOrgsPane() {
+    const pane = container.querySelector('#crm-pane-organisations');
+    pane.innerHTML = `
+      <div class="crm-pane-toolbar">
+        <input class="kb-input crm-view-search" id="orgSearchInput" placeholder="Search organisations…">
+        <button class="crm-view-add-btn" id="orgAddBtn">+ New Organisation</button>
+      </div>
+      <div class="crm-contact-table-wrap">
+        <table class="crm-contact-table">
+          <thead><tr><th>Organisation</th><th>Contacts</th><th></th></tr></thead>
+          <tbody id="crmOrgTableBody"><tr><td colspan="3" class="crm-loading">Loading…</td></tr></tbody>
+        </table>
+      </div>`;
+
+    let orgSearch = '';
+    pane.querySelector('#orgSearchInput').addEventListener('input', e => {
+      orgSearch = e.target.value;
+      fetchOrgs(orgSearch);
+    });
+
+    pane.querySelector('#orgAddBtn').addEventListener('click', () => {
+      openDrawer(drawer => renderOrgDrawer(drawer, null, () => { closeDrawer(); loadOrgsPane(); }));
+    });
+
+    async function fetchOrgs(q = '') {
+      const tbody = pane.querySelector('#crmOrgTableBody');
+      tbody.innerHTML = `<tr><td colspan="3" class="crm-loading">Loading…</td></tr>`;
+      const params = { all_orgs: '1' };
+      if (q) params.org_search = q;
+      const orgs = await apiGet(params).catch(() => []);
+      if (!orgs.length) { tbody.innerHTML = `<tr><td colspan="3" class="crm-empty">No organisations found</td></tr>`; return; }
+      tbody.innerHTML = '';
+      orgs.forEach(org => {
+        const tr = document.createElement('tr');
+        tr.className = 'crm-contact-tr';
+        tr.innerHTML = `
+          <td><strong>${org.name}</strong></td>
+          <td>${org.contact_count ?? '—'}</td>
+          <td class="crm-td-actions">
+            <button class="crm-view-edit-btn" title="Edit">✎</button>
+            <button class="crm-view-delete-btn" title="Delete" style="color:#c0392b">🗑</button>
+          </td>`;
+        tr.querySelector('.crm-view-edit-btn').addEventListener('click', () => {
+          openDrawer(drawer => renderOrgDrawer(drawer, org, () => { closeDrawer(); fetchOrgs(orgSearch); }));
+        });
+        tr.querySelector('.crm-view-delete-btn').addEventListener('click', async () => {
+          if (!confirm(`Delete organisation "${org.name}"?`)) return;
+          await apiDelete({ org_id: org.id });
+          fetchOrgs(orgSearch);
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    fetchOrgs();
+  }
+
+  async function renderOrgDrawer(drawer, prefill, onDone) {
+    const isEdit = !!prefill?.id;
+
+    async function render() {
+      drawer.innerHTML = '<div class="crm-drawer-loading">Loading…</div>';
+
+      const [orgContacts, allContacts] = isEdit ? await Promise.all([
+        apiGet({ org_contacts: prefill.id }).catch(() => []),
+        apiGet({ all: '1', limit: 200 }).then(d => d.contacts || d).catch(() => []),
+      ]) : [[], []];
+
+      // Contacts not already in this org
+      const orgContactIds = new Set(orgContacts.map(c => c.id));
+      const available = Array.isArray(allContacts) ? allContacts.filter(c => !orgContactIds.has(c.id)) : [];
+
+      drawer.innerHTML = `
+        <div class="crm-drawer-header">
+          <div class="crm-drawer-title">${isEdit ? prefill.name : 'New Organisation'}</div>
+          <button class="crm-drawer-close">✕</button>
+        </div>
+        <div class="crm-drawer-body">
+          <div class="crm-drawer-section">
+            <div class="crm-drawer-section-title">Organisation Name</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input class="kb-input crm-org-name" type="text" placeholder="e.g. Ray White Parramatta" value="${prefill?.name || ''}" style="flex:1">
+              <button class="crm-org-save-btn kb-add-offer-btn">${isEdit ? 'Save' : 'Create'}</button>
+            </div>
+          </div>
+
+          ${isEdit ? `
+          <div class="crm-drawer-section">
+            <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+              Contacts (${orgContacts.length})
+              <button class="crm-org-add-contact-btn kb-add-offer-btn">+ Add Contact</button>
+            </div>
+            <div class="crm-org-add-contact-form" style="display:none;margin-bottom:8px">
+              <div style="display:flex;gap:6px;align-items:center">
+                <select class="kb-input crm-org-contact-select" style="flex:1;font-size:12px">
+                  <option value="">Select contact…</option>
+                  ${available.map(c => `<option value="${c.id}">${displayName(c)}${c.org_name ? ' · ' + c.org_name : ''}</option>`).join('')}
+                </select>
+                <button class="crm-org-contact-link-save kb-add-offer-btn">Add</button>
+                <button class="crm-org-contact-link-cancel">Cancel</button>
+              </div>
+            </div>
+            <div id="crmOrgContactsList">
+              ${orgContacts.length ? orgContacts.map(c => `
+                <div class="crm-prop-row" data-contact-id="${c.id}">
+                  <span class="crm-prop-address" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px" data-contact-id="${c.id}">${displayName(c)}</span>
+                  <span style="font-size:11px;color:var(--text-secondary)">${c.mobile || c.email || ''}</span>
+                  <button class="crm-org-contact-remove" data-contact-id="${c.id}" title="Remove from org">✕</button>
+                </div>`).join('') : '<div class="crm-empty">No contacts in this organisation</div>'}
+            </div>
+          </div>` : ''}
+
+        </div>`;
+
+      drawer.querySelector('.crm-drawer-close').addEventListener('click', onDone);
+
+      // Save org name
+      drawer.querySelector('.crm-org-save-btn').addEventListener('click', async () => {
+        const name = drawer.querySelector('.crm-org-name').value.trim();
+        if (!name) { drawer.querySelector('.crm-org-name').focus(); return; }
+        if (isEdit) {
+          await apiPut({ org_id: prefill.id, name });
+          prefill.name = name;
+          drawer.querySelector('.crm-drawer-title').textContent = name;
+        } else {
+          const created = await apiPost({ action: 'create_org', name });
+          onDone();
+          return;
+        }
+      });
+
+      if (!isEdit) return;
+
+      // Add contact to org
+      const addContactBtn  = drawer.querySelector('.crm-org-add-contact-btn');
+      const addContactForm = drawer.querySelector('.crm-org-add-contact-form');
+      addContactBtn.addEventListener('click', () => { addContactForm.style.display = ''; addContactBtn.style.display = 'none'; });
+      drawer.querySelector('.crm-org-contact-link-cancel').addEventListener('click', () => { addContactForm.style.display = 'none'; addContactBtn.style.display = ''; });
+      drawer.querySelector('.crm-org-contact-link-save').addEventListener('click', async () => {
+        const contactId = drawer.querySelector('.crm-org-contact-select').value;
+        if (!contactId) return;
+        await apiPost({ action: 'set_org', contact_id: parseInt(contactId), organisation_id: prefill.id });
+        render();
+      });
+
+      // Remove contact from org
+      drawer.querySelectorAll('.crm-org-contact-remove').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Remove this contact from the organisation?')) return;
+          await apiPost({ action: 'set_org', contact_id: parseInt(btn.dataset.contactId), organisation_id: null });
+          render();
+        });
+      });
+
+      // Click contact name → open contact detail
+      drawer.querySelectorAll('.crm-prop-address[data-contact-id]').forEach(el => {
+        el.addEventListener('click', () => {
+          renderContactDetail(drawer, parseInt(el.dataset.contactId), () => render());
+        });
+      });
+    }
+
+    render();
+  }
+
+  // Initial load
+  loadContactsPane();
+}

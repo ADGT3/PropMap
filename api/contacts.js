@@ -57,7 +57,67 @@ export default async function handler(req, res) {
 
       // ── GET ──────────────────────────────────────────────────────────────────
       case 'GET': {
-        const { id, search, pipeline_id, check_duplicate, orgs, org_search, notes, contact_id, note_id } = req.query;
+        const { id, search, pipeline_id, check_duplicate, orgs, org_search, notes, contact_id, all, all_orgs, contact_properties, offset, limit } = req.query;
+
+        // All organisations with contact count
+        if (all_orgs) {
+          const q = org_search ? `%${org_search}%` : null;
+          const rows = q
+            ? await sql`
+                SELECT o.*, COUNT(c.id)::int AS contact_count
+                FROM organisations o
+                LEFT JOIN contacts c ON c.organisation_id = o.id
+                WHERE o.name ILIKE ${q}
+                GROUP BY o.id ORDER BY o.name`
+            : await sql`
+                SELECT o.*, COUNT(c.id)::int AS contact_count
+                FROM organisations o
+                LEFT JOIN contacts c ON c.organisation_id = o.id
+                GROUP BY o.id ORDER BY o.name`;
+          return res.status(200).json(rows);
+        }
+
+        // Contacts belonging to an organisation
+        if (req.query.org_contacts) {
+          const orgId = parseInt(req.query.org_contacts);
+          const rows = await sql`
+            SELECT c.*, o.name AS org_name
+            FROM contacts c
+            LEFT JOIN organisations o ON o.id = c.organisation_id
+            WHERE c.organisation_id = ${orgId}
+            ORDER BY c.last_name, c.first_name`;
+          return res.status(200).json(rows);
+        }
+
+        // All pipeline properties for note association dropdown
+        if (req.query.pipeline_list) {
+          try {
+            const rows = await sql`
+              SELECT id,
+                COALESCE(data->>'address', id::text) AS address,
+                COALESCE(data->>'suburb', '') AS suburb
+              FROM pipeline
+              ORDER BY data->>'address' NULLS LAST
+              LIMIT 500`;
+            return res.status(200).json(rows);
+          } catch (e) {
+            return res.status(200).json([]);
+          }
+        }
+
+        // Properties linked to a contact
+        if (contact_properties) {
+          if (!contact_id) return res.status(400).json({ error: 'contact_id required' });
+          const rows = await sql`
+            SELECT cp.pipeline_id, cp.role,
+              COALESCE(p.data->>'address', cp.pipeline_id) AS address,
+              p.data->>'suburb' AS suburb
+            FROM contact_properties cp
+            LEFT JOIN pipeline p ON p.id = cp.pipeline_id
+            WHERE cp.contact_id = ${parseInt(contact_id)}
+            ORDER BY cp.created_at DESC`;
+          return res.status(200).json(rows);
+        }
 
         // List / search organisations
         if (orgs) {
@@ -73,6 +133,7 @@ export default async function handler(req, res) {
 
         // Notes
         if (notes) {
+          const { note_id } = req.query;
           if (contact_id) {
             const rows = await sql`
               SELECT n.*, p.data->>'address' AS property_address
@@ -97,22 +158,27 @@ export default async function handler(req, res) {
         // Duplicate check
         if (check_duplicate) {
           const { first_name, last_name, email, mobile } = req.query;
-          const conditions = [];
-          if (email?.trim()) conditions.push(sql`c.email ILIKE ${email.trim()}`);
-          if (mobile?.trim()) conditions.push(sql`c.mobile ILIKE ${mobile.trim()}`);
-          if (first_name?.trim() && last_name?.trim()) {
-            conditions.push(sql`(c.first_name ILIKE ${first_name.trim()} AND c.last_name ILIKE ${last_name.trim()})`);
+          if (!email?.trim() && !mobile?.trim() && !(first_name?.trim() && last_name?.trim())) {
+            return res.status(200).json([]);
           }
-          if (!conditions.length) return res.status(200).json([]);
-          const rows = await sql`
-            SELECT c.*, o.name AS org_name
-            FROM contacts c
-            LEFT JOIN organisations o ON o.id = c.organisation_id
-            WHERE ${conditions[0]}
-            ${conditions[1] ? sql`OR ${conditions[1]}` : sql``}
-            ${conditions[2] ? sql`OR ${conditions[2]}` : sql``}
-            LIMIT 5`;
-          return res.status(200).json(rows);
+          // Build safe OR conditions using parameterised sub-queries
+          const results = new Map();
+          const addResults = (rows) => rows.forEach(r => results.set(r.id, r));
+          await Promise.all([
+            email?.trim() ? sql`
+              SELECT c.*, o.name AS org_name FROM contacts c
+              LEFT JOIN organisations o ON o.id = c.organisation_id
+              WHERE c.email ILIKE ${email.trim()} LIMIT 5`.then(addResults) : null,
+            mobile?.trim() ? sql`
+              SELECT c.*, o.name AS org_name FROM contacts c
+              LEFT JOIN organisations o ON o.id = c.organisation_id
+              WHERE c.mobile ILIKE ${mobile.trim()} LIMIT 5`.then(addResults) : null,
+            (first_name?.trim() && last_name?.trim()) ? sql`
+              SELECT c.*, o.name AS org_name FROM contacts c
+              LEFT JOIN organisations o ON o.id = c.organisation_id
+              WHERE c.first_name ILIKE ${first_name.trim()} AND c.last_name ILIKE ${last_name.trim()} LIMIT 5`.then(addResults) : null,
+          ].filter(Boolean));
+          return res.status(200).json([...results.values()].slice(0, 5));
         }
 
         // Single contact
@@ -144,7 +210,38 @@ export default async function handler(req, res) {
           return res.status(200).json(rows);
         }
 
-        // Search
+        // All contacts — paginated, for CRM view
+        if (all) {
+          const lim = Math.min(parseInt(limit) || 30, 100);
+          const off = parseInt(offset) || 0;
+          if (search) {
+            const q = `%${search}%`;
+            const rows = await sql`
+              SELECT c.*, o.name AS org_name,
+                COUNT(DISTINCT cp.pipeline_id)::int AS property_count
+              FROM contacts c
+              LEFT JOIN organisations o ON o.id = c.organisation_id
+              LEFT JOIN contact_properties cp ON cp.contact_id = c.id
+              WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
+                 OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
+              GROUP BY c.id, o.id
+              ORDER BY c.last_name, c.first_name`;
+            const total = rows.length;
+            return res.status(200).json({ contacts: rows.slice(off, off + lim), total });
+          }
+          const rows = await sql`
+            SELECT c.*, o.name AS org_name,
+              COUNT(DISTINCT cp.pipeline_id)::int AS property_count
+            FROM contacts c
+            LEFT JOIN organisations o ON o.id = c.organisation_id
+            LEFT JOIN contact_properties cp ON cp.contact_id = c.id
+            GROUP BY c.id, o.id
+            ORDER BY c.last_name, c.first_name`;
+          const total = rows.length;
+          return res.status(200).json({ contacts: rows.slice(off, off + lim), total });
+        }
+
+        // List all (unpaginated — used by existing search/link flows)
         if (search) {
           const q = `%${search}%`;
           const rows = await sql`
@@ -202,6 +299,16 @@ export default async function handler(req, res) {
           return res.status(201).json(rows[0]);
         }
 
+        // Set organisation on a contact
+        if (body.action === 'set_org') {
+          const { contact_id, organisation_id } = body;
+          if (!contact_id) return res.status(400).json({ error: 'contact_id required' });
+          const rows = await sql`
+            UPDATE contacts SET organisation_id = ${organisation_id || null}, updated_at = now()
+            WHERE id = ${parseInt(contact_id)} RETURNING *`;
+          return res.status(200).json(rows[0]);
+        }
+
         // Link
         if (body.action === 'link') {
           const { contact_id, pipeline_id, role = 'vendor' } = body;
@@ -244,7 +351,18 @@ export default async function handler(req, res) {
 
       // ── PUT ──────────────────────────────────────────────────────────────────
       case 'PUT': {
-        const { id, first_name, last_name, mobile, email, organisation_id, source, domain_id } = req.body;
+        const { id, org_id, first_name, last_name, mobile, email, organisation_id, source, domain_id, name } = req.body;
+
+        // Update organisation
+        if (org_id) {
+          if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+          const rows = await sql`
+            UPDATE organisations SET name = ${name.trim()}
+            WHERE id = ${parseInt(org_id)} RETURNING *`;
+          if (!rows.length) return res.status(404).json({ error: 'Not found' });
+          return res.status(200).json(rows[0]);
+        }
+
         if (!id) return res.status(400).json({ error: 'id required' });
         const rows = await sql`
           UPDATE contacts SET
@@ -264,9 +382,13 @@ export default async function handler(req, res) {
 
       // ── DELETE ───────────────────────────────────────────────────────────────
       case 'DELETE': {
-        const { id, note_id } = req.query;
+        const { id, note_id, org_id } = req.query;
         if (note_id) {
           await sql`DELETE FROM contact_notes WHERE id = ${parseInt(note_id)}`;
+          return res.status(200).json({ ok: true });
+        }
+        if (org_id) {
+          await sql`DELETE FROM organisations WHERE id = ${parseInt(org_id)}`;
           return res.status(200).json({ ok: true });
         }
         if (!id) return res.status(400).json({ error: 'id required' });
