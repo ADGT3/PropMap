@@ -1020,7 +1020,7 @@ function buildLeafletLayer(def) {
     return geoJsonLayer;
   }
 
-  // Vector GeoJSON overlay — fetched from a URL (e.g. planning proposals)
+  // Vector GeoJSON overlay — fetched from a URL (planning proposals etc.)
   if (def.vector && def.vectorUrl) {
     const layerGroup = L.layerGroup();
     fetch(def.vectorUrl)
@@ -1029,14 +1029,12 @@ function buildLeafletLayer(def) {
         L.geoJSON(gj, {
           style: feat => {
             const p = feat.properties;
-            // Support both vectorStyle (keyed by zone) and vectorStyleMap (keyed by a property)
             let s = {};
             if (def.vectorStyleMap && def.vectorStyleProp) {
               s = def.vectorStyleMap[p[def.vectorStyleProp]] || {};
             } else if (def.vectorStyle) {
               s = def.vectorStyle[p.zone] || {};
             } else {
-              // Fall back to inline fill/stroke from GeoJSON properties
               s = { color: p.stroke || '#666', fillColor: p.fill || '#aaa',
                     fillOpacity: p['fill-opacity'] ?? 0.5, weight: p['stroke-width'] ?? 1 };
             }
@@ -1050,9 +1048,14 @@ function buildLeafletLayer(def) {
           },
           onEachFeature: (feat, layer) => {
             const p = feat.properties;
-            const label = p.zone || p.elevation || p.flood_depth || p.road || p.name || '';
-            const name  = p.name || '';
-            layer.bindPopup(`<b>${label}</b>${name && label !== name ? '<br>' + name : ''}`);
+            const label  = p.zone || p.elevation || p.flood_depth || p.road || p.name || '';
+            const name   = p.name || '';
+            const source = def.source || '';
+            layer.bindPopup(
+              `<b>${label}</b>` +
+              (name && label !== name ? `<br>${name}` : '') +
+              (source ? `<br><small style="color:#888">${source}</small>` : '')
+            );
           }
         }).addTo(layerGroup);
       })

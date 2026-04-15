@@ -91,57 +91,6 @@ const OVERLAYS = [
       layers: "show:229"
     }
   },
-
-  // ── Catherine Park North — Topography (Figure 7) ────────────────────────────
-  {
-    id: "catherine-park-north-topography",
-    label: "Catherine Park North – Topography",
-    type: "environmental",
-    group: "environmental",
-    zone: "all",
-    enabled: false,
-    opacity: 0.65,
-    bounds: null,
-    b64: null,
-    vector: true,
-    vectorUrl: "/catherine_park_north_topography_wgs84.geojson",
-    vectorStyleProp: "elevation",
-    vectorStyleMap: {
-      "80-85m":   { color: "#87CEEB", fillColor: "#87CEEB", fillOpacity: 0.6, weight: 0.5 },
-      "85-90m":   { color: "#00E5FF", fillColor: "#00E5FF", fillOpacity: 0.6, weight: 0.5 },
-      "90-95m":   { color: "#40E0D0", fillColor: "#40E0D0", fillOpacity: 0.6, weight: 0.5 },
-      "95-100m":  { color: "#7CFC00", fillColor: "#7CFC00", fillOpacity: 0.6, weight: 0.5 },
-      "100-105m": { color: "#ADFF2F", fillColor: "#ADFF2F", fillOpacity: 0.6, weight: 0.5 },
-      "105-110m": { color: "#FFFF00", fillColor: "#FFFF00", fillOpacity: 0.6, weight: 0.5 },
-      "110-115m": { color: "#FFA500", fillColor: "#FFA500", fillOpacity: 0.6, weight: 0.5 },
-      "115-120m": { color: "#FF7F50", fillColor: "#FF7F50", fillOpacity: 0.6, weight: 0.5 },
-      "125-130m": { color: "#FF6B6B", fillColor: "#FF6B6B", fillOpacity: 0.6, weight: 0.5 }
-    }
-  },
-  // ── Catherine Park North — 1% AEP Flood (Figure 22) ─────────────────────────
-  {
-    id: "catherine-park-north-flood",
-    label: "Catherine Park North – 1% AEP Flood Depth",
-    type: "environmental",
-    group: "environmental",
-    zone: "all",
-    enabled: false,
-    opacity: 0.65,
-    bounds: null,
-    b64: null,
-    vector: true,
-    vectorUrl: "/catherine_park_north_flood_wgs84.geojson",
-    vectorStyleProp: "flood_depth",
-    vectorStyleMap: {
-      "0.0-0.5m": { color: "#1a1aff", fillColor: "#1a1aff", fillOpacity: 0.65, weight: 0.5 },
-      "0.5-1.0m": { color: "#6666ff", fillColor: "#6666ff", fillOpacity: 0.65, weight: 0.5 },
-      "1.0-1.5m": { color: "#87ceeb", fillColor: "#87ceeb", fillOpacity: 0.65, weight: 0.5 },
-      "1.5-2.0m": { color: "#ffff00", fillColor: "#ffff00", fillOpacity: 0.65, weight: 0.5 },
-      "2.0-3.0m": { color: "#ffa500", fillColor: "#ffa500", fillOpacity: 0.65, weight: 0.5 },
-      "3.0-4.0m": { color: "#ffb6c1", fillColor: "#ffb6c1", fillOpacity: 0.65, weight: 0.5 },
-      ">4.0m":    { color: "#ff0000", fillColor: "#ff0000", fillOpacity: 0.65, weight: 0.5 }
-    }
-  },
   // ── Catherine Park North — Land Use Zoning (Figure 40) ─────────────────────
   {
     id: "catherine-park-north-zoning",
@@ -155,6 +104,7 @@ const OVERLAYS = [
     b64: null,
     vector: true,
     vectorUrl: "/catherine_park_north_zoning_wgs84.geojson",
+    source: "Figure 40 – Proposed Land Use Zoning, Catherine Park North Draft Planning Proposal, Sep 2025",
     vectorStyle: {
       R2:  { color: "#cc3333", fillColor: "#ff9999", fillOpacity: 0.50, weight: 1.5 },
       R3:  { color: "#990000", fillColor: "#cc3333", fillOpacity: 0.60, weight: 1.5 },
@@ -174,10 +124,83 @@ const OVERLAYS = [
     b64: null,
     vector: true,
     vectorUrl: "/catherine_park_north_land_reservation_wgs84.geojson",
+    source: "Figure 43 – Land Reservation Acquisition, Catherine Park North Draft Planning Proposal, Sep 2025",
     vectorStyleProp: "zone",
     vectorStyleMap: {
       RE1: { color: "#145214", fillColor: "#228B22", fillOpacity: 0.65, weight: 1.5 },
       SP2: { color: "#B8860B", fillColor: "#FFD700", fillOpacity: 0.65, weight: 1.5 }
+    }
+  },
+  // ── Catherine Park North — Topography (Figure 7) ─────────────────────────────
+  {
+    id: "catherine-park-north-topography",
+    label: "Catherine Park North – Topography",
+    type: "environmental",
+    group: "environmental",
+    zone: "all",
+    enabled: false,
+    opacity: 0.65,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/catherine_park_north_topography_wgs84.geojson",
+    source: "Figure 7 – Topography, Catherine Park North Draft Planning Proposal, Sep 2025",
+    vectorStyleProp: "elevation",
+    vectorStyleMap: {
+      "80-85m":   { color: "#87CEEB", fillColor: "#87CEEB", fillOpacity: 0.6, weight: 0.5 },
+      "85-90m":   { color: "#00E5FF", fillColor: "#00E5FF", fillOpacity: 0.6, weight: 0.5 },
+      "90-95m":   { color: "#40E0D0", fillColor: "#40E0D0", fillOpacity: 0.6, weight: 0.5 },
+      "95-100m":  { color: "#7CFC00", fillColor: "#7CFC00", fillOpacity: 0.6, weight: 0.5 },
+      "100-105m": { color: "#ADFF2F", fillColor: "#ADFF2F", fillOpacity: 0.6, weight: 0.5 },
+      "105-110m": { color: "#FFFF00", fillColor: "#FFFF00", fillOpacity: 0.6, weight: 0.5 },
+      "110-115m": { color: "#FFA500", fillColor: "#FFA500", fillOpacity: 0.6, weight: 0.5 },
+      "115-120m": { color: "#FF7F50", fillColor: "#FF7F50", fillOpacity: 0.6, weight: 0.5 },
+      "125-130m": { color: "#FF6B6B", fillColor: "#FF6B6B", fillOpacity: 0.6, weight: 0.5 }
+    }
+  },
+  // ── Catherine Park North — 1% AEP Flood (Figure 22) ──────────────────────────
+  {
+    id: "catherine-park-north-flood",
+    label: "Catherine Park North – 1% AEP Flood Depth",
+    type: "environmental",
+    group: "environmental",
+    zone: "all",
+    enabled: false,
+    opacity: 0.65,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/catherine_park_north_flood_wgs84.geojson",
+    source: "Figure 22 – Existing Flood Conditions 1% AEP, Catherine Park North Draft Planning Proposal, Sep 2025",
+    vectorStyleProp: "flood_depth",
+    vectorStyleMap: {
+      "0.0-0.5m": { color: "#1a1aff", fillColor: "#1a1aff", fillOpacity: 0.65, weight: 0.5 },
+      "0.5-1.0m": { color: "#6666ff", fillColor: "#6666ff", fillOpacity: 0.65, weight: 0.5 },
+      "1.0-1.5m": { color: "#87ceeb", fillColor: "#87ceeb", fillOpacity: 0.65, weight: 0.5 },
+      "1.5-2.0m": { color: "#ffff00", fillColor: "#ffff00", fillOpacity: 0.65, weight: 0.5 },
+      "2.0-3.0m": { color: "#ffa500", fillColor: "#ffa500", fillOpacity: 0.65, weight: 0.5 },
+      "3.0-4.0m": { color: "#ffb6c1", fillColor: "#ffb6c1", fillOpacity: 0.65, weight: 0.5 },
+      ">4.0m":    { color: "#ff0000", fillColor: "#ff0000", fillOpacity: 0.65, weight: 0.5 }
+    }
+  },
+  // ── Catherine Park North — Rickard Road Alignment (Figure 31) ────────────────
+  {
+    id: "catherine-park-north-rickard-road",
+    label: "Catherine Park North – Rickard Road Alignment",
+    type: "future-roads",
+    group: "transport",
+    zone: "all",
+    enabled: false,
+    opacity: 0.75,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/catherine_park_north_rickard_road_wgs84.geojson",
+    source: "Figure 31 – Revised Rickard Road Alignment, Catherine Park North Draft Planning Proposal, Sep 2025",
+    vectorStyleProp: "road",
+    vectorStyleMap: {
+      "road-yellow": { color: "#FFD700", fillColor: "#FFD700", fillOpacity: 0.7, weight: 2 },
+      "road-aqua":   { color: "#00CED1", fillColor: "#00CED1", fillOpacity: 0.7, weight: 2 }
     }
   },
   {
@@ -229,25 +252,6 @@ const OVERLAYS = [
     wms: {
       url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Transport_and_Infrastructure_2021/MapServer/export",
       layers: "show:1"
-    }
-  },
-  // ── Catherine Park North — Rickard Road Alignment (Figure 31) ───────────────
-  {
-    id: "catherine-park-north-rickard-road",
-    label: "Catherine Park North – Rickard Road Alignment",
-    type: "future-roads",
-    group: "transport",
-    zone: "all",
-    enabled: false,
-    opacity: 0.75,
-    bounds: null,
-    b64: null,
-    vector: true,
-    vectorUrl: "/catherine_park_north_rickard_road_wgs84.geojson",
-    vectorStyleProp: "road",
-    vectorStyleMap: {
-      "road-yellow": { color: "#FFD700", fillColor: "#FFD700", fillOpacity: 0.7, weight: 2 },
-      "road-aqua":   { color: "#00CED1", fillColor: "#00CED1", fillOpacity: 0.7, weight: 2 }
     }
   },
 
