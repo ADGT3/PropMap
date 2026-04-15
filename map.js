@@ -1020,6 +1020,37 @@ function buildLeafletLayer(def) {
     return geoJsonLayer;
   }
 
+  // Vector GeoJSON overlay — fetched from a URL (e.g. planning proposals)
+  if (def.vector && def.vectorUrl) {
+    const layerGroup = L.layerGroup();
+    fetch(def.vectorUrl)
+      .then(r => r.json())
+      .then(gj => {
+        const styles = def.vectorStyle || {};
+        L.geoJSON(gj, {
+          style: feat => {
+            const s = styles[feat.properties.zone] || {};
+            return {
+              color:       s.color       || '#7d3c98',
+              fillColor:   s.fillColor   || '#bb8fce',
+              fillOpacity: (s.fillOpacity ?? 0.5) * (def.opacity ?? 1),
+              weight:      s.weight      || 1.5,
+              opacity:     def.opacity   ?? 0.9
+            };
+          },
+          onEachFeature: (feat, layer) => {
+            const p = feat.properties;
+            layer.bindPopup(`<b>${p.zone}</b> — ${p.name}`);
+          }
+        }).addTo(layerGroup);
+      })
+      .catch(err => console.error(`[overlay] failed to load "${def.id}":`, err));
+    layerGroup.setOpacity = function(v) {
+      this.eachLayer(l => { if (l.setStyle) l.setStyle({ opacity: v, fillOpacity: v * 0.6 }); });
+    };
+    return layerGroup;
+  }
+
   // GeoTIFF image overlay
   if (!def.b64 || !def.bounds) return null;
   const leafletBounds = [

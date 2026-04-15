@@ -30,6 +30,7 @@ sydney-property-map/
 ├── overlays-b64-sw-ilp.js         — Leppington ILP GeoTIFF (b64)
 ├── gsp-wsa-sw-wastewater.js       — WSA wastewater GeoJSON (planning stages)
 ├── WSA_SW_Wastewater_Precincts.geojson
+├── catherine_park_north_zoning_wgs84.geojson  — Catherine Park North proposed zoning (R2/R3/SP2, georeferenced)
 ├── domain-api.js            — Domain API client (live only, no mock)
 ├── dd-risks.js              — DD risk assessment (queries NSW layers at lat/lng)
 ├── map.js                   — Map logic, overlays, search, listings, Domain init
@@ -293,6 +294,7 @@ Grouped into: Zoning, Environmental, Transport, Services, Western Parkland City 
 | Transport | Future Road Reservations, Rail & Infrastructure Corridors |
 | Services | Electricity Transmission, Wastewater SW, Potable Water SW |
 | Western Parkland City | Floor Space Ratio, Land Zoning, Height, Flood, Heritage, Riparian, and more |
+| Planning Proposals | Catherine Park North Proposed Zoning (R2/R3/SP2) |
 
 ### Pipeline (Kanban)
 - Six columns: Shortlisted → Under DD → Offer → Acquired / Not Suitable / Lost
@@ -353,11 +355,68 @@ See `DEPLOY.md` for full setup guide.
 
 ---
 
+## GeoJSON Overlays — Georeferencing Notes
+
+### Catherine Park North Proposed Zoning (`catherine_park_north_zoning_wgs84.geojson`)
+
+Source: **Figure 40** of the *Catherine Park North Draft Planning Proposal, September 2025* (urbanco.com.au, Catherine Field Precinct, South West Growth Area).
+
+**How it was produced:**
+1. Figure 40 (Land Use Zoning Map) was extracted as a raster image (1471×1471px) from the PDF — the map is embedded as a JPEG, not native vector paths.
+2. Colour segmentation (HSV masking in OpenCV) isolated the three zone colours: R2 light pink, R3 darker red, SP2 yellow.
+3. Contours were extracted and simplified using Shapely, then normalised to pixel-space coordinates [0,1].
+4. An affine transform was fitted using a scale bar measurement (94px = 150m on the 200 dpi page image, scale ≈ 1:12,563) and calibrated against the known site area of 54.49ha.
+5. Anchor GCP: **Hungerford St / Camden Valley Way** → pixel (815, 1255) = **-34.0183, 150.7694**.
+
+**Zone legend:**
+
+| Code | Name | Fill | `fill-opacity` |
+|------|------|------|----------------|
+| R2 | Low Density Residential | `#ff9999` | 0.50 |
+| R3 | Medium Density Residential | `#cc3333` | 0.60 |
+| SP2 | Infrastructure – Classified Road | `#ffcc00` | 0.70 |
+
+**Output stats:**
+- 8 features (2× R2, 4× R3, 2× SP2)
+- Bounding box: Lat −34.019 to −34.007, Lon 150.763 to 150.774
+- Centre: −34.013, 150.768 (Catherine Field, Camden LGA)
+- R2 + R3 net area: ~50ha (balance to 54.49ha = internal roads, open space, drainage — not zoned R2/R3)
+
+**Accuracy:** ~30–60m pending anchor GCP verification. To improve, open `catherine_park_north_zoning_map.png` in QGIS Georeferencer, snap 4+ GCPs to road intersections against satellite imagery, and re-apply the transform to `catherine_park_north_zoning_pixel.geojson`.
+
+**Affine transform coefficients** (px_x, px_y in 1471×1471 image, origin top-left):
+```
+lon = 150.76002335 + 0.0000115051 × px_x
+lat = −34.00645912 − 0.0000094350 × px_y
+```
+
+**Loading in `overlays-meta.js`:**
+```javascript
+{
+  id: 'catherine_park_north_zoning',
+  label: 'Catherine Park North – Proposed Zoning',
+  group: 'Planning Proposals',
+  type: 'geojson',
+  url: '/catherine_park_north_zoning_wgs84.geojson',
+  style: (feat) => ({
+    color: feat.properties.stroke || '#cc3333',
+    fillColor: feat.properties.fill,
+    fillOpacity: feat.properties['fill-opacity'],
+    weight: 1.5
+  }),
+  onEachFeature: (feat, layer) => {
+    layer.bindPopup(`<b>${feat.properties.zone}</b><br>${feat.properties.name}`);
+  }
+}
+```
+
+---
+
 ## Version History
 
 | Version | Notes |
 |---|---|
-| V68 | **map.js improvements.** Viewport and filter persistence: map center/zoom saved to `localStorage` on every pan/zoom and restored on page load (deferred to `window.load` to avoid Leaflet container sizing race); active filters saved to `localStorage` on Apply and Clear, restored on load including chip/select/checkbox UI state and filter badge count. Measure tool fixed: removed broken secondary picker popup that was appending to a hidden parent; Distance and Area now injected directly as items in the Tools dropdown menu; Clear Measurement item shown only when a measurement is active. Selecting a Domain API listing marker no longer recentres the map (popup `autoPan` disabled; `setView` suppressed on marker click, preserved on sidebar card click). |
+| V68 | **map.js improvements.** Viewport and filter persistence: map center/zoom saved to `localStorage` on every pan/zoom and restored on page load (deferred to `window.load` to avoid Leaflet container sizing race); active filters saved to `localStorage` on Apply and Clear, restored on load including chip/select/checkbox UI state and filter badge count. Measure tool fixed: removed broken secondary picker popup that was appending to a hidden parent; Distance and Area now injected directly as items in the Tools dropdown menu; Clear Measurement item shown only when a measurement is active. Selecting a Domain API listing marker no longer recentres the map (popup `autoPan` disabled; `setView` suppressed on marker click, preserved on sidebar card click). **Data:** `catherine_park_north_zoning_wgs84.geojson` added — Catherine Park North proposed zoning (R2/R3/SP2) georeferenced from Figure 40 of the Draft Planning Proposal (Sep 2025); colour-segmented from raster PDF, affine-transformed using scale bar + 54.49ha area calibration. |
 | V67 | **Finance module — Phase 2 (Data Integrity, Calculations & UX).** **File renames**: `finance/finance.js` → `finance/finance-module.js`, `api/finance.js` → `api/finance-api.js` (delete old files on deploy). **Data integrity**: all pipeline monetary values stored as plain numbers. Submit offer handler force-blurs all inputs before reading so unblurred tranches are captured. `deleteOffer` uses `String()` coercion for ID comparison. **Kanban modal**: "Terms Offered" and "Model in Financial Feasibility" merged into single **Submitted Offers & Financial Feasibility** section. Each offer row shows full details (price, settlement, deposit tranches) plus 📊 Model and ✕ delete buttons. **+ Add Offer** button in section header opens inline popup form immediately below heading. Vendor terms row shown with same detail, no delete. **Nav buttons**: Pipeline and Finance converted to `toggle-btn` with `.dot` indicator matching Listings. Dot goes accent-coloured when active. Finance button opens/closes finance view. Pipeline button opens pipeline board. **Finance → Pipeline link**: navigates back to pipeline modal without triggering kanban close. **Finance table**: Funds to Complete section with ▶/▼ toggle and **Include in cashflow** checkbox (default on). Each cost placed in correct year: deposits at cumulative days from contract ÷ 365, purchase costs at offer settlement year. `_settlementYr` computed once in `runModel` from actual offer settlement days and reused by KPI tiles, table rows, and cashflow adjustment — all consistent. **KPI strip**: 9 tiles, CSS grid, 75% of original size. Tiles: Acquisition Price · Comparable Value · Total Loan · Cash Required (Upfront) · Cash Required (Settlement) · Cash Required (Total) · Net Income (Yr 1) · Asset Value (Exit) · NPV at Exit. Cashflow (Yr 1) tile removed. **Cash Required definitions**: Upfront = all FTC items except Commission and Equity Contribution; Settlement = Commission + Equity Contribution; Total = Upfront + Settlement = Total Purchase Costs. **Total Purchase Costs** = all Funds to Complete items across all years (deposits + stamp + valuation + solicitor + inspections + commission + equity). **Stamp duty**: auto-calculated only on new model creation — never overwritten on existing models, preserving manual changes. Editing acquisition price no longer recalculates stamp duty. **Sidebar sections**: all start collapsed. Purchase Costs moved into Outgoings section as first subsection. Deposits shown as first items under Purchase Costs. Revenue section: Rent (accepts /w /m /y) + Other. All running cost fields annual (accept /w /m /y): Council, Water, Cleaning, Insurance, Land Tax, Management Fee, Common Power, Fire Services, Maintenance, Sinking Fund, Other. Separate Council (quarterly) and Maintenance (monthly) inputs removed — stored as annual. **Settlement lag** auto-set from offer settlement days on open (rent starts at correct year). **ROE** = Cashflow ÷ Total Cash Required. |
 | V66.2 | **Finance module enhancements.** Calculation engine rewritten to match `Feasibility_-82WPRL-v3.xlsx`: interest-only loan driven by `% profit used for debt reduction` (principal paid = (Rent − Interest) × debt reduction %; 0% = pure interest-only), settlement lag (pre-settlement years show zero rent/interest), Cost of Funds row (upfront cash × cost of capital per year), NPV = Asset Value − Cost of Funds (per-year, not DCF). Dual cash totals: Upfront (deposit + purchase costs) and Total (upfront − pre-reval cashflows). Inputs correctly split into grey (editable) vs calculated display fields — weekly rent × 52, council quarterly × 4, maintenance monthly × 12, management fee % × gross rent, sinking fund % × acquisition price. Five comparable value methods (Gross Area, 30% GRV, Development TDC, Method 5 Yield-derived). **Multi-state stamp duty**: state auto-detected from property address; separate formula for NSW, VIC, QLD, SA, ACT — each sourced from official .gov.au pages (Revenue NSW contracts guide, SRO Vic fixtures page, QRO rates page, RevenueSA, ACT Revenue Office non-commercial table). NSW rates updated to 1 July 2025 CPI-adjusted thresholds. **Kanban modal**: Finance button moved from header to below Terms Offered section, restyled as full-width accent action link; passes most recent offer price (or vendor terms price) to finance module. **Price carry-forward**: new models seeded from offer price; existing models preserve all assumptions — only acquisitionPrice updates if offer differs. **Finance header**: phase chevron nav (Financial Feasibility › Acquisition → Delivery placeholder); Mean Comparable Value shown live in header. **Comparable section**: collapsed by default, mean value shown as badge in section header. |
 | V66 | **Finance module** (Phase 1 — Feasibility, initial). New `finance/` folder with `finance.js` and `finance-styles.css`. New `api/finance.js` (Postgres CRUD, `property_financials` table). Nav updated: **Pipeline \| CRM \| Finance \| ⚙ Tools ▾**. |

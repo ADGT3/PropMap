@@ -108,6 +108,27 @@ const OVERLAYS = [
     }
   },
   {
+    // Catherine Park North Proposed Zoning — Figure 40, Draft Planning Proposal Sep 2025
+    // Source: urbanco.com.au / Catherine Field Precinct, South West Growth Area
+    // Georeferenced from raster PDF via colour segmentation + affine transform (~30–60m accuracy)
+    id: "catherine-park-north-zoning",
+    label: "Catherine Park North – Proposed Zoning",
+    type: "zoning",
+    group: "zoning",
+    zone: "all",
+    enabled: false,
+    opacity: 0.7,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/catherine_park_north_zoning_wgs84.geojson",
+    vectorStyle: {
+      R2:  { color: "#cc3333", fillColor: "#ff9999", fillOpacity: 0.50, weight: 1.5 },
+      R3:  { color: "#990000", fillColor: "#cc3333", fillOpacity: 0.60, weight: 1.5 },
+      SP2: { color: "#997700", fillColor: "#ffcc00", fillOpacity: 0.70, weight: 1.5 }
+    }
+  },
+  {
     // Future Road Reservations — EPI Additional Layers (NSW Planning Portal)
     // Shows land reserved for future roads and arterial infrastructure under Transport & Infrastructure SEPP
     id: "nsw-future-roads",
