@@ -59,8 +59,10 @@ const map = L.map('map', {
 map.createPane('hillshade');
 map.getPane('hillshade').style.zIndex = 150; // below tilePane (200) and MapLibre canvas
 
-// ─── Restore last viewport from localStorage (deferred to after layout) ───────
-window.addEventListener('load', function restoreViewport() {
+// ─── Restore last viewport from localStorage ──────────────────────────────────
+// Run immediately (not deferred) so the map starts at the right position
+// before the first Domain search fires.
+(function restoreViewport() {
   try {
     const saved = localStorage.getItem('propmap_viewport');
     if (saved) {
@@ -68,7 +70,7 @@ window.addEventListener('load', function restoreViewport() {
       if (lat && lng && zoom) map.setView([lat, lng], zoom, { animate: false });
     }
   } catch (e) { /* ignore */ }
-});
+})();
 
 const baseLayers = {
   map: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
