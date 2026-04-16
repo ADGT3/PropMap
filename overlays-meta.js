@@ -106,9 +106,9 @@ const OVERLAYS = [
     vectorUrl: "/catherine_park_north_zoning_wgs84.geojson",
     source: "Figure 40 – Proposed Land Use Zoning, Catherine Park North Draft Planning Proposal, Sep 2025",
     vectorStyle: {
-      R2:  { color: "#cc3333", fillColor: "#ff9999", fillOpacity: 0.50, weight: 1.5 },
-      R3:  { color: "#990000", fillColor: "#cc3333", fillOpacity: 0.60, weight: 1.5 },
-      SP2: { color: "#997700", fillColor: "#ffcc00", fillOpacity: 0.70, weight: 1.5 }
+      R2:  { color: "#C8BC7A", fillColor: "#EAE3B8", fillOpacity: 0.70, weight: 1 },
+      R3:  { color: "#C8B840", fillColor: "#EBDE8A", fillOpacity: 0.70, weight: 1 },
+      SP2: { color: "#B8860B", fillColor: "#FFD700", fillOpacity: 0.70, weight: 1 }
     }
   },
   // ── Catherine Park North — Land Reservation Acquisition (Figure 43) ─────────
@@ -131,7 +131,25 @@ const OVERLAYS = [
       SP2: { color: "#B8860B", fillColor: "#FFD700", fillOpacity: 0.65, weight: 1.5 }
     }
   },
-  // ── Catherine Park North — Topography (Figure 7) ─────────────────────────────
+  // ── Springfield Road ILP — Contours (from PDF vector layer) ─────────────────
+  {
+    id: "springfield-road-contours",
+    label: "Springfield Road – Topography Contours",
+    type: "environmental",
+    group: "environmental",
+    zone: "all",
+    enabled: false,
+    opacity: 0.8,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/springfield_road_contours_wgs84.geojson",
+    source: "Levels/Contour layer – Springfield Road Indicative Layout Plan Option B, 11 Dec 2024",
+    vectorStyleProp: "type",
+    vectorStyleMap: {
+      "contour": { color: "#E28807", fillColor: "none", fillOpacity: 0, weight: 0.8, opacity: 0.8 }
+    }
+  },
   {
     id: "catherine-park-north-topography",
     label: "Catherine Park North – Topography",
@@ -203,8 +221,35 @@ const OVERLAYS = [
       "road-aqua":   { color: "#00CED1", fillColor: "#00CED1", fillOpacity: 0.7, weight: 2 }
     }
   },
+  // ── Springfield Road ILP — Land Use Zones (from PDF vector layer) ──────────
   {
-    // NSW Strategic Regional Land Use Policy — live WMS from NSW Environment
+    id: "springfield-road-ilp",
+    label: "Springfield Road – Indicative Layout Plan",
+    type: "zoning",
+    group: "zoning",
+    zone: "all",
+    enabled: false,
+    opacity: 0.7,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/springfield_road_ilp_wgs84.geojson",
+    source: "Springfield Road Indicative Layout Plan Option B, 11 Dec 2024, urbanco.com.au",
+    vectorStyleProp: "zone",
+    vectorStyleMap: {
+      "low-residential":         { color: "#C8BC7A", fillColor: "#EAE3B8", fillOpacity: 0.70, weight: 1 },
+      "medium-residential":      { color: "#C8B840", fillColor: "#EBDE8A", fillOpacity: 0.70, weight: 1 },
+      "medium-high-residential": { color: "#CC8070", fillColor: "#FFA196", fillOpacity: 0.70, weight: 1 },
+      "open-space":              { color: "#00CC00", fillColor: "#00FF00", fillOpacity: 0.70, weight: 1 },
+      "drainage":                { color: "#90CC60", fillColor: "#BDFF87", fillOpacity: 0.70, weight: 1 },
+      "riparian":                { color: "#004000", fillColor: "#006400", fillOpacity: 0.80, weight: 1 },
+      "local-centre":            { color: "#5090C0", fillColor: "#90C9F2", fillOpacity: 0.70, weight: 1 },
+      "primary-school":          { color: "#CCCC00", fillColor: "#FFFF66", fillOpacity: 0.70, weight: 1 },
+      "future-road":             { color: "#0050A0", fillColor: "#0071BC", fillOpacity: 0.60, weight: 1 },
+      "site-boundary":           { color: "#FF0000", fillColor: "none",    fillOpacity: 0.00, weight: 2 }
+    }
+  },
+  {
     id: "nsw-srlup",
     label: "NSW Strategic Regional Land Use Policy",
     type: "srlup",
