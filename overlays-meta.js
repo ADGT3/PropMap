@@ -106,9 +106,9 @@ const OVERLAYS = [
     vectorUrl: "/catherine_park_north_zoning_wgs84.geojson",
     source: "Figure 40 – Proposed Land Use Zoning, Catherine Park North Draft Planning Proposal, Sep 2025",
     vectorStyle: {
-      R2:  { color: "#cc3333", fillColor: "#ff9999", fillOpacity: 0.50, weight: 1.5 },
-      R3:  { color: "#990000", fillColor: "#cc3333", fillOpacity: 0.60, weight: 1.5 },
-      SP2: { color: "#997700", fillColor: "#ffcc00", fillOpacity: 0.70, weight: 1.5 }
+      R2:  { color: "#C8BC7A", fillColor: "#EAE3B8", fillOpacity: 0.70, weight: 1 },
+      R3:  { color: "#C8B840", fillColor: "#EBDE8A", fillOpacity: 0.70, weight: 1 },
+      SP2: { color: "#B8860B", fillColor: "#FFD700", fillOpacity: 0.70, weight: 1 }
     }
   },
   // ── Catherine Park North — Land Reservation Acquisition (Figure 43) ─────────
