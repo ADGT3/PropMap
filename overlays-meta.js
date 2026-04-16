@@ -277,6 +277,39 @@ const OVERLAYS = [
       "SP2": { color: "#c8c800", fillColor: "#ffff70", fillOpacity: 0.70, weight: 1 }
     }
   },
+  // ── South Creek West Belmore Road Precinct — ILP ────────────────────────────
+  {
+    id: "south-creek-west-ilp",
+    label: "South Creek West – Belmore Road Precinct ILP",
+    type: "zoning",
+    group: "zoning",
+    zone: "all",
+    enabled: false,
+    opacity: 0.7,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/south_creek_west_ilp_wgs84.geojson",
+    source: "South Creek West - Belmore Road Precinct, Revised Final ILP, 07-11-24, Urbis",
+    vectorStyleProp: "zone",
+    vectorStyleMap: {
+      "school":     { color: "#a05090", fillColor: "#ca94c2", fillOpacity: 0.70, weight: 1 },
+      "employment": { color: "#803880", fillColor: "#b26dab", fillOpacity: 0.70, weight: 1 },
+      "ld_res_1":   { color: "#C8BC7A", fillColor: "#fcefdf", fillOpacity: 0.70, weight: 1 },
+      "ld_res_2":   { color: "#C8A870", fillColor: "#f1d1aa", fillOpacity: 0.70, weight: 1 },
+      "md_res_1":   { color: "#a06828", fillColor: "#d79754", fillOpacity: 0.70, weight: 1 },
+      "md_res_2":   { color: "#803020", fillColor: "#ae4331", fillOpacity: 0.70, weight: 1 },
+      "local_park": { color: "#90a030", fillColor: "#bed471", fillOpacity: 0.70, weight: 1 },
+      "playing":    { color: "#405820", fillColor: "#597f39", fillOpacity: 0.70, weight: 1 },
+      "riparian":   { color: "#102810", fillColor: "#1c4835", fillOpacity: 0.80, weight: 1 },
+      "comm_open":  { color: "#a0b870", fillColor: "#dfeabd", fillOpacity: 0.70, weight: 1 },
+      "open_tree":  { color: "#90a830", fillColor: "#bed571", fillOpacity: 0.70, weight: 1 },
+      "village":    { color: "#082840", fillColor: "#0b486e", fillOpacity: 0.80, weight: 1 },
+      "drainage":   { color: "#4898a0", fillColor: "#7ecacf", fillOpacity: 0.70, weight: 1 },
+      "raingarden": { color: "#a8a030", fillColor: "#f8f2a8", fillOpacity: 0.70, weight: 1 },
+      "env_living": { color: "#907860", fillColor: "#cdb9a7", fillOpacity: 0.70, weight: 1 }
+    }
+  },
   {
     id: "nsw-srlup",
     label: "NSW Strategic Regional Land Use Policy",
