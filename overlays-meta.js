@@ -91,6 +91,140 @@ const OVERLAYS = [
       layers: "show:229"
     }
   },
+  // ── Catherine Park North — Land Use Zoning (Figure 40) ─────────────────────
+  {
+    id: "catherine-park-north-zoning",
+    label: "Catherine Park North – Proposed Zoning",
+    type: "zoning",
+    group: "zoning",
+    zone: "all",
+    enabled: false,
+    opacity: 0.7,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/catherine_park_north_zoning_wgs84.geojson",
+    source: "Figure 40 – Proposed Land Use Zoning, Catherine Park North Draft Planning Proposal, Sep 2025",
+    vectorStyle: {
+      R2:  { color: "#cc3333", fillColor: "#ff9999", fillOpacity: 0.50, weight: 1.5 },
+      R3:  { color: "#990000", fillColor: "#cc3333", fillOpacity: 0.60, weight: 1.5 },
+      SP2: { color: "#997700", fillColor: "#ffcc00", fillOpacity: 0.70, weight: 1.5 }
+    }
+  },
+  // ── Catherine Park North — Land Reservation Acquisition (Figure 43) ─────────
+  {
+    id: "catherine-park-north-land-reservation",
+    label: "Catherine Park North – Land Reservation Acquisition",
+    type: "zoning",
+    group: "zoning",
+    zone: "all",
+    enabled: false,
+    opacity: 0.7,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/catherine_park_north_land_reservation_wgs84.geojson",
+    source: "Figure 43 – Land Reservation Acquisition, Catherine Park North Draft Planning Proposal, Sep 2025",
+    vectorStyleProp: "zone",
+    vectorStyleMap: {
+      RE1: { color: "#145214", fillColor: "#228B22", fillOpacity: 0.65, weight: 1.5 },
+      SP2: { color: "#B8860B", fillColor: "#FFD700", fillOpacity: 0.65, weight: 1.5 }
+    }
+  },
+  // ── Catherine Park North — Topography (Figure 7) ─────────────────────────────
+  {
+  // ── Springfield Road ILP — Contours (from PDF vector layer) ─────────────────
+  {
+    id: "springfield-road-contours",
+    label: "Springfield Road – Topography Contours",
+    type: "environmental",
+    group: "environmental",
+    zone: "all",
+    enabled: false,
+    opacity: 0.8,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/springfield_road_contours_wgs84.geojson",
+    source: "Levels/Contour layer – Springfield Road Indicative Layout Plan Option B, 11 Dec 2024",
+    vectorStyleProp: "type",
+    vectorStyleMap: {
+      "contour": { color: "#E28807", fillColor: "none", fillOpacity: 0, weight: 0.8, opacity: 0.8 }
+    }
+  },
+  {
+    id: "catherine-park-north-topography",
+    label: "Catherine Park North – Topography",
+    type: "environmental",
+    group: "environmental",
+    zone: "all",
+    enabled: false,
+    opacity: 0.65,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/catherine_park_north_topography_wgs84.geojson",
+    source: "Figure 7 – Topography, Catherine Park North Draft Planning Proposal, Sep 2025",
+    vectorStyleProp: "elevation",
+    vectorStyleMap: {
+      "80-85m":   { color: "#87CEEB", fillColor: "#87CEEB", fillOpacity: 0.6, weight: 0.5 },
+      "85-90m":   { color: "#00E5FF", fillColor: "#00E5FF", fillOpacity: 0.6, weight: 0.5 },
+      "90-95m":   { color: "#40E0D0", fillColor: "#40E0D0", fillOpacity: 0.6, weight: 0.5 },
+      "95-100m":  { color: "#7CFC00", fillColor: "#7CFC00", fillOpacity: 0.6, weight: 0.5 },
+      "100-105m": { color: "#ADFF2F", fillColor: "#ADFF2F", fillOpacity: 0.6, weight: 0.5 },
+      "105-110m": { color: "#FFFF00", fillColor: "#FFFF00", fillOpacity: 0.6, weight: 0.5 },
+      "110-115m": { color: "#FFA500", fillColor: "#FFA500", fillOpacity: 0.6, weight: 0.5 },
+      "115-120m": { color: "#FF7F50", fillColor: "#FF7F50", fillOpacity: 0.6, weight: 0.5 },
+      "125-130m": { color: "#FF6B6B", fillColor: "#FF6B6B", fillOpacity: 0.6, weight: 0.5 }
+    }
+  },
+  // ── Catherine Park North — 1% AEP Flood (Figure 22) ──────────────────────────
+  {
+    id: "catherine-park-north-flood",
+    label: "Catherine Park North – 1% AEP Flood Depth",
+    type: "environmental",
+    group: "environmental",
+    zone: "all",
+    enabled: false,
+    opacity: 0.65,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/catherine_park_north_flood_wgs84.geojson",
+    source: "Figure 22 – Existing Flood Conditions 1% AEP, Catherine Park North Draft Planning Proposal, Sep 2025",
+    vectorStyleProp: "flood_depth",
+    vectorStyleMap: {
+      "0.0-0.5m": { color: "#1a1aff", fillColor: "#1a1aff", fillOpacity: 0.65, weight: 0.5 },
+      "0.5-1.0m": { color: "#6666ff", fillColor: "#6666ff", fillOpacity: 0.65, weight: 0.5 },
+      "1.0-1.5m": { color: "#87ceeb", fillColor: "#87ceeb", fillOpacity: 0.65, weight: 0.5 },
+      "1.5-2.0m": { color: "#ffff00", fillColor: "#ffff00", fillOpacity: 0.65, weight: 0.5 },
+      "2.0-3.0m": { color: "#ffa500", fillColor: "#ffa500", fillOpacity: 0.65, weight: 0.5 },
+      "3.0-4.0m": { color: "#ffb6c1", fillColor: "#ffb6c1", fillOpacity: 0.65, weight: 0.5 },
+      ">4.0m":    { color: "#ff0000", fillColor: "#ff0000", fillOpacity: 0.65, weight: 0.5 }
+    }
+  },
+  // ── Catherine Park North — Rickard Road Alignment (Figure 31) ────────────────
+  {
+    id: "catherine-park-north-rickard-road",
+    label: "Catherine Park North – Rickard Road Alignment",
+    type: "future-roads",
+    group: "transport",
+    zone: "all",
+    enabled: false,
+    opacity: 0.75,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/catherine_park_north_rickard_road_wgs84.geojson",
+    source: "Figure 31 – Revised Rickard Road Alignment, Catherine Park North Draft Planning Proposal, Sep 2025",
+    vectorStyleProp: "road",
+    vectorStyleMap: {
+      "road-yellow": { color: "#FFD700", fillColor: "#FFD700", fillOpacity: 0.7, weight: 2 },
+      "road-aqua":   { color: "#00CED1", fillColor: "#00CED1", fillOpacity: 0.7, weight: 2 }
+    }
+  },
+  {
+    // NSW Strategic Regional Land Use Policy — live WMS from NSW Environment
   // ── Springfield Road ILP — Land Use Zones (from PDF vector layer) ──────────
   {
     id: "springfield-road-ilp",
@@ -119,120 +253,7 @@ const OVERLAYS = [
       "site-boundary":           { color: "#FF0000", fillColor: "none",    fillOpacity: 0.00, weight: 2 }
     }
   },
-  // ── Catherine Park North — Topography (Figure 7) ────────────────────────────
   {
-    id: "catherine-park-north-topography",
-    label: "Catherine Park North – Topography",
-    type: "environmental",
-    group: "environmental",
-    zone: "all",
-    enabled: false,
-    opacity: 0.65,
-    bounds: null,
-    b64: null,
-    vector: true,
-    vectorUrl: "/catherine_park_north_topography_wgs84.geojson",
-    source: "Figure 7 – Topography, Catherine Park North Draft Planning Proposal, September 2025, urbanco.com.au",
-    vectorStyleProp: "elevation",
-    vectorStyleMap: {
-      "80-85m":   { color: "#87CEEB", fillColor: "#87CEEB", fillOpacity: 0.6, weight: 0.5 },
-      "85-90m":   { color: "#00E5FF", fillColor: "#00E5FF", fillOpacity: 0.6, weight: 0.5 },
-      "90-95m":   { color: "#40E0D0", fillColor: "#40E0D0", fillOpacity: 0.6, weight: 0.5 },
-      "95-100m":  { color: "#7CFC00", fillColor: "#7CFC00", fillOpacity: 0.6, weight: 0.5 },
-      "100-105m": { color: "#ADFF2F", fillColor: "#ADFF2F", fillOpacity: 0.6, weight: 0.5 },
-      "105-110m": { color: "#FFFF00", fillColor: "#FFFF00", fillOpacity: 0.6, weight: 0.5 },
-      "110-115m": { color: "#FFA500", fillColor: "#FFA500", fillOpacity: 0.6, weight: 0.5 },
-      "115-120m": { color: "#FF7F50", fillColor: "#FF7F50", fillOpacity: 0.6, weight: 0.5 },
-      "125-130m": { color: "#FF6B6B", fillColor: "#FF6B6B", fillOpacity: 0.6, weight: 0.5 }
-    }
-  },
-  // ── Catherine Park North — 1% AEP Flood (Figure 22) ──────────────────────────
-  {
-    id: "catherine-park-north-flood",
-    label: "Catherine Park North – 1% AEP Flood Depth",
-    type: "environmental",
-    group: "environmental",
-    zone: "all",
-    enabled: false,
-    opacity: 0.65,
-    bounds: null,
-    b64: null,
-    vector: true,
-    vectorUrl: "/catherine_park_north_flood_wgs84.geojson",
-    source: "Figure 22 – Existing Flood Conditions 1% AEP, Catherine Park North Draft Planning Proposal, September 2025, urbanco.com.au",
-    vectorStyleProp: "flood_depth",
-    vectorStyleMap: {
-      "0.0-0.5m": { color: "#1a1aff", fillColor: "#7B7BD4", fillOpacity: 0.65, weight: 0.5 },
-      "0.5-1.0m": { color: "#6666ff", fillColor: "#9BB8F0", fillOpacity: 0.65, weight: 0.5 },
-      "1.0-1.5m": { color: "#87ceeb", fillColor: "#8CF0E8", fillOpacity: 0.65, weight: 0.5 },
-      "1.5-2.0m": { color: "#e6e600", fillColor: "#FAFA85", fillOpacity: 0.65, weight: 0.5 },
-      "2.0-3.0m": { color: "#e09000", fillColor: "#F0C486", fillOpacity: 0.65, weight: 0.5 },
-      "3.0-4.0m": { color: "#c06070", fillColor: "#E07080", fillOpacity: 0.65, weight: 0.5 },
-      ">4.0m":    { color: "#cc0000", fillColor: "#E03030", fillOpacity: 0.65, weight: 0.5 }
-    }
-  },
-  // ── Springfield Road ILP — Contours (from PDF vector layer) ─────────────────
-  {
-    id: "springfield-road-contours",
-    label: "Springfield Road – Topography Contours",
-    type: "environmental",
-    group: "environmental",
-    zone: "all",
-    enabled: false,
-    opacity: 0.8,
-    bounds: null,
-    b64: null,
-    vector: true,
-    vectorUrl: "/springfield_road_contours_wgs84.geojson",
-    source: "Levels/Contour layer – Springfield Road Indicative Layout Plan Option B, 11 Dec 2024",
-    vectorStyleProp: "type",
-    vectorStyleMap: {
-      "contour": { color: "#E28807", fillColor: "none", fillOpacity: 0, weight: 0.8, opacity: 0.8 }
-    }
-  },
-  // ── Catherine Park North — Topography (Figure 7) – already present below
-  // ── Catherine Park North — Land Use Zoning (Figure 40) ─────────────────────
-  {
-    id: "catherine-park-north-zoning",
-    label: "Catherine Park North – Proposed Zoning",
-    type: "zoning",
-    group: "zoning",
-    zone: "all",
-    enabled: false,
-    opacity: 0.7,
-    bounds: null,
-    b64: null,
-    vector: true,
-    vectorUrl: "/catherine_park_north_zoning_wgs84.geojson",
-    source: "Figure 40 – Proposed Land Use Zoning, Catherine Park North Draft Planning Proposal, September 2025, urbanco.com.au",
-    vectorStyle: {
-      R2:  { color: "#cc3333", fillColor: "#ff9999", fillOpacity: 0.50, weight: 1.5 },
-      R3:  { color: "#990000", fillColor: "#cc3333", fillOpacity: 0.60, weight: 1.5 },
-      SP2: { color: "#997700", fillColor: "#ffcc00", fillOpacity: 0.70, weight: 1.5 }
-    }
-  },
-  // ── Catherine Park North — Land Reservation Acquisition (Figure 43) ─────────
-  {
-    id: "catherine-park-north-land-reservation",
-    label: "Catherine Park North – Land Reservation Acquisition",
-    type: "zoning",
-    group: "zoning",
-    zone: "all",
-    enabled: false,
-    opacity: 0.7,
-    bounds: null,
-    b64: null,
-    vector: true,
-    vectorUrl: "/catherine_park_north_land_reservation_wgs84.geojson",
-    source: "Figure 43 – Land Reservation Acquisition, Catherine Park North Draft Planning Proposal, September 2025, urbanco.com.au",
-    vectorStyleProp: "zone",
-    vectorStyleMap: {
-      RE1: { color: "#145214", fillColor: "#228B22", fillOpacity: 0.65, weight: 1.5 },
-      SP2: { color: "#B8860B", fillColor: "#FFD700", fillOpacity: 0.65, weight: 1.5 }
-    }
-  },
-  {
-    // NSW Strategic Regional Land Use Policy — live WMS from NSW Environment
     id: "nsw-srlup",
     label: "NSW Strategic Regional Land Use Policy",
     type: "srlup",
@@ -250,26 +271,6 @@ const OVERLAYS = [
   {
     // Future Road Reservations — EPI Additional Layers (NSW Planning Portal)
     // Shows land reserved for future roads and arterial infrastructure under Transport & Infrastructure SEPP
-  // ── Catherine Park North — Rickard Road Alignment (Figure 31) ───────────────
-  {
-    id: "catherine-park-north-rickard-road",
-    label: "Catherine Park North – Rickard Road Alignment",
-    type: "future-roads",
-    group: "transport",
-    zone: "all",
-    enabled: false,
-    opacity: 0.75,
-    bounds: null,
-    b64: null,
-    vector: true,
-    vectorUrl: "/catherine_park_north_rickard_road_wgs84.geojson",
-    source: "Figure 31 – Revised Rickard Road Alignment, Catherine Park North Draft Planning Proposal, September 2025, urbanco.com.au",
-    vectorStyleProp: "road",
-    vectorStyleMap: {
-      "road-yellow": { color: "#FFD700", fillColor: "#FFD700", fillOpacity: 0.7, weight: 2 },
-      "road-aqua":   { color: "#00CED1", fillColor: "#00CED1", fillOpacity: 0.7, weight: 2 }
-    }
-  },
     id: "nsw-future-roads",
     label: "Future Road Reservations",
     type: "future-roads",
