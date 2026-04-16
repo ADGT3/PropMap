@@ -249,6 +249,34 @@ const OVERLAYS = [
       "site-boundary":           { color: "#FF0000", fillColor: "none",    fillOpacity: 0.00, weight: 2 }
     }
   },
+  // ── Leppington Precinct — Land Zoning Map (SEPP Sydney Region Growth Centres 2006)
+  {
+    id: "leppington-zoning",
+    label: "Leppington – Land Zoning Map",
+    type: "zoning",
+    group: "zoning",
+    zone: "all",
+    enabled: false,
+    opacity: 0.7,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/leppington_zoning_wgs84.geojson",
+    source: "Leppington Precinct - South West Growth Centre Land Zoning Map, SEPP (Sydney Region Growth Centres) 2006, NSW Planning & Environment",
+    vectorStyleProp: "zone",
+    vectorStyleMap: {
+      "B2":  { color: "#40d0d8", fillColor: "#62f0f5", fillOpacity: 0.70, weight: 1 },
+      "B3":  { color: "#0090b8", fillColor: "#00c2ed", fillOpacity: 0.70, weight: 1 },
+      "B4":  { color: "#7070a0", fillColor: "#959dc2", fillOpacity: 0.70, weight: 1 },
+      "B7":  { color: "#90a8b0", fillColor: "#bad6de", fillOpacity: 0.70, weight: 1 },
+      "E2":  { color: "#c07010", fillColor: "#f0ae3c", fillOpacity: 0.70, weight: 1 },
+      "E4":  { color: "#c09040", fillColor: "#ffda96", fillOpacity: 0.70, weight: 1 },
+      "R2":  { color: "#C8BC7A", fillColor: "#ffa6a3", fillOpacity: 0.70, weight: 1 },
+      "R3":  { color: "#C8B840", fillColor: "#ff776e", fillOpacity: 0.70, weight: 1 },
+      "RE1": { color: "#00aa00", fillColor: "#55ff00", fillOpacity: 0.70, weight: 1 },
+      "SP2": { color: "#c8c800", fillColor: "#ffff70", fillOpacity: 0.70, weight: 1 }
+    }
+  },
   {
     id: "nsw-srlup",
     label: "NSW Strategic Regional Land Use Policy",
