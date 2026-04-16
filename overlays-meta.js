@@ -530,17 +530,8 @@ const OVERLAYS = [
     bounds: { latMin: -34.06703146583395, latMax: -33.79801841774339, lonMin: 150.6301602408125, lonMax: 150.89931435500063 },
     b64: null
   },
-  {
-    id: "sw-ilp",
-    label: "ILP — Leppington Stage 3&4",
-    type: "ilp",
-    zone: "south-west-sydney",
-    enabled: false,
-    opacity: 0.7,
-    bounds: { latMin: -33.99934965392993, latMax: -33.94960464165743, lonMin: 150.77621588449637, lonMax: 150.81793543936465 },
-    b64: null
-  }
 ];
+
 
 /**
  * ZONES
