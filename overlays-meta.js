@@ -131,8 +131,6 @@ const OVERLAYS = [
       SP2: { color: "#B8860B", fillColor: "#FFD700", fillOpacity: 0.65, weight: 1.5 }
     }
   },
-  // ── Catherine Park North — Topography (Figure 7) ─────────────────────────────
-  {
   // ── Springfield Road ILP — Contours (from PDF vector layer) ─────────────────
   {
     id: "springfield-road-contours",
@@ -223,8 +221,6 @@ const OVERLAYS = [
       "road-aqua":   { color: "#00CED1", fillColor: "#00CED1", fillOpacity: 0.7, weight: 2 }
     }
   },
-  {
-    // NSW Strategic Regional Land Use Policy — live WMS from NSW Environment
   // ── Springfield Road ILP — Land Use Zones (from PDF vector layer) ──────────
   {
     id: "springfield-road-ilp",
