@@ -514,7 +514,7 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
     if (ns) {
       nsBtn = `
         <button type="button"
-          onclick="window._nsClear && window._nsClear('${key}')"
+          data-ns-clear="${key}"
           style="display:block;width:100%;margin-top:6px;padding:6px 10px;
                  background:#888;color:#fff;border:none;border-radius:4px;
                  font-size:11px;font-weight:600;cursor:pointer">
@@ -523,7 +523,7 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
     } else {
       const opts = SNOOZE_OPTIONS.map((o, i) =>
         `<button type="button"
-           onclick="window._nsMark && window._nsMark('${key}', ${i})"
+           data-ns-mark="${key}|${i}"
            style="display:block;width:100%;text-align:left;padding:5px 10px;
                   background:#fff;color:#333;border:none;border-bottom:1px solid #eee;
                   font-size:11px;cursor:pointer">${o.label}</button>`
@@ -531,7 +531,7 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
       nsBtn = `
         <div style="position:relative;margin-top:6px">
           <button type="button"
-            onclick="(function(b){var m=b.nextElementSibling;m.style.display=(m.style.display==='none'?'block':'none');})(this)"
+            data-ns-toggle
             style="display:block;width:100%;padding:6px 10px;
                    background:transparent;color:#888;border:1px solid #ccc;border-radius:4px;
                    font-size:11px;font-weight:500;cursor:pointer">
@@ -3396,3 +3396,59 @@ window._nsClear = async function(key) {
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
   if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
 };
+
+// V75.1a fix — Leaflet popups parse inline `onclick` strings inconsistently
+// across browsers (Safari especially), and popup HTML gets re-rendered when
+// async cadastre data resolves — so per-popup listeners would also become
+// stale. Use event delegation on the map container so listeners survive both
+// fresh opens and content swaps.
+//
+// The popup HTML uses data-* attributes:
+//   data-ns-toggle           → button that opens the snooze menu
+//   data-ns-mark="key|idx"   → menu items that call markNotSuitable
+//   data-ns-clear="key"      → reinstate button
+document.addEventListener('click', (ev) => {
+  const target = ev.target;
+
+  // Toggle menu
+  const toggle = target.closest('[data-ns-toggle]');
+  if (toggle) {
+    ev.stopPropagation();
+    const menu = toggle.parentElement.querySelector('.popup-ns-menu');
+    if (menu) menu.style.display = (menu.style.display === 'none' ? 'block' : 'none');
+    return;
+  }
+
+  // Pick a snooze duration
+  const markBtn = target.closest('[data-ns-mark]');
+  if (markBtn) {
+    ev.stopPropagation();
+    const [key, idxStr] = markBtn.dataset.nsMark.split('|');
+    const idx = parseInt(idxStr, 10);
+    const listing = window._nsContext && window._nsContext[key];
+    if (!listing) return;
+    (async () => {
+      await markNotSuitable(listing, idx);
+      if (typeof renderListings === 'function') renderListings();
+      if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+      if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+    })();
+    return;
+  }
+
+  // Clear (reinstate)
+  const clearBtn = target.closest('[data-ns-clear]');
+  if (clearBtn) {
+    ev.stopPropagation();
+    const key = clearBtn.dataset.nsClear;
+    const listing = window._nsContext && window._nsContext[key];
+    if (!listing) return;
+    (async () => {
+      await clearNotSuitable(listing);
+      if (typeof renderListings === 'function') renderListings();
+      if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+      if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+    })();
+    return;
+  }
+});
