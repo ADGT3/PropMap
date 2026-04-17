@@ -115,8 +115,18 @@ export default async function handler(req, res) {
             FROM contact_properties cp
             LEFT JOIN pipeline p ON p.id = cp.pipeline_id
             WHERE cp.contact_id = ${parseInt(contact_id)}
-            ORDER BY cp.created_at DESC`;
+            ORDER BY cp.linked_at DESC`;
           return res.status(200).json(rows);
+        }
+
+        // Most recent role used by this contact (used to pre-select default role when linking)
+        if (req.query.last_role) {
+          if (!contact_id) return res.status(400).json({ error: 'contact_id required' });
+          const rows = await sql`
+            SELECT role FROM contact_properties
+            WHERE contact_id = ${parseInt(contact_id)}
+            ORDER BY linked_at DESC LIMIT 1`;
+          return res.status(200).json({ role: rows[0]?.role || null });
         }
 
         // List / search organisations
