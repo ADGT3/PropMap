@@ -10,18 +10,11 @@
  */
 
 import { neon } from '@neondatabase/serverless';
+import { getDatabaseUrl } from '../../lib/db.js';
 import bcrypt from 'bcryptjs';
 import { requireSession } from '../../lib/auth.js';
 
-// V74 hotfix — prefer Neon integration's per-deployment pipeline_* vars first
-const sql = neon(
-     process.env.pipeline_POSTGRES_URL
-  || process.env.pipeline_DATABASE_URL
-  || process.env.PIPELINE_POSTGRES_URL
-  || process.env.PIPELINE_DATABASE_URL
-  || process.env.POSTGRES_URL
-  || process.env.DATABASE_URL
-);
+const sql = neon(getDatabaseUrl());
 const MIN_PASSWORD_LEN = 8;
 const BCRYPT_ROUNDS = 10;
 

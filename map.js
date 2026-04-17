@@ -307,17 +307,35 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
     ? `<a href="${dl.listingUrl}" target="_blank" style="color:#c4841a;font-size:12px;text-decoration:none;display:block;margin-top:8px">View on Domain →</a>`
     : '';
 
-  // + Pipeline button (V74.7). Uses an inline onclick so the button keeps
-  // working across popup re-renders (DD data loading, etc.). The handler
-  // reads live map selection state at click time, not popup-build time.
-  const pipelineBtn = `
-    <button type="button"
-      onclick="window.addCurrentSelectionToPipeline && window.addCurrentSelectionToPipeline()"
-      style="display:block;width:100%;margin-top:10px;padding:7px 10px;
-             background:#1a6b3a;color:#fff;border:none;border-radius:4px;
-             font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
-      + Pipeline
-    </button>`;
+  // V74.8: detect whether this location corresponds to an existing pipeline
+  // item. If so, swap the "+ Pipeline" add button for an "Open in Pipeline"
+  // link that jumps straight to that pipeline card.
+  const matchedPipelineId = findPipelineMatchForClick(listing);
+
+  let pipelineBtn;
+  if (matchedPipelineId) {
+    const pid = String(matchedPipelineId).replace(/'/g, "\\'");
+    pipelineBtn = `
+      <button type="button"
+        onclick="window.openPipelineItem && window.openPipelineItem('${pid}')"
+        style="display:block;width:100%;margin-top:10px;padding:7px 10px;
+               background:#c4841a;color:#fff;border:none;border-radius:4px;
+               font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+        ★ Open in Pipeline
+      </button>`;
+  } else {
+    // + Pipeline button (V74.7). Uses an inline onclick so the button keeps
+    // working across popup re-renders (DD data loading, etc.). The handler
+    // reads live map selection state at click time, not popup-build time.
+    pipelineBtn = `
+      <button type="button"
+        onclick="window.addCurrentSelectionToPipeline && window.addCurrentSelectionToPipeline()"
+        style="display:block;width:100%;margin-top:10px;padding:7px 10px;
+               background:#1a6b3a;color:#fff;border:none;border-radius:4px;
+               font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+        + Pipeline
+      </button>`;
+  }
 
   return `
     ${priceSection}
@@ -329,6 +347,79 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
     ${overlayBlock}
     ${domainLink}
     ${pipelineBtn}`;
+}
+
+// V74.8: find the pipeline item (if any) that matches the currently-clicked
+// map location. Match strategy, in priority order:
+//   1. Listing id (exact match for Domain listings that were already saved)
+//   2. Lot/DP overlap (any shared Lot/DP string between click and pipeline entry)
+//   3. Lat/lng proximity (within ~25m of any parcel coordinate on a pipeline entry)
+// Returns the pipeline item id, or null if no match.
+function findPipelineMatchForClick(listing) {
+  if (!window.getPipelineData) { console.log('[match] no getPipelineData'); return null; }
+  const pipelineData = window.getPipelineData();
+  if (!pipelineData) { console.log('[match] pipelineData null'); return null; }
+
+  const entries = Object.entries(pipelineData);
+  if (!entries.length) { console.log('[match] entries empty'); return null; }
+
+  // 1. Listing-id match (Domain pins)
+  if (listing?.id != null) {
+    const hit = entries.find(([id]) => id === String(listing.id));
+    if (hit) { console.log('[match] hit on listing.id:', hit[0]); return hit[0]; }
+  }
+
+  // Build a candidate click context: lot/DP set + lat/lng
+  const clickLotDPs = new Set();
+  let clickLat = null, clickLng = null;
+  if (clickMarkerData) {
+    clickLat = clickMarkerData.lat;
+    clickLng = clickMarkerData.lng;
+    if (clickMarkerData.lotDP) clickLotDPs.add(String(clickMarkerData.lotDP).toUpperCase());
+  }
+  if (_selectedParcels && _selectedParcels.length) {
+    _selectedParcels.forEach(p => {
+      if (p.lotDP) clickLotDPs.add(String(p.lotDP).toUpperCase());
+    });
+    if (!clickLat || !clickLng) {
+      clickLat = _selectedParcels.reduce((s, p) => s + p.lat, 0) / _selectedParcels.length;
+      clickLng = _selectedParcels.reduce((s, p) => s + p.lng, 0) / _selectedParcels.length;
+    }
+  }
+
+  console.log('[match] click context:', { clickLat, clickLng, clickLotDPs: [...clickLotDPs], clickMarkerData });
+
+  // 2. Lot/DP overlap
+  if (clickLotDPs.size) {
+    for (const [id, item] of entries) {
+      const itemLotDPs = (item?.property?._lotDPs || '')
+        .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      if (itemLotDPs.some(l => clickLotDPs.has(l))) {
+        console.log('[match] hit on lot/DP overlap:', id, itemLotDPs);
+        return id;
+      }
+    }
+    console.log('[match] no lot/DP overlap. Pipeline lots sample:',
+      entries.slice(0, 3).map(([id, item]) => ({ id, lots: item?.property?._lotDPs })));
+  }
+
+  // 3. Lat/lng proximity — ~25m tolerance
+  if (clickLat != null && clickLng != null) {
+    const tol = 0.00025;
+    for (const [id, item] of entries) {
+      const parcels = item?.property?._parcels || [];
+      for (const pc of parcels) {
+        if (Math.abs(pc.lat - clickLat) <= tol && Math.abs(pc.lng - clickLng) <= tol) {
+          console.log('[match] hit on lat/lng proximity:', id, { pcLat: pc.lat, pcLng: pc.lng, clickLat, clickLng });
+          return id;
+        }
+      }
+    }
+    console.log('[match] no lat/lng proximity match');
+  }
+
+  console.log('[match] no match found');
+  return null;
 }
 
 const ZONING_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/EPI_Primary_Planning_Layers/MapServer';
