@@ -716,14 +716,78 @@ function renderCRMView(container) {
   async function renderContactDetail(drawer, contactId, onDone) {
     drawer.innerHTML = '<div class="crm-drawer-loading">Loading…</div>';
     try {
-      const [contactData, notes, props, allPipeline] = await Promise.all([
+      const [contactData, notes, props, allPipeline, me] = await Promise.all([
         apiGet({ id: contactId }),
         apiGet({ notes: '1', contact_id: contactId }),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
         apiGet({ pipeline_list: '1' }).catch(() => []),
+        fetch('/api/auth/me').then(r => r.json()).catch(() => ({ authenticated: false })),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { drawer.innerHTML = '<div class="crm-drawer-loading">Not found</div>'; return; }
+
+      const viewerIsAdmin = !!(me && me.authenticated && me.user && me.user.isAdmin);
+      const viewerId      = me && me.authenticated && me.user ? String(me.user.id) : '';
+      const isSelf        = viewerId && String(c.id) === viewerId;
+      const canManage     = viewerIsAdmin;
+      const canChangePw   = viewerIsAdmin || isSelf;
+      const lastLogin     = c.last_login_at ? new Date(c.last_login_at).toLocaleString() : 'Never';
+      const hasPassword   = !!c.password_hash;
+      const accessModules = Array.isArray(c.access_modules) ? c.access_modules : [];
+      // PropMap access = allowed to log in AND has propmap (or wildcard) module
+      const hasPropMapAccess = c.can_login && (accessModules.includes('*') || accessModules.includes('propmap'));
+
+      // Site Access section — only rendered when viewer is admin OR viewing self
+      const siteAccessHtml = (canManage || isSelf) ? `
+        <div class="crm-drawer-section">
+          <div class="crm-drawer-section-title">Site Access</div>
+          <div class="crm-access-grid">
+            <label class="crm-access-row ${canManage && hasPassword ? '' : 'disabled'}">
+              <input type="checkbox" class="crm-access-propmap"
+                     ${hasPropMapAccess ? 'checked' : ''}
+                     ${canManage && hasPassword ? '' : 'disabled'}>
+              <div>
+                <div class="crm-access-label">PropMap Access</div>
+                <div class="crm-access-hint">${hasPassword ? 'Allows sign-in and use of the property map. CRM and Finance modules will become separate toggles.' : 'Set a password first, then enable access.'}</div>
+              </div>
+            </label>
+            <label class="crm-access-row ${canManage ? '' : 'disabled'}">
+              <input type="checkbox" class="crm-access-is-admin"
+                     ${c.is_admin ? 'checked' : ''}
+                     ${canManage ? '' : 'disabled'}>
+              <div>
+                <div class="crm-access-label">Administrator</div>
+                <div class="crm-access-hint">Can manage site access for all contacts.</div>
+              </div>
+            </label>
+            <div class="crm-access-row readonly">
+              <div class="crm-access-label">Last login</div>
+              <div class="crm-access-hint">${lastLogin}</div>
+            </div>
+          </div>
+
+          <div class="crm-access-actions">
+            <button class="crm-access-pw-btn kb-add-offer-btn" ${canChangePw ? '' : 'disabled'}>
+              ${hasPassword ? (isSelf && !canManage ? 'Change my password' : 'Reset password') : 'Set password'}
+            </button>
+            <span class="crm-access-status"></span>
+          </div>
+
+          <div class="crm-access-pw-form" style="display:none;margin-top:10px">
+            ${(isSelf && !canManage) ? `
+              <label class="crm-access-label">Current password</label>
+              <input type="password" class="kb-input crm-access-pw-current" autocomplete="current-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
+            ` : ''}
+            <label class="crm-access-label">New password (min 8 chars)</label>
+            <input type="password" class="kb-input crm-access-pw-new" autocomplete="new-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
+            <label class="crm-access-label">Confirm new password</label>
+            <input type="password" class="kb-input crm-access-pw-confirm" autocomplete="new-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
+            <div style="display:flex;gap:6px">
+              <button class="crm-access-pw-save kb-add-offer-btn">Save password</button>
+              <button class="crm-access-pw-cancel">Cancel</button>
+            </div>
+          </div>
+        </div>` : '';
 
       drawer.innerHTML = `
         <div class="crm-drawer-header">
@@ -747,6 +811,8 @@ function renderCRMView(container) {
               <div class="crm-detail-label">Source</div><div>${c.source || "manual"}</div>
             </div>
           </div>
+
+          ${siteAccessHtml}
 
           <div class="crm-drawer-section">
             <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -859,6 +925,108 @@ function renderCRMView(container) {
           renderContactDetail(drawer, contactId, onDone);
         });
       });
+
+      // ── Site Access handlers ───────────────────────────────────────────────
+      const statusEl = drawer.querySelector(".crm-access-status");
+      const setStatus = (msg, isErr = false) => {
+        if (!statusEl) return;
+        statusEl.textContent = msg || '';
+        statusEl.style.color = isErr ? '#8b2a1f' : 'var(--text-secondary, #7a7366)';
+      };
+
+      async function postAccessUpdate(payload) {
+        setStatus('Saving…');
+        try {
+          const r = await fetch('/api/auth/update-access', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ contact_id: contactId, ...payload }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+          setStatus('Saved');
+          setTimeout(() => setStatus(''), 2000);
+          return d;
+        } catch (err) {
+          setStatus(err.message || 'Save failed', true);
+          throw err;
+        }
+      }
+
+      const propmapEl = drawer.querySelector(".crm-access-propmap");
+      const isAdminEl = drawer.querySelector(".crm-access-is-admin");
+
+      if (propmapEl) {
+        propmapEl.addEventListener('change', async (e) => {
+          const enabled = e.target.checked;
+          // PropMap access = can_login + 'propmap' in access_modules.
+          // Turning off: revoke login, clear modules. Password is preserved.
+          const payload = enabled
+            ? { can_login: true,  access_modules: ['propmap'] }
+            : { can_login: false, access_modules: [] };
+          try {
+            await postAccessUpdate(payload);
+          } catch {
+            e.target.checked = !e.target.checked; // revert
+          }
+        });
+      }
+      if (isAdminEl) {
+        isAdminEl.addEventListener('change', async (e) => {
+          try {
+            await postAccessUpdate({ is_admin: e.target.checked });
+          } catch {
+            e.target.checked = !e.target.checked; // revert
+          }
+        });
+      }
+
+      // Password form toggle + save
+      const pwBtn     = drawer.querySelector(".crm-access-pw-btn");
+      const pwForm    = drawer.querySelector(".crm-access-pw-form");
+      const pwCancel  = drawer.querySelector(".crm-access-pw-cancel");
+      const pwSave    = drawer.querySelector(".crm-access-pw-save");
+      if (pwBtn && pwForm) {
+        pwBtn.addEventListener('click', () => {
+          pwForm.style.display = pwForm.style.display === 'none' ? '' : 'none';
+        });
+      }
+      if (pwCancel) {
+        pwCancel.addEventListener('click', () => {
+          pwForm.style.display = 'none';
+          ['.crm-access-pw-current','.crm-access-pw-new','.crm-access-pw-confirm'].forEach(sel => {
+            const el = drawer.querySelector(sel); if (el) el.value = '';
+          });
+          setStatus('');
+        });
+      }
+      if (pwSave) {
+        pwSave.addEventListener('click', async () => {
+          const currentEl = drawer.querySelector(".crm-access-pw-current");
+          const newEl     = drawer.querySelector(".crm-access-pw-new");
+          const confirmEl = drawer.querySelector(".crm-access-pw-confirm");
+          const newPw = newEl.value;
+          const confPw = confirmEl.value;
+          if (newPw.length < 8) { setStatus('Password must be at least 8 characters', true); return; }
+          if (newPw !== confPw) { setStatus('Passwords do not match', true); return; }
+          const payload = { contact_id: contactId, newPassword: newPw };
+          if (currentEl) payload.currentPassword = currentEl.value;
+          setStatus('Saving…');
+          try {
+            const r = await fetch('/api/auth/set-password', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+            setStatus('Password saved');
+            setTimeout(() => renderContactDetail(drawer, contactId, onDone), 800);
+          } catch (err) {
+            setStatus(err.message || 'Save failed', true);
+          }
+        });
+      }
 
     } catch (err) {
       console.error("[CRM] renderContactDetail failed:", err);

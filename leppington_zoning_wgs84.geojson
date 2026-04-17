@@ -7,55 +7,9 @@
     }
   },
   "metadata": {
-    "source": "Leppington Precinct - South West Growth Centre Land Zoning Map, State Environmental Planning Policy (Sydney Region Growth Centres) 2006, NSW Planning & Environment",
+    "source": "Leppington Precinct - South West Growth Centre Land Zoning Map, SEPP (Sydney Region Growth Centres) 2006, NSW Planning & Environment",
     "coordinate_system": "WGS84 (EPSG:4326)",
-    "georef": "Corrective affine from 4 WGS84 GCP pairs. Max residual 14.3m.",
-    "gcps": [
-      {
-        "label": "a",
-        "current": [
-          -33.9626281,
-          150.7805848
-        ],
-        "correct": [
-          -33.9629026,
-          150.779601
-        ]
-      },
-      {
-        "label": "b",
-        "current": [
-          -33.9543993,
-          150.7934479
-        ],
-        "correct": [
-          -33.9538501,
-          150.7932272
-        ]
-      },
-      {
-        "label": "c",
-        "current": [
-          -33.968246,
-          150.813714
-        ],
-        "correct": [
-          -33.968978,
-          150.814075
-        ]
-      },
-      {
-        "label": "d",
-        "current": [
-          -33.98934,
-          150.789807
-        ],
-        "correct": [
-          -33.991591,
-          150.789121
-        ]
-      }
-    ]
+    "georef": "Corrective affine from 4 WGS84 GCP pairs. Max residual 14.3m."
   },
   "features": [
     {
