@@ -1,0 +1,210 @@
+/**
+ * api/deals.js
+ * Deals CRUD — Kanban cards, workflow-scoped. New in V75.
+ *
+ * GET    /api/deals                                       -> all deals (lightweight)
+ * GET    /api/deals?id=X                                  -> single deal, with property joined
+ * GET    /api/deals?workflow=acquisition&status=active    -> filtered
+ * GET    /api/deals?property_id=X                         -> all deals on a property
+ * POST   /api/deals                                       -> create deal
+ * PUT    /api/deals                                       -> update deal
+ * DELETE /api/deals?id=X                                  -> delete deal
+ * POST   /api/deals { action:'close',  id, status }       -> close (status='won'|'lost'|'archived')
+ * POST   /api/deals { action:'reopen', id }               -> reopen closed deal
+ * POST   /api/deals { action:'new_on_property', property_id, workflow, stage, seed_financials_from? }
+ */
+
+import { neon } from '@neondatabase/serverless';
+import { requireSession } from '../lib/auth.js';
+import { getDatabaseUrl } from '../lib/db.js';
+const sql = neon(getDatabaseUrl());
+
+function newDealId() {
+  // Compact URL-safe id; collision-resistant enough for our scale
+  return 'deal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+export default async function handler(req, res) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  try {
+    switch (req.method) {
+
+      case 'GET': {
+        const { id, workflow, status, property_id } = req.query;
+
+        if (id) {
+          // Single deal with property joined + entity_contacts summary
+          const dealRows = await sql`
+            SELECT d.*, row_to_json(p.*) AS property
+            FROM deals d LEFT JOIN properties p ON p.id = d.property_id
+            WHERE d.id = ${id}`;
+          if (!dealRows.length) return res.status(404).json({ error: 'Not found' });
+          return res.status(200).json(dealRows[0]);
+        }
+
+        // Filtered list
+        if (property_id) {
+          const rows = await sql`
+            SELECT d.*, row_to_json(p.*) AS property
+            FROM deals d LEFT JOIN properties p ON p.id = d.property_id
+            WHERE d.property_id = ${property_id}
+            ORDER BY d.opened_at DESC`;
+          return res.status(200).json(rows);
+        }
+
+        if (workflow && status) {
+          const rows = await sql`
+            SELECT d.*, row_to_json(p.*) AS property
+            FROM deals d LEFT JOIN properties p ON p.id = d.property_id
+            WHERE d.workflow = ${workflow} AND d.status = ${status}
+            ORDER BY d.updated_at DESC`;
+          return res.status(200).json(rows);
+        }
+        if (workflow) {
+          const rows = await sql`
+            SELECT d.*, row_to_json(p.*) AS property
+            FROM deals d LEFT JOIN properties p ON p.id = d.property_id
+            WHERE d.workflow = ${workflow}
+            ORDER BY d.updated_at DESC`;
+          return res.status(200).json(rows);
+        }
+
+        // Unfiltered full list
+        const rows = await sql`
+          SELECT d.*, row_to_json(p.*) AS property
+          FROM deals d LEFT JOIN properties p ON p.id = d.property_id
+          ORDER BY d.updated_at DESC`;
+        return res.status(200).json(rows);
+      }
+
+      case 'POST': {
+        const body = req.body || {};
+
+        // Close / reopen actions
+        if (body.action === 'close') {
+          const { id, status = 'lost' } = body;
+          if (!id) return res.status(400).json({ error: 'id required' });
+          const rows = await sql`
+            UPDATE deals SET status = ${status}, closed_at = now(), updated_at = now()
+            WHERE id = ${id}
+            RETURNING *`;
+          if (!rows.length) return res.status(404).json({ error: 'Not found' });
+          return res.status(200).json(rows[0]);
+        }
+        if (body.action === 'reopen') {
+          const { id } = body;
+          if (!id) return res.status(400).json({ error: 'id required' });
+          const rows = await sql`
+            UPDATE deals SET status='active', closed_at=NULL, updated_at=now()
+            WHERE id = ${id} RETURNING *`;
+          if (!rows.length) return res.status(404).json({ error: 'Not found' });
+          return res.status(200).json(rows[0]);
+        }
+
+        // Start a new deal on an existing property, optionally seeding financials
+        if (body.action === 'new_on_property') {
+          const {
+            property_id,
+            workflow = 'acquisition',
+            stage    = 'shortlisted',
+            data     = {},
+            seed_financials_from, // optional deal_id to seed from
+          } = body;
+          if (!property_id) return res.status(400).json({ error: 'property_id required' });
+
+          // Verify property exists
+          const pRows = await sql`SELECT id FROM properties WHERE id = ${property_id}`;
+          if (!pRows.length) return res.status(404).json({ error: 'Property not found' });
+
+          const id = newDealId();
+          const dataJson = JSON.stringify({ addedAt: Date.now(), ...data });
+
+          const dealRows = await sql`
+            INSERT INTO deals (id, property_id, workflow, stage, status, data)
+            VALUES (${id}, ${property_id}, ${workflow}, ${stage}, 'active', ${dataJson}::jsonb)
+            RETURNING *`;
+
+          // Seed financials — find most recent prior deal's financial record if not specified
+          let seedFrom = seed_financials_from || null;
+          if (!seedFrom) {
+            const prior = await sql`
+              SELECT d.id FROM deals d
+              JOIN property_financials pf ON pf.deal_id = d.id
+              WHERE d.property_id = ${property_id} AND d.id <> ${id}
+              ORDER BY d.opened_at DESC LIMIT 1`;
+            if (prior.length) seedFrom = prior[0].id;
+          }
+          let financialsSeeded = false;
+          if (seedFrom) {
+            const src = await sql`SELECT data FROM property_financials WHERE deal_id = ${seedFrom} LIMIT 1`;
+            if (src.length) {
+              const dataJson2 = JSON.stringify(src[0].data);
+              await sql`
+                INSERT INTO property_financials (pipeline_id, deal_id, data, updated_at)
+                VALUES (${id}, ${id}, ${dataJson2}::jsonb, now())
+                ON CONFLICT (pipeline_id) DO NOTHING`;
+              financialsSeeded = true;
+            }
+          }
+
+          return res.status(201).json({ ...dealRows[0], financials_seeded: financialsSeeded, seed_from: seedFrom });
+        }
+
+        // Plain create
+        const {
+          id = newDealId(),
+          property_id,
+          workflow = 'acquisition',
+          stage    = 'shortlisted',
+          status   = 'active',
+          data     = {},
+        } = body;
+        if (!property_id) return res.status(400).json({ error: 'property_id required' });
+        const dataJson = JSON.stringify({ addedAt: Date.now(), ...data });
+        const rows = await sql`
+          INSERT INTO deals (id, property_id, workflow, stage, status, data)
+          VALUES (${id}, ${property_id}, ${workflow}, ${stage}, ${status}, ${dataJson}::jsonb)
+          ON CONFLICT (id) DO NOTHING
+          RETURNING *`;
+        if (!rows.length) {
+          const existing = await sql`SELECT * FROM deals WHERE id = ${id}`;
+          return res.status(200).json(existing[0]);
+        }
+        return res.status(201).json(rows[0]);
+      }
+
+      case 'PUT': {
+        const body = req.body || {};
+        const { id, stage, status, data } = body;
+        if (!id) return res.status(400).json({ error: 'id required' });
+        const dataJson = data !== undefined ? JSON.stringify(data) : null;
+        const rows = await sql`
+          UPDATE deals SET
+            stage      = COALESCE(${stage  ?? null}, stage),
+            status     = COALESCE(${status ?? null}, status),
+            data       = COALESCE(${dataJson}::jsonb, data),
+            updated_at = now()
+          WHERE id = ${id}
+          RETURNING *`;
+        if (!rows.length) return res.status(404).json({ error: 'Not found' });
+        return res.status(200).json(rows[0]);
+      }
+
+      case 'DELETE': {
+        const { id } = req.query;
+        if (!id) return res.status(400).json({ error: 'id required' });
+        await sql`DELETE FROM deals WHERE id = ${id}`;
+        return res.status(200).json({ ok: true });
+      }
+
+      default:
+        res.setHeader('Allow', 'GET, POST, PUT, DELETE');
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+  } catch (err) {
+    console.error('[deals API]', err);
+    return res.status(500).json({ error: err.message });
+  }
+}
