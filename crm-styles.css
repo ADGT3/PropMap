@@ -652,3 +652,74 @@
   height: auto !important;
   width: auto !important;
 }
+
+/* ── Site Access (V74) ──────────────────────────────────────────────────────── */
+.crm-access-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.crm-access-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #fafaf7;
+  border: 1px solid #eeeae0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.crm-access-row:hover:not(.disabled):not(.readonly) {
+  background: #f5f2ea;
+  border-color: #e1dcc9;
+}
+.crm-access-row.readonly,
+.crm-access-row.disabled {
+  cursor: default;
+}
+.crm-access-row.disabled {
+  opacity: 0.6;
+}
+.crm-access-row input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.crm-access-row.disabled input[type="checkbox"] {
+  cursor: not-allowed;
+}
+.crm-access-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #4a4539;
+  margin-bottom: 2px;
+}
+.crm-access-hint {
+  font-size: 11px;
+  color: #7a7366;
+  line-height: 1.4;
+}
+.crm-access-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.crm-access-status {
+  font-size: 11px;
+  color: #7a7366;
+  min-height: 14px;
+}
+.crm-access-pw-form {
+  padding: 12px;
+  background: #fafaf7;
+  border: 1px solid #eeeae0;
+  border-radius: 6px;
+}
+.crm-access-pw-form .crm-access-label {
+  display: block;
+  margin-bottom: 4px;
+  margin-top: 4px;
+}

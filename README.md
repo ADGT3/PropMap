@@ -1,4 +1,4 @@
-# Sydney Property Map — V68
+# Sydney Property Map — V74
 
 A browser-based interactive property map overlaying live Domain.com.au listings with planning, environmental and infrastructure data across Sydney's growth corridors. Deployed on Vercel with a Neon Postgres database for persistent pipeline and CRM storage.
 
@@ -8,22 +8,34 @@ A browser-based interactive property map overlaying live Domain.com.au listings 
 
 ```
 sydney-property-map/
+├── middleware.js            — Edge middleware: gates every request with session-cookie check (V74)
+├── login.html               — Branded sign-in page (V74)
 ├── api/
+│   ├── auth/
+│   │   ├── login.js         — Verifies credentials, issues session cookie (V74)
+│   │   ├── logout.js        — Clears session cookie (V74)
+│   │   ├── me.js            — Returns current session user (V74, public endpoint)
+│   │   ├── set-password.js  — Set/change contact password (admin or self) (V74)
+│   │   └── update-access.js — Toggle can_login / is_admin / access_modules (admin only) (V74)
 │   ├── pipeline.js          — Pipeline CRUD (Neon Postgres)
 │   ├── contacts.js          — CRM Contacts CRUD (Neon Postgres)
 │   ├── finance-api.js       — Financial model CRUD (Neon Postgres, property_financials table)
-│   ├── db-setup.js          — One-time DB schema setup endpoint
+│   ├── db-setup.js          — One-time DB schema setup endpoint (now includes auth columns)
 │   ├── domain-search.js     — Domain API proxy (keeps key server-side)
 │   ├── tiles.js             — NSW tile proxy (query params, not path segments)
 │   ├── topo-style.js        — NSW topo style proxy (CORS fix)
 │   └── health.js            — DB health check endpoint
+├── lib/
+│   └── auth.js              — Shared JWT sign/verify, cookie helpers, session guards (V74)
+├── scripts/
+│   └── hash-password.mjs    — Local utility: generates bcrypt hash for fallback env var (V74)
 ├── finance/
 │   ├── finance-module.js    — Financial feasibility calculator, UI, DB persistence
 │   └── finance-styles.css   — Finance module styles
-├── index.html               — Page structure and UI
-├── styles.css               — All styling (includes timestamped notes styles)
-├── crm.js                   — CRM contact management module
-├── crm-styles.css           — CRM-specific styles
+├── index.html               — Page structure and UI (now with user menu in header)
+├── styles.css               — All styling (includes user menu styles)
+├── crm.js                   — CRM contact management module (now with Site Access section)
+├── crm-styles.css           — CRM-specific styles (includes Site Access styles)
 ├── overlays-meta.js         — Overlay definitions, zone config, type metadata
 ├── overlays-b64-sw-wastewater.js  — SW Sydney wastewater GeoTIFF (b64)
 ├── overlays-b64-sw-potable.js     — SW Sydney potable water GeoTIFF (b64)
@@ -35,7 +47,7 @@ sydney-property-map/
 ├── dd-risks.js              — DD risk assessment (queries NSW layers at lat/lng)
 ├── map.js                   — Map logic, overlays, search, listings, Domain init
 ├── kanban.js                — Pipeline Kanban board with DD automation and CRM
-├── package.json             — Dependencies (@neondatabase/serverless), type:module
+├── package.json             — Dependencies (@neondatabase/serverless, jose, bcryptjs), type:module
 ├── vercel.json              — Vercel routing config
 ├── DEPLOY.md                — Deployment guide
 └── README.md                — This file
@@ -50,6 +62,9 @@ sydney-property-map/
 |---|---|
 | `DOMAIN_API_KEY` | Domain Developer API key — store in Vercel only, never in code |
 | `POSTGRES_URL` | Neon database connection string (auto-injected by Vercel) |
+| `JWT_SECRET` | Session JWT signing secret — minimum 32 random chars. Generate: `openssl rand -base64 48` |
+| `ADMIN_FALLBACK_EMAIL` | Break-glass admin email (e.g. `alan.diversi@edanproperty.com.au`). Always has admin access, works even if DB is unreachable |
+| `ADMIN_FALLBACK_PASSWORD_HASH` | Bcrypt hash of the fallback admin password. Generate locally with `node scripts/hash-password.mjs` |
 
 ---
 
@@ -198,6 +213,115 @@ property_financials (
   updated_at   TIMESTAMPTZ
 )
 ```
+
+---
+
+## Authentication (V74)
+
+The site is staff-only. Every request (pages and API routes) runs through `middleware.js`, which verifies a signed session cookie. Anyone without a valid session is redirected to `/login.html` (for pages) or gets a 401 (for API calls). This also protects the Domain API proxy, NSW tile proxy, and all other `/api/*` endpoints from being hit anonymously.
+
+### How it works
+
+- **Session cookie**: `spm_session`, httpOnly, secure, SameSite=Lax, 30-day expiry. Contains a JWT signed with `JWT_SECRET` (HS256 via `jose`). Payload: `sub`, `email`, `name`, `isAdmin`, `modules`, `src`.
+- **Login priority**: the login endpoint first checks the `contacts` table (`can_login = true`, password matches). If no match, it falls back to the env-var superuser (`ADMIN_FALLBACK_EMAIL` + `ADMIN_FALLBACK_PASSWORD_HASH`). The fallback always has admin access and works even if Neon is unreachable.
+- **Admins** can enable/disable login for any contact, toggle admin rights, and reset passwords via the Site Access section of the contact detail drawer in the CRM.
+- **Non-admins** can only change their own password (via the same UI on their own record, which requires their current password).
+- **Password hashing**: `bcryptjs`, 10 rounds. Happens in Node serverless functions (`api/auth/login.js`, `api/auth/set-password.js`) — never in the Edge middleware.
+
+### Contact table auth columns
+
+Run `POST /api/db-setup` once after deploying V74 to apply these. All statements are `IF NOT EXISTS` and safe to re-run.
+
+```sql
+ALTER TABLE contacts ADD COLUMN can_login      BOOLEAN     NOT NULL DEFAULT false;
+ALTER TABLE contacts ADD COLUMN is_admin       BOOLEAN     NOT NULL DEFAULT false;
+ALTER TABLE contacts ADD COLUMN password_hash  TEXT;
+ALTER TABLE contacts ADD COLUMN last_login_at  TIMESTAMPTZ;
+ALTER TABLE contacts ADD COLUMN access_modules TEXT[]      NOT NULL DEFAULT ARRAY['*'];
+CREATE INDEX contacts_email_lower_idx ON contacts (LOWER(email));
+```
+
+### First-time setup (do this before V74 goes live)
+
+**1. Install the new dependencies locally** (first time only, for the hash script):
+```bash
+npm install
+```
+
+**2. Generate a JWT signing secret**:
+```bash
+openssl rand -base64 48
+```
+Copy the output. In Vercel → Settings → Environment Variables, add:
+- `JWT_SECRET` = (the output, for Production + Preview)
+
+> If you ever rotate `JWT_SECRET`, all existing sessions are invalidated and everyone must log in again.
+
+**3. Generate the fallback admin password hash**:
+```bash
+node scripts/hash-password.mjs
+```
+Type a strong password (min 8 chars). It will print a bcrypt hash. In Vercel → Settings → Environment Variables, add:
+- `ADMIN_FALLBACK_EMAIL` = `alan.diversi@edanproperty.com.au`
+- `ADMIN_FALLBACK_PASSWORD_HASH` = (the hash output)
+
+**4. Deploy V74** (redeploy after adding the env vars so they take effect).
+
+**5. Run the DB migration**:
+```
+POST https://<your-prod-url>/api/db-setup
+```
+This adds the auth columns. You'll need to be logged in to call it — which is the chicken-and-egg: use the fallback admin login from step 3.
+
+**6. Log in as the fallback admin** at `/login.html` using `ADMIN_FALLBACK_EMAIL` + the password you chose in step 3.
+
+**7. Create your own contact row and grant yourself admin** (so you're not relying on the fallback day-to-day):
+- Open the CRM → find or create the contact for `alan.diversi@edanproperty.com.au`
+- Open the contact detail drawer → scroll to **Site Access**
+- Click **Set password** → enter a password → Save
+- Tick **Can log in** and **Administrator**
+- Log out and log back in — you'll now be signed in via the DB path (seen as `src: 'db'` in `/api/auth/me`), with the env-var fallback reserved as break-glass.
+
+### Day-to-day admin tasks
+
+**Grant a new staff member login access:**
+1. CRM → open (or create) their contact record
+2. Site Access → **Set password** → type an initial password → Save (share it with them via Signal, in person, or similar out-of-band channel)
+3. Tick **Can log in** ✓
+4. Tick **Administrator** if they should be an admin
+5. Tell them to log in and change their password immediately via their own CRM record
+
+**Revoke access:**
+- CRM → contact → Site Access → untick **Can log in**. Their current session remains valid until its 30-day expiry, but no new logins. To force-expire, rotate `JWT_SECRET` (kicks everyone out).
+
+**Reset someone's forgotten password:**
+- CRM → contact → Site Access → **Reset password** → type new password → Save → share with them.
+
+**Safeguard**: The update-access endpoint refuses to leave the system with zero DB-admins (where `is_admin = true AND can_login = true`). The env-var fallback is always still available, but this prevents accidentally orphaning the admin set through the UI.
+
+### If you lock yourself out
+
+As long as the env-var fallback is configured, you can always log in as `ADMIN_FALLBACK_EMAIL` + fallback password. To rotate the fallback password:
+1. Locally: `node scripts/hash-password.mjs` → copy hash
+2. Vercel → Settings → Environment Variables → update `ADMIN_FALLBACK_PASSWORD_HASH` → Save
+3. Trigger a redeploy (env var changes don't take effect until the next deploy)
+
+If both the fallback env vars and your DB admin credentials are lost, connect directly to Neon and either update `password_hash` for an existing admin row, or insert a new admin contact — then log in.
+
+### Portability notes
+
+This system is mostly portable — if you migrate off Vercel, only `middleware.js` is Vercel-specific. Everything else (lib/auth.js, the `/api/auth/*` endpoints, login.html, the CRM Site Access UI, the DB columns) works on any Node host.
+
+On a platform without edge middleware (Bluehost, Railway, Render, VPS, etc.):
+1. Delete `middleware.js`.
+2. At the top of every `/api/*.js` handler that should be protected, add:
+   ```js
+   import { requireSession } from '../lib/auth.js';
+   // inside handler, before the real logic:
+   const session = await requireSession(req, res);
+   if (!session) return;
+   ```
+3. For static HTML pages (`index.html`), either wrap them behind a thin Node/Express server that checks the cookie before serving, or accept that the HTML/JS is reachable and rely on API-level auth to protect data (the frontend will just show a broken page that immediately redirects to `/login.html` when its XHRs return 401, which `index.html` already does via the `/api/auth/me` bootstrap).
 
 ---
 
@@ -382,7 +506,7 @@ Source: **Figure 40** of the *Catherine Park North Draft Planning Proposal, Sept
 | R3 | Medium Density Residential | `#cc3333` | 0.60 |
 | SP2 | Infrastructure – Classified Road (Catherine Park Drive) | `#ffcc00` | 0.70 |
 
-**Output:** 7 features (2× R2, 4× R3, 1× SP2). Bounding box: lat −34.014 to −34.000, lon 150.758 to 150.771. Centre: −34.004, 150.765 (Catherine Field, Camden LGA).
+**Output:** 7 features (2× R2, 4× R3, 1× SP2). Final bounding box: lat −34.013 to −34.001, lon 150.759 to 150.770. Centre: −34.007, 150.764 (Catherine Field, Camden LGA). Confirmed correct against satellite basemap.
 
 **Affine transform coefficients** (px_x, px_y in 1471×1471 image, origin top-left):
 ```
@@ -390,12 +514,22 @@ lon = 150.75400628 + 0.0000135531 × px_x + 0.0000010737 × px_y
 lat = −34.00441390 + 0.0000122711 × px_x − 0.0000156330 × px_y
 ```
 
+Corrective affine applied post-hoc from 4 confirmed GCP pairs (Web Mercator coords, max residual 11m):
+```
+cor_lon = −5.22125477 + 1.03752258 × cur_lon + 0.01293760 × cur_lat
+cor_lat =  3.86074737 − 0.00992951 × cur_lon + 1.06930344 × cur_lat
+```
+
+**Final output:** 7 features, bbox lat −34.013 to −34.001, lon 150.759 to 150.770, centre −34.007, 150.764.
+
 ---
 
 ## Version History
 
 | Version | Notes |
 |---|---|
+| V74 | **Authentication & site access.** Entire site gated behind a session cookie via `middleware.js` (Vercel Routing Middleware, Edge runtime) — protects both pages and API routes, so Domain API proxy, tile proxy, and all other endpoints are no longer publicly hit-able. New branded `/login.html`. JWT (HS256 via `jose`) stored in httpOnly Secure SameSite=Lax cookie, 30-day expiry. **Contacts table extended**: `can_login`, `is_admin`, `password_hash` (bcryptjs, 10 rounds), `last_login_at`, `access_modules TEXT[]` (default `['*']` = full site access; per-module wiring scaffolded for future Map/CRM/Finance split). **Login priority**: DB first, then env-var fallback superuser (`ADMIN_FALLBACK_EMAIL`, `ADMIN_FALLBACK_PASSWORD_HASH`) that always has admin and works even if Neon is unreachable. **New endpoints** (`api/auth/*`): `login`, `logout`, `me`, `set-password` (admin or self; self requires current password), `update-access` (admin-only, with last-admin safeguard — cannot orphan DB admin set through UI). **CRM Site Access section** added to contact detail drawer: Can log in / Administrator / Full site access checkboxes, Last login display, Set/Reset/Change password form. Admin-gated; non-admins only see self-service password change on their own record. **Header user menu** in `index.html` — avatar with initials, dropdown showing full name/email/role and Sign out action; bootstraps from `/api/auth/me` on page load. **New files**: `middleware.js`, `login.html`, `lib/auth.js`, `api/auth/{login,logout,me,set-password,update-access}.js`, `scripts/hash-password.mjs`. **New env vars** (required before V74 goes live): `JWT_SECRET`, `ADMIN_FALLBACK_EMAIL`, `ADMIN_FALLBACK_PASSWORD_HASH`. **New deps**: `jose`, `bcryptjs`. `api/db-setup.js` extended with ALTER statements for all auth columns (safe to re-run). Framework-agnostic middleware uses plain Web Request/Response (not `next/server`) so no Next.js dependency. Portability: only `middleware.js` is Vercel-specific; if migrating, delete it and call `requireSession()` at the top of each API route — `lib/auth.js` already exposes this. See **Authentication** section for full setup, day-to-day admin tasks, and lockout recovery. |
+| V73 | Leppington and South Creek ILPs added. |
 | V68 | **map.js improvements.** Viewport and filter persistence: map center/zoom saved to `localStorage` on every pan/zoom and restored on page load (deferred to `window.load` to avoid Leaflet container sizing race); active filters saved to `localStorage` on Apply and Clear, restored on load including chip/select/checkbox UI state and filter badge count. Measure tool fixed: removed broken secondary picker popup that was appending to a hidden parent; Distance and Area now injected directly as items in the Tools dropdown menu; Clear Measurement item shown only when a measurement is active. Selecting a Domain API listing marker no longer recentres the map (popup `autoPan` disabled; `setView` suppressed on marker click, preserved on sidebar card click). **Data + overlays:** `catherine_park_north_zoning_wgs84.geojson` added — Catherine Park North proposed zoning (R2/R3/SP2) georeferenced from Figure 40 of the Draft Planning Proposal (Sep 2025) using 3 confirmed road intersection GCPs. Added to Zoning overlay group. `map.js` `buildLeafletLayer` extended with `vectorUrl` branch for fetch-based GeoJSON overlays. |
 | V67 | **Finance module — Phase 2 (Data Integrity, Calculations & UX).** **File renames**: `finance/finance.js` → `finance/finance-module.js`, `api/finance.js` → `api/finance-api.js` (delete old files on deploy). **Data integrity**: all pipeline monetary values stored as plain numbers. Submit offer handler force-blurs all inputs before reading so unblurred tranches are captured. `deleteOffer` uses `String()` coercion for ID comparison. **Kanban modal**: "Terms Offered" and "Model in Financial Feasibility" merged into single **Submitted Offers & Financial Feasibility** section. Each offer row shows full details (price, settlement, deposit tranches) plus 📊 Model and ✕ delete buttons. **+ Add Offer** button in section header opens inline popup form immediately below heading. Vendor terms row shown with same detail, no delete. **Nav buttons**: Pipeline and Finance converted to `toggle-btn` with `.dot` indicator matching Listings. Dot goes accent-coloured when active. Finance button opens/closes finance view. Pipeline button opens pipeline board. **Finance → Pipeline link**: navigates back to pipeline modal without triggering kanban close. **Finance table**: Funds to Complete section with ▶/▼ toggle and **Include in cashflow** checkbox (default on). Each cost placed in correct year: deposits at cumulative days from contract ÷ 365, purchase costs at offer settlement year. `_settlementYr` computed once in `runModel` from actual offer settlement days and reused by KPI tiles, table rows, and cashflow adjustment — all consistent. **KPI strip**: 9 tiles, CSS grid, 75% of original size. Tiles: Acquisition Price · Comparable Value · Total Loan · Cash Required (Upfront) · Cash Required (Settlement) · Cash Required (Total) · Net Income (Yr 1) · Asset Value (Exit) · NPV at Exit. Cashflow (Yr 1) tile removed. **Cash Required definitions**: Upfront = all FTC items except Commission and Equity Contribution; Settlement = Commission + Equity Contribution; Total = Upfront + Settlement = Total Purchase Costs. **Total Purchase Costs** = all Funds to Complete items across all years (deposits + stamp + valuation + solicitor + inspections + commission + equity). **Stamp duty**: auto-calculated only on new model creation — never overwritten on existing models, preserving manual changes. Editing acquisition price no longer recalculates stamp duty. **Sidebar sections**: all start collapsed. Purchase Costs moved into Outgoings section as first subsection. Deposits shown as first items under Purchase Costs. Revenue section: Rent (accepts /w /m /y) + Other. All running cost fields annual (accept /w /m /y): Council, Water, Cleaning, Insurance, Land Tax, Management Fee, Common Power, Fire Services, Maintenance, Sinking Fund, Other. Separate Council (quarterly) and Maintenance (monthly) inputs removed — stored as annual. **Settlement lag** auto-set from offer settlement days on open (rent starts at correct year). **ROE** = Cashflow ÷ Total Cash Required. |
 | V66.2 | **Finance module enhancements.** Calculation engine rewritten to match `Feasibility_-82WPRL-v3.xlsx`: interest-only loan driven by `% profit used for debt reduction` (principal paid = (Rent − Interest) × debt reduction %; 0% = pure interest-only), settlement lag (pre-settlement years show zero rent/interest), Cost of Funds row (upfront cash × cost of capital per year), NPV = Asset Value − Cost of Funds (per-year, not DCF). Dual cash totals: Upfront (deposit + purchase costs) and Total (upfront − pre-reval cashflows). Inputs correctly split into grey (editable) vs calculated display fields — weekly rent × 52, council quarterly × 4, maintenance monthly × 12, management fee % × gross rent, sinking fund % × acquisition price. Five comparable value methods (Gross Area, 30% GRV, Development TDC, Method 5 Yield-derived). **Multi-state stamp duty**: state auto-detected from property address; separate formula for NSW, VIC, QLD, SA, ACT — each sourced from official .gov.au pages (Revenue NSW contracts guide, SRO Vic fixtures page, QRO rates page, RevenueSA, ACT Revenue Office non-commercial table). NSW rates updated to 1 July 2025 CPI-adjusted thresholds. **Kanban modal**: Finance button moved from header to below Terms Offered section, restyled as full-width accent action link; passes most recent offer price (or vendor terms price) to finance module. **Price carry-forward**: new models seeded from offer price; existing models preserve all assumptions — only acquisitionPrice updates if offer differs. **Finance header**: phase chevron nav (Financial Feasibility › Acquisition → Delivery placeholder); Mean Comparable Value shown live in header. **Comparable section**: collapsed by default, mean value shown as badge in section header. |
