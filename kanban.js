@@ -1391,3 +1391,16 @@ window.getPipelineStages = () => STAGES;
 window.refreshPipelinePins = function () {
   if (typeof window._renderPipelinePins === 'function') window._renderPipelinePins();
 };
+
+// Expose for cross-module navigation (CRM deep-links into a pipeline item)
+window.openPipelineItem = function (pipelineId) {
+  if (!pipeline[pipelineId]) {
+    alert('That pipeline item no longer exists.');
+    return;
+  }
+  // Close CRM view if open, then open Kanban and the card modal
+  if (crmVisible) toggleCRM(false);
+  if (!kanbanVisible) toggleKanban(true);
+  // Wait a tick for Kanban to render before opening the modal
+  setTimeout(() => openCardModal(pipelineId), 50);
+};

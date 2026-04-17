@@ -629,6 +629,23 @@
   font-size: 13px;
 }
 .crm-prop-address { flex: 1; font-weight: 500; }
+.crm-prop-id-link {
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: #7a7366;
+  text-decoration: none;
+  padding: 2px 6px;
+  border: 1px solid #e5e1d8;
+  border-radius: 4px;
+  background: #fafaf7;
+  flex-shrink: 0;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.crm-prop-id-link:hover {
+  color: #b8935f;
+  border-color: #d9c89f;
+  background: #fcf8ef;
+}
 .crm-drawer-note-input { margin-bottom: 8px; }
 .crm-drawer-note-text { width: 100%; resize: vertical; }
 .crm-drawer-edit-btn { font-size: 12px; padding: 4px 10px; }
