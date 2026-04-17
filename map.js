@@ -3432,6 +3432,9 @@ document.addEventListener('click', (ev) => {
       if (typeof renderListings === 'function') renderListings();
       if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
       if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+      // V75.1c — also clear any temporary click marker placed by selectPropertyAtPoint
+      // so a marker dropped on bare ground (not a listing pin) disappears too.
+      if (typeof clearParcelSelection === 'function') clearParcelSelection();
     })();
     return;
   }
@@ -3448,6 +3451,7 @@ document.addEventListener('click', (ev) => {
       if (typeof renderListings === 'function') renderListings();
       if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
       if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+      if (typeof clearParcelSelection === 'function') clearParcelSelection();
     })();
     return;
   }

@@ -2347,3 +2347,9 @@ header {
 .listing-card:has(.listing-not-suitable-banner):hover {
   opacity: 1;
 }
+
+/* V75.1 popup snooze menu — hover state on duration options */
+.popup-ns-menu button:hover {
+  color: #c4841a;
+  background: #f8f4ec;
+}
