@@ -249,6 +249,67 @@ const OVERLAYS = [
       "site-boundary":           { color: "#FF0000", fillColor: "none",    fillOpacity: 0.00, weight: 2 }
     }
   },
+  // ── Leppington Precinct — Land Zoning Map (SEPP Sydney Region Growth Centres 2006)
+  {
+    id: "leppington-zoning",
+    label: "Leppington – Land Zoning Map",
+    type: "zoning",
+    group: "zoning",
+    zone: "all",
+    enabled: false,
+    opacity: 0.7,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/leppington_zoning_wgs84.geojson",
+    source: "Leppington Precinct - South West Growth Centre Land Zoning Map, SEPP (Sydney Region Growth Centres) 2006, NSW Planning & Environment",
+    vectorStyleProp: "zone",
+    vectorStyleMap: {
+      "B2":  { color: "#40d0d8", fillColor: "#62f0f5", fillOpacity: 0.70, weight: 1 },
+      "B3":  { color: "#0090b8", fillColor: "#00c2ed", fillOpacity: 0.70, weight: 1 },
+      "B4":  { color: "#7070a0", fillColor: "#959dc2", fillOpacity: 0.70, weight: 1 },
+      "B7":  { color: "#90a8b0", fillColor: "#bad6de", fillOpacity: 0.70, weight: 1 },
+      "E2":  { color: "#c07010", fillColor: "#f0ae3c", fillOpacity: 0.70, weight: 1 },
+      "E4":  { color: "#c09040", fillColor: "#ffda96", fillOpacity: 0.70, weight: 1 },
+      "R2":  { color: "#C8BC7A", fillColor: "#ffa6a3", fillOpacity: 0.70, weight: 1 },
+      "R3":  { color: "#C8B840", fillColor: "#ff776e", fillOpacity: 0.70, weight: 1 },
+      "RE1": { color: "#00aa00", fillColor: "#55ff00", fillOpacity: 0.70, weight: 1 },
+      "SP2": { color: "#c8c800", fillColor: "#ffff70", fillOpacity: 0.70, weight: 1 }
+    }
+  },
+  // ── South Creek West Belmore Road Precinct — ILP ────────────────────────────
+  {
+    id: "south-creek-west-ilp",
+    label: "South Creek West – Belmore Road Precinct ILP",
+    type: "zoning",
+    group: "zoning",
+    zone: "all",
+    enabled: false,
+    opacity: 0.7,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/south_creek_west_ilp_wgs84.geojson",
+    source: "South Creek West - Belmore Road Precinct, Revised Final ILP, 07-11-24, Urbis",
+    vectorStyleProp: "zone",
+    vectorStyleMap: {
+      "school":     { color: "#a05090", fillColor: "#ca94c2", fillOpacity: 0.70, weight: 1 },
+      "employment": { color: "#803880", fillColor: "#b26dab", fillOpacity: 0.70, weight: 1 },
+      "ld_res_1":   { color: "#C8BC7A", fillColor: "#fcefdf", fillOpacity: 0.70, weight: 1 },
+      "ld_res_2":   { color: "#C8A870", fillColor: "#f1d1aa", fillOpacity: 0.70, weight: 1 },
+      "md_res_1":   { color: "#a06828", fillColor: "#d79754", fillOpacity: 0.70, weight: 1 },
+      "md_res_2":   { color: "#803020", fillColor: "#ae4331", fillOpacity: 0.70, weight: 1 },
+      "local_park": { color: "#90a030", fillColor: "#bed471", fillOpacity: 0.70, weight: 1 },
+      "playing":    { color: "#405820", fillColor: "#597f39", fillOpacity: 0.70, weight: 1 },
+      "riparian":   { color: "#102810", fillColor: "#1c4835", fillOpacity: 0.80, weight: 1 },
+      "comm_open":  { color: "#a0b870", fillColor: "#dfeabd", fillOpacity: 0.70, weight: 1 },
+      "open_tree":  { color: "#90a830", fillColor: "#bed571", fillOpacity: 0.70, weight: 1 },
+      "village":    { color: "#082840", fillColor: "#0b486e", fillOpacity: 0.80, weight: 1 },
+      "drainage":   { color: "#4898a0", fillColor: "#7ecacf", fillOpacity: 0.70, weight: 1 },
+      "raingarden": { color: "#a8a030", fillColor: "#f8f2a8", fillOpacity: 0.70, weight: 1 },
+      "env_living": { color: "#907860", fillColor: "#cdb9a7", fillOpacity: 0.70, weight: 1 }
+    }
+  },
   {
     id: "nsw-srlup",
     label: "NSW Strategic Regional Land Use Policy",
@@ -469,17 +530,8 @@ const OVERLAYS = [
     bounds: { latMin: -34.06703146583395, latMax: -33.79801841774339, lonMin: 150.6301602408125, lonMax: 150.89931435500063 },
     b64: null
   },
-  {
-    id: "sw-ilp",
-    label: "ILP — Leppington Stage 3&4",
-    type: "ilp",
-    zone: "south-west-sydney",
-    enabled: false,
-    opacity: 0.7,
-    bounds: { latMin: -33.99934965392993, latMax: -33.94960464165743, lonMin: 150.77621588449637, lonMax: 150.81793543936465 },
-    b64: null
-  }
 ];
+
 
 /**
  * ZONES
