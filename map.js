@@ -493,9 +493,11 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
       </button>`;
   }
 
-  // V75.1 — Not Suitable / snooze control. Inline onclick handlers wire to
-  // globals on window so they survive popup re-renders. Listing context is
-  // serialised into a JSON-encoded string for the click handler.
+  // V75.1 — Not Suitable / snooze control. The popup is rendered as a string,
+  // so we can't attach JS event listeners directly to its buttons. Instead we
+  // stash the listing under a unique key on window._nsContext and use simple
+  // onclick handlers that look up by key (avoids JSON-in-attribute escaping
+  // issues that broke this in Safari).
   const nsListing = listing || (clickMarkerData ? {
     address: clickMarkerData.label?.split(',')[0]?.trim() || '',
     suburb:  clickMarkerData.label?.split(',')[1]?.trim() || '',
@@ -504,12 +506,15 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
   } : null);
   let nsBtn = '';
   if (nsListing) {
-    const ns = isNotSuitable(nsListing);
-    const lJson = JSON.stringify(nsListing).replace(/"/g, '&quot;');
+    const ns  = isNotSuitable(nsListing);
+    const key = 'k' + Math.random().toString(36).slice(2, 10);
+    window._nsContext = window._nsContext || {};
+    window._nsContext[key] = nsListing;
+
     if (ns) {
       nsBtn = `
         <button type="button"
-          onclick="(async () => { await window.clearNotSuitable(${lJson}); window.refreshListings && window.refreshListings(); window.refreshPipelinePins && window.refreshPipelinePins(); })()"
+          onclick="window._nsClear && window._nsClear('${key}')"
           style="display:block;width:100%;margin-top:6px;padding:6px 10px;
                  background:#888;color:#fff;border:none;border-radius:4px;
                  font-size:11px;font-weight:600;cursor:pointer">
@@ -518,7 +523,7 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
     } else {
       const opts = SNOOZE_OPTIONS.map((o, i) =>
         `<button type="button"
-           onclick="event.stopPropagation(); (async () => { await window.markNotSuitable(${lJson}, ${i}); window.refreshListings && window.refreshListings(); window.refreshPipelinePins && window.refreshPipelinePins(); document.querySelectorAll('.popup-ns-menu').forEach(m => m.style.display='none'); })()"
+           onclick="window._nsMark && window._nsMark('${key}', ${i})"
            style="display:block;width:100%;text-align:left;padding:5px 10px;
                   background:#fff;color:#333;border:none;border-bottom:1px solid #eee;
                   font-size:11px;cursor:pointer">${o.label}</button>`
@@ -526,7 +531,7 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
       nsBtn = `
         <div style="position:relative;margin-top:6px">
           <button type="button"
-            onclick="event.stopPropagation(); var m=this.nextElementSibling; m.style.display=(m.style.display==='none'?'block':'none');"
+            onclick="(function(b){var m=b.nextElementSibling;m.style.display=(m.style.display==='none'?'block':'none');})(this)"
             style="display:block;width:100%;padding:6px 10px;
                    background:transparent;color:#888;border:1px solid #ccc;border-radius:4px;
                    font-size:11px;font-weight:500;cursor:pointer">
@@ -3367,3 +3372,27 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('.listing-ns-menu').forEach(m => { m.style.display = 'none'; });
   }
 });
+
+// V75.1 — global delegate handlers for popup Not Suitable buttons.
+// The popup is a string-rendered HTML blob; inline onclicks call these by
+// short key into window._nsContext to avoid JSON-in-attribute escaping.
+window._nsMark = async function(key, optionIndex) {
+  const listing = window._nsContext && window._nsContext[key];
+  if (!listing) return;
+  await markNotSuitable(listing, optionIndex);
+  // Close any open menu
+  document.querySelectorAll('.popup-ns-menu').forEach(m => { m.style.display = 'none'; });
+  // Refresh listings + pipeline pins
+  if (typeof renderListings === 'function') renderListings();
+  if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+  // Close any open Leaflet popup so the user gets immediate feedback
+  if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+};
+window._nsClear = async function(key) {
+  const listing = window._nsContext && window._nsContext[key];
+  if (!listing) return;
+  await clearNotSuitable(listing);
+  if (typeof renderListings === 'function') renderListings();
+  if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+  if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+};
