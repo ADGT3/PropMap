@@ -29,10 +29,166 @@ let _activeFilters = {
   excludePriceWithheld:   false,
   excludeDepositTaken:    true,
   newDevOnly:             false,
+  showSnoozed:            false,    // V75.1 — show properties marked Not Suitable
 };
 let activeZone   = 'all';
 let showListings = true;
 let markers      = {};
+
+// V75.1 — Not Suitable / snooze state.
+// Map of (Domain listing id OR lat,lng key) → { property_id, until, reason }
+// Loaded from /api/properties on map init; mutated by mark-not-suitable actions.
+const _notSuitable = {
+  byListingId: new Map(),   // domain_listing_id → { property_id, until, reason }
+  byLatLng:    new Map(),   // 'lat,lng' rounded → { property_id, until, reason }
+};
+
+function _llKey(lat, lng) {
+  return `${Number(lat).toFixed(5)},${Number(lng).toFixed(5)}`;
+}
+
+// True if the given listing OR lat/lng is currently flagged not-suitable.
+function isNotSuitable(listingOrLatLng) {
+  const now = Date.now();
+  const check = (entry) => {
+    if (!entry) return false;
+    if (!entry.until) return false;
+    // 'infinity' permanent — always block
+    if (entry.until === 'infinity' || entry.until === 'Infinity') return true;
+    return Date.parse(entry.until) > now;
+  };
+  if (listingOrLatLng?.id != null) {
+    if (check(_notSuitable.byListingId.get(String(listingOrLatLng.id)))) return true;
+  }
+  if (listingOrLatLng?.lat != null && listingOrLatLng?.lng != null) {
+    if (check(_notSuitable.byLatLng.get(_llKey(listingOrLatLng.lat, listingOrLatLng.lng)))) return true;
+  }
+  return false;
+}
+
+// Fetch all properties currently flagged not-suitable; populate _notSuitable lookup.
+async function loadNotSuitable() {
+  try {
+    const res = await fetch('/api/properties');
+    if (!res.ok) throw new Error('properties fetch failed');
+    const props = await res.json();
+    _notSuitable.byListingId.clear();
+    _notSuitable.byLatLng.clear();
+    const now = Date.now();
+    props.forEach(p => {
+      if (!p.not_suitable_until) return;
+      const isPerm = p.not_suitable_until === 'infinity' || p.not_suitable_until === 'Infinity';
+      const stillActive = isPerm || Date.parse(p.not_suitable_until) > now;
+      if (!stillActive) return;
+      const entry = { property_id: p.id, until: p.not_suitable_until, reason: p.not_suitable_reason };
+      if (p.domain_listing_id) _notSuitable.byListingId.set(String(p.domain_listing_id), entry);
+      if (p.lat != null && p.lng != null) _notSuitable.byLatLng.set(_llKey(p.lat, p.lng), entry);
+    });
+  } catch (err) {
+    console.warn('[V75.1] loadNotSuitable failed:', err);
+  }
+}
+
+// Snooze options shown in the dropdown — value is sent as ISO string or 'permanent'
+const SNOOZE_OPTIONS = [
+  { label: '30 days',  ms: 30  * 86400000 },
+  { label: '90 days',  ms: 90  * 86400000 },
+  { label: '6 months', ms: 182 * 86400000 },
+  { label: '1 year',   ms: 365 * 86400000 },
+  { label: 'Permanent', permanent: true },
+];
+
+function snoozeUntil(option) {
+  if (option.permanent) return 'permanent';
+  return new Date(Date.now() + option.ms).toISOString();
+}
+
+// Mark a listing/property as Not Suitable. Creates the property row if it
+// doesn't yet exist (no deal attached), then sets not_suitable_until.
+// Returns the property row, or null on failure.
+async function markNotSuitable(listing, optionIndex) {
+  const opt = SNOOZE_OPTIONS[optionIndex];
+  if (!opt) return null;
+  const until = snoozeUntil(opt);
+
+  // Stable property ID — prefer existing pipeline id (reuse if already in pipeline),
+  // else Domain listing id, else generate
+  const pipelineData = window.getPipelineData ? window.getPipelineData() : null;
+  let propertyId = null;
+
+  if (listing?.id != null) {
+    // If a pipeline entry already exists for this Domain listing id, reuse its id
+    if (pipelineData && pipelineData[String(listing.id)]) {
+      propertyId = String(listing.id);
+    } else {
+      propertyId = String(listing.id);
+    }
+  } else if (listing?.lat != null && listing?.lng != null) {
+    propertyId = `notsuitable-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  } else {
+    return null;
+  }
+
+  // Create property if needed (POST is idempotent — ON CONFLICT DO NOTHING)
+  try {
+    await fetch('/api/properties', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id:      propertyId,
+        address: listing.address || '',
+        suburb:  listing.suburb  || '',
+        lat:     listing.lat,
+        lng:     listing.lng,
+        domain_listing_id: listing.id != null ? String(listing.id) : null,
+        listing_url:       listing.listingUrl || null,
+      }),
+    });
+    // Set not-suitable
+    const setRes = await fetch('/api/properties', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'set_not_suitable', id: propertyId, until }),
+    });
+    if (!setRes.ok) throw new Error('set_not_suitable failed');
+    // Update local lookup
+    const entry = { property_id: propertyId, until: (until === 'permanent' ? 'infinity' : until), reason: null };
+    if (listing.id != null) _notSuitable.byListingId.set(String(listing.id), entry);
+    if (listing.lat != null && listing.lng != null) _notSuitable.byLatLng.set(_llKey(listing.lat, listing.lng), entry);
+    return entry;
+  } catch (err) {
+    console.error('[V75.1] markNotSuitable failed:', err);
+    return null;
+  }
+}
+
+// Clear not-suitable flag.
+async function clearNotSuitable(listing) {
+  const entry =
+    (listing?.id != null && _notSuitable.byListingId.get(String(listing.id))) ||
+    (listing?.lat != null && _notSuitable.byLatLng.get(_llKey(listing.lat, listing.lng)));
+  if (!entry) return false;
+  try {
+    await fetch('/api/properties', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clear_not_suitable', id: entry.property_id }),
+    });
+    if (listing.id != null) _notSuitable.byListingId.delete(String(listing.id));
+    if (listing.lat != null && listing.lng != null) _notSuitable.byLatLng.delete(_llKey(listing.lat, listing.lng));
+    return true;
+  } catch (err) {
+    console.error('[V75.1] clearNotSuitable failed:', err);
+    return false;
+  }
+}
+
+// Expose to popup / kanban call sites
+window.markNotSuitable    = markNotSuitable;
+window.clearNotSuitable   = clearNotSuitable;
+window.isNotSuitable      = isNotSuitable;
+window.SNOOZE_OPTIONS     = SNOOZE_OPTIONS;
+window.refreshListings    = () => { if (typeof renderListings === 'function') renderListings(); };
 
 // Live overlay registry: id → { def, layer }
 const overlayRegistry = {};
@@ -337,6 +493,53 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
       </button>`;
   }
 
+  // V75.1 — Not Suitable / snooze control. Inline onclick handlers wire to
+  // globals on window so they survive popup re-renders. Listing context is
+  // serialised into a JSON-encoded string for the click handler.
+  const nsListing = listing || (clickMarkerData ? {
+    address: clickMarkerData.label?.split(',')[0]?.trim() || '',
+    suburb:  clickMarkerData.label?.split(',')[1]?.trim() || '',
+    lat:     clickMarkerData.lat,
+    lng:     clickMarkerData.lng,
+  } : null);
+  let nsBtn = '';
+  if (nsListing) {
+    const ns = isNotSuitable(nsListing);
+    const lJson = JSON.stringify(nsListing).replace(/"/g, '&quot;');
+    if (ns) {
+      nsBtn = `
+        <button type="button"
+          onclick="(async () => { await window.clearNotSuitable(${lJson}); window.refreshListings && window.refreshListings(); window.refreshPipelinePins && window.refreshPipelinePins(); })()"
+          style="display:block;width:100%;margin-top:6px;padding:6px 10px;
+                 background:#888;color:#fff;border:none;border-radius:4px;
+                 font-size:11px;font-weight:600;cursor:pointer">
+          🚫 Not Suitable — Click to Reinstate
+        </button>`;
+    } else {
+      const opts = SNOOZE_OPTIONS.map((o, i) =>
+        `<button type="button"
+           onclick="event.stopPropagation(); (async () => { await window.markNotSuitable(${lJson}, ${i}); window.refreshListings && window.refreshListings(); window.refreshPipelinePins && window.refreshPipelinePins(); document.querySelectorAll('.popup-ns-menu').forEach(m => m.style.display='none'); })()"
+           style="display:block;width:100%;text-align:left;padding:5px 10px;
+                  background:#fff;color:#333;border:none;border-bottom:1px solid #eee;
+                  font-size:11px;cursor:pointer">${o.label}</button>`
+      ).join('');
+      nsBtn = `
+        <div style="position:relative;margin-top:6px">
+          <button type="button"
+            onclick="event.stopPropagation(); var m=this.nextElementSibling; m.style.display=(m.style.display==='none'?'block':'none');"
+            style="display:block;width:100%;padding:6px 10px;
+                   background:transparent;color:#888;border:1px solid #ccc;border-radius:4px;
+                   font-size:11px;font-weight:500;cursor:pointer">
+            Mark Not Suitable ▾
+          </button>
+          <div class="popup-ns-menu"
+               style="display:none;position:absolute;top:100%;left:0;right:0;z-index:1000;
+                      background:#fff;border:1px solid #ccc;border-radius:4px;margin-top:2px;
+                      box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow:hidden">${opts}</div>
+        </div>`;
+    }
+  }
+
   return `
     ${priceSection}
     <div style="font-weight:600;margin-bottom:6px;font-size:13px">${label}</div>
@@ -346,7 +549,8 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
     ${zoneCode ? `<div style="${rowStyle}"><span style="${lblStyle}">Zoning</span><span style="font-weight:600">${zoneCode}</span></div>` : ''}
     ${overlayBlock}
     ${domainLink}
-    ${pipelineBtn}`;
+    ${pipelineBtn}
+    ${nsBtn}`;
 }
 
 // V74.8: find the pipeline item (if any) that matches the currently-clicked
@@ -1530,6 +1734,21 @@ function makeListingCard(l, { pinToTop = false } = {}) {
   const card = document.createElement('div');
   card.className = 'listing-card';
   card.dataset.id = l.id;
+
+  // V75.1 — Not Suitable inline control
+  const ns = isNotSuitable(l);
+  const nsBlock = ns
+    ? `<div class="listing-not-suitable-banner">
+         🚫 Not Suitable
+         <button class="listing-ns-clear" type="button" title="Mark as suitable again">✓ Reinstate</button>
+       </div>`
+    : `<div class="listing-ns-wrap">
+         <button class="listing-ns-toggle" type="button">Not Suitable ▾</button>
+         <div class="listing-ns-menu" style="display:none">
+           ${SNOOZE_OPTIONS.map((o, i) => `<button type="button" data-idx="${i}">${o.label}</button>`).join('')}
+         </div>
+       </div>`;
+
   card.innerHTML = `
     ${pinBadge}
     ${thumbHtml}
@@ -1542,8 +1761,36 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     </div>
     <div class="listing-address">${l.address}</div>
     <div class="listing-suburb">${l.suburb} NSW</div>
+    ${nsBlock}
   `;
   card.addEventListener('click', () => selectListing(l.id));
+
+  // V75.1 — Not Suitable handlers (stop propagation so they don't trigger card click)
+  if (ns) {
+    card.querySelector('.listing-ns-clear')?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const ok = await clearNotSuitable(l);
+      if (ok) renderListings();
+    });
+  } else {
+    const toggle = card.querySelector('.listing-ns-toggle');
+    const menu   = card.querySelector('.listing-ns-menu');
+    toggle?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Close any other open menus
+      document.querySelectorAll('.listing-ns-menu').forEach(m => { if (m !== menu) m.style.display = 'none'; });
+      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    });
+    menu?.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.idx);
+        await markNotSuitable(l, idx);
+        renderListings();
+      });
+    });
+  }
+
   return card;
 }
 
@@ -1560,7 +1807,9 @@ function renderListings() {
     const inView   = bounds.contains(L.latLng(l.lat, l.lng));
     const typeMatch = _activeFilters.propertyTypes.length === 0
       || _activeFilters.propertyTypes.some(t => l.type === t.toLowerCase());
-    return inView && typeMatch;
+    // V75.1 — hide not-suitable unless toggle is on
+    const suitabilityOk = _activeFilters.showSnoozed || !isNotSuitable(l);
+    return inView && typeMatch && suitabilityOk;
   });
 
   document.getElementById('listingCount').textContent = filtered.length;
@@ -1890,6 +2139,8 @@ function restoreFilters() {
     document.getElementById('filterExcludePriceWithheld').checked = !!f.excludePriceWithheld;
     document.getElementById('filterExcludeDepositTaken').checked  = !!f.excludeDepositTaken;
     document.getElementById('filterNewDevOnly').checked           = !!f.newDevOnly;
+    const ssEl = document.getElementById('filterShowSnoozed');
+    if (ssEl) ssEl.checked = !!f.showSnoozed;
   } catch (e) { /* ignore */ }
 }
 
@@ -1940,6 +2191,7 @@ function restoreFilters() {
       minPrice: null, maxPrice: null, minLand: null, maxLand: null,
       features: [], listingAttributes: [], establishedType: null,
       excludePriceWithheld: false, excludeDepositTaken: true, newDevOnly: false,
+      showSnoozed: false,
     };
     saveFilters();
     updateActiveCount();
@@ -1982,12 +2234,14 @@ function restoreFilters() {
       excludePriceWithheld: document.getElementById('filterExcludePriceWithheld').checked,
       excludeDepositTaken:  document.getElementById('filterExcludeDepositTaken').checked,
       newDevOnly:           document.getElementById('filterNewDevOnly').checked,
+      showSnoozed:          document.getElementById('filterShowSnoozed')?.checked || false,
     };
 
     updateActiveCount();
     saveFilters();
     panel.classList.remove('open');
     runDomainSearch();
+    if (typeof refreshPipelinePins === 'function') refreshPipelinePins();
   });
 })();
 
@@ -2717,7 +2971,6 @@ window._renderPipelinePins = function () {
   const markers = [];
 
   Object.entries(pipelineData).forEach(([id, item]) => {
-    console.log('[pipeline pins] item', id, 'stage:', item?.stage, 'property:', item?.property);
     if (!item?.property) return;
     if (!PIPELINE_PIN_STAGES.has(item.stage)) return;
 
@@ -2726,8 +2979,12 @@ window._renderPipelinePins = function () {
     const firstParcel = (p._parcels && p._parcels.length > 0) ? p._parcels[0] : null;
     const lat = firstParcel?.lat ?? null;
     const lng = firstParcel?.lng ?? null;
-    console.log('[pipeline pins] id:', id, 'firstParcel:', firstParcel, 'lat:', lat, 'lng:', lng);
     if (!lat || !lng) return;
+
+    // V75.1 — hide pin if property is flagged not-suitable (unless toggle is on)
+    if (!_activeFilters.showSnoozed) {
+      if (isNotSuitable({ id: p.domain_id, lat, lng })) return;
+    }
 
     const address = p.address || '';
     const suburb  = p.suburb  || '';
@@ -3097,3 +3354,16 @@ window.reSelectParcels = function(parcels) {
     }
   }, 200);
 })();
+
+// V75.1 — Load Not Suitable property flags on init so listings/pins can be
+// filtered immediately. Re-runs after each pipeline load to stay current.
+loadNotSuitable().then(() => {
+  if (showListings && typeof renderListings === 'function') renderListings();
+});
+
+// V75.1 — close any open Not Suitable dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.listing-ns-wrap')) {
+    document.querySelectorAll('.listing-ns-menu').forEach(m => { m.style.display = 'none'; });
+  }
+});
