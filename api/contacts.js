@@ -94,10 +94,10 @@ export default async function handler(req, res) {
           try {
             const rows = await sql`
               SELECT id,
-                COALESCE(data->>'address', id::text) AS address,
-                COALESCE(data->>'suburb', '') AS suburb
+                COALESCE(data->'property'->>'address', id::text) AS address,
+                COALESCE(data->'property'->>'suburb', '') AS suburb
               FROM pipeline
-              ORDER BY data->>'address' NULLS LAST
+              ORDER BY data->'property'->>'address' NULLS LAST
               LIMIT 500`;
             return res.status(200).json(rows);
           } catch (e) {
@@ -110,8 +110,8 @@ export default async function handler(req, res) {
           if (!contact_id) return res.status(400).json({ error: 'contact_id required' });
           const rows = await sql`
             SELECT cp.pipeline_id, cp.role,
-              COALESCE(p.data->>'address', cp.pipeline_id) AS address,
-              p.data->>'suburb' AS suburb
+              COALESCE(p.data->'property'->>'address', cp.pipeline_id) AS address,
+              p.data->'property'->>'suburb' AS suburb
             FROM contact_properties cp
             LEFT JOIN pipeline p ON p.id = cp.pipeline_id
             WHERE cp.contact_id = ${parseInt(contact_id)}
@@ -146,7 +146,7 @@ export default async function handler(req, res) {
           const { note_id } = req.query;
           if (contact_id) {
             const rows = await sql`
-              SELECT n.*, p.data->>'address' AS property_address
+              SELECT n.*, p.data->'property'->>'address' AS property_address
               FROM contact_notes n
               LEFT JOIN pipeline p ON p.id = n.pipeline_id
               WHERE n.contact_id = ${parseInt(contact_id)}
