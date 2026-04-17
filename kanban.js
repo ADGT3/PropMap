@@ -29,9 +29,15 @@ const STAGES = [
 // ─── State ────────────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = 'propertyPipeline';
-const API_BASE    = '/api/pipeline';
 
-// In-memory pipeline — loaded from DB on init, localStorage used as fallback cache
+// V75.0b — frontend talks to /api/deals and /api/properties directly.
+// No /api/pipeline shim used.
+const DEALS_API      = '/api/deals';
+const PROPERTIES_API = '/api/properties';
+
+// In-memory pipeline dict — keyed by deal.id; shape matches what kanban.js
+// has always used so the rest of the file keeps working with minimal edits:
+//   { [id]: { stage, note, addedAt, property, terms, offers, notes, dd } }
 let pipeline = {};
 let dbAvailable = false;
 
@@ -43,35 +49,163 @@ function cacheSave(p) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(p)); } catch (_) {}
 }
 
+// ── Shape translation helpers ──────────────────────────────────────────────
+// New backend: deal row has { id, property_id, stage, status, data } joined
+// with a property object that has { address, suburb, lat, lng, lot_dps,
+// area_sqm, parcels, property_count, dd, domain_listing_id, listing_url,
+// agent, not_suitable_until, not_suitable_reason }.
+//
+// Internal kanban shape: { stage, note, notes, addedAt, terms, offers, dd,
+// property: { address, suburb, lat, lng, _parcels, _lotDPs, _areaSqm,
+// _propertyCount, _agent, _listingUrl, domain_id, price, type, beds, baths,
+// cars, waterStatus, zone } }
+
+function dealRowToInternal(row) {
+  const p        = row.property || {};
+  const dealData = row.data     || {};
+  return {
+    stage:   row.stage || 'shortlisted',
+    note:    dealData.note    || '',
+    notes:   dealData.notes   || [],
+    addedAt: dealData.addedAt || (row.opened_at ? Date.parse(row.opened_at) : Date.now()),
+    terms:   dealData.terms   || null,
+    offers:  dealData.offers  || [],
+    dd:      (typeof p.dd === 'object' && p.dd !== null) ? p.dd : {},
+    property: {
+      id:             row.property_id,
+      address:        p.address || '',
+      suburb:         p.suburb  || '',
+      lat:            p.lat     ?? null,
+      lng:            p.lng     ?? null,
+      _lotDPs:        p.lot_dps || '',
+      _areaSqm:       p.area_sqm ?? null,
+      _parcels:       Array.isArray(p.parcels) ? p.parcels : [],
+      _propertyCount: p.property_count ?? 1,
+      _agent:         p.agent ?? null,
+      _listingUrl:    p.listing_url ?? null,
+      domain_id:      p.domain_listing_id ?? null,
+      not_suitable_until:  p.not_suitable_until  || null,
+      not_suitable_reason: p.not_suitable_reason || null,
+      // Listing-ish fields stored in deal.data (not first-class on properties)
+      price:          dealData.price       || 'Unknown',
+      type:           dealData.type        || 'land',
+      beds:           dealData.beds        || 0,
+      baths:          dealData.baths       || 0,
+      cars:           dealData.cars        || 0,
+      waterStatus:    dealData.waterStatus || 'outside',
+      zone:           dealData.zone        || 'all',
+    },
+  };
+}
+
+function internalToPropertyPayload(id, entry) {
+  const p = entry.property || {};
+  const firstParcel = Array.isArray(p._parcels) && p._parcels[0] ? p._parcels[0] : null;
+  return {
+    id,
+    address:           p.address || '',
+    suburb:            p.suburb  || '',
+    lat:               p.lat     ?? firstParcel?.lat ?? null,
+    lng:               p.lng     ?? firstParcel?.lng ?? null,
+    lot_dps:           (p._lotDPs || '').toString().toUpperCase(),
+    area_sqm:          p._areaSqm ?? null,
+    parcels:           Array.isArray(p._parcels) ? p._parcels : [],
+    property_count:    p._propertyCount ?? 1,
+    dd:                entry.dd || {},
+    domain_listing_id: p.domain_id || null,
+    listing_url:       p._listingUrl || null,
+    agent:             p._agent || null,
+  };
+}
+
+function internalToDealPayload(id, entry) {
+  const p = entry.property || {};
+  const stage  = entry.stage || 'shortlisted';
+  const status = (stage === 'lost') ? 'lost' : (stage === 'acquired' ? 'won' : 'active');
+  return {
+    id,
+    property_id: id,
+    workflow:    'acquisition',
+    stage,
+    status,
+    data: {
+      note:    entry.note    || '',
+      notes:   entry.notes   || [],
+      addedAt: entry.addedAt || Date.now(),
+      terms:   entry.terms   || null,
+      offers:  entry.offers  || [],
+      // Stash listing-ish fields that aren't first-class on properties
+      price:       p.price,
+      type:        p.type,
+      beds:        p.beds,
+      baths:       p.baths,
+      cars:        p.cars,
+      waterStatus: p.waterStatus,
+      zone:        p.zone,
+    },
+  };
+}
+
 // ── DB helpers ────────────────────────────────────────────────────────────────
 async function dbLoad() {
   try {
-    const res = await fetch(API_BASE);
+    const res = await fetch(`${DEALS_API}?workflow=acquisition`);
     if (!res.ok) throw new Error(res.status);
-    const data = await res.json();
+    const rows = await res.json();
     dbAvailable = true;
-    return data;
+    const dict = {};
+    for (const row of rows) dict[row.id] = dealRowToInternal(row);
+    return dict;
   } catch (_) {
     dbAvailable = false;
     return null;
   }
 }
 
-async function dbSave(id, data) {
+// Save an entry — writes property first (needed as FK target for the deal), then deal.
+async function dbSave(id, entry) {
   if (!dbAvailable) return;
   try {
-    await fetch(API_BASE, {
-      method:  'POST',
+    const propPayload = internalToPropertyPayload(id, entry);
+    const dealPayload = internalToDealPayload(id, entry);
+
+    // PUT property first (will 404 if it doesn't exist yet → fall through to create)
+    let propRes = await fetch(PROPERTIES_API, {
+      method:  'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ id, data })
+      body:    JSON.stringify(propPayload),
     });
-  } catch (_) {}
+    if (propRes.status === 404) {
+      propRes = await fetch(PROPERTIES_API, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(propPayload),
+      });
+    }
+
+    // Then deal — same pattern
+    let dealRes = await fetch(DEALS_API, {
+      method:  'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(dealPayload),
+    });
+    if (dealRes.status === 404) {
+      await fetch(DEALS_API, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(dealPayload),
+      });
+    }
+  } catch (err) {
+    console.warn('[kanban] dbSave failed:', err);
+  }
 }
 
 async function dbDelete(id) {
   if (!dbAvailable) return;
   try {
-    await fetch(`${API_BASE}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    // Deleting the property cascades to deals and entity_contacts via FK
+    await fetch(`${PROPERTIES_API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
   } catch (_) {}
 }
 
@@ -234,7 +368,7 @@ function addNote(id, text, contactId = null, contactName = null) {
     fetch('/api/contacts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'add_note', contact_id: contactId, pipeline_id: String(id), note_text: text.trim() })
+      body: JSON.stringify({ action: 'add_note', contact_id: contactId, entity_type: 'deal', entity_id: String(id), note_text: text.trim() })
     }).catch(err => console.warn('[CRM] failed to mirror note to contact_notes:', err));
   }
 }
@@ -1043,7 +1177,7 @@ ${rows.join('')}`;
     if (q.length < 2) { contactResults.innerHTML = ''; return; }
     _contactSearchTimer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/contacts?pipeline_id=${encodeURIComponent(id)}`);
+        const res = await fetch(`/api/contacts?entity_type=deal&entity_id=${encodeURIComponent(id)}`);
         const linked = await res.json();
         // Also search all contacts
         const res2 = await fetch(`/api/contacts?search=${encodeURIComponent(q)}`);
