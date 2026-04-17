@@ -363,6 +363,9 @@ export default async function handler(req, res) {
         }
 
         // ── Link (polymorphic, with legacy fallback)
+        // V75.0d fix: enforce one-role-per-contact-per-entity. If a link for
+        // the same (contact, entity) already exists with a different role, that
+        // old link is removed first so this acts as "upsert by (contact, entity)".
         if (body.action === 'link') {
           let { contact_id, role, role_id, entity_type, entity_id, pipeline_id } = body;
           const roleId = role_id || role || 'vendor';
@@ -375,7 +378,14 @@ export default async function handler(req, res) {
               return res.status(400).json({ error: 'entity_type+entity_id or pipeline_id required' });
             }
           }
-          // Upsert: if same (contact, entity, role) exists, no-op; else insert
+          // Remove any existing link for this (contact, entity) with a different role
+          await sql`
+            DELETE FROM entity_contacts
+            WHERE contact_id  = ${contact_id}
+              AND entity_type = ${entity_type}
+              AND entity_id   = ${entity_id}
+              AND role_id    <> ${roleId}`;
+          // Insert (or no-op if exact same role already present)
           await sql`
             INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id, linked_at)
             VALUES (${contact_id}, ${entity_type}, ${entity_id}, ${roleId}, now())
