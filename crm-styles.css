@@ -629,6 +629,23 @@
   font-size: 13px;
 }
 .crm-prop-address { flex: 1; font-weight: 500; }
+.crm-prop-id-link {
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: #7a7366;
+  text-decoration: none;
+  padding: 2px 6px;
+  border: 1px solid #e5e1d8;
+  border-radius: 4px;
+  background: #fafaf7;
+  flex-shrink: 0;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.crm-prop-id-link:hover {
+  color: #b8935f;
+  border-color: #d9c89f;
+  background: #fcf8ef;
+}
 .crm-drawer-note-input { margin-bottom: 8px; }
 .crm-drawer-note-text { width: 100%; resize: vertical; }
 .crm-drawer-edit-btn { font-size: 12px; padding: 4px 10px; }
@@ -722,4 +739,39 @@
   display: block;
   margin-bottom: 4px;
   margin-top: 4px;
+}
+
+/* ── Organisation contacts list (V74.5) ─────────────────────────────────── */
+.crm-org-contact-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border, #eeeae0);
+}
+.crm-org-contact-row:last-child { border-bottom: none; }
+.crm-org-contact-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.crm-org-contact-name {
+  font-weight: 500;
+  color: #1a1a1a;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.crm-org-contact-name:hover {
+  color: #b8935f;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.crm-org-contact-meta {
+  font-size: 11px;
+  color: #7a7366;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

@@ -307,6 +307,18 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
     ? `<a href="${dl.listingUrl}" target="_blank" style="color:#c4841a;font-size:12px;text-decoration:none;display:block;margin-top:8px">View on Domain →</a>`
     : '';
 
+  // + Pipeline button (V74.7). Uses an inline onclick so the button keeps
+  // working across popup re-renders (DD data loading, etc.). The handler
+  // reads live map selection state at click time, not popup-build time.
+  const pipelineBtn = `
+    <button type="button"
+      onclick="window.addCurrentSelectionToPipeline && window.addCurrentSelectionToPipeline()"
+      style="display:block;width:100%;margin-top:10px;padding:7px 10px;
+             background:#1a6b3a;color:#fff;border:none;border-radius:4px;
+             font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+      + Pipeline
+    </button>`;
+
   return `
     ${priceSection}
     <div style="font-weight:600;margin-bottom:6px;font-size:13px">${label}</div>
@@ -315,7 +327,8 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
     ${areaSqm  ? `<div style="${rowStyle}"><span style="${lblStyle}">Lot Size</span><span>${areaSqm.toLocaleString()} m²</span></div>` : ''}
     ${zoneCode ? `<div style="${rowStyle}"><span style="${lblStyle}">Zoning</span><span style="font-weight:600">${zoneCode}</span></div>` : ''}
     ${overlayBlock}
-    ${domainLink}`;
+    ${domainLink}
+    ${pipelineBtn}`;
 }
 
 const ZONING_BASE = 'https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/EPI_Primary_Planning_Layers/MapServer';
@@ -1651,79 +1664,63 @@ function buildMergedAddress(parcels) {
   return parts.join(' + ');
 }
 
+
 function renderMultiSelectBar() {
-  const sidebar = document.querySelector('.sidebar');
-  let bar = document.getElementById('multi-select-bar');
+  // V74.7: Add-to-Pipeline moved from sidebar bar into the map popup.
+  // This function is retained as a no-op cleanup so legacy call sites
+  // keep working; if a stale bar exists from a previous session, drop it.
+  const bar = document.getElementById('multi-select-bar');
+  if (bar) bar.remove();
+}
+
+// Central helper used by the popup "+ Pipeline" button. Constructs the
+// same payload the old multi-select bar built, scoped to current map
+// selection state (single click, multi-parcel, or listing pin).
+function addCurrentSelectionToPipeline() {
+  if (typeof addToPipeline !== 'function') return;
 
   const hasSingle = !!clickMarkerData;
   const hasMulti  = _selectedParcels.length > 0;
+  if (!hasSingle && !hasMulti) return;
 
-  if (!hasSingle && !hasMulti) {
-    if (bar) bar.remove();
-    return;
-  }
+  const parcels  = hasMulti ? _selectedParcels : [clickMarkerData];
+  const count    = parcels.length;
+  const isParcel = count > 1;
+  const merged   = buildMergedAddress(parcels);
+  const parts    = merged.split(',');
+  const streetPart = parts[0]?.trim() || merged;
+  const suburbPart = parts[1]?.trim() || parcels[0]?.label?.split(',')[1]?.trim() || '';
 
-  const parcels    = hasMulti ? _selectedParcels : [clickMarkerData];
-  const merged     = buildMergedAddress(parcels);
+  const totalArea = parcels.reduce((s, p) => s + (p.areaSqm || 0), 0);
+  const avgLat    = parcels.reduce((s, p) => s + p.lat, 0) / count;
+  const avgLng    = parcels.reduce((s, p) => s + p.lng, 0) / count;
+  const lotDPs    = parcels.map(p => p.lotDP).filter(Boolean).join(', ');
 
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'multi-select-bar';
-    bar.className = 'multi-select-bar';
-    sidebar.appendChild(bar);
-  }
+  // If this is a single-click on a listing pin, carry listing details through
+  const listing = !isParcel && parcels[0]?.listing ? parcels[0].listing : null;
 
-  const count      = parcels.length;
-  const isParcel   = count > 1;
-  const countLabel = isParcel ? `Parcel — ${count} properties selected` : `1 property selected`;
-  const addLabel   = isParcel ? `+ Add to Pipeline as parcel` : `+ Add to Pipeline`;
-  const addrLabel  = isParcel ? 'Parcel address' : 'Address';
-
-  bar.innerHTML = `
-    <div class="msb-header">
-      <span class="msb-count">${countLabel}</span>
-      <button class="msb-clear" id="msbClear">✕ Clear</button>
-    </div>
-    <div class="msb-label">${addrLabel}</div>
-    <input class="msb-input" id="msbAddress" type="text" value="${merged}" />
-    <button class="msb-add" id="msbAdd">${addLabel}</button>
-  `;
-
-  document.getElementById('msbClear').addEventListener('click', () => {
-    clearParcelSelection();
-  });
-
-  document.getElementById('msbAdd').addEventListener('click', () => {
-    if (typeof addToPipeline !== 'function') return;
-    const address    = document.getElementById('msbAddress').value.trim();
-    const parts      = address.split(',');
-    const streetPart = parts[0]?.trim() || address;
-    const suburbPart = parts[1]?.trim() || parcels[0]?.label?.split(',')[1]?.trim() || '';
-
-    const totalArea = parcels.reduce((s, p) => s + (p.areaSqm || 0), 0);
-    const avgLat    = parcels.reduce((s, p) => s + p.lat, 0) / count;
-    const avgLng    = parcels.reduce((s, p) => s + p.lng, 0) / count;
-    const lotDPs    = parcels.map(p => p.lotDP).filter(Boolean).join(', ');
-
-    addToPipeline({
-      id:           (isParcel ? 'parcel-' : 'property-') + Date.now(),
-      address:      streetPart,
-      suburb:       suburbPart,
-      price:        'Unknown',
-      type:         'land',
-      beds: 0, baths: 0, cars: 0,
-      lat:          avgLat,
-      lng:          avgLng,
-      waterStatus:  'outside',
-      zone:         'all',
-      _lotDPs:      lotDPs,
-      _areaSqm:     totalArea || null,
-      _propertyCount: count,
-      _parcels:     parcels.map(p => ({ lat: p.lat, lng: p.lng, label: p.label }))
-    });
-    // Do NOT clear selection — leave pin and parcel on map after adding to pipeline
+  addToPipeline({
+    id:           listing ? String(listing.id) : ((isParcel ? 'parcel-' : 'property-') + Date.now()),
+    address:      listing?.address || streetPart,
+    suburb:       listing?.suburb  || suburbPart,
+    price:        listing?.price   || 'Unknown',
+    type:         listing?.type    || 'land',
+    beds:         listing?.beds    || 0,
+    baths:        listing?.baths   || 0,
+    cars:         listing?.cars    || 0,
+    lat:          avgLat,
+    lng:          avgLng,
+    waterStatus:  'outside',
+    zone:         'all',
+    _lotDPs:      lotDPs,
+    _areaSqm:     totalArea || null,
+    _propertyCount: count,
+    _parcels:     parcels.map(p => ({ lat: p.lat, lng: p.lng, label: p.label })),
   });
 }
+
+// Expose so the popup's inline onclick can call it
+window.addCurrentSelectionToPipeline = addCurrentSelectionToPipeline;
 
 function selectListing(id, clickLatLng = null) {
   clearParcelSelection();

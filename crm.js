@@ -21,6 +21,72 @@ const ROLES = [
   { value: 'solicitor',   label: 'Solicitor'     },
 ];
 
+const SOURCES = [
+  'Our Website',
+  'Realestate.com.au',
+  'Domain.com.au',
+  'Instagram',
+  'Facebook',
+  'Letter Drop',
+  'Door Knocking',
+  'Walk-In',
+  'Signboard',
+  'Cold-Calling',
+  'Open House',
+  'Referral',
+  'Other',
+];
+
+// Resolve a raw source value into { dropdown, other }.
+// - If source matches one of SOURCES → dropdown=that, other=''
+// - Empty/null/undefined → dropdown='', other=''
+// - Anything else (legacy/custom) → dropdown='Other', other=<raw value>
+function resolveSource(raw) {
+  if (!raw) return { dropdown: '', other: '' };
+  const s = String(raw);
+  if (SOURCES.includes(s)) return { dropdown: s, other: '' };
+  return { dropdown: 'Other', other: s };
+}
+
+// Render the Source field HTML (dropdown + hidden Other input that reveals
+// when 'Other' is selected). Classes crm-source-sel and crm-source-other are
+// used for query selection by the save handlers.
+function renderSourceField(rawValue) {
+  const { dropdown, other } = resolveSource(rawValue);
+  const otherVisible = dropdown === 'Other';
+  return `
+    <select class="kb-input crm-source-sel">
+      <option value="">Select source…</option>
+      ${SOURCES.map(s => `<option value="${s}" ${s === dropdown ? 'selected' : ''}>${s}</option>`).join('')}
+    </select>
+    <input class="kb-input crm-source-other" type="text" placeholder="Describe source…"
+      value="${other.replace(/"/g, '&quot;')}"
+      style="margin-top:6px;${otherVisible ? '' : 'display:none'}">
+  `;
+}
+
+// Read the effective source from the form (drop value, or Other text when
+// 'Other' is selected). Returns empty string if nothing chosen.
+function readSourceField(container) {
+  const sel = container.querySelector('.crm-source-sel');
+  const oth = container.querySelector('.crm-source-other');
+  if (!sel) return '';
+  const val = sel.value;
+  if (val === 'Other') return (oth?.value || '').trim() || 'Other';
+  return val;
+}
+
+// Wire up the dropdown so 'Other' reveals the text input.
+function wireSourceField(container) {
+  const sel = container.querySelector('.crm-source-sel');
+  const oth = container.querySelector('.crm-source-other');
+  if (!sel || !oth) return;
+  sel.addEventListener('change', () => {
+    oth.style.display = sel.value === 'Other' ? '' : 'none';
+    if (sel.value === 'Other') oth.focus();
+  });
+}
+
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
 async function apiGet(params = {}) {
@@ -318,7 +384,7 @@ async function renderContactsSection(pipelineId, agentData) {
           if (existing.length) {
             contactId = existing[0].id;
           } else {
-            const created = await apiPost({ first_name, last_name, mobile: agentData.phone || '', email: agentData.email || '', organisation_id: orgId, source: 'domain_agent', domain_id: String(pipelineId) });
+            const created = await apiPost({ first_name, last_name, mobile: agentData.phone || '', email: agentData.email || '', organisation_id: orgId, source: 'Domain.com.au', domain_id: String(pipelineId) });
             contactId = created.id;
           }
           await apiPost({ action: 'link', contact_id: contactId, pipeline_id: pipelineId, role: 'agent' });
@@ -343,16 +409,16 @@ async function renderContactsSection(pipelineId, agentData) {
     contacts.forEach(contact => {
       const row = document.createElement('div');
       row.className = 'crm-contact-row';
-      const roleLabel = ROLES.find(r => r.value === contact.role)?.label || contact.role;
-      const roleClass = contact.role.replace(/[^a-z0-9]/gi, '_');
+      const currentRole = contact.role || 'vendor';
+      const roleLabel = ROLES.find(r => r.value === currentRole)?.label || currentRole;
       row.innerHTML = `
         <div class="crm-contact-info">
           <div class="crm-contact-name">
             ${displayName(contact)}
-            <span class="crm-role-badge crm-role-${roleClass}">${roleLabel}</span>
           </div>
           <div class="crm-contact-meta">
             ${contact.org_name ? `<span>${contact.org_name}</span>` : ''}
+            <span class="crm-role-badge crm-role-${currentRole.replace(/[^a-z0-9]/gi,'_')}">${roleLabel}</span>
             ${contact.mobile   ? `<a href="tel:${contact.mobile}" class="crm-link">${contact.mobile}</a>` : ''}
             ${contact.email    ? `<a href="mailto:${contact.email}" class="crm-link">${contact.email}</a>` : ''}
           </div>
@@ -377,6 +443,7 @@ async function renderContactsSection(pipelineId, agentData) {
         reload();
       });
 
+      // Edit opens form — Role dropdown is available there and saves per-property
       row.querySelector('.crm-edit-btn').addEventListener('click', () => showForm(contact, contact.role));
       listEl.appendChild(row);
     });
@@ -428,10 +495,16 @@ async function renderContactsSection(pipelineId, agentData) {
             <div class="crm-org-wrap"></div>
           </div>
           <div class="kb-field-wrap">
-            <label class="kb-field-label">Role</label>
+            <label class="kb-field-label">Role (this property)</label>
             <select class="kb-input crm-role">
               ${ROLES.map(r => `<option value="${r.value}" ${r.value === prefillRole ? 'selected' : ''}>${r.label}</option>`).join('')}
             </select>
+          </div>
+        </div>
+        <div class="crm-form-row">
+          <div class="kb-field-wrap" style="flex:1">
+            <label class="kb-field-label">Source</label>
+            ${renderSourceField(prefill.source)}
           </div>
         </div>
 
@@ -447,6 +520,9 @@ async function renderContactsSection(pipelineId, agentData) {
     const orgTA = buildOrgTypeahead(orgWrap, (id) => { selectedOrgId = id; });
     if (prefill.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
 
+    // Source field — reveal Other input when selected
+    wireSourceField(formEl);
+
     // Duplicate detection (new contacts only)
     if (!isEdit) {
       const dupWrap = formEl.querySelector('.crm-duplicate-warning-wrap');
@@ -460,11 +536,11 @@ async function renderContactsSection(pipelineId, agentData) {
           const mobile = formEl.querySelector('.crm-mobile').value.trim();
           if (!first && !email && !mobile) { dupWrap.innerHTML = ''; return; }
           const dups = await checkDuplicates(first, last, email, mobile);
-          renderDuplicateWarning(dupWrap, dups, (existing) => {
-            // Link existing contact instead of creating new
+          renderDuplicateWarning(dupWrap, dups, async (existing) => {
+            // Link existing contact with the role currently selected in the form
             const role = formEl.querySelector('.crm-role').value;
-            apiPost({ action: 'link', contact_id: existing.id, pipeline_id: pipelineId, role })
-              .then(() => { hideForm(); reload(); });
+            await apiPost({ action: 'link', contact_id: existing.id, pipeline_id: pipelineId, role });
+            hideForm(); reload();
           });
         }, 500);
       };
@@ -491,7 +567,12 @@ async function renderContactsSection(pipelineId, agentData) {
             item.className = 'crm-search-item';
             item.innerHTML = `<strong>${displayName(ct)}</strong>${ct.org_name ? ` · ${ct.org_name}` : ''}${ct.mobile || ct.email ? ` · ${ct.mobile || ct.email}` : ''}`;
             item.addEventListener('click', async () => {
-              const role = formEl.querySelector('.crm-role').value;
+              // Seed form role with their most recent role on any property,
+              // so user can accept the default or override before linking.
+              const lr = await apiGet({ last_role: '1', contact_id: ct.id }).catch(() => ({}));
+              const roleSel = formEl.querySelector('.crm-role');
+              if (lr?.role && roleSel) roleSel.value = lr.role;
+              const role = roleSel ? roleSel.value : 'vendor';
               await apiPost({ action: 'link', contact_id: ct.id, pipeline_id: pipelineId, role });
               hideForm();
               reload();
@@ -505,18 +586,21 @@ async function renderContactsSection(pipelineId, agentData) {
     formEl.querySelector('.crm-save-btn').addEventListener('click', async () => {
       const first = formEl.querySelector('.crm-first').value.trim();
       if (!first) { formEl.querySelector('.crm-first').focus(); return; }
+      const sourceVal = readSourceField(formEl);
       const data = {
         first_name:      first,
         last_name:       formEl.querySelector('.crm-last').value.trim(),
         mobile:          formEl.querySelector('.crm-mobile').value.trim(),
         email:           formEl.querySelector('.crm-email').value.trim(),
         organisation_id: selectedOrgId,
-        source:          prefill.source || 'manual',
+        source:          sourceVal || prefill.source || 'Other',
         domain_id:       prefill.domain_id || null,
       };
       const role = formEl.querySelector('.crm-role').value;
       if (isEdit) {
+        // Identity fields via PUT; role via link upsert (scoped to this property)
         await apiPut({ id: prefill.id, ...data });
+        await apiPost({ action: 'link', contact_id: prefill.id, pipeline_id: pipelineId, role });
       } else {
         const created = await apiPost(data);
         await apiPost({ action: 'link', contact_id: created.id, pipeline_id: pipelineId, role });
@@ -613,9 +697,9 @@ function renderCRMView(container) {
       <div class="crm-contact-table-wrap">
         <table class="crm-contact-table">
           <thead><tr>
-            <th>Name</th><th>Organisation</th><th>Role</th><th>Mobile</th><th>Email</th><th>Properties</th><th></th>
+            <th>Name</th><th>Organisation</th><th>Mobile</th><th>Email</th><th>Properties</th><th></th>
           </tr></thead>
-          <tbody id="crmContactTableBody"><tr><td colspan="7" class="crm-loading">Loading…</td></tr></tbody>
+          <tbody id="crmContactTableBody"><tr><td colspan="6" class="crm-loading">Loading…</td></tr></tbody>
         </table>
       </div>
       <div class="crm-pane-pagination" id="crmContactPagination"></div>`;
@@ -635,7 +719,7 @@ function renderCRMView(container) {
     const pagEl  = pane?.querySelector('#crmContactPagination');
     if (!tbody) return;
 
-    tbody.innerHTML = `<tr><td colspan="7" class="crm-loading">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="crm-loading">Loading…</td></tr>`;
     try {
       const params = { all: '1', offset: contactPage * PAGE_SIZE, limit: PAGE_SIZE };
       if (contactSearch) params.search = contactSearch;
@@ -644,7 +728,7 @@ function renderCRMView(container) {
       const total    = data.total ?? contacts.length;
 
       if (!contacts.length) {
-        tbody.innerHTML = `<tr><td colspan="7" class="crm-empty">No contacts found</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" class="crm-empty">No contacts found</td></tr>`;
         if (pagEl) pagEl.innerHTML = '';
         return;
       }
@@ -653,12 +737,10 @@ function renderCRMView(container) {
       contacts.forEach(c => {
         const tr = document.createElement('tr');
         tr.className = 'crm-contact-tr';
-        const roleLabel = ROLES.find(r => r.value === c.role)?.label || c.role || '—';
         const propCount = c.property_count ?? 0;
         tr.innerHTML = `
           <td class="crm-td-name"><strong>${displayName(c)}</strong></td>
           <td>${c.org_name || '—'}</td>
-          <td><span class="crm-role-badge crm-role-${(c.role||'').replace(/[^a-z0-9]/gi,'_')}">${roleLabel}</span></td>
           <td>${c.mobile ? `<a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a>` : '—'}</td>
           <td>${c.email  ? `<a href="mailto:${c.email}" class="crm-link">${c.email}</a>` : '—'}</td>
           <td>${propCount ? `<span class="crm-prop-count">${propCount}</span>` : '—'}</td>
@@ -707,7 +789,7 @@ function renderCRMView(container) {
         pagEl.appendChild(next);
       }
     } catch (err) {
-      if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="crm-empty">Error loading contacts</td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="crm-empty">Error loading contacts</td></tr>`;
     }
   }
 
@@ -740,7 +822,12 @@ function renderCRMView(container) {
       // Site Access section — only rendered when viewer is admin OR viewing self
       const siteAccessHtml = (canManage || isSelf) ? `
         <div class="crm-drawer-section">
-          <div class="crm-drawer-section-title">Site Access</div>
+          <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+            Site Access
+            <button class="crm-access-pw-btn kb-add-offer-btn" ${canChangePw ? '' : 'disabled'}>
+              ${hasPassword ? (isSelf && !canManage ? 'Change my password' : 'Reset password') : 'Set password'}
+            </button>
+          </div>
           <div class="crm-access-grid">
             <label class="crm-access-row ${canManage && hasPassword ? '' : 'disabled'}">
               <input type="checkbox" class="crm-access-propmap"
@@ -767,9 +854,6 @@ function renderCRMView(container) {
           </div>
 
           <div class="crm-access-actions">
-            <button class="crm-access-pw-btn kb-add-offer-btn" ${canChangePw ? '' : 'disabled'}>
-              ${hasPassword ? (isSelf && !canManage ? 'Change my password' : 'Reset password') : 'Set password'}
-            </button>
             <span class="crm-access-status"></span>
           </div>
 
@@ -822,7 +906,8 @@ function renderCRMView(container) {
             <div id="crmDetailPropsList">
               ${props.length ? props.map(p => `
                 <div class="crm-prop-row" data-pipeline-id="${p.pipeline_id}">
-                  <span class="crm-prop-address">${p.address || p.pipeline_id}${p.suburb ? ", " + p.suburb : ""}</span>
+                  <span class="crm-prop-address">${p.address || '—'}${p.suburb ? ", " + p.suburb : ""}</span>
+                  <a href="#" class="crm-prop-id-link" data-pipeline-id="${p.pipeline_id}" title="Open in pipeline">${p.pipeline_id}</a>
                   <select class="crm-prop-role-sel kb-input" data-pipeline-id="${p.pipeline_id}" style="font-size:11px;padding:2px 4px;width:auto">
                     ${ROLES.map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
                   </select>
@@ -896,6 +981,15 @@ function renderCRMView(container) {
       propsList.querySelectorAll(".crm-prop-role-sel").forEach(sel => {
         sel.addEventListener("change", async () => {
           await apiPost({ action: "link", contact_id: contactId, pipeline_id: sel.dataset.pipelineId, role: sel.value });
+        });
+      });
+      propsList.querySelectorAll(".crm-prop-id-link").forEach(link => {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          const pid = link.dataset.pipelineId;
+          if (typeof window.openPipelineItem === 'function') {
+            window.openPipelineItem(pid);
+          }
         });
       });
       propsList.querySelectorAll(".crm-prop-unlink-btn").forEach(btn => {
@@ -1066,15 +1160,15 @@ function renderCRMView(container) {
             </div>
           </div>
           <div class="crm-form-row">
-            <div class="kb-field-wrap" style="flex:2">
+            <div class="kb-field-wrap" style="flex:1">
               <label class="kb-field-label">Organisation</label>
               <div class="crm-org-wrap"></div>
             </div>
-            <div class="kb-field-wrap">
-              <label class="kb-field-label">Role</label>
-              <select class="kb-input crm-role">
-                ${ROLES.map(r => `<option value="${r.value}" ${r.value === (prefill?.role || 'vendor') ? 'selected' : ''}>${r.label}</option>`).join('')}
-              </select>
+          </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Source</label>
+              ${renderSourceField(prefill?.source)}
             </div>
           </div>
           <div class="crm-duplicate-warning-wrap"></div>
@@ -1093,6 +1187,9 @@ function renderCRMView(container) {
     let selectedOrgId = prefill?.organisation_id || null;
     const orgTA = buildOrgTypeahead(drawer.querySelector('.crm-org-wrap'), (id) => { selectedOrgId = id; });
     if (prefill?.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
+
+    // Source field — reveal Other input when selected
+    wireSourceField(drawer);
 
     // Duplicate detection (new only)
     if (!isEdit) {
@@ -1121,13 +1218,14 @@ function renderCRMView(container) {
     drawer.querySelector('.crm-save-btn').addEventListener('click', async () => {
       const first = drawer.querySelector('.crm-first').value.trim();
       if (!first) { drawer.querySelector('.crm-first').focus(); return; }
+      const sourceVal = readSourceField(drawer);
       const data = {
         first_name:      first,
         last_name:       drawer.querySelector('.crm-last').value.trim(),
         mobile:          drawer.querySelector('.crm-mobile').value.trim(),
         email:           drawer.querySelector('.crm-email').value.trim(),
         organisation_id: selectedOrgId,
-        source:          prefill?.source || 'manual',
+        source:          sourceVal || prefill?.source || 'Other',
       };
       if (isEdit) {
         await apiPut({ id: prefill.id, ...data });
@@ -1183,16 +1281,23 @@ function renderCRMView(container) {
         const tr = document.createElement('tr');
         tr.className = 'crm-contact-tr';
         tr.innerHTML = `
-          <td><strong>${org.name}</strong></td>
+          <td class="crm-td-name"><strong>${org.name}</strong></td>
           <td>${org.contact_count ?? '—'}</td>
           <td class="crm-td-actions">
             <button class="crm-view-edit-btn" title="Edit">✎</button>
             <button class="crm-view-delete-btn" title="Delete" style="color:#c0392b">🗑</button>
           </td>`;
-        tr.querySelector('.crm-view-edit-btn').addEventListener('click', () => {
+        // Click on name → open drawer in view mode
+        tr.querySelector('.crm-td-name').addEventListener('click', () => {
           openDrawer(drawer => renderOrgDrawer(drawer, org, () => { closeDrawer(); fetchOrgs(orgSearch); }));
         });
-        tr.querySelector('.crm-view-delete-btn').addEventListener('click', async () => {
+        // ✎ → open drawer, will go straight to edit mode via handler below
+        tr.querySelector('.crm-view-edit-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          openDrawer(drawer => renderOrgDrawer(drawer, { ...org, _startInEditMode: true }, () => { closeDrawer(); fetchOrgs(orgSearch); }));
+        });
+        tr.querySelector('.crm-view-delete-btn').addEventListener('click', async (e) => {
+          e.stopPropagation();
           if (!confirm(`Delete organisation "${org.name}"?`)) return;
           await apiDelete({ org_id: org.id });
           fetchOrgs(orgSearch);
@@ -1206,6 +1311,7 @@ function renderCRMView(container) {
 
   async function renderOrgDrawer(drawer, prefill, onDone) {
     const isEdit = !!prefill?.id;
+    let editMode = !isEdit || !!prefill?._startInEditMode;   // new orgs or ✎ click start in edit mode
 
     async function render() {
       drawer.innerHTML = '<div class="crm-drawer-loading">Loading…</div>';
@@ -1219,19 +1325,68 @@ function renderCRMView(container) {
       const orgContactIds = new Set(orgContacts.map(c => c.id));
       const available = Array.isArray(allContacts) ? allContacts.filter(c => !orgContactIds.has(c.id)) : [];
 
+      const orgName    = prefill?.name    || '';
+      const orgPhone   = prefill?.phone   || '';
+      const orgEmail   = prefill?.email   || '';
+      const orgWebsite = prefill?.website || '';
+
+      // ── Details section: read mode vs edit mode ────────────────────────────
+      const detailsHtml = editMode ? `
+        <div class="crm-drawer-section">
+          <div class="crm-drawer-section-title">${isEdit ? 'Edit Organisation' : 'New Organisation'}</div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Name *</label>
+              <input class="kb-input crm-org-name" type="text" placeholder="e.g. Ray White Parramatta" value="${orgName}">
+            </div>
+          </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Phone</label>
+              <input class="kb-input crm-org-phone" type="text" placeholder="02 xxxx xxxx" value="${orgPhone}">
+            </div>
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Email</label>
+              <input class="kb-input crm-org-email" type="text" placeholder="info@example.com" value="${orgEmail}">
+            </div>
+          </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Website</label>
+              <input class="kb-input crm-org-website" type="text" placeholder="https://example.com" value="${orgWebsite}">
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="crm-org-save-btn kb-add-offer-btn">${isEdit ? 'Save Changes' : 'Create'}</button>
+            ${isEdit ? '<button class="crm-org-edit-cancel">Cancel</button>' : ''}
+          </div>
+        </div>
+      ` : `
+        <div class="crm-drawer-section">
+          <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+            Organisation Details
+            <button class="crm-org-edit-btn kb-add-offer-btn">✎ Edit</button>
+          </div>
+          <div class="crm-detail-grid">
+            ${orgPhone   ? `<div class="crm-detail-label">Phone</div><div><a href="tel:${orgPhone}" class="crm-link">${orgPhone}</a></div>` : ''}
+            ${orgEmail   ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${orgEmail}" class="crm-link">${orgEmail}</a></div>` : ''}
+            ${orgWebsite ? `<div class="crm-detail-label">Website</div><div><a href="${orgWebsite.startsWith('http') ? orgWebsite : 'https://' + orgWebsite}" target="_blank" rel="noopener" class="crm-link">${orgWebsite}</a></div>` : ''}
+            ${!orgPhone && !orgEmail && !orgWebsite ? '<div style="grid-column:1/-1;color:var(--text-secondary);font-size:12px">No contact details yet — click Edit to add.</div>' : ''}
+          </div>
+        </div>
+      `;
+
       drawer.innerHTML = `
         <div class="crm-drawer-header">
-          <div class="crm-drawer-title">${isEdit ? prefill.name : 'New Organisation'}</div>
+          <div>
+            <div class="crm-drawer-title">${orgName || 'New Organisation'}</div>
+            ${isEdit ? `<div class="crm-drawer-subtitle">${orgContacts.length} contact${orgContacts.length === 1 ? '' : 's'}</div>` : ''}
+          </div>
           <button class="crm-drawer-close">✕</button>
         </div>
         <div class="crm-drawer-body">
-          <div class="crm-drawer-section">
-            <div class="crm-drawer-section-title">Organisation Name</div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input class="kb-input crm-org-name" type="text" placeholder="e.g. Ray White Parramatta" value="${prefill?.name || ''}" style="flex:1">
-              <button class="crm-org-save-btn kb-add-offer-btn">${isEdit ? 'Save' : 'Create'}</button>
-            </div>
-          </div>
+
+          ${detailsHtml}
 
           ${isEdit ? `
           <div class="crm-drawer-section">
@@ -1251,9 +1406,11 @@ function renderCRMView(container) {
             </div>
             <div id="crmOrgContactsList">
               ${orgContacts.length ? orgContacts.map(c => `
-                <div class="crm-prop-row" data-contact-id="${c.id}">
-                  <span class="crm-prop-address" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px" data-contact-id="${c.id}">${displayName(c)}</span>
-                  <span style="font-size:11px;color:var(--text-secondary)">${c.mobile || c.email || ''}</span>
+                <div class="crm-org-contact-row" data-contact-id="${c.id}">
+                  <div class="crm-org-contact-info">
+                    <span class="crm-org-contact-name" data-contact-id="${c.id}">${displayName(c)}</span>
+                    <span class="crm-org-contact-meta">${[c.mobile, c.email].filter(Boolean).join(' · ')}</span>
+                  </div>
                   <button class="crm-org-contact-remove" data-contact-id="${c.id}" title="Remove from org">✕</button>
                 </div>`).join('') : '<div class="crm-empty">No contacts in this organisation</div>'}
             </div>
@@ -1261,20 +1418,43 @@ function renderCRMView(container) {
 
         </div>`;
 
+      // ── Handlers ───────────────────────────────────────────────────────────
       drawer.querySelector('.crm-drawer-close').addEventListener('click', onDone);
 
-      // Save org name
-      drawer.querySelector('.crm-org-save-btn').addEventListener('click', async () => {
-        const name = drawer.querySelector('.crm-org-name').value.trim();
+      // Enter edit mode (existing org)
+      drawer.querySelector('.crm-org-edit-btn')?.addEventListener('click', () => {
+        editMode = true;
+        render();
+      });
+
+      // Cancel edit (existing org)
+      drawer.querySelector('.crm-org-edit-cancel')?.addEventListener('click', () => {
+        editMode = false;
+        render();
+      });
+
+      // Save (create or update)
+      drawer.querySelector('.crm-org-save-btn')?.addEventListener('click', async () => {
+        const name    = drawer.querySelector('.crm-org-name').value.trim();
+        const phone   = drawer.querySelector('.crm-org-phone').value.trim();
+        const email   = drawer.querySelector('.crm-org-email').value.trim();
+        const website = drawer.querySelector('.crm-org-website').value.trim();
         if (!name) { drawer.querySelector('.crm-org-name').focus(); return; }
-        if (isEdit) {
-          await apiPut({ org_id: prefill.id, name });
-          prefill.name = name;
-          drawer.querySelector('.crm-drawer-title').textContent = name;
-        } else {
-          const created = await apiPost({ action: 'create_org', name });
-          onDone();
-          return;
+        try {
+          if (isEdit) {
+            await apiPut({ org_id: prefill.id, name, phone, email, website });
+            prefill.name    = name;
+            prefill.phone   = phone;
+            prefill.email   = email;
+            prefill.website = website;
+            editMode = false;
+            render();
+          } else {
+            await apiPost({ action: 'create_org', name, phone, email, website });
+            onDone();
+          }
+        } catch (err) {
+          alert('Save failed: ' + (err.message || 'unknown error'));
         }
       });
 
@@ -1283,9 +1463,9 @@ function renderCRMView(container) {
       // Add contact to org
       const addContactBtn  = drawer.querySelector('.crm-org-add-contact-btn');
       const addContactForm = drawer.querySelector('.crm-org-add-contact-form');
-      addContactBtn.addEventListener('click', () => { addContactForm.style.display = ''; addContactBtn.style.display = 'none'; });
-      drawer.querySelector('.crm-org-contact-link-cancel').addEventListener('click', () => { addContactForm.style.display = 'none'; addContactBtn.style.display = ''; });
-      drawer.querySelector('.crm-org-contact-link-save').addEventListener('click', async () => {
+      addContactBtn?.addEventListener('click', () => { addContactForm.style.display = ''; addContactBtn.style.display = 'none'; });
+      drawer.querySelector('.crm-org-contact-link-cancel')?.addEventListener('click', () => { addContactForm.style.display = 'none'; addContactBtn.style.display = ''; });
+      drawer.querySelector('.crm-org-contact-link-save')?.addEventListener('click', async () => {
         const contactId = drawer.querySelector('.crm-org-contact-select').value;
         if (!contactId) return;
         await apiPost({ action: 'set_org', contact_id: parseInt(contactId), organisation_id: prefill.id });
@@ -1301,8 +1481,8 @@ function renderCRMView(container) {
         });
       });
 
-      // Click contact name → open contact detail
-      drawer.querySelectorAll('.crm-prop-address[data-contact-id]').forEach(el => {
+      // Click contact name → open contact detail (same drawer as the contacts list)
+      drawer.querySelectorAll('.crm-org-contact-name').forEach(el => {
         el.addEventListener('click', () => {
           renderContactDetail(drawer, parseInt(el.dataset.contactId), () => render());
         });
