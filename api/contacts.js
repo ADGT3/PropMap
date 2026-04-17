@@ -361,13 +361,18 @@ export default async function handler(req, res) {
 
       // ── PUT ──────────────────────────────────────────────────────────────────
       case 'PUT': {
-        const { id, org_id, first_name, last_name, mobile, email, organisation_id, source, domain_id, name } = req.body;
+        const { id, org_id, first_name, last_name, mobile, email, organisation_id, source, domain_id, name, phone, website } = req.body;
 
-        // Update organisation
+        // Update organisation (name required; phone/email/website optional)
         if (org_id) {
           if (!name?.trim()) return res.status(400).json({ error: 'name required' });
           const rows = await sql`
-            UPDATE organisations SET name = ${name.trim()}
+            UPDATE organisations SET
+              name    = ${name.trim()},
+              phone   = COALESCE(${phone   ?? null}, phone),
+              email   = COALESCE(${email   ?? null}, email),
+              website = COALESCE(${website ?? null}, website),
+              updated_at = now()
             WHERE id = ${parseInt(org_id)} RETURNING *`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           return res.status(200).json(rows[0]);

@@ -163,6 +163,22 @@ export default async function handler(req, res) {
     await run('CREATE INDEX contacts_email_lower_idx', () => sql`
       CREATE INDEX IF NOT EXISTS contacts_email_lower_idx ON contacts (LOWER(email))`);
 
+    // ── Source migration (V74.6) ─────────────────────────────────────────────
+    // Normalise legacy source values to the new human-readable list.
+    // Safe to re-run — only rewrites rows whose source isn't already in the
+    // new set.
+    await run("Migrate contacts.source legacy values", () => sql`
+      UPDATE contacts SET source = 'Domain.com.au'
+      WHERE source IN ('domain', 'domain_agent')`);
+
+    await run("Migrate contacts.source → 'Other' for unknowns", () => sql`
+      UPDATE contacts SET source = 'Other'
+      WHERE source NOT IN (
+        'Our Website','Realestate.com.au','Domain.com.au','Instagram',
+        'Facebook','Letter Drop','Door Knocking','Walk-In','Signboard',
+        'Cold-Calling','Open House','Referral','Other'
+      )`);
+
     const allOk = results.every(r => r.ok);
     return res.status(allOk ? 200 : 207).json({ allOk, results });
   }
