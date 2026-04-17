@@ -17,7 +17,15 @@ import { neon } from '@neondatabase/serverless';
 import bcrypt from 'bcryptjs';
 import { signSession, buildSessionCookie, FALLBACK_EMAIL } from '../../lib/auth.js';
 
-const sql = neon(process.env.POSTGRES_URL);
+// V74 hotfix — prefer Neon integration's per-deployment pipeline_* vars first
+const sql = neon(
+     process.env.pipeline_POSTGRES_URL
+  || process.env.pipeline_DATABASE_URL
+  || process.env.PIPELINE_POSTGRES_URL
+  || process.env.PIPELINE_DATABASE_URL
+  || process.env.POSTGRES_URL
+  || process.env.DATABASE_URL
+);
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
