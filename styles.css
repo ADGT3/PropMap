@@ -2348,8 +2348,10 @@ header {
   opacity: 1;
 }
 
-/* V75.1 popup snooze menu — hover state on duration options */
+/* V75.1 popup snooze menu — hover state on duration options.
+   !important is needed because the buttons carry inline styles (background/
+   color) baked into the popup HTML string, which beat normal CSS. */
 .popup-ns-menu button:hover {
-  color: #c4841a;
-  background: #f8f4ec;
+  color: #c4841a !important;
+  background: #f8f4ec !important;
 }
