@@ -1,4 +1,4 @@
-# Sydney Property Map — V74
+# Sydney Property Map — V74.1
 
 A browser-based interactive property map overlaying live Domain.com.au listings with planning, environmental and infrastructure data across Sydney's growth corridors. Deployed on Vercel with a Neon Postgres database for persistent pipeline and CRM storage.
 
@@ -279,7 +279,7 @@ This adds the auth columns. You'll need to be logged in to call it — which is 
 - Open the CRM → find or create the contact for `alan.diversi@edanproperty.com.au`
 - Open the contact detail drawer → scroll to **Site Access**
 - Click **Set password** → enter a password → Save
-- Tick **Can log in** and **Administrator**
+- Tick **PropMap Access** and **Administrator**
 - Log out and log back in — you'll now be signed in via the DB path (seen as `src: 'db'` in `/api/auth/me`), with the env-var fallback reserved as break-glass.
 
 ### Day-to-day admin tasks
@@ -287,12 +287,12 @@ This adds the auth columns. You'll need to be logged in to call it — which is 
 **Grant a new staff member login access:**
 1. CRM → open (or create) their contact record
 2. Site Access → **Set password** → type an initial password → Save (share it with them via Signal, in person, or similar out-of-band channel)
-3. Tick **Can log in** ✓
+3. Tick **PropMap Access** ✓
 4. Tick **Administrator** if they should be an admin
 5. Tell them to log in and change their password immediately via their own CRM record
 
 **Revoke access:**
-- CRM → contact → Site Access → untick **Can log in**. Their current session remains valid until its 30-day expiry, but no new logins. To force-expire, rotate `JWT_SECRET` (kicks everyone out).
+- CRM → contact → Site Access → untick **PropMap Access**. Their current session remains valid until its 30-day expiry, but no new logins. To force-expire, rotate `JWT_SECRET` (kicks everyone out).
 
 **Reset someone's forgotten password:**
 - CRM → contact → Site Access → **Reset password** → type new password → Save → share with them.
@@ -528,6 +528,7 @@ cor_lat =  3.86074737 − 0.00992951 × cur_lon + 1.06930344 × cur_lat
 
 | Version | Notes |
 |---|---|
+| V74.1 | **Site Access UI simplification.** Merged "Can log in" and "Full site access" into a single **PropMap Access** checkbox in the CRM contact detail drawer — ticking it sets `can_login = true` and `access_modules = ['propmap']` in one API call; unticking revokes both (password is preserved). Admin checkbox unchanged. Rationale: the two checkboxes were functionally redundant while only one module exists. When CRM and Finance later become independently-gated modules, each gets its own access checkbox; "can log in" becomes implicit in having any module access. Login endpoint and DB schema unchanged — still checks `can_login`. Fallback env-var superuser continues to receive `['*']` wildcard for full access. |
 | V74 | **Authentication & site access.** Entire site gated behind a session cookie via `middleware.js` (Vercel Routing Middleware, Edge runtime) — protects both pages and API routes, so Domain API proxy, tile proxy, and all other endpoints are no longer publicly hit-able. New branded `/login.html`. JWT (HS256 via `jose`) stored in httpOnly Secure SameSite=Lax cookie, 30-day expiry. **Contacts table extended**: `can_login`, `is_admin`, `password_hash` (bcryptjs, 10 rounds), `last_login_at`, `access_modules TEXT[]` (default `['*']` = full site access; per-module wiring scaffolded for future Map/CRM/Finance split). **Login priority**: DB first, then env-var fallback superuser (`ADMIN_FALLBACK_EMAIL`, `ADMIN_FALLBACK_PASSWORD_HASH`) that always has admin and works even if Neon is unreachable. **New endpoints** (`api/auth/*`): `login`, `logout`, `me`, `set-password` (admin or self; self requires current password), `update-access` (admin-only, with last-admin safeguard — cannot orphan DB admin set through UI). **CRM Site Access section** added to contact detail drawer: Can log in / Administrator / Full site access checkboxes, Last login display, Set/Reset/Change password form. Admin-gated; non-admins only see self-service password change on their own record. **Header user menu** in `index.html` — avatar with initials, dropdown showing full name/email/role and Sign out action; bootstraps from `/api/auth/me` on page load. **New files**: `middleware.js`, `login.html`, `lib/auth.js`, `api/auth/{login,logout,me,set-password,update-access}.js`, `scripts/hash-password.mjs`. **New env vars** (required before V74 goes live): `JWT_SECRET`, `ADMIN_FALLBACK_EMAIL`, `ADMIN_FALLBACK_PASSWORD_HASH`. **New deps**: `jose`, `bcryptjs`. `api/db-setup.js` extended with ALTER statements for all auth columns (safe to re-run). Framework-agnostic middleware uses plain Web Request/Response (not `next/server`) so no Next.js dependency. Portability: only `middleware.js` is Vercel-specific; if migrating, delete it and call `requireSession()` at the top of each API route — `lib/auth.js` already exposes this. See **Authentication** section for full setup, day-to-day admin tasks, and lockout recovery. |
 | V73 | Leppington and South Creek ILPs added. |
 | V68 | **map.js improvements.** Viewport and filter persistence: map center/zoom saved to `localStorage` on every pan/zoom and restored on page load (deferred to `window.load` to avoid Leaflet container sizing race); active filters saved to `localStorage` on Apply and Clear, restored on load including chip/select/checkbox UI state and filter badge count. Measure tool fixed: removed broken secondary picker popup that was appending to a hidden parent; Distance and Area now injected directly as items in the Tools dropdown menu; Clear Measurement item shown only when a measurement is active. Selecting a Domain API listing marker no longer recentres the map (popup `autoPan` disabled; `setView` suppressed on marker click, preserved on sidebar card click). **Data + overlays:** `catherine_park_north_zoning_wgs84.geojson` added — Catherine Park North proposed zoning (R2/R3/SP2) georeferenced from Figure 40 of the Draft Planning Proposal (Sep 2025) using 3 confirmed road intersection GCPs. Added to Zoning overlay group. `map.js` `buildLeafletLayer` extended with `vectorUrl` branch for fetch-based GeoJSON overlays. |

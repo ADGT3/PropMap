@@ -733,21 +733,22 @@ function renderCRMView(container) {
       const canChangePw   = viewerIsAdmin || isSelf;
       const lastLogin     = c.last_login_at ? new Date(c.last_login_at).toLocaleString() : 'Never';
       const hasPassword   = !!c.password_hash;
-      const accessModules = Array.isArray(c.access_modules) ? c.access_modules : ['*'];
-      const hasFullAccess = accessModules.includes('*');
+      const accessModules = Array.isArray(c.access_modules) ? c.access_modules : [];
+      // PropMap access = allowed to log in AND has propmap (or wildcard) module
+      const hasPropMapAccess = c.can_login && (accessModules.includes('*') || accessModules.includes('propmap'));
 
       // Site Access section — only rendered when viewer is admin OR viewing self
       const siteAccessHtml = (canManage || isSelf) ? `
         <div class="crm-drawer-section">
           <div class="crm-drawer-section-title">Site Access</div>
           <div class="crm-access-grid">
-            <label class="crm-access-row ${canManage ? '' : 'disabled'}">
-              <input type="checkbox" class="crm-access-can-login"
-                     ${c.can_login ? 'checked' : ''}
+            <label class="crm-access-row ${canManage && hasPassword ? '' : 'disabled'}">
+              <input type="checkbox" class="crm-access-propmap"
+                     ${hasPropMapAccess ? 'checked' : ''}
                      ${canManage && hasPassword ? '' : 'disabled'}>
               <div>
-                <div class="crm-access-label">Can log in</div>
-                <div class="crm-access-hint">${hasPassword ? 'Password is set.' : 'Set a password first, then enable login.'}</div>
+                <div class="crm-access-label">PropMap Access</div>
+                <div class="crm-access-hint">${hasPassword ? 'Allows sign-in and use of the property map. CRM and Finance modules will become separate toggles.' : 'Set a password first, then enable access.'}</div>
               </div>
             </label>
             <label class="crm-access-row ${canManage ? '' : 'disabled'}">
@@ -757,15 +758,6 @@ function renderCRMView(container) {
               <div>
                 <div class="crm-access-label">Administrator</div>
                 <div class="crm-access-hint">Can manage site access for all contacts.</div>
-              </div>
-            </label>
-            <label class="crm-access-row ${canManage ? '' : 'disabled'}">
-              <input type="checkbox" class="crm-access-full"
-                     ${hasFullAccess ? 'checked' : ''}
-                     ${canManage ? '' : 'disabled'}>
-              <div>
-                <div class="crm-access-label">Full site access</div>
-                <div class="crm-access-hint">Access to all modules. Per-module permissions coming later.</div>
               </div>
             </label>
             <div class="crm-access-row readonly">
@@ -961,14 +953,19 @@ function renderCRMView(container) {
         }
       }
 
-      const canLoginEl = drawer.querySelector(".crm-access-can-login");
-      const isAdminEl  = drawer.querySelector(".crm-access-is-admin");
-      const fullAccEl  = drawer.querySelector(".crm-access-full");
+      const propmapEl = drawer.querySelector(".crm-access-propmap");
+      const isAdminEl = drawer.querySelector(".crm-access-is-admin");
 
-      if (canLoginEl) {
-        canLoginEl.addEventListener('change', async (e) => {
+      if (propmapEl) {
+        propmapEl.addEventListener('change', async (e) => {
+          const enabled = e.target.checked;
+          // PropMap access = can_login + 'propmap' in access_modules.
+          // Turning off: revoke login, clear modules. Password is preserved.
+          const payload = enabled
+            ? { can_login: true,  access_modules: ['propmap'] }
+            : { can_login: false, access_modules: [] };
           try {
-            await postAccessUpdate({ can_login: e.target.checked });
+            await postAccessUpdate(payload);
           } catch {
             e.target.checked = !e.target.checked; // revert
           }
@@ -978,16 +975,6 @@ function renderCRMView(container) {
         isAdminEl.addEventListener('change', async (e) => {
           try {
             await postAccessUpdate({ is_admin: e.target.checked });
-          } catch {
-            e.target.checked = !e.target.checked; // revert
-          }
-        });
-      }
-      if (fullAccEl) {
-        fullAccEl.addEventListener('change', async (e) => {
-          const modules = e.target.checked ? ['*'] : [];
-          try {
-            await postAccessUpdate({ access_modules: modules });
           } catch {
             e.target.checked = !e.target.checked; // revert
           }
