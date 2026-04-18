@@ -880,3 +880,26 @@
   font-weight: 500;
   letter-spacing: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   V75.3 — Note source badge
+   Small pill showing where a note lives (Deal — 35 Smith St, Property — ..., Contact)
+   Shown between the meta row and the note text in the contact drawer's
+   aggregated notes feed.
+   ═══════════════════════════════════════════════════════════════════════ */
+.crm-note-source {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--surface2);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  margin: 2px 0 4px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

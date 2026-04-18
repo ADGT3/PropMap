@@ -252,7 +252,10 @@ async function renderNotesPanel(contactId, pipelineId) {
   panel.className = 'crm-notes-panel';
 
   async function loadNotes() {
-    const notes = await apiGet({ notes: '1', contact_id: contactId }).catch(() => []);
+    // V75.3: unified notes API — combined feed where contact is the entity OR is tagged
+    const notes = await fetch(`/api/notes?by_contact=${encodeURIComponent(contactId)}`)
+      .then(r => r.ok ? r.json() : [])
+      .catch(() => []);
     panel.innerHTML = `
       <div class="crm-notes-title">Notes</div>
       <div class="crm-notes-input-row">
@@ -268,15 +271,16 @@ async function renderNotesPanel(contactId, pipelineId) {
       notes.forEach(n => {
         const entry = document.createElement('div');
         entry.className = 'crm-note-entry';
-        const propLabel = n.property_address ? ` <span class="crm-note-prop">· ${n.property_address}</span>` : '';
+        const src = n.source_label ? ` <span class="crm-note-prop">· ${n.source_label}</span>` : '';
+        const author = n.author_name || 'Unknown';
         entry.innerHTML = `
           <div class="crm-note-meta">
-            <span class="crm-note-date">${formatNoteDate(n.created_at)}${propLabel}</span>
+            <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}${src}</span>
             <button class="crm-note-delete" data-id="${n.id}">✕</button>
           </div>
           <div class="crm-note-text">${n.note_text}</div>`;
         entry.querySelector('.crm-note-delete').addEventListener('click', async () => {
-          await apiDelete({ note_id: n.id });
+          await fetch(`/api/notes?id=${encodeURIComponent(n.id)}`, { method: 'DELETE' });
           loadNotes();
         });
         listEl.appendChild(entry);
@@ -287,7 +291,17 @@ async function renderNotesPanel(contactId, pipelineId) {
       const input = panel.querySelector('.crm-note-input');
       const text = input.value.trim();
       if (!text) return;
-      await apiPost({ action: 'add_note', contact_id: contactId, pipeline_id: pipelineId || null, note_text: text });
+      // Panel is rendered from the agent-side CRM section of the pipeline
+      // modal. The note is attached to the deal (pipelineId) when present,
+      // otherwise to the contact.
+      const entity_type = pipelineId ? 'deal'        : 'contact';
+      const entity_id   = pipelineId ? String(pipelineId) : String(contactId);
+      const tagged_contact_id = pipelineId ? contactId : null;
+      await fetch('/api/notes', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entity_type, entity_id, note_text: text, tagged_contact_id }),
+      });
       input.value = '';
       loadNotes();
     });
@@ -814,7 +828,7 @@ function renderCRMView(container) {
     try {
       const [contactData, notes, props, allPipeline, me] = await Promise.all([
         apiGet({ id: contactId }),
-        apiGet({ notes: '1', contact_id: contactId }),
+        fetch(`/api/notes?by_contact=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
         apiGet({ pipeline_list: '1' }).catch(() => []),
         fetch('/api/auth/me').then(r => r.json()).catch(() => ({ authenticated: false })),
@@ -1009,24 +1023,27 @@ function renderCRMView(container) {
             <div class="crm-section-body">
               <div class="crm-drawer-note-input" style="display:none;margin-bottom:10px">
                 <textarea class="kb-input crm-drawer-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
-                <div style="display:flex;gap:6px;margin-top:4px;align-items:center;flex-wrap:wrap">
-                  <select class="kb-input crm-drawer-note-prop" style="flex:1;font-size:12px;min-width:140px">
-                    <option value="">No property</option>
-                    ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
-                  </select>
+                <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
                   <button class="crm-drawer-note-save kb-add-offer-btn">Save Note</button>
                   <button class="crm-drawer-note-cancel">Cancel</button>
                 </div>
               </div>
               <div class="crm-drawer-notes-list">
-                ${notes.length ? notes.map(n => `
+                ${notes.length ? notes.map(n => {
+                  const author = n.author_name || 'Unknown';
+                  const sourceBadge = n.source_label
+                    ? `<span class="crm-note-source">${n.source_label}</span>`
+                    : '';
+                  return `
                   <div class="crm-note-entry" data-note-id="${n.id}">
                     <div class="crm-note-meta">
-                      <span class="crm-note-date">${formatNoteDate(n.created_at)}${n.property_address ? ` · <span class="crm-note-prop">${n.property_address}</span>` : ""}</span>
+                      <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}</span>
                       <button class="crm-note-delete" data-id="${n.id}">✕</button>
                     </div>
+                    ${sourceBadge}
                     <div class="crm-note-text">${n.note_text}</div>
-                  </div>`).join("") : '<div class="crm-empty">No notes yet</div>'}
+                  </div>`;
+                }).join("") : '<div class="crm-empty">No notes yet</div>'}
               </div>
             </div>
           </div>
@@ -1141,22 +1158,31 @@ function renderCRMView(container) {
         });
       });
 
-      // Notes
+      // Notes (V75.3 — /api/notes)
       const addNoteBtn = drawer.querySelector(".crm-drawer-add-note-btn");
       const noteInput  = drawer.querySelector(".crm-drawer-note-input");
       addNoteBtn.addEventListener("click", () => { noteInput.style.display = ""; addNoteBtn.style.display = "none"; drawer.querySelector(".crm-drawer-note-text").focus(); });
       drawer.querySelector(".crm-drawer-note-cancel").addEventListener("click", () => { noteInput.style.display = "none"; addNoteBtn.style.display = ""; });
       drawer.querySelector(".crm-drawer-note-save").addEventListener("click", async () => {
-        const text       = drawer.querySelector(".crm-drawer-note-text").value.trim();
-        const pipelineId = drawer.querySelector(".crm-drawer-note-prop").value || null;
+        const text = drawer.querySelector(".crm-drawer-note-text").value.trim();
         if (!text) return;
-        await apiPost({ action: "add_note", contact_id: contactId, pipeline_id: pipelineId, note_text: text });
+        await fetch('/api/notes', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entity_type: 'contact',
+            entity_id:   String(contactId),
+            note_text:   text,
+            // tagged_contact_id intentionally null — notes written here are
+            // attached to THIS contact already; tagging would be redundant
+          }),
+        });
         renderContactDetail(drawer, contactId, onDone);
       });
       drawer.querySelectorAll(".crm-note-delete").forEach(btn => {
         btn.addEventListener("click", async () => {
           if (!confirm("Delete this note?")) return;
-          await apiDelete({ note_id: btn.dataset.id });
+          await fetch(`/api/notes?id=${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
           renderContactDetail(drawer, contactId, onDone);
         });
       });
