@@ -944,9 +944,9 @@ function renderCRMView(container) {
               <div id="crmDetailPropsList">
                 ${propLinks.length ? propLinks.map(p => `
                   <div class="crm-prop-row" data-entity-type="property" data-entity-id="${p.entity_id}">
-                    <span class="crm-prop-address">${p.address || '—'}${p.suburb ? ", " + p.suburb : ""}</span>
+                    <a href="#" class="crm-prop-open" data-property-id="${p.entity_id}" title="Open property">${p.address || '—'}${p.suburb ? ", " + p.suburb : ""}</a>
                     <select class="crm-prop-role-sel kb-input" data-entity-type="property" data-entity-id="${p.entity_id}" style="font-size:11px;padding:2px 4px;width:auto">
-                      ${rolesForScope('property').map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
+                      ${ROLES.map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
                     </select>
                     <button class="crm-prop-unlink-btn" data-entity-type="property" data-entity-id="${p.entity_id}" title="Remove">✕</button>
                   </div>`).join("") : '<div class="crm-empty">No linked properties</div>'}
@@ -958,7 +958,7 @@ function renderCRMView(container) {
                     ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
                   </select>
                   <select class="kb-input crm-prop-role-new" style="font-size:12px">
-                    ${rolesForScope('property').map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                    ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-prop-link-save kb-add-offer-btn">Link</button>
                   <button class="crm-prop-link-cancel">Cancel</button>
@@ -980,7 +980,7 @@ function renderCRMView(container) {
                     <span class="crm-deal-badge crm-deal-badge-workflow">${workflowLabels[d.workflow] || d.workflow || 'Acquisition'}</span>
                     <span class="crm-deal-badge crm-deal-badge-stage">${dealStageLabels[d.stage] || d.stage || '—'}</span>
                     <select class="crm-prop-role-sel kb-input" data-entity-type="deal" data-entity-id="${d.entity_id}" style="font-size:11px;padding:2px 4px;width:auto">
-                      ${rolesForScope('deal').map(r => `<option value="${r.value}" ${r.value === d.role ? "selected" : ""}>${r.label}</option>`).join("")}
+                      ${ROLES.map(r => `<option value="${r.value}" ${r.value === d.role ? "selected" : ""}>${r.label}</option>`).join("")}
                     </select>
                     <button class="crm-prop-unlink-btn" data-entity-type="deal" data-entity-id="${d.entity_id}" title="Remove">✕</button>
                   </div>`).join("") : '<div class="crm-empty">No deals linked</div>'}
@@ -992,7 +992,7 @@ function renderCRMView(container) {
                     ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
                   </select>
                   <select class="kb-input crm-deal-role-new" style="font-size:12px">
-                    ${rolesForScope('deal').map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                    ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-deal-link-save kb-add-offer-btn">Link</button>
                   <button class="crm-deal-link-cancel">Cancel</button>
@@ -1098,6 +1098,17 @@ function renderCRMView(container) {
           e.preventDefault();
           const dealId = link.dataset.dealId;
           if (window.Router) Router.navigate(`/pipeline/deal/${dealId}`);
+        });
+      });
+
+      // Property address click → open property drawer (V75.4). For now the
+      // route is a no-op if CRM.navigateTo isn't defined; falls back to a
+      // brief notice so users don't wonder why nothing happened.
+      propsList?.querySelectorAll(".crm-prop-open").forEach(link => {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          const propertyId = link.dataset.propertyId;
+          if (window.Router) Router.navigate(`/crm/properties/${propertyId}`);
         });
       });
 

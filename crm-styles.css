@@ -656,9 +656,10 @@
   align-items: center;
   gap: 8px;
   padding: 6px 0;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #efefef;
   font-size: 13px;
 }
+.crm-prop-row:last-child { border-bottom: none; }
 .crm-prop-address { flex: 1; font-weight: 500; }
 .crm-prop-id-link {
   font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
@@ -841,12 +842,13 @@
   align-items: center;
   gap: 8px;
   padding: 6px 4px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid #efefef;
   flex-wrap: wrap;
 }
 .crm-deal-row:last-child { border-bottom: none; }
 
-.crm-deal-open {
+.crm-deal-open,
+.crm-prop-open {
   flex: 1 1 160px;
   min-width: 140px;
   color: var(--accent);
@@ -854,7 +856,8 @@
   font-size: 13px;
   text-decoration: none;
 }
-.crm-deal-open:hover { text-decoration: underline; }
+.crm-deal-open:hover,
+.crm-prop-open:hover { text-decoration: underline; }
 
 .crm-deal-badge {
   font-size: 10px;
