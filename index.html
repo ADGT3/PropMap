@@ -13,6 +13,69 @@
 </head>
 <body>
 
+  <!-- V75.2c — SVG icon sprite. All icons use currentColor so they inherit
+       text colour from their surrounding element (white on gold active, gold
+       on hover, muted on rest). Monoline stroke style, 24-unit viewBox. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <!-- Mapping: folded map with creases -->
+      <symbol id="icon-mapping" viewBox="0 0 24 24">
+        <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"
+              d="M3 6.5 L9 4.5 L15 6.5 L21 4.5 L21 17.5 L15 19.5 L9 17.5 L3 19.5 Z M9 4.5 L9 17.5 M15 6.5 L15 19.5"/>
+      </symbol>
+
+      <!-- Pipeline: three kanban columns with cards -->
+      <symbol id="icon-pipeline" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+          <rect x="3"  y="4" width="5" height="16" rx="1"/>
+          <rect x="9.5" y="4" width="5" height="10" rx="1"/>
+          <rect x="16" y="4" width="5" height="7"  rx="1"/>
+        </g>
+      </symbol>
+
+      <!-- CRM: person with contact-card lines -->
+      <symbol id="icon-crm" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+          <circle cx="9" cy="8" r="3"/>
+          <path d="M3.5 19 C4 15.5 6 14 9 14 C12 14 14 15.5 14.5 19"/>
+          <line x1="16" y1="8"  x2="21" y2="8"/>
+          <line x1="16" y1="12" x2="21" y2="12"/>
+          <line x1="16" y1="16" x2="20" y2="16"/>
+        </g>
+      </symbol>
+
+      <!-- Finance: rising bar chart -->
+      <symbol id="icon-finance" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+          <line x1="3" y1="20" x2="21" y2="20"/>
+          <rect x="5"  y="13" width="3" height="7" rx="0.4"/>
+          <rect x="10.5" y="9"  width="3" height="11" rx="0.4"/>
+          <rect x="16" y="5"  width="3" height="15" rx="0.4"/>
+        </g>
+      </symbol>
+
+      <!-- Tools: wrench -->
+      <symbol id="icon-tools" viewBox="0 0 24 24">
+        <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"
+              d="M14.7 6.3 a4 4 0 0 0 5 5 L21 13 L13 21 L3 11 L11 3 L12.7 4.7 a4 4 0 0 0 2 1.6 Z"/>
+      </symbol>
+
+      <!-- Settings: gear -->
+      <symbol id="icon-settings" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2 L12 5 M12 19 L12 22 M4.9 4.9 L7 7 M17 17 L19.1 19.1 M2 12 L5 12 M19 12 L22 12 M4.9 19.1 L7 17 M17 7 L19.1 4.9"/>
+        </g>
+      </symbol>
+
+      <!-- Chevron down for dropdown toggles -->
+      <symbol id="icon-chevron-down" viewBox="0 0 24 24">
+        <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"
+              d="M6 9 L12 15 L18 9"/>
+      </symbol>
+    </defs>
+  </svg>
+
   <header>
     <div class="logo">property<span>map</span></div>
 
@@ -28,14 +91,14 @@
 
     <!-- Module nav + user menu — right-aligned (ml-auto via header CSS) -->
     <nav class="module-nav">
-      <button class="module-nav-btn active" data-module-nav="mapping"  onclick="Router.navigate('/mapping')">🗺 Mapping</button>
-      <button class="module-nav-btn"        data-module-nav="pipeline" onclick="Router.navigate('/pipeline')">⬡ Pipeline</button>
-      <button class="module-nav-btn"        data-module-nav="crm"      onclick="Router.navigate('/crm')">👤 CRM</button>
-      <button class="module-nav-btn"        data-module-nav="finance"  onclick="Router.navigate('/finance')">📊 Finance</button>
+      <button class="module-nav-btn active" data-module-nav="mapping"  onclick="Router.navigate('/mapping')"><svg class="mn-icon"><use href="#icon-mapping"/></svg>Mapping</button>
+      <button class="module-nav-btn"        data-module-nav="pipeline" onclick="Router.navigate('/pipeline')"><svg class="mn-icon"><use href="#icon-pipeline"/></svg>Pipeline</button>
+      <button class="module-nav-btn"        data-module-nav="crm"      onclick="Router.navigate('/crm')"><svg class="mn-icon"><use href="#icon-crm"/></svg>CRM</button>
+      <button class="module-nav-btn"        data-module-nav="finance"  onclick="Router.navigate('/finance')"><svg class="mn-icon"><use href="#icon-finance"/></svg>Finance</button>
 
       <!-- Tools dropdown (stays as dropdown, not a router target for now) -->
       <div class="tools-dropdown-anchor" id="toolsAnchor">
-        <button class="module-nav-btn" id="toolsDropdownBtn">⚙ Tools ▾</button>
+        <button class="module-nav-btn" id="toolsDropdownBtn"><svg class="mn-icon"><use href="#icon-tools"/></svg>Tools<svg class="mn-icon mn-icon-chev"><use href="#icon-chevron-down"/></svg></button>
         <div class="tools-dropdown-menu" id="toolsDropdownMenu">
           <button class="tools-dropdown-item" id="measureBtn">📐 Measure</button>
           <button class="tools-dropdown-item" id="uploadPanelBtn">⬆ Upload Map</button>
@@ -56,7 +119,7 @@
           <div class="user-menu-email" id="userMenuEmail"></div>
           <div class="user-menu-role" id="userMenuRole"></div>
         </div>
-        <button class="tools-dropdown-item user-menu-settings" id="userMenuSettings" style="display:none">⚙ System Settings</button>
+        <button class="tools-dropdown-item user-menu-settings" id="userMenuSettings" style="display:none"><svg class="menu-item-icon"><use href="#icon-settings"/></svg>System Settings</button>
         <button class="tools-dropdown-item" id="userMenuLogout">Sign out</button>
       </div>
     </div>
@@ -529,7 +592,7 @@
   <div class="finance-view" id="financeView">
     <div class="finance-header">
       <div class="finance-header-left">
-        <span class="finance-title-icon">📊</span>
+        <svg class="module-header-icon"><use href="#icon-finance"/></svg>
         <span class="finance-title">Finance</span>
         <div class="fin-phase-nav">
           <div class="fin-phase active" id="finPhaseAcquisition">
@@ -554,7 +617,7 @@
   <div class="kanban-view" id="kanbanView">
     <div class="kanban-header">
       <div class="kanban-title">
-        <span class="kanban-title-icon">⬡</span>
+        <svg class="module-header-icon"><use href="#icon-pipeline"/></svg>
         Property Pipeline
       </div>
       <div class="kanban-header-right">
@@ -570,7 +633,7 @@
   <div class="settings-view" id="settingsView">
     <div class="settings-header">
       <div class="settings-title">
-        <span class="settings-title-icon">⚙</span>
+        <svg class="module-header-icon"><use href="#icon-settings"/></svg>
         System Settings
       </div>
       <button class="panel-close" id="settingsClose" title="Close settings">✕</button>

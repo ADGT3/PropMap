@@ -635,10 +635,10 @@ function renderCRMView(container) {
   container.innerHTML = `
     <div class="crm-view-wrap">
       <div class="crm-view-header">
-        <span class="crm-view-title"><span class="crm-view-title-icon">👤</span> CRM</span>
+        <span class="crm-view-title"><svg class="module-header-icon"><use href="#icon-crm"/></svg> CRM</span>
         <div class="crm-view-tabs">
-          <button class="crm-tab active" data-tab="contacts">👤 Contacts</button>
-          <button class="crm-tab" data-tab="organisations">🏢 Organisations</button>
+          <button class="crm-tab active" data-tab="contacts">Contacts</button>
+          <button class="crm-tab" data-tab="organisations">Organisations</button>
         </div>
         <button class="crm-view-add-btn" id="crmViewAddBtn">+ New Contact</button>
       </div>

@@ -559,24 +559,34 @@
 
 /* ── CRM Drawer ──────────────────────────────────────────────────────────── */
 
+/* V75.2b — CRM drawer reworked to match Kanban card modal pattern.
+   Centred modal, fixed positioning, blur backdrop. Keeps the .crm-drawer*
+   class names so existing crm.js code still targets the right elements, but
+   the layout/sizing mirrors the Kanban .kb-modal treatment. Future property
+   drawer (V75.4) will reuse these same classes for consistency. */
 .crm-drawer-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.3);
-  z-index: 10;
+  background: rgba(0,0,0,0.45);
+  z-index: 9000;        /* above everything except toast (9999) */
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(2px);
 }
 .crm-drawer {
-  width: 420px;
-  max-width: 100%;
   background: var(--surface);
-  border-left: 1px solid var(--border);
+  border: none;          /* was border-left for drawer; centred modal needs none */
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  width: 100%;
+  max-width: 580px;
+  max-height: 88vh;
   display: flex;
   flex-direction: column;
-  height: 100%;
   overflow: hidden;
-  box-shadow: -4px 0 20px rgba(0,0,0,0.12);
+  height: auto;          /* was 100% for drawer; let content determine */
 }
 .crm-drawer-loading {
   padding: 32px;
@@ -588,7 +598,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  padding: 16px;
+  padding: 20px 20px 16px;
   border-bottom: 1px solid var(--border);
   gap: 12px;
   flex-shrink: 0;

@@ -2558,3 +2558,56 @@ header .address-search {
 body:not([data-route="mapping"]) .leaflet-control-container {
   display: none;
 }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   V75.2c — SVG icon system
+   All icons use currentColor so they inherit text colour from context.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* Module nav button icon (small, inline with text) */
+.module-nav-btn .mn-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: inherit;  /* make currentColor inherit from button */
+}
+.module-nav-btn .mn-icon-chev {
+  width: 10px;
+  height: 10px;
+  margin-left: 2px;
+}
+
+/* Resting — muted grey */
+.module-nav-btn { color: var(--muted); }
+/* Hover — gold */
+.module-nav-btn:hover { color: var(--accent); background: var(--surface2); }
+/* Active — white on gold */
+.module-nav-btn.active,
+.module-nav-btn.active:hover {
+  color: #fff;
+  background: var(--accent);
+}
+
+/* Module header icon (larger, in kanban/finance/crm/settings header) */
+.module-header-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Menu item icon (smaller, for dropdown menu entries) */
+.menu-item-icon {
+  width: 13px;
+  height: 13px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: var(--accent);
+}
+
+/* User menu: give Settings item a bit more visual weight */
+.user-menu-settings {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
