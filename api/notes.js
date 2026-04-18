@@ -16,7 +16,7 @@
  *     → every note tagged to that contact, across all entities (with source info)
  *
  *   GET    /api/notes?by_contact=N
- *     → combined feed for a contact's CRM drawer:
+ *     → combined feed for a contact's CRM modal:
  *       - notes where entity_type='contact' AND entity_id=N
  *       - notes where tagged_contact_id=N
  *       (de-duplicated by id)
@@ -107,7 +107,7 @@ export default async function handler(req, res) {
 async function handleGet(req, res) {
   const { entity_type, entity_id, tagged_contact_id, by_contact } = req.query;
 
-  // Combined CRM contact-drawer feed: contact-attached notes + tagged notes
+  // Combined CRM contact-modal feed: contact-attached notes + tagged notes
   if (by_contact) {
     const cid = parseInt(by_contact, 10);
     const rows = await sql`
