@@ -14,9 +14,9 @@
  *   /pipeline/deal/:id             → Pipeline, with deal modal open
  *   /crm                           → CRM (Contacts)
  *   /crm/contacts                  → CRM Contacts tab
- *   /crm/contacts/:id              → CRM Contacts tab, drawer open
+ *   /crm/contacts/:id              → CRM Contacts tab, modal open
  *   /crm/organisations             → CRM Organisations tab
- *   /crm/organisations/:id         → CRM Organisations tab, drawer open
+ *   /crm/organisations/:id         → CRM Organisations tab, modal open
  *   /finance                       → Finance
  *   /tools                         → Tools (placeholder module — currently tools is a dropdown)
  *   /settings                      → System Settings (empty scaffold in V75.2)
@@ -90,7 +90,7 @@
 
       case 'crm':
         if (typeof toggleCRM === 'function') toggleCRM(true);
-        // Deep link: switch CRM sub-tab and open drawer
+        // Deep link: switch CRM sub-tab and open modal
         if (route.subRoute && window.CRM && typeof window.CRM.navigateTo === 'function') {
           setTimeout(() => window.CRM.navigateTo(route.subRoute, route.entityId), 100);
         }

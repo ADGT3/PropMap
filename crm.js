@@ -674,8 +674,8 @@ function renderCRMView(container) {
         <div class="crm-tab-pane" id="crm-pane-organisations"></div>
       </div>
     </div>
-    <div class="crm-drawer-overlay" id="crmDrawerOverlay" style="display:none">
-      <div class="crm-drawer" id="crmDrawer"></div>
+    <div class="crm-modal-overlay" id="crmModalOverlay" style="display:none">
+      <div class="crm-modal" id="crmModal"></div>
     </div>`;
 
   // Tab switching
@@ -690,24 +690,24 @@ function renderCRMView(container) {
     });
   });
 
-  // Drawer helpers
-  function openDrawer(renderFn) {
-    const overlay = container.querySelector('#crmDrawerOverlay');
-    const drawer  = container.querySelector('#crmDrawer');
+  // Modal helpers
+  function openModal(renderFn) {
+    const overlay = container.querySelector('#crmModalOverlay');
+    const modal  = container.querySelector('#crmModal');
     overlay.style.display = '';
-    renderFn(drawer);
-    overlay.addEventListener('click', e => { if (e.target === overlay) closeDrawer(); }, { once: true });
+    renderFn(modal);
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); }, { once: true });
   }
-  function closeDrawer() {
-    const overlay = container.querySelector('#crmDrawerOverlay');
+  function closeModal() {
+    const overlay = container.querySelector('#crmModalOverlay');
     overlay.style.display = 'none';
-    container.querySelector('#crmDrawer').innerHTML = '';
+    container.querySelector('#crmModal').innerHTML = '';
   }
-  window._crmCloseDrawer = closeDrawer;
+  window._crmCloseModal = closeModal;
 
   // + New Contact button
   container.querySelector('#crmViewAddBtn').addEventListener('click', () => {
-    openDrawer(drawer => renderContactDrawer(drawer, null, () => { closeDrawer(); loadContactsPane(); }));
+    openModal(modal => renderContactModal(modal, null, () => { closeModal(); loadContactsPane(); }));
   });
 
   // ── Contacts pane ──────────────────────────────────────────────────────────
@@ -778,11 +778,11 @@ function renderCRMView(container) {
           </td>`;
 
         tr.querySelector('.crm-td-name').addEventListener('click', () => {
-          openDrawer(drawer => renderContactDetail(drawer, c.id, () => { closeDrawer(); fetchContacts(); }));
+          openModal(modal => renderContactDetail(modal, c.id, () => { closeModal(); fetchContacts(); }));
         });
         tr.querySelector('.crm-view-edit-btn').addEventListener('click', e => {
           e.stopPropagation();
-          openDrawer(drawer => renderContactDrawer(drawer, c, () => { closeDrawer(); fetchContacts(); }));
+          openModal(modal => renderContactModal(modal, c, () => { closeModal(); fetchContacts(); }));
         });
         tr.querySelector('.crm-view-delete-btn').addEventListener('click', async e => {
           e.stopPropagation();
@@ -821,10 +821,10 @@ function renderCRMView(container) {
     }
   }
 
-  // ── Contact detail drawer ──────────────────────────────────────────────────
+  // ── Contact detail modal ──────────────────────────────────────────────────
 
-  async function renderContactDetail(drawer, contactId, onDone) {
-    drawer.innerHTML = '<div class="crm-drawer-loading">Loading…</div>';
+  async function renderContactDetail(modal, contactId, onDone) {
+    modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
     try {
       const [contactData, notes, props, allPipeline, me] = await Promise.all([
         apiGet({ id: contactId }),
@@ -834,7 +834,7 @@ function renderCRMView(container) {
         fetch('/api/auth/me').then(r => r.json()).catch(() => ({ authenticated: false })),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
-      if (!c) { drawer.innerHTML = '<div class="crm-drawer-loading">Not found</div>'; return; }
+      if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
 
       const viewerIsAdmin = !!(me && me.authenticated && me.user && me.user.isAdmin);
       const viewerId      = me && me.authenticated && me.user ? String(me.user.id) : '';
@@ -870,8 +870,8 @@ function renderCRMView(container) {
       // Site Access section — only rendered when viewer is admin OR viewing self.
       // V75.2d — now collapsible; defaults to COLLAPSED.
       const siteAccessHtml = (canManage || isSelf) ? `
-        <div class="crm-drawer-section crm-section-collapsible" data-section="site-access" data-collapsed="1">
-          <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+        <div class="crm-modal-section crm-section-collapsible" data-section="site-access" data-collapsed="1">
+          <div class="crm-modal-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
             <span class="crm-section-header-left"><span class="crm-section-chev">▸</span> Site Access</span>
             <button class="crm-access-pw-btn kb-add-offer-btn" ${canChangePw ? '' : 'disabled'}>
               ${hasPassword ? (isSelf && !canManage ? 'Change my password' : 'Reset password') : 'Set password'}
@@ -924,21 +924,21 @@ function renderCRMView(container) {
           </div>
         </div>` : '';
 
-      drawer.innerHTML = `
-        <div class="crm-drawer-header">
+      modal.innerHTML = `
+        <div class="crm-modal-header">
           <div>
-            <div class="crm-drawer-title">${displayName(c)}</div>
-            <div class="crm-drawer-subtitle">${[c.org_name, c.mobile, c.email].filter(Boolean).join(" · ")}</div>
+            <div class="crm-modal-title">${displayName(c)}</div>
+            <div class="crm-modal-subtitle">${[c.org_name, c.mobile, c.email].filter(Boolean).join(" · ")}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
-            <button class="crm-drawer-edit-btn kb-add-offer-btn">✎ Edit</button>
-            <button class="crm-drawer-close">✕</button>
+            <button class="crm-modal-edit-btn kb-add-offer-btn">✎ Edit</button>
+            <button class="crm-modal-close">✕</button>
           </div>
         </div>
-        <div class="crm-drawer-body">
+        <div class="crm-modal-body">
 
-          <div class="crm-drawer-section">
-            <div class="crm-drawer-section-title">Contact Details</div>
+          <div class="crm-modal-section">
+            <div class="crm-modal-section-title">Contact Details</div>
             <div class="crm-detail-grid">
               ${c.mobile   ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
               ${c.email    ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
@@ -949,8 +949,8 @@ function renderCRMView(container) {
 
           ${siteAccessHtml}
 
-          <div class="crm-drawer-section crm-section-collapsible" data-section="linked-properties">
-            <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="crm-modal-section crm-section-collapsible" data-section="linked-properties">
+            <div class="crm-modal-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Linked Properties <span class="crm-section-count">(${propLinks.length})</span></span>
               <button class="crm-detail-add-prop-btn kb-add-offer-btn">+ Link Property</button>
             </div>
@@ -981,8 +981,8 @@ function renderCRMView(container) {
             </div>
           </div>
 
-          <div class="crm-drawer-section crm-section-collapsible" data-section="deals">
-            <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="crm-modal-section crm-section-collapsible" data-section="deals">
+            <div class="crm-modal-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${dealLinks.length})</span></span>
               <button class="crm-detail-add-deal-btn kb-add-offer-btn">+ Link Deal</button>
             </div>
@@ -1015,20 +1015,20 @@ function renderCRMView(container) {
             </div>
           </div>
 
-          <div class="crm-drawer-section crm-section-collapsible" data-section="notes">
-            <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="crm-modal-section crm-section-collapsible" data-section="notes">
+            <div class="crm-modal-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Notes <span class="crm-section-count">(${notes.length})</span></span>
-              <button class="crm-drawer-add-note-btn kb-add-offer-btn">+ Add Note</button>
+              <button class="crm-modal-add-note-btn kb-add-offer-btn">+ Add Note</button>
             </div>
             <div class="crm-section-body">
-              <div class="crm-drawer-note-input" style="display:none;margin-bottom:10px">
-                <textarea class="kb-input crm-drawer-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+              <div class="crm-modal-note-input" style="display:none;margin-bottom:10px">
+                <textarea class="kb-input crm-modal-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
                 <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
-                  <button class="crm-drawer-note-save kb-add-offer-btn">Save Note</button>
-                  <button class="crm-drawer-note-cancel">Cancel</button>
+                  <button class="crm-modal-note-save kb-add-offer-btn">Save Note</button>
+                  <button class="crm-modal-note-cancel">Cancel</button>
                 </div>
               </div>
-              <div class="crm-drawer-notes-list">
+              <div class="crm-modal-notes-list">
                 ${notes.length ? notes.map(n => {
                   const author = n.author_name || 'Unknown';
                   const sourceBadge = n.source_label
@@ -1049,16 +1049,16 @@ function renderCRMView(container) {
 
         </div>`;
 
-      drawer.querySelector(".crm-drawer-close").addEventListener("click", onDone);
-      drawer.querySelector(".crm-drawer-edit-btn").addEventListener("click", () => {
-        renderContactDrawer(drawer, c, () => renderContactDetail(drawer, contactId, onDone));
+      modal.querySelector(".crm-modal-close").addEventListener("click", onDone);
+      modal.querySelector(".crm-modal-edit-btn").addEventListener("click", () => {
+        renderContactModal(modal, c, () => renderContactDetail(modal, contactId, onDone));
       });
 
       // ── Collapsible sections ─────────────────────────────────────────────
       // Section state is per-render (no persistence); clicking the header
       // toggles the body and chev. Initial collapsed state comes from
       // data-collapsed="1" on the section (set in the HTML above).
-      drawer.querySelectorAll(".crm-section-collapsible").forEach(section => {
+      modal.querySelectorAll(".crm-section-collapsible").forEach(section => {
         const header = section.querySelector(".crm-section-header");
         const body   = section.querySelector(".crm-section-body");
         const chev   = section.querySelector(".crm-section-chev");
@@ -1079,33 +1079,33 @@ function renderCRMView(container) {
       });
 
       // ── Linked Properties section (entity_type = 'property') ─────────────
-      const addPropBtn  = drawer.querySelector(".crm-detail-add-prop-btn");
-      const addPropForm = drawer.querySelector(".crm-detail-add-prop-form");
-      const propsList   = drawer.querySelector("#crmDetailPropsList");
+      const addPropBtn  = modal.querySelector(".crm-detail-add-prop-btn");
+      const addPropForm = modal.querySelector(".crm-detail-add-prop-form");
+      const propsList   = modal.querySelector("#crmDetailPropsList");
 
       addPropBtn?.addEventListener("click", () => { addPropForm.style.display = ""; addPropBtn.style.display = "none"; });
-      drawer.querySelector(".crm-prop-link-cancel")?.addEventListener("click", () => { addPropForm.style.display = "none"; addPropBtn.style.display = ""; });
-      drawer.querySelector(".crm-prop-link-save")?.addEventListener("click", async () => {
-        const entityId = drawer.querySelector(".crm-prop-select").value;
-        const role     = drawer.querySelector(".crm-prop-role-new").value;
+      modal.querySelector(".crm-prop-link-cancel")?.addEventListener("click", () => { addPropForm.style.display = "none"; addPropBtn.style.display = ""; });
+      modal.querySelector(".crm-prop-link-save")?.addEventListener("click", async () => {
+        const entityId = modal.querySelector(".crm-prop-select").value;
+        const role     = modal.querySelector(".crm-prop-role-new").value;
         if (!entityId) return;
         await apiPost({ action: "link", contact_id: contactId, entity_type: "property", entity_id: entityId, role_id: role });
-        renderContactDetail(drawer, contactId, onDone);
+        renderContactDetail(modal, contactId, onDone);
       });
 
       // ── Deals section (entity_type = 'deal') ─────────────────────────────
-      const addDealBtn  = drawer.querySelector(".crm-detail-add-deal-btn");
-      const addDealForm = drawer.querySelector(".crm-detail-add-deal-form");
-      const dealsList   = drawer.querySelector("#crmDetailDealsList");
+      const addDealBtn  = modal.querySelector(".crm-detail-add-deal-btn");
+      const addDealForm = modal.querySelector(".crm-detail-add-deal-form");
+      const dealsList   = modal.querySelector("#crmDetailDealsList");
 
       addDealBtn?.addEventListener("click", () => { addDealForm.style.display = ""; addDealBtn.style.display = "none"; });
-      drawer.querySelector(".crm-deal-link-cancel")?.addEventListener("click", () => { addDealForm.style.display = "none"; addDealBtn.style.display = ""; });
-      drawer.querySelector(".crm-deal-link-save")?.addEventListener("click", async () => {
-        const entityId = drawer.querySelector(".crm-deal-select").value;
-        const role     = drawer.querySelector(".crm-deal-role-new").value;
+      modal.querySelector(".crm-deal-link-cancel")?.addEventListener("click", () => { addDealForm.style.display = "none"; addDealBtn.style.display = ""; });
+      modal.querySelector(".crm-deal-link-save")?.addEventListener("click", async () => {
+        const entityId = modal.querySelector(".crm-deal-select").value;
+        const role     = modal.querySelector(".crm-deal-role-new").value;
         if (!entityId) return;
         await apiPost({ action: "link", contact_id: contactId, entity_type: "deal", entity_id: entityId, role_id: role });
-        renderContactDetail(drawer, contactId, onDone);
+        renderContactDetail(modal, contactId, onDone);
       });
 
       // Deal row click → open that deal's card modal in the Pipeline module
@@ -1117,7 +1117,7 @@ function renderCRMView(container) {
         });
       });
 
-      // Property address click → open property drawer (V75.4). For now the
+      // Property address click → open property modal (V75.4). For now the
       // route is a no-op if CRM.navigateTo isn't defined; falls back to a
       // brief notice so users don't wonder why nothing happened.
       propsList?.querySelectorAll(".crm-prop-open").forEach(link => {
@@ -1130,7 +1130,7 @@ function renderCRMView(container) {
 
       // Role change on either a property or deal row (same selector class,
       // different entity_type in the dataset)
-      drawer.querySelectorAll(".crm-prop-role-sel").forEach(sel => {
+      modal.querySelectorAll(".crm-prop-role-sel").forEach(sel => {
         sel.addEventListener("change", async () => {
           await apiPost({
             action:      "link",
@@ -1143,7 +1143,7 @@ function renderCRMView(container) {
       });
 
       // Unlink — same class used in both sections, entity_type tells us which
-      drawer.querySelectorAll(".crm-prop-unlink-btn").forEach(btn => {
+      modal.querySelectorAll(".crm-prop-unlink-btn").forEach(btn => {
         btn.addEventListener("click", async () => {
           const what = btn.dataset.entityType === "deal" ? "deal link" : "property link";
           if (!confirm(`Remove this ${what}?`)) return;
@@ -1153,17 +1153,17 @@ function renderCRMView(container) {
             entity_type: btn.dataset.entityType,
             entity_id:   btn.dataset.entityId,
           });
-          renderContactDetail(drawer, contactId, onDone);
+          renderContactDetail(modal, contactId, onDone);
         });
       });
 
       // Notes (V75.3 — /api/notes)
-      const addNoteBtn = drawer.querySelector(".crm-drawer-add-note-btn");
-      const noteInput  = drawer.querySelector(".crm-drawer-note-input");
-      addNoteBtn.addEventListener("click", () => { noteInput.style.display = ""; addNoteBtn.style.display = "none"; drawer.querySelector(".crm-drawer-note-text").focus(); });
-      drawer.querySelector(".crm-drawer-note-cancel").addEventListener("click", () => { noteInput.style.display = "none"; addNoteBtn.style.display = ""; });
-      drawer.querySelector(".crm-drawer-note-save").addEventListener("click", async () => {
-        const text = drawer.querySelector(".crm-drawer-note-text").value.trim();
+      const addNoteBtn = modal.querySelector(".crm-modal-add-note-btn");
+      const noteInput  = modal.querySelector(".crm-modal-note-input");
+      addNoteBtn.addEventListener("click", () => { noteInput.style.display = ""; addNoteBtn.style.display = "none"; modal.querySelector(".crm-modal-note-text").focus(); });
+      modal.querySelector(".crm-modal-note-cancel").addEventListener("click", () => { noteInput.style.display = "none"; addNoteBtn.style.display = ""; });
+      modal.querySelector(".crm-modal-note-save").addEventListener("click", async () => {
+        const text = modal.querySelector(".crm-modal-note-text").value.trim();
         if (!text) return;
         await fetch('/api/notes', {
           method:  'POST',
@@ -1176,18 +1176,18 @@ function renderCRMView(container) {
             // attached to THIS contact already; tagging would be redundant
           }),
         });
-        renderContactDetail(drawer, contactId, onDone);
+        renderContactDetail(modal, contactId, onDone);
       });
-      drawer.querySelectorAll(".crm-note-delete").forEach(btn => {
+      modal.querySelectorAll(".crm-note-delete").forEach(btn => {
         btn.addEventListener("click", async () => {
           if (!confirm("Delete this note?")) return;
           await fetch(`/api/notes?id=${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
-          renderContactDetail(drawer, contactId, onDone);
+          renderContactDetail(modal, contactId, onDone);
         });
       });
 
       // ── Site Access handlers ───────────────────────────────────────────────
-      const statusEl = drawer.querySelector(".crm-access-status");
+      const statusEl = modal.querySelector(".crm-access-status");
       const setStatus = (msg, isErr = false) => {
         if (!statusEl) return;
         statusEl.textContent = msg || '';
@@ -1213,8 +1213,8 @@ function renderCRMView(container) {
         }
       }
 
-      const propmapEl = drawer.querySelector(".crm-access-propmap");
-      const isAdminEl = drawer.querySelector(".crm-access-is-admin");
+      const propmapEl = modal.querySelector(".crm-access-propmap");
+      const isAdminEl = modal.querySelector(".crm-access-is-admin");
 
       if (propmapEl) {
         propmapEl.addEventListener('change', async (e) => {
@@ -1242,10 +1242,10 @@ function renderCRMView(container) {
       }
 
       // Password form toggle + save
-      const pwBtn     = drawer.querySelector(".crm-access-pw-btn");
-      const pwForm    = drawer.querySelector(".crm-access-pw-form");
-      const pwCancel  = drawer.querySelector(".crm-access-pw-cancel");
-      const pwSave    = drawer.querySelector(".crm-access-pw-save");
+      const pwBtn     = modal.querySelector(".crm-access-pw-btn");
+      const pwForm    = modal.querySelector(".crm-access-pw-form");
+      const pwCancel  = modal.querySelector(".crm-access-pw-cancel");
+      const pwSave    = modal.querySelector(".crm-access-pw-save");
       if (pwBtn && pwForm) {
         pwBtn.addEventListener('click', () => {
           pwForm.style.display = pwForm.style.display === 'none' ? '' : 'none';
@@ -1255,16 +1255,16 @@ function renderCRMView(container) {
         pwCancel.addEventListener('click', () => {
           pwForm.style.display = 'none';
           ['.crm-access-pw-current','.crm-access-pw-new','.crm-access-pw-confirm'].forEach(sel => {
-            const el = drawer.querySelector(sel); if (el) el.value = '';
+            const el = modal.querySelector(sel); if (el) el.value = '';
           });
           setStatus('');
         });
       }
       if (pwSave) {
         pwSave.addEventListener('click', async () => {
-          const currentEl = drawer.querySelector(".crm-access-pw-current");
-          const newEl     = drawer.querySelector(".crm-access-pw-new");
-          const confirmEl = drawer.querySelector(".crm-access-pw-confirm");
+          const currentEl = modal.querySelector(".crm-access-pw-current");
+          const newEl     = modal.querySelector(".crm-access-pw-new");
+          const confirmEl = modal.querySelector(".crm-access-pw-confirm");
           const newPw = newEl.value;
           const confPw = confirmEl.value;
           if (newPw.length < 8) { setStatus('Password must be at least 8 characters', true); return; }
@@ -1281,7 +1281,7 @@ function renderCRMView(container) {
             const d = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
             setStatus('Password saved');
-            setTimeout(() => renderContactDetail(drawer, contactId, onDone), 800);
+            setTimeout(() => renderContactDetail(modal, contactId, onDone), 800);
           } catch (err) {
             setStatus(err.message || 'Save failed', true);
           }
@@ -1290,20 +1290,20 @@ function renderCRMView(container) {
 
     } catch (err) {
       console.error("[CRM] renderContactDetail failed:", err);
-      drawer.innerHTML = `<div class="crm-drawer-loading">Error loading contact</div>`;
+      modal.innerHTML = `<div class="crm-modal-loading">Error loading contact</div>`;
     }
   }
 
-    // ── Contact edit/create drawer ─────────────────────────────────────────────
+    // ── Contact edit/create modal ─────────────────────────────────────────────
 
-  function renderContactDrawer(drawer, prefill, onDone) {
+  function renderContactModal(modal, prefill, onDone) {
     const isEdit = !!prefill?.id;
-    drawer.innerHTML = `
-      <div class="crm-drawer-header">
-        <div class="crm-drawer-title">${isEdit ? 'Edit Contact' : 'New Contact'}</div>
-        <button class="crm-drawer-close">✕</button>
+    modal.innerHTML = `
+      <div class="crm-modal-header">
+        <div class="crm-modal-title">${isEdit ? 'Edit Contact' : 'New Contact'}</div>
+        <button class="crm-modal-close">✕</button>
       </div>
-      <div class="crm-drawer-body">
+      <div class="crm-modal-body">
         <div class="crm-form-inner">
           <div class="crm-form-row">
             <div class="kb-field-wrap">
@@ -1346,28 +1346,28 @@ function renderCRMView(container) {
         </div>
       </div>`;
 
-    drawer.querySelector('.crm-drawer-close').addEventListener('click', onDone);
-    drawer.querySelector('.crm-cancel-btn').addEventListener('click', onDone);
+    modal.querySelector('.crm-modal-close').addEventListener('click', onDone);
+    modal.querySelector('.crm-cancel-btn').addEventListener('click', onDone);
 
     // Org typeahead
     let selectedOrgId = prefill?.organisation_id || null;
-    const orgTA = buildOrgTypeahead(drawer.querySelector('.crm-org-wrap'), (id) => { selectedOrgId = id; });
+    const orgTA = buildOrgTypeahead(modal.querySelector('.crm-org-wrap'), (id) => { selectedOrgId = id; });
     if (prefill?.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
 
     // Source field — reveal Other input when selected
-    wireSourceField(drawer);
+    wireSourceField(modal);
 
     // Duplicate detection (new only)
     if (!isEdit) {
-      const dupWrap = drawer.querySelector('.crm-duplicate-warning-wrap');
+      const dupWrap = modal.querySelector('.crm-duplicate-warning-wrap');
       let dupTimer;
       const checkDups = () => {
         clearTimeout(dupTimer);
         dupTimer = setTimeout(async () => {
-          const first  = drawer.querySelector('.crm-first').value.trim();
-          const last   = drawer.querySelector('.crm-last').value.trim();
-          const email  = drawer.querySelector('.crm-email').value.trim();
-          const mobile = drawer.querySelector('.crm-mobile').value.trim();
+          const first  = modal.querySelector('.crm-first').value.trim();
+          const last   = modal.querySelector('.crm-last').value.trim();
+          const email  = modal.querySelector('.crm-email').value.trim();
+          const mobile = modal.querySelector('.crm-mobile').value.trim();
           const dups   = await checkDuplicates(first, last, email, mobile);
           renderDuplicateWarning(dupWrap, dups, existing => {
             if (!confirm(`Link existing contact "${displayName(existing)}" instead?`)) return;
@@ -1376,20 +1376,20 @@ function renderCRMView(container) {
         }, 500);
       };
       ['crm-first','crm-last','crm-email','crm-mobile'].forEach(cls => {
-        drawer.querySelector(`.${cls}`)?.addEventListener('input', checkDups);
+        modal.querySelector(`.${cls}`)?.addEventListener('input', checkDups);
       });
     }
 
     // Save
-    drawer.querySelector('.crm-save-btn').addEventListener('click', async () => {
-      const first = drawer.querySelector('.crm-first').value.trim();
-      if (!first) { drawer.querySelector('.crm-first').focus(); return; }
-      const sourceVal = readSourceField(drawer);
+    modal.querySelector('.crm-save-btn').addEventListener('click', async () => {
+      const first = modal.querySelector('.crm-first').value.trim();
+      if (!first) { modal.querySelector('.crm-first').focus(); return; }
+      const sourceVal = readSourceField(modal);
       const data = {
         first_name:      first,
-        last_name:       drawer.querySelector('.crm-last').value.trim(),
-        mobile:          drawer.querySelector('.crm-mobile').value.trim(),
-        email:           drawer.querySelector('.crm-email').value.trim(),
+        last_name:       modal.querySelector('.crm-last').value.trim(),
+        mobile:          modal.querySelector('.crm-mobile').value.trim(),
+        email:           modal.querySelector('.crm-email').value.trim(),
         organisation_id: selectedOrgId,
         source:          sourceVal || prefill?.source || 'Other',
       };
@@ -1402,7 +1402,7 @@ function renderCRMView(container) {
     });
 
     // Delete (edit only)
-    drawer.querySelector('.crm-delete-btn')?.addEventListener('click', async () => {
+    modal.querySelector('.crm-delete-btn')?.addEventListener('click', async () => {
       if (!confirm(`Permanently delete ${displayName(prefill)}? This cannot be undone.`)) return;
       await apiDelete({ id: prefill.id });
       onDone();
@@ -1432,7 +1432,7 @@ function renderCRMView(container) {
     });
 
     pane.querySelector('#orgAddBtn').addEventListener('click', () => {
-      openDrawer(drawer => renderOrgDrawer(drawer, null, () => { closeDrawer(); loadOrgsPane(); }));
+      openModal(modal => renderOrgModal(modal, null, () => { closeModal(); loadOrgsPane(); }));
     });
 
     async function fetchOrgs(q = '') {
@@ -1453,14 +1453,14 @@ function renderCRMView(container) {
             <button class="crm-view-edit-btn" title="Edit">✎</button>
             <button class="crm-view-delete-btn" title="Delete" style="color:#c0392b">🗑</button>
           </td>`;
-        // Click on name → open drawer in view mode
+        // Click on name → open modal in view mode
         tr.querySelector('.crm-td-name').addEventListener('click', () => {
-          openDrawer(drawer => renderOrgDrawer(drawer, org, () => { closeDrawer(); fetchOrgs(orgSearch); }));
+          openModal(modal => renderOrgModal(modal, org, () => { closeModal(); fetchOrgs(orgSearch); }));
         });
-        // ✎ → open drawer, will go straight to edit mode via handler below
+        // ✎ → open modal, will go straight to edit mode via handler below
         tr.querySelector('.crm-view-edit-btn').addEventListener('click', (e) => {
           e.stopPropagation();
-          openDrawer(drawer => renderOrgDrawer(drawer, { ...org, _startInEditMode: true }, () => { closeDrawer(); fetchOrgs(orgSearch); }));
+          openModal(modal => renderOrgModal(modal, { ...org, _startInEditMode: true }, () => { closeModal(); fetchOrgs(orgSearch); }));
         });
         tr.querySelector('.crm-view-delete-btn').addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -1475,12 +1475,12 @@ function renderCRMView(container) {
     fetchOrgs();
   }
 
-  async function renderOrgDrawer(drawer, prefill, onDone) {
+  async function renderOrgModal(modal, prefill, onDone) {
     const isEdit = !!prefill?.id;
     let editMode = !isEdit || !!prefill?._startInEditMode;   // new orgs or ✎ click start in edit mode
 
     async function render() {
-      drawer.innerHTML = '<div class="crm-drawer-loading">Loading…</div>';
+      modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
 
       const [orgContacts, allContacts] = isEdit ? await Promise.all([
         apiGet({ org_contacts: prefill.id }).catch(() => []),
@@ -1498,8 +1498,8 @@ function renderCRMView(container) {
 
       // ── Details section: read mode vs edit mode ────────────────────────────
       const detailsHtml = editMode ? `
-        <div class="crm-drawer-section">
-          <div class="crm-drawer-section-title">${isEdit ? 'Edit Organisation' : 'New Organisation'}</div>
+        <div class="crm-modal-section">
+          <div class="crm-modal-section-title">${isEdit ? 'Edit Organisation' : 'New Organisation'}</div>
           <div class="crm-form-row">
             <div class="kb-field-wrap" style="flex:1">
               <label class="kb-field-label">Name *</label>
@@ -1528,8 +1528,8 @@ function renderCRMView(container) {
           </div>
         </div>
       ` : `
-        <div class="crm-drawer-section">
-          <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+        <div class="crm-modal-section">
+          <div class="crm-modal-section-title" style="display:flex;justify-content:space-between;align-items:center">
             Organisation Details
             <button class="crm-org-edit-btn kb-add-offer-btn">✎ Edit</button>
           </div>
@@ -1542,21 +1542,21 @@ function renderCRMView(container) {
         </div>
       `;
 
-      drawer.innerHTML = `
-        <div class="crm-drawer-header">
+      modal.innerHTML = `
+        <div class="crm-modal-header">
           <div>
-            <div class="crm-drawer-title">${orgName || 'New Organisation'}</div>
-            ${isEdit ? `<div class="crm-drawer-subtitle">${orgContacts.length} contact${orgContacts.length === 1 ? '' : 's'}</div>` : ''}
+            <div class="crm-modal-title">${orgName || 'New Organisation'}</div>
+            ${isEdit ? `<div class="crm-modal-subtitle">${orgContacts.length} contact${orgContacts.length === 1 ? '' : 's'}</div>` : ''}
           </div>
-          <button class="crm-drawer-close">✕</button>
+          <button class="crm-modal-close">✕</button>
         </div>
-        <div class="crm-drawer-body">
+        <div class="crm-modal-body">
 
           ${detailsHtml}
 
           ${isEdit ? `
-          <div class="crm-drawer-section">
-            <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="crm-modal-section">
+            <div class="crm-modal-section-title" style="display:flex;justify-content:space-between;align-items:center">
               Contacts (${orgContacts.length})
               <button class="crm-org-add-contact-btn kb-add-offer-btn">+ Add Contact</button>
             </div>
@@ -1585,27 +1585,27 @@ function renderCRMView(container) {
         </div>`;
 
       // ── Handlers ───────────────────────────────────────────────────────────
-      drawer.querySelector('.crm-drawer-close').addEventListener('click', onDone);
+      modal.querySelector('.crm-modal-close').addEventListener('click', onDone);
 
       // Enter edit mode (existing org)
-      drawer.querySelector('.crm-org-edit-btn')?.addEventListener('click', () => {
+      modal.querySelector('.crm-org-edit-btn')?.addEventListener('click', () => {
         editMode = true;
         render();
       });
 
       // Cancel edit (existing org)
-      drawer.querySelector('.crm-org-edit-cancel')?.addEventListener('click', () => {
+      modal.querySelector('.crm-org-edit-cancel')?.addEventListener('click', () => {
         editMode = false;
         render();
       });
 
       // Save (create or update)
-      drawer.querySelector('.crm-org-save-btn')?.addEventListener('click', async () => {
-        const name    = drawer.querySelector('.crm-org-name').value.trim();
-        const phone   = drawer.querySelector('.crm-org-phone').value.trim();
-        const email   = drawer.querySelector('.crm-org-email').value.trim();
-        const website = drawer.querySelector('.crm-org-website').value.trim();
-        if (!name) { drawer.querySelector('.crm-org-name').focus(); return; }
+      modal.querySelector('.crm-org-save-btn')?.addEventListener('click', async () => {
+        const name    = modal.querySelector('.crm-org-name').value.trim();
+        const phone   = modal.querySelector('.crm-org-phone').value.trim();
+        const email   = modal.querySelector('.crm-org-email').value.trim();
+        const website = modal.querySelector('.crm-org-website').value.trim();
+        if (!name) { modal.querySelector('.crm-org-name').focus(); return; }
         try {
           if (isEdit) {
             await apiPut({ org_id: prefill.id, name, phone, email, website });
@@ -1627,19 +1627,19 @@ function renderCRMView(container) {
       if (!isEdit) return;
 
       // Add contact to org
-      const addContactBtn  = drawer.querySelector('.crm-org-add-contact-btn');
-      const addContactForm = drawer.querySelector('.crm-org-add-contact-form');
+      const addContactBtn  = modal.querySelector('.crm-org-add-contact-btn');
+      const addContactForm = modal.querySelector('.crm-org-add-contact-form');
       addContactBtn?.addEventListener('click', () => { addContactForm.style.display = ''; addContactBtn.style.display = 'none'; });
-      drawer.querySelector('.crm-org-contact-link-cancel')?.addEventListener('click', () => { addContactForm.style.display = 'none'; addContactBtn.style.display = ''; });
-      drawer.querySelector('.crm-org-contact-link-save')?.addEventListener('click', async () => {
-        const contactId = drawer.querySelector('.crm-org-contact-select').value;
+      modal.querySelector('.crm-org-contact-link-cancel')?.addEventListener('click', () => { addContactForm.style.display = 'none'; addContactBtn.style.display = ''; });
+      modal.querySelector('.crm-org-contact-link-save')?.addEventListener('click', async () => {
+        const contactId = modal.querySelector('.crm-org-contact-select').value;
         if (!contactId) return;
         await apiPost({ action: 'set_org', contact_id: parseInt(contactId), organisation_id: prefill.id });
         render();
       });
 
       // Remove contact from org
-      drawer.querySelectorAll('.crm-org-contact-remove').forEach(btn => {
+      modal.querySelectorAll('.crm-org-contact-remove').forEach(btn => {
         btn.addEventListener('click', async () => {
           if (!confirm('Remove this contact from the organisation?')) return;
           await apiPost({ action: 'set_org', contact_id: parseInt(btn.dataset.contactId), organisation_id: null });
@@ -1647,10 +1647,10 @@ function renderCRMView(container) {
         });
       });
 
-      // Click contact name → open contact detail (same drawer as the contacts list)
-      drawer.querySelectorAll('.crm-org-contact-name').forEach(el => {
+      // Click contact name → open contact detail (same modal as the contacts list)
+      modal.querySelectorAll('.crm-org-contact-name').forEach(el => {
         el.addEventListener('click', () => {
-          renderContactDetail(drawer, parseInt(el.dataset.contactId), () => render());
+          renderContactDetail(modal, parseInt(el.dataset.contactId), () => render());
         });
       });
     }
