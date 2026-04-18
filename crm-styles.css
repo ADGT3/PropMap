@@ -369,18 +369,15 @@
 /* ── CRM Standalone View ──────────────────────────────────────────────────── */
 
 #crmView {
+  /* V75.2 — promoted from right-side 960px drawer to full-viewport module.
+     Matches Kanban/Finance treatment since CRM is now a top-level module. */
   position: fixed;
-  top: 56px;
-  right: 0;
-  bottom: 0;
-  width: 100%;
-  max-width: 960px;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  z-index: 900;
+  inset: 56px 0 0 0;
+  background: var(--bg);
+  z-index: 1500;
   display: none;
   flex-direction: column;
-  box-shadow: -4px 0 24px rgba(0,0,0,0.10);
+  overflow: hidden;
 }
 #crmView.visible { display: flex; }
 

@@ -313,6 +313,9 @@ let activeBase = 'map';
 baseLayers.map.addTo(map);
 
 // ─── Basemap toggle ───────────────────────────────────────────────────────────
+// V75.2 — Overlays button added at the end as a 4th basemap-row item. It
+// doesn't switch basemap; it opens the overlay panel (replaces the header
+// button that was removed in V75.2).
 const baseToggle = L.control({ position: 'bottomleft' });
 baseToggle.onAdd = function () {
   const div = L.DomUtil.create('div', 'basemap-toggle');
@@ -320,9 +323,20 @@ baseToggle.onAdd = function () {
     <button class="basemap-btn active" data-base="map">Map</button>
     <button class="basemap-btn" data-base="satellite">Satellite</button>
     <button class="basemap-btn" data-base="topo">Topography</button>
+    <button class="basemap-btn basemap-btn-overlays" data-overlays>🗺 Overlays <span class="badge" id="basemapOverlayBadge">0</span></button>
   `;
   L.DomEvent.disableClickPropagation(div);
-  div.querySelectorAll('.basemap-btn').forEach(btn => {
+
+  // Overlays button — opens the existing overlay panel
+  const overlaysBtn = div.querySelector('[data-overlays]');
+  overlaysBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (typeof togglePanel === 'function') {
+      togglePanel('overlayPanel', 'overlayPanelBtn');
+    }
+  });
+
+  div.querySelectorAll('.basemap-btn[data-base]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const target = btn.dataset.base;
       if (target === activeBase) return;
@@ -346,7 +360,7 @@ baseToggle.onAdd = function () {
           next.bringToBack();
         }
         activeBase = target;
-        div.querySelectorAll('.basemap-btn').forEach(b => b.classList.toggle('active', b.dataset.base === target));
+        div.querySelectorAll('.basemap-btn[data-base]').forEach(b => b.classList.toggle('active', b.dataset.base === target));
       } catch (err) {
         console.error('[Basemap] Failed to switch to', target, err);
         // Re-add the previous layer so the map isn't blank
@@ -357,6 +371,19 @@ baseToggle.onAdd = function () {
   return div;
 };
 baseToggle.addTo(map);
+
+// V75.2 — Mirror the legacy #overlayBadge into the basemap-row copy.
+// The overlay code still writes to #overlayBadge in three places; rather
+// than touching all of those, observe that node and mirror whenever it
+// changes. Cheap and non-invasive.
+(function mirrorOverlayBadge() {
+  const src  = document.getElementById('overlayBadge');
+  const sink = document.getElementById('basemapOverlayBadge');
+  if (!src || !sink) return;
+  const sync = () => { sink.textContent = src.textContent; };
+  sync();
+  new MutationObserver(sync).observe(src, { childList: true, characterData: true, subtree: true });
+})();
 
 // ─── Map click — property select + SRLUP identify ────────────────────────────
 
@@ -2251,10 +2278,17 @@ function restoreFilters() {
 })();
 
 // ─── Listings toggle ──────────────────────────────────────────────────────────
+// V75.2: the original listingsToggle button was moved from the top header
+// into the sidebar's own header (id #listingsPanelToggle). Wire both so
+// either element triggers the same show/hide logic. #listingsToggle stays
+// as a hidden stub to keep legacy references happy.
 
-document.getElementById('listingsToggle').addEventListener('click', function () {
+function _listingsToggleHandler() {
   showListings = !showListings;
-  this.classList.toggle('active', showListings);
+  const stub = document.getElementById('listingsToggle');
+  const live = document.getElementById('listingsPanelToggle');
+  if (stub) stub.classList.toggle('active', showListings);
+  if (live) live.classList.toggle('active', showListings);
   Object.values(markers).forEach(m => {
     if (showListings) m.addTo(map); else map.removeLayer(m);
   });
@@ -2266,7 +2300,10 @@ document.getElementById('listingsToggle').addEventListener('click', function () 
     const count = document.getElementById('listingCount');
     if (count) count.textContent = '0';
   }
-});
+}
+
+document.getElementById('listingsToggle')?.addEventListener('click', _listingsToggleHandler);
+document.getElementById('listingsPanelToggle')?.addEventListener('click', _listingsToggleHandler);
 
 // ─── Panel open/close ─────────────────────────────────────────────────────────
 

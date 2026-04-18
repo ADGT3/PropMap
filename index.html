@@ -15,9 +15,27 @@
 
   <header>
     <div class="logo">property<span>map</span></div>
+
+    <!-- Module nav — top-level buttons that switch main content -->
+    <nav class="module-nav">
+      <button class="module-nav-btn active" data-module-nav="mapping"  onclick="Router.navigate('/mapping')">🗺 Mapping</button>
+      <button class="module-nav-btn"        data-module-nav="pipeline" onclick="Router.navigate('/pipeline')">⬡ Pipeline</button>
+      <button class="module-nav-btn"        data-module-nav="crm"      onclick="Router.navigate('/crm')">👤 CRM</button>
+      <button class="module-nav-btn"        data-module-nav="finance"  onclick="Router.navigate('/finance')">📊 Finance</button>
+
+      <!-- Tools dropdown (stays as dropdown, not a router target for now) -->
+      <div class="tools-dropdown-anchor" id="toolsAnchor">
+        <button class="module-nav-btn" id="toolsDropdownBtn">⚙ Tools ▾</button>
+        <div class="tools-dropdown-menu" id="toolsDropdownMenu">
+          <button class="tools-dropdown-item" id="measureBtn">📐 Measure</button>
+          <button class="tools-dropdown-item" id="uploadPanelBtn">⬆ Upload Map</button>
+        </div>
+      </div>
+    </nav>
+
     <div class="header-controls">
 
-      <!-- Address search -->
+      <!-- Address search — always visible in header, operates on map regardless of active module -->
       <div class="address-search" id="addressSearch">
         <div class="address-input-wrap">
           <span class="search-icon">&#9906;</span>
@@ -25,41 +43,6 @@
           <button class="search-clear" id="searchClear" title="Clear">&#x2715;</button>
         </div>
         <ul class="search-suggestions" id="searchSuggestions"></ul>
-      </div>
-
-      <!-- Overlay panel toggle -->
-      <div class="panel-anchor" id="overlayAnchor">
-        <button class="panel-btn" id="overlayPanelBtn">
-          🗺 Overlays
-          <span class="badge" id="overlayBadge">0</span>
-        </button>
-      </div>
-
-      <!-- Listings toggle -->
-      <button class="toggle-btn active" id="listingsToggle">
-        <span class="dot"></span> Listings
-      </button>
-
-      <!-- Kanban pipeline toggle -->
-      <button class="toggle-btn kanban-toggle-btn" id="kanbanToggleBtn">
-        <span class="dot"></span> Pipeline
-      </button>
-
-      <!-- CRM toggle -->
-      <button class="panel-btn" id="crmNavBtn">👤 CRM</button>
-
-      <!-- Finance toggle -->
-      <button class="toggle-btn" id="financeNavBtn">
-        <span class="dot"></span> Finance
-      </button>
-
-      <!-- Tools dropdown -->
-      <div class="tools-dropdown-anchor" id="toolsAnchor">
-        <button class="panel-btn" id="toolsDropdownBtn">⚙ Tools ▾</button>
-        <div class="tools-dropdown-menu" id="toolsDropdownMenu">
-          <button class="tools-dropdown-item" id="measureBtn">📐 Measure</button>
-          <button class="tools-dropdown-item" id="uploadPanelBtn">⬆ Upload Map</button>
-        </div>
       </div>
 
       <!-- User menu -->
@@ -75,12 +58,48 @@
             <div class="user-menu-email" id="userMenuEmail"></div>
             <div class="user-menu-role" id="userMenuRole"></div>
           </div>
+          <button class="tools-dropdown-item user-menu-settings" id="userMenuSettings" style="display:none">⚙ System Settings</button>
           <button class="tools-dropdown-item" id="userMenuLogout">Sign out</button>
         </div>
       </div>
 
     </div>
   </header>
+
+  <!-- Secondary bar — content changes per active module. Hidden when Mapping is active. -->
+  <div class="module-bar" id="moduleBar">
+    <div class="module-bar-slot" data-module-bar="pipeline" style="display:none">
+      <span class="module-bar-title">Pipeline</span>
+      <!-- Future: workflow filter dropdown -->
+    </div>
+    <div class="module-bar-slot" data-module-bar="crm" style="display:none">
+      <span class="module-bar-title">CRM</span>
+      <!-- CRM sub-tabs live inside the CRM view itself for V75.2 —
+           they can be hoisted here in a later version if wanted. -->
+    </div>
+    <div class="module-bar-slot" data-module-bar="finance" style="display:none">
+      <span class="module-bar-title">Finance</span>
+    </div>
+    <div class="module-bar-slot" data-module-bar="tools" style="display:none">
+      <span class="module-bar-title">Tools</span>
+    </div>
+    <div class="module-bar-slot" data-module-bar="settings" style="display:none">
+      <span class="module-bar-title">System Settings</span>
+    </div>
+  </div>
+
+  <!-- Stubs for legacy IDs that existing JS still references. These are
+       hidden and not user-visible — they exist so addEventListener calls
+       in kanban.js, finance-module.js, etc. still find their targets.
+       Router.navigate() is what actually drives module switching now. -->
+  <div style="display:none" id="legacyStubs">
+    <button id="kanbanToggleBtn"></button>
+    <button id="crmNavBtn"></button>
+    <button id="financeNavBtn"></button>
+    <button id="listingsToggle" class="active"></button>
+    <button id="overlayPanelBtn"></button>
+    <span id="overlayBadge">0</span>
+  </div>
 
   <!-- Overlay panel (dropdown) — moved into anchor via JS -->
   <div class="overlay-panel" id="overlayPanel">
@@ -159,7 +178,12 @@
             <h2>Listings in view</h2>
             <p><span id="listingCount">0</span> properties found</p>
           </div>
-          <button class="filter-toggle-btn" id="filterToggleBtn">⚙ Filter <span class="filter-active-count" id="filterActiveCount"></span></button>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="panel-btn sidebar-listings-toggle active" id="listingsPanelToggle" title="Hide listings on map">
+              <span class="dot"></span> Show pins
+            </button>
+            <button class="filter-toggle-btn" id="filterToggleBtn">⚙ Filter <span class="filter-active-count" id="filterActiveCount"></span></button>
+          </div>
         </div>
       </div>
 
@@ -566,6 +590,26 @@
     <div class="kanban-board" id="kanbanBoard"></div>
   </div>
 
+  <!-- System Settings view — empty scaffold for V75.2. Populated in V75.5
+       with Role Management and other admin-only configuration sections. -->
+  <div class="settings-view" id="settingsView">
+    <div class="settings-header">
+      <div class="settings-title">
+        <span class="settings-title-icon">⚙</span>
+        System Settings
+      </div>
+      <button class="panel-close" id="settingsClose" title="Close settings">✕</button>
+    </div>
+    <div class="settings-body">
+      <div class="settings-placeholder">
+        <p>System Settings sections will appear here.</p>
+        <p class="settings-placeholder-sub">
+          Role Management and other admin configuration tools land in a future release.
+        </p>
+      </div>
+    </div>
+  </div>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.0/leaflet-maplibre-gl.js"></script>
@@ -579,6 +623,7 @@
   <script src="map.js"></script>
   <script src="kanban.js"></script>
   <script src="finance/finance-module.js"></script>
+  <script src="router.js"></script>
   <script>
     // ── Tools dropdown toggle ──────────────────────────────────────────────
     (function() {
@@ -632,6 +677,9 @@
         emailEl.textContent  = user.email || '';
         roleEl.textContent   = user.isAdmin ? 'Administrator' : 'Staff';
         btn.style.display    = '';
+        // V75.2 — reveal System Settings menu item for admins
+        const settingsBtn = document.getElementById('userMenuSettings');
+        if (settingsBtn) settingsBtn.style.display = user.isAdmin ? '' : 'none';
       }
 
       async function loadMe() {
@@ -660,8 +708,43 @@
         location.href = '/login.html';
       });
 
+      // V75.2 — System Settings menu item (admin only)
+      const settingsBtn = document.getElementById('userMenuSettings');
+      if (settingsBtn) {
+        settingsBtn.addEventListener('click', () => {
+          dropdown.classList.remove('open');
+          if (window.Router) Router.navigate('/settings');
+        });
+      }
+
       loadMe();
     })();
+
+    // ── Settings view toggle + close wiring (V75.2) ────────────────────────
+    let _settingsVisible = false;
+    function toggleSettings(show) {
+      _settingsVisible = (show !== undefined) ? show : !_settingsVisible;
+      const view = document.getElementById('settingsView');
+      if (!view) return;
+      view.classList.toggle('visible', _settingsVisible);
+    }
+    window.toggleSettings = toggleSettings;
+    document.getElementById('settingsClose')?.addEventListener('click', () => {
+      if (window.Router) Router.navigate('/mapping');
+      else toggleSettings(false);
+    });
+
+    // ── Close buttons on existing views now return to Mapping via router ───
+    // (was: directly flipping the .visible class)
+    document.getElementById('kanbanClose')?.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (window.Router) Router.navigate('/mapping');
+    }, true); // capture so we run before kanban.js's own handler
+
+    document.getElementById('financeClose')?.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (window.Router) Router.navigate('/mapping');
+    }, true);
   </script>
 
 </body>
