@@ -42,12 +42,9 @@
  * PUT    /api/contacts (org_id, name, phone, email, website)  -> update org
  * DELETE /api/contacts?org_id=X                       -> delete org
  *
- * ── Notes ──────────────────────────────────────────────────────────────────
- * GET    /api/contacts?notes=1&contact_id=X           -> notes for a contact
- * GET    /api/contacts?notes=1&pipeline_id=X          -> notes for a deal (legacy)
- * GET    /api/contacts?notes=1&entity_type=deal&entity_id=X  -> preferred
- * POST   /api/contacts { action:'add_note', contact_id, pipeline_id?, entity_type?, entity_id?, note_text }
- * DELETE /api/contacts?note_id=X
+ * ── Notes (V75.3: MOVED to /api/notes) ────────────────────────────────────
+ * All note routes (?notes=1, action=add_note, ?note_id=X) return 410 Gone
+ * with a redirect hint. See /api/notes.js for the replacement endpoint.
  *
  * ── Deal/property list for UI dropdowns ────────────────────────────────────
  * GET    /api/contacts?pipeline_list=1   -> [{id, address, suburb}] — deals across properties
@@ -158,7 +155,10 @@ export default async function handler(req, res) {
               CASE
                 WHEN ec.entity_type = 'deal' THEN ec.entity_id
                 ELSE NULL
-              END AS pipeline_id
+              END AS pipeline_id,
+              d.workflow AS workflow,
+              d.stage    AS stage,
+              d.status   AS deal_status
             FROM entity_contacts ec
             LEFT JOIN deals d ON d.id = ec.entity_id AND ec.entity_type = 'deal'
             LEFT JOIN properties p_via_deal ON p_via_deal.id = d.property_id
@@ -168,34 +168,13 @@ export default async function handler(req, res) {
           return res.status(200).json(rows);
         }
 
-        // ── Notes
+        // ── Notes (V75.3: moved to /api/notes) ─────────────────────────────
+        // Return 410 Gone with a hint so any lingering callers notice.
         if (notes) {
-          const { note_id } = req.query;
-          if (contact_id) {
-            const rows = await sql`
-              SELECT n.*,
-                COALESCE(n.pipeline_id, n.entity_id) AS pipeline_id,
-                p.address AS property_address
-              FROM contact_notes n
-              LEFT JOIN deals d       ON d.id = n.entity_id AND n.entity_type = 'deal'
-              LEFT JOIN properties p  ON p.id = d.property_id
-              WHERE n.contact_id = ${parseInt(contact_id)}
-              ORDER BY n.created_at DESC`;
-            return res.status(200).json(rows);
-          }
-          // By pipeline_id (legacy)  or  by entity_type+entity_id (preferred)
-          const eType = entity_type || (pipeline_id ? 'deal' : null);
-          const eId   = entity_id   || pipeline_id;
-          if (eType && eId) {
-            const rows = await sql`
-              SELECT n.*, c.first_name, c.last_name
-              FROM contact_notes n
-              JOIN contacts c ON c.id = n.contact_id
-              WHERE n.entity_type = ${eType} AND n.entity_id = ${eId}
-              ORDER BY n.created_at DESC`;
-            return res.status(200).json(rows);
-          }
-          return res.status(400).json({ error: 'contact_id or pipeline_id/entity_id required' });
+          return res.status(410).json({
+            error: 'Notes moved to /api/notes in V75.3',
+            hint:  'Use GET /api/notes?entity_type=X&entity_id=Y, or ?by_contact=N for a combined contact feed',
+          });
         }
 
         // ── Duplicate check
@@ -418,19 +397,12 @@ export default async function handler(req, res) {
           return res.status(200).json({ ok: true });
         }
 
-        // ── Add note
+        // ── Add note (V75.3: moved to /api/notes) ──────────────────────────
         if (body.action === 'add_note') {
-          let { contact_id, pipeline_id = null, entity_type, entity_id, note_text } = body;
-          if (!entity_type || !entity_id) {
-            if (pipeline_id) { entity_type = 'deal'; entity_id = pipeline_id; }
-          }
-          if (!contact_id || !note_text?.trim()) return res.status(400).json({ error: 'contact_id and note_text required' });
-          // Insert — pipeline_id column still exists for back-compat during transition
-          const rows = await sql`
-            INSERT INTO contact_notes (contact_id, pipeline_id, entity_type, entity_id, note_text)
-            VALUES (${contact_id}, ${entity_id || null}, ${entity_type || null}, ${entity_id || null}, ${note_text.trim()})
-            RETURNING *`;
-          return res.status(201).json(rows[0]);
+          return res.status(410).json({
+            error: 'add_note moved to POST /api/notes in V75.3',
+            hint:  'POST /api/notes { entity_type, entity_id, note_text, tagged_contact_id? } — author stamped server-side',
+          });
         }
 
         // ── Create contact
@@ -483,8 +455,10 @@ export default async function handler(req, res) {
       case 'DELETE': {
         const { id, note_id, org_id } = req.query;
         if (note_id) {
-          await sql`DELETE FROM contact_notes WHERE id = ${parseInt(note_id)}`;
-          return res.status(200).json({ ok: true });
+          return res.status(410).json({
+            error: 'note_id delete moved to /api/notes in V75.3',
+            hint:  'DELETE /api/notes?id=N',
+          });
         }
         if (org_id) {
           await sql`DELETE FROM organisations WHERE id = ${parseInt(org_id)}`;
