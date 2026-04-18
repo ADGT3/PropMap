@@ -1037,10 +1037,9 @@ function renderCRMView(container) {
                   return `
                   <div class="crm-note-entry" data-note-id="${n.id}">
                     <div class="crm-note-meta">
-                      <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}</span>
+                      <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}${sourceBadge ? ' · ' + sourceBadge : ''}</span>
                       <button class="crm-note-delete" data-id="${n.id}">✕</button>
                     </div>
-                    ${sourceBadge}
                     <div class="crm-note-text">${n.note_text}</div>
                   </div>`;
                 }).join("") : '<div class="crm-empty">No notes yet</div>'}
