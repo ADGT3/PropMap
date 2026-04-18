@@ -47,9 +47,10 @@ export default async function handler(req, res) {
         }
 
         // List all — used by kanban bootstrap
+        // V75.3: dd column dropped; DD now lives per-deal in deals.data.dd
         const rows = await sql`
           SELECT id, address, suburb, lat, lng, lot_dps, area_sqm,
-                 parcels, property_count, dd, domain_listing_id, listing_url,
+                 parcels, property_count, domain_listing_id, listing_url,
                  agent, not_suitable_until, not_suitable_reason, updated_at
           FROM properties ORDER BY updated_at DESC`;
         return res.status(200).json(rows);
@@ -85,23 +86,23 @@ export default async function handler(req, res) {
         }
 
         // Create
+        // V75.3: dd column dropped; DD now lives per-deal in deals.data.dd
         const {
           id, address = '', suburb = '', lat = null, lng = null,
           lot_dps = '', area_sqm = null, parcels = [], property_count = 1,
-          dd = {}, domain_listing_id = null, listing_url = null, agent = null,
+          domain_listing_id = null, listing_url = null, agent = null,
         } = body;
         if (!id) return res.status(400).json({ error: 'id required' });
         const parcelsJson = JSON.stringify(parcels);
-        const ddJson      = JSON.stringify(dd);
         const agentJson   = agent ? JSON.stringify(agent) : null;
         const rows = await sql`
           INSERT INTO properties (
             id, address, suburb, lat, lng, lot_dps, area_sqm,
-            parcels, property_count, dd, domain_listing_id, listing_url, agent
+            parcels, property_count, domain_listing_id, listing_url, agent
           ) VALUES (
             ${id}, ${address}, ${suburb}, ${lat}, ${lng},
             ${String(lot_dps).toUpperCase()}, ${area_sqm},
-            ${parcelsJson}::jsonb, ${property_count}, ${ddJson}::jsonb,
+            ${parcelsJson}::jsonb, ${property_count},
             ${domain_listing_id}, ${listing_url},
             ${agentJson}::jsonb
           )
@@ -123,8 +124,8 @@ export default async function handler(req, res) {
         // separately because NULL and "unchanged" need to be distinguishable,
         // and nesting sql`` fragments inside a parent sql`` template is not
         // supported by the Neon tagged-template driver.
+        // V75.3: dd column dropped; DD updates go via /api/deals with data.dd
         const parcelsJson = body.parcels !== undefined ? JSON.stringify(body.parcels) : null;
-        const ddJson      = body.dd      !== undefined ? JSON.stringify(body.dd)      : null;
 
         const rows = await sql`
           UPDATE properties SET
@@ -136,7 +137,6 @@ export default async function handler(req, res) {
             area_sqm           = COALESCE(${body.area_sqm       ?? null}, area_sqm),
             parcels            = COALESCE(${parcelsJson}::jsonb, parcels),
             property_count     = COALESCE(${body.property_count ?? null}, property_count),
-            dd                 = COALESCE(${ddJson}::jsonb, dd),
             domain_listing_id  = COALESCE(${body.domain_listing_id ?? null}, domain_listing_id),
             listing_url        = COALESCE(${body.listing_url    ?? null}, listing_url),
             updated_at         = now()

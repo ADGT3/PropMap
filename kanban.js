@@ -66,11 +66,15 @@ function dealRowToInternal(row) {
   return {
     stage:   row.stage || 'shortlisted',
     note:    dealData.note    || '',
-    notes:   dealData.notes   || [],
+    // V75.3: notes are NO LONGER stored inline on the deal. They live in the
+    // `notes` table and are fetched on demand. We keep a client-side cache
+    // loaded lazily by fetchNotesForCard(dealId).
+    notes:   [],
     addedAt: dealData.addedAt || (row.opened_at ? Date.parse(row.opened_at) : Date.now()),
     terms:   dealData.terms   || null,
     offers:  dealData.offers  || [],
-    dd:      (typeof p.dd === 'object' && p.dd !== null) ? p.dd : {},
+    // V75.3: DD is now per-deal (deals.data.dd), not per-property
+    dd:      (typeof dealData.dd === 'object' && dealData.dd !== null) ? dealData.dd : {},
     property: {
       id:             row.property_id,
       address:        p.address || '',
@@ -111,7 +115,7 @@ function internalToPropertyPayload(id, entry) {
     area_sqm:          p._areaSqm ?? null,
     parcels:           Array.isArray(p._parcels) ? p._parcels : [],
     property_count:    p._propertyCount ?? 1,
-    dd:                entry.dd || {},
+    // V75.3: dd removed — DD now lives per-deal in deals.data.dd
     domain_listing_id: p.domain_id || null,
     listing_url:       p._listingUrl || null,
     agent:             p._agent || null,
@@ -130,10 +134,12 @@ function internalToDealPayload(id, entry) {
     status,
     data: {
       note:    entry.note    || '',
-      notes:   entry.notes   || [],
+      // V75.3: notes[] no longer stored inline — lives in `notes` table
       addedAt: entry.addedAt || Date.now(),
       terms:   entry.terms   || null,
       offers:  entry.offers  || [],
+      // V75.3: DD moved here from properties.dd
+      dd:      entry.dd      || {},
       // Stash listing-ish fields that aren't first-class on properties
       price:       p.price,
       type:        p.type,
@@ -348,34 +354,61 @@ function moveToStage(id, stageId) {
   }
 }
 
-function getNotes(id) {
-  const raw = pipeline[id]?.note;
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  return [{ text: raw, ts: pipeline[id].addedAt || Date.now() }];
-}
-function addNote(id, text, contactId = null, contactName = null) {
-  if (!pipeline[id] || !text.trim()) return;
-  const notes = getNotes(id);
-  const entry = { text: text.trim(), ts: Date.now() };
-  if (contactId)   entry.contact_id   = contactId;
-  if (contactName) entry.contact_name = contactName;
-  notes.unshift(entry);
-  pipeline[id].note = notes;
-  savePipeline(id);
-  // Also write to contact_notes API for future CRM contact view
-  if (contactId) {
-    fetch('/api/contacts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'add_note', contact_id: contactId, entity_type: 'deal', entity_id: String(id), note_text: text.trim() })
-    }).catch(err => console.warn('[CRM] failed to mirror note to contact_notes:', err));
+// ─── Notes (V75.3 — unified /api/notes backend) ──────────────────────────────
+// Notes are no longer stored on the pipeline object; they live in the `notes`
+// table accessed via /api/notes. Kept a tiny in-memory cache per deal id so
+// repeated modal opens don't re-fetch. The cache is invalidated after any
+// write.
+
+const NOTES_API = '/api/notes';
+const _notesCache = new Map();   // dealId → array of note rows (newest first)
+
+async function fetchNotesForDeal(id) {
+  if (_notesCache.has(id)) return _notesCache.get(id);
+  try {
+    const r = await fetch(`${NOTES_API}?entity_type=deal&entity_id=${encodeURIComponent(id)}`);
+    if (!r.ok) throw new Error(r.status);
+    const rows = await r.json();
+    _notesCache.set(id, rows);
+    return rows;
+  } catch (err) {
+    console.warn('[notes] fetchNotesForDeal failed:', err);
+    return [];
   }
 }
-function deleteNote(id, ts) {
-  if (!pipeline[id]) return;
-  pipeline[id].note = getNotes(id).filter(n => n.ts !== ts);
-  savePipeline(id);
+
+async function addNote(id, text, taggedContactId = null) {
+  if (!text.trim()) return null;
+  try {
+    const r = await fetch(NOTES_API, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        entity_type:       'deal',
+        entity_id:         String(id),
+        note_text:         text.trim(),
+        tagged_contact_id: taggedContactId || null,
+      }),
+    });
+    if (!r.ok) throw new Error(r.status);
+    _notesCache.delete(id);
+    return await r.json();
+  } catch (err) {
+    console.error('[notes] addNote failed:', err);
+    return null;
+  }
+}
+
+async function deleteNote(id, noteId) {
+  try {
+    const r = await fetch(`${NOTES_API}?id=${encodeURIComponent(noteId)}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(r.status);
+    _notesCache.delete(id);
+    return true;
+  } catch (err) {
+    console.error('[notes] deleteNote failed:', err);
+    return false;
+  }
 }
 
 // ─── Vendor Terms ────────────────────────────────────────────────────────────
@@ -1118,35 +1151,40 @@ ${rows.join('')}`;
     });
   });
 
-  // Notes
+  // Notes (V75.3 — async, backed by /api/notes)
   function formatNoteDate(ts) {
     const d = new Date(ts);
     const pad = n => String(n).padStart(2, '0');
     return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  function renderNotesList() {
+  async function renderNotesList() {
     const listEl = modal.querySelector('.kb-notes-list');
     if (!listEl) return;
-    const notes = getNotes(id);
+    listEl.innerHTML = '<div class="kb-notes-empty">Loading…</div>';
+    const notes = await fetchNotesForDeal(id);
     if (!notes.length) { listEl.innerHTML = '<div class="kb-notes-empty">No notes yet</div>'; return; }
     listEl.innerHTML = '';
     notes.forEach(n => {
       const entry = document.createElement('div');
       entry.className = 'kb-note-entry';
-      const contactTag = n.contact_name ? `<span class="kb-note-contact-badge">@${n.contact_name}</span>` : '';
+      const taggedName = [n.tagged_first_name, n.tagged_last_name].filter(Boolean).join(' ').trim();
+      const taggedBadge = taggedName ? `<span class="kb-note-contact-badge">@${taggedName}</span>` : '';
+      const author = n.author_name || 'Unknown';
       entry.innerHTML = `
         <div class="kb-note-meta">
-          <span class="kb-note-date">${formatNoteDate(n.ts)}${contactTag}</span>
-          <button class="kb-note-delete" data-ts="${n.ts}" title="Delete note">✕</button>
+          <span class="kb-note-date">${formatNoteDate(n.created_at)} · by ${author}${taggedBadge}</span>
+          <button class="kb-note-delete" data-id="${n.id}" title="Delete note">✕</button>
         </div>
-        <div class="kb-note-text">${n.text.split('\n').join('<br>')}</div>`;
-      entry.querySelector('.kb-note-delete').addEventListener('click', () => {
+        <div class="kb-note-text">${String(n.note_text || '').split('\n').join('<br>')}</div>`;
+      entry.querySelector('.kb-note-delete').addEventListener('click', async () => {
         if (!confirm('Delete this note?')) return;
-        deleteNote(id, n.ts);
-        renderNotesList();
-        const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
-        if (boardCard) refreshCardIndicators(boardCard, id);
+        const ok = await deleteNote(id, n.id);
+        if (ok) {
+          renderNotesList();
+          const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
+          if (boardCard) refreshCardIndicators(boardCard, id);
+        }
       });
       listEl.appendChild(entry);
     });
@@ -1210,10 +1248,10 @@ ${rows.join('')}`;
   });
 
   const noteInput = modal.querySelector('.kb-note-input');
-  modal.querySelector('.kb-note-add-btn').addEventListener('click', () => {
+  modal.querySelector('.kb-note-add-btn').addEventListener('click', async () => {
     const text = noteInput.value.trim();
     if (!text) return;
-    addNote(id, text, _noteContactId, _noteContactName);
+    await addNote(id, text, _noteContactId);
     noteInput.value = '';
     clearContactTag();
     renderNotesList();
@@ -1419,11 +1457,16 @@ function refreshCardIndicators(card, id) {
 
   const el = card.querySelector('.kb-card-indicators');
   if (!el) return;
+  // V75.3: note indicator reads from the notes cache only — it appears after
+  // the card modal has been opened at least once (which populates the cache).
+  // This avoids N extra API calls on Kanban board render.
+  const cachedNotes = _notesCache.get(id);
+  const noteCount = Array.isArray(cachedNotes) ? cachedNotes.length : 0;
   el.innerHTML = `
     ${hasTerms    ? `<span class="kb-ind kb-ind-terms">Terms</span>` : ''}
     ${offers.length ? `<span class="kb-ind kb-ind-offers">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
     ${ddCount     ? `<span class="kb-ind kb-ind-dd ${ddClass}">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
-    ${(Array.isArray(item.note) ? item.note.length : item.note) ? `<span class="kb-ind kb-ind-note">Note</span>` : ''}
+    ${noteCount   ? `<span class="kb-ind kb-ind-note">${noteCount} Note${noteCount > 1 ? 's' : ''}</span>` : ''}
   `;
 }
 

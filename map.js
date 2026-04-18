@@ -29,10 +29,166 @@ let _activeFilters = {
   excludePriceWithheld:   false,
   excludeDepositTaken:    true,
   newDevOnly:             false,
+  showSnoozed:            false,    // V75.1 — show properties marked Not Suitable
 };
 let activeZone   = 'all';
 let showListings = true;
 let markers      = {};
+
+// V75.1 — Not Suitable / snooze state.
+// Map of (Domain listing id OR lat,lng key) → { property_id, until, reason }
+// Loaded from /api/properties on map init; mutated by mark-not-suitable actions.
+const _notSuitable = {
+  byListingId: new Map(),   // domain_listing_id → { property_id, until, reason }
+  byLatLng:    new Map(),   // 'lat,lng' rounded → { property_id, until, reason }
+};
+
+function _llKey(lat, lng) {
+  return `${Number(lat).toFixed(5)},${Number(lng).toFixed(5)}`;
+}
+
+// True if the given listing OR lat/lng is currently flagged not-suitable.
+function isNotSuitable(listingOrLatLng) {
+  const now = Date.now();
+  const check = (entry) => {
+    if (!entry) return false;
+    if (!entry.until) return false;
+    // 'infinity' permanent — always block
+    if (entry.until === 'infinity' || entry.until === 'Infinity') return true;
+    return Date.parse(entry.until) > now;
+  };
+  if (listingOrLatLng?.id != null) {
+    if (check(_notSuitable.byListingId.get(String(listingOrLatLng.id)))) return true;
+  }
+  if (listingOrLatLng?.lat != null && listingOrLatLng?.lng != null) {
+    if (check(_notSuitable.byLatLng.get(_llKey(listingOrLatLng.lat, listingOrLatLng.lng)))) return true;
+  }
+  return false;
+}
+
+// Fetch all properties currently flagged not-suitable; populate _notSuitable lookup.
+async function loadNotSuitable() {
+  try {
+    const res = await fetch('/api/properties');
+    if (!res.ok) throw new Error('properties fetch failed');
+    const props = await res.json();
+    _notSuitable.byListingId.clear();
+    _notSuitable.byLatLng.clear();
+    const now = Date.now();
+    props.forEach(p => {
+      if (!p.not_suitable_until) return;
+      const isPerm = p.not_suitable_until === 'infinity' || p.not_suitable_until === 'Infinity';
+      const stillActive = isPerm || Date.parse(p.not_suitable_until) > now;
+      if (!stillActive) return;
+      const entry = { property_id: p.id, until: p.not_suitable_until, reason: p.not_suitable_reason };
+      if (p.domain_listing_id) _notSuitable.byListingId.set(String(p.domain_listing_id), entry);
+      if (p.lat != null && p.lng != null) _notSuitable.byLatLng.set(_llKey(p.lat, p.lng), entry);
+    });
+  } catch (err) {
+    console.warn('[V75.1] loadNotSuitable failed:', err);
+  }
+}
+
+// Snooze options shown in the dropdown — value is sent as ISO string or 'permanent'
+const SNOOZE_OPTIONS = [
+  { label: '30 days',  ms: 30  * 86400000 },
+  { label: '90 days',  ms: 90  * 86400000 },
+  { label: '6 months', ms: 182 * 86400000 },
+  { label: '1 year',   ms: 365 * 86400000 },
+  { label: 'Permanent', permanent: true },
+];
+
+function snoozeUntil(option) {
+  if (option.permanent) return 'permanent';
+  return new Date(Date.now() + option.ms).toISOString();
+}
+
+// Mark a listing/property as Not Suitable. Creates the property row if it
+// doesn't yet exist (no deal attached), then sets not_suitable_until.
+// Returns the property row, or null on failure.
+async function markNotSuitable(listing, optionIndex) {
+  const opt = SNOOZE_OPTIONS[optionIndex];
+  if (!opt) return null;
+  const until = snoozeUntil(opt);
+
+  // Stable property ID — prefer existing pipeline id (reuse if already in pipeline),
+  // else Domain listing id, else generate
+  const pipelineData = window.getPipelineData ? window.getPipelineData() : null;
+  let propertyId = null;
+
+  if (listing?.id != null) {
+    // If a pipeline entry already exists for this Domain listing id, reuse its id
+    if (pipelineData && pipelineData[String(listing.id)]) {
+      propertyId = String(listing.id);
+    } else {
+      propertyId = String(listing.id);
+    }
+  } else if (listing?.lat != null && listing?.lng != null) {
+    propertyId = `notsuitable-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  } else {
+    return null;
+  }
+
+  // Create property if needed (POST is idempotent — ON CONFLICT DO NOTHING)
+  try {
+    await fetch('/api/properties', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id:      propertyId,
+        address: listing.address || '',
+        suburb:  listing.suburb  || '',
+        lat:     listing.lat,
+        lng:     listing.lng,
+        domain_listing_id: listing.id != null ? String(listing.id) : null,
+        listing_url:       listing.listingUrl || null,
+      }),
+    });
+    // Set not-suitable
+    const setRes = await fetch('/api/properties', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'set_not_suitable', id: propertyId, until }),
+    });
+    if (!setRes.ok) throw new Error('set_not_suitable failed');
+    // Update local lookup
+    const entry = { property_id: propertyId, until: (until === 'permanent' ? 'infinity' : until), reason: null };
+    if (listing.id != null) _notSuitable.byListingId.set(String(listing.id), entry);
+    if (listing.lat != null && listing.lng != null) _notSuitable.byLatLng.set(_llKey(listing.lat, listing.lng), entry);
+    return entry;
+  } catch (err) {
+    console.error('[V75.1] markNotSuitable failed:', err);
+    return null;
+  }
+}
+
+// Clear not-suitable flag.
+async function clearNotSuitable(listing) {
+  const entry =
+    (listing?.id != null && _notSuitable.byListingId.get(String(listing.id))) ||
+    (listing?.lat != null && _notSuitable.byLatLng.get(_llKey(listing.lat, listing.lng)));
+  if (!entry) return false;
+  try {
+    await fetch('/api/properties', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'clear_not_suitable', id: entry.property_id }),
+    });
+    if (listing.id != null) _notSuitable.byListingId.delete(String(listing.id));
+    if (listing.lat != null && listing.lng != null) _notSuitable.byLatLng.delete(_llKey(listing.lat, listing.lng));
+    return true;
+  } catch (err) {
+    console.error('[V75.1] clearNotSuitable failed:', err);
+    return false;
+  }
+}
+
+// Expose to popup / kanban call sites
+window.markNotSuitable    = markNotSuitable;
+window.clearNotSuitable   = clearNotSuitable;
+window.isNotSuitable      = isNotSuitable;
+window.SNOOZE_OPTIONS     = SNOOZE_OPTIONS;
+window.refreshListings    = () => { if (typeof renderListings === 'function') renderListings(); };
 
 // Live overlay registry: id → { def, layer }
 const overlayRegistry = {};
@@ -157,6 +313,9 @@ let activeBase = 'map';
 baseLayers.map.addTo(map);
 
 // ─── Basemap toggle ───────────────────────────────────────────────────────────
+// V75.2 — Overlays button added at the end as a 4th basemap-row item. It
+// doesn't switch basemap; it opens the overlay panel (replaces the header
+// button that was removed in V75.2).
 const baseToggle = L.control({ position: 'bottomleft' });
 baseToggle.onAdd = function () {
   const div = L.DomUtil.create('div', 'basemap-toggle');
@@ -164,9 +323,20 @@ baseToggle.onAdd = function () {
     <button class="basemap-btn active" data-base="map">Map</button>
     <button class="basemap-btn" data-base="satellite">Satellite</button>
     <button class="basemap-btn" data-base="topo">Topography</button>
+    <button class="basemap-btn basemap-btn-overlays" data-overlays>🗺 Overlays <span class="badge" id="basemapOverlayBadge">0</span></button>
   `;
   L.DomEvent.disableClickPropagation(div);
-  div.querySelectorAll('.basemap-btn').forEach(btn => {
+
+  // Overlays button — opens the existing overlay panel
+  const overlaysBtn = div.querySelector('[data-overlays]');
+  overlaysBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (typeof togglePanel === 'function') {
+      togglePanel('overlayPanel', 'overlayPanelBtn');
+    }
+  });
+
+  div.querySelectorAll('.basemap-btn[data-base]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const target = btn.dataset.base;
       if (target === activeBase) return;
@@ -190,7 +360,7 @@ baseToggle.onAdd = function () {
           next.bringToBack();
         }
         activeBase = target;
-        div.querySelectorAll('.basemap-btn').forEach(b => b.classList.toggle('active', b.dataset.base === target));
+        div.querySelectorAll('.basemap-btn[data-base]').forEach(b => b.classList.toggle('active', b.dataset.base === target));
       } catch (err) {
         console.error('[Basemap] Failed to switch to', target, err);
         // Re-add the previous layer so the map isn't blank
@@ -201,6 +371,19 @@ baseToggle.onAdd = function () {
   return div;
 };
 baseToggle.addTo(map);
+
+// V75.2 — Mirror the legacy #overlayBadge into the basemap-row copy.
+// The overlay code still writes to #overlayBadge in three places; rather
+// than touching all of those, observe that node and mirror whenever it
+// changes. Cheap and non-invasive.
+(function mirrorOverlayBadge() {
+  const src  = document.getElementById('overlayBadge');
+  const sink = document.getElementById('basemapOverlayBadge');
+  if (!src || !sink) return;
+  const sync = () => { sink.textContent = src.textContent; };
+  sync();
+  new MutationObserver(sync).observe(src, { childList: true, characterData: true, subtree: true });
+})();
 
 // ─── Map click — property select + SRLUP identify ────────────────────────────
 
@@ -337,6 +520,58 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
       </button>`;
   }
 
+  // V75.1 — Not Suitable / snooze control. The popup is rendered as a string,
+  // so we can't attach JS event listeners directly to its buttons. Instead we
+  // stash the listing under a unique key on window._nsContext and use simple
+  // onclick handlers that look up by key (avoids JSON-in-attribute escaping
+  // issues that broke this in Safari).
+  const nsListing = listing || (clickMarkerData ? {
+    address: clickMarkerData.label?.split(',')[0]?.trim() || '',
+    suburb:  clickMarkerData.label?.split(',')[1]?.trim() || '',
+    lat:     clickMarkerData.lat,
+    lng:     clickMarkerData.lng,
+  } : null);
+  let nsBtn = '';
+  if (nsListing) {
+    const ns  = isNotSuitable(nsListing);
+    const key = 'k' + Math.random().toString(36).slice(2, 10);
+    window._nsContext = window._nsContext || {};
+    window._nsContext[key] = nsListing;
+
+    if (ns) {
+      nsBtn = `
+        <button type="button"
+          data-ns-clear="${key}"
+          style="display:block;width:100%;margin-top:6px;padding:6px 10px;
+                 background:#888;color:#fff;border:none;border-radius:4px;
+                 font-size:11px;font-weight:600;cursor:pointer">
+          🚫 Not Suitable — Click to Reinstate
+        </button>`;
+    } else {
+      const opts = SNOOZE_OPTIONS.map((o, i) =>
+        `<button type="button"
+           data-ns-mark="${key}|${i}"
+           style="display:block;width:100%;text-align:left;padding:5px 10px;
+                  background:#fff;color:#333;border:none;border-bottom:1px solid #eee;
+                  font-size:11px;cursor:pointer">${o.label}</button>`
+      ).join('');
+      nsBtn = `
+        <div style="position:relative;margin-top:6px">
+          <button type="button"
+            data-ns-toggle
+            style="display:block;width:100%;padding:6px 10px;
+                   background:transparent;color:#888;border:1px solid #ccc;border-radius:4px;
+                   font-size:11px;font-weight:500;cursor:pointer">
+            Mark Not Suitable ▾
+          </button>
+          <div class="popup-ns-menu"
+               style="display:none;position:absolute;top:100%;left:0;right:0;z-index:1000;
+                      background:#fff;border:1px solid #ccc;border-radius:4px;margin-top:2px;
+                      box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow:hidden">${opts}</div>
+        </div>`;
+    }
+  }
+
   return `
     ${priceSection}
     <div style="font-weight:600;margin-bottom:6px;font-size:13px">${label}</div>
@@ -346,7 +581,8 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
     ${zoneCode ? `<div style="${rowStyle}"><span style="${lblStyle}">Zoning</span><span style="font-weight:600">${zoneCode}</span></div>` : ''}
     ${overlayBlock}
     ${domainLink}
-    ${pipelineBtn}`;
+    ${pipelineBtn}
+    ${nsBtn}`;
 }
 
 // V74.8: find the pipeline item (if any) that matches the currently-clicked
@@ -1530,6 +1766,21 @@ function makeListingCard(l, { pinToTop = false } = {}) {
   const card = document.createElement('div');
   card.className = 'listing-card';
   card.dataset.id = l.id;
+
+  // V75.1 — Not Suitable inline control
+  const ns = isNotSuitable(l);
+  const nsBlock = ns
+    ? `<div class="listing-not-suitable-banner">
+         🚫 Not Suitable
+         <button class="listing-ns-clear" type="button" title="Mark as suitable again">✓ Reinstate</button>
+       </div>`
+    : `<div class="listing-ns-wrap">
+         <button class="listing-ns-toggle" type="button">Not Suitable ▾</button>
+         <div class="listing-ns-menu" style="display:none">
+           ${SNOOZE_OPTIONS.map((o, i) => `<button type="button" data-idx="${i}">${o.label}</button>`).join('')}
+         </div>
+       </div>`;
+
   card.innerHTML = `
     ${pinBadge}
     ${thumbHtml}
@@ -1542,8 +1793,36 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     </div>
     <div class="listing-address">${l.address}</div>
     <div class="listing-suburb">${l.suburb} NSW</div>
+    ${nsBlock}
   `;
   card.addEventListener('click', () => selectListing(l.id));
+
+  // V75.1 — Not Suitable handlers (stop propagation so they don't trigger card click)
+  if (ns) {
+    card.querySelector('.listing-ns-clear')?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const ok = await clearNotSuitable(l);
+      if (ok) renderListings();
+    });
+  } else {
+    const toggle = card.querySelector('.listing-ns-toggle');
+    const menu   = card.querySelector('.listing-ns-menu');
+    toggle?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Close any other open menus
+      document.querySelectorAll('.listing-ns-menu').forEach(m => { if (m !== menu) m.style.display = 'none'; });
+      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    });
+    menu?.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.idx);
+        await markNotSuitable(l, idx);
+        renderListings();
+      });
+    });
+  }
+
   return card;
 }
 
@@ -1560,7 +1839,9 @@ function renderListings() {
     const inView   = bounds.contains(L.latLng(l.lat, l.lng));
     const typeMatch = _activeFilters.propertyTypes.length === 0
       || _activeFilters.propertyTypes.some(t => l.type === t.toLowerCase());
-    return inView && typeMatch;
+    // V75.1 — hide not-suitable unless toggle is on
+    const suitabilityOk = _activeFilters.showSnoozed || !isNotSuitable(l);
+    return inView && typeMatch && suitabilityOk;
   });
 
   document.getElementById('listingCount').textContent = filtered.length;
@@ -1890,6 +2171,8 @@ function restoreFilters() {
     document.getElementById('filterExcludePriceWithheld').checked = !!f.excludePriceWithheld;
     document.getElementById('filterExcludeDepositTaken').checked  = !!f.excludeDepositTaken;
     document.getElementById('filterNewDevOnly').checked           = !!f.newDevOnly;
+    const ssEl = document.getElementById('filterShowSnoozed');
+    if (ssEl) ssEl.checked = !!f.showSnoozed;
   } catch (e) { /* ignore */ }
 }
 
@@ -1940,6 +2223,7 @@ function restoreFilters() {
       minPrice: null, maxPrice: null, minLand: null, maxLand: null,
       features: [], listingAttributes: [], establishedType: null,
       excludePriceWithheld: false, excludeDepositTaken: true, newDevOnly: false,
+      showSnoozed: false,
     };
     saveFilters();
     updateActiveCount();
@@ -1982,20 +2266,29 @@ function restoreFilters() {
       excludePriceWithheld: document.getElementById('filterExcludePriceWithheld').checked,
       excludeDepositTaken:  document.getElementById('filterExcludeDepositTaken').checked,
       newDevOnly:           document.getElementById('filterNewDevOnly').checked,
+      showSnoozed:          document.getElementById('filterShowSnoozed')?.checked || false,
     };
 
     updateActiveCount();
     saveFilters();
     panel.classList.remove('open');
     runDomainSearch();
+    if (typeof refreshPipelinePins === 'function') refreshPipelinePins();
   });
 })();
 
 // ─── Listings toggle ──────────────────────────────────────────────────────────
+// V75.2: the original listingsToggle button was moved from the top header
+// into the sidebar's own header (id #listingsPanelToggle). Wire both so
+// either element triggers the same show/hide logic. #listingsToggle stays
+// as a hidden stub to keep legacy references happy.
 
-document.getElementById('listingsToggle').addEventListener('click', function () {
+function _listingsToggleHandler() {
   showListings = !showListings;
-  this.classList.toggle('active', showListings);
+  const stub = document.getElementById('listingsToggle');
+  const live = document.getElementById('listingsPanelToggle');
+  if (stub) stub.classList.toggle('active', showListings);
+  if (live) live.classList.toggle('active', showListings);
   Object.values(markers).forEach(m => {
     if (showListings) m.addTo(map); else map.removeLayer(m);
   });
@@ -2007,7 +2300,10 @@ document.getElementById('listingsToggle').addEventListener('click', function () 
     const count = document.getElementById('listingCount');
     if (count) count.textContent = '0';
   }
-});
+}
+
+document.getElementById('listingsToggle')?.addEventListener('click', _listingsToggleHandler);
+document.getElementById('listingsPanelToggle')?.addEventListener('click', _listingsToggleHandler);
 
 // ─── Panel open/close ─────────────────────────────────────────────────────────
 
@@ -2717,7 +3013,6 @@ window._renderPipelinePins = function () {
   const markers = [];
 
   Object.entries(pipelineData).forEach(([id, item]) => {
-    console.log('[pipeline pins] item', id, 'stage:', item?.stage, 'property:', item?.property);
     if (!item?.property) return;
     if (!PIPELINE_PIN_STAGES.has(item.stage)) return;
 
@@ -2726,8 +3021,12 @@ window._renderPipelinePins = function () {
     const firstParcel = (p._parcels && p._parcels.length > 0) ? p._parcels[0] : null;
     const lat = firstParcel?.lat ?? null;
     const lng = firstParcel?.lng ?? null;
-    console.log('[pipeline pins] id:', id, 'firstParcel:', firstParcel, 'lat:', lat, 'lng:', lng);
     if (!lat || !lng) return;
+
+    // V75.1 — hide pin if property is flagged not-suitable (unless toggle is on)
+    if (!_activeFilters.showSnoozed) {
+      if (isNotSuitable({ id: p.domain_id, lat, lng })) return;
+    }
 
     const address = p.address || '';
     const suburb  = p.suburb  || '';
@@ -3097,3 +3396,100 @@ window.reSelectParcels = function(parcels) {
     }
   }, 200);
 })();
+
+// V75.1 — Load Not Suitable property flags on init so listings/pins can be
+// filtered immediately. Re-runs after each pipeline load to stay current.
+loadNotSuitable().then(() => {
+  if (showListings && typeof renderListings === 'function') renderListings();
+});
+
+// V75.1 — close any open Not Suitable dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.listing-ns-wrap')) {
+    document.querySelectorAll('.listing-ns-menu').forEach(m => { m.style.display = 'none'; });
+  }
+});
+
+// V75.1 — global delegate handlers for popup Not Suitable buttons.
+// The popup is a string-rendered HTML blob; inline onclicks call these by
+// short key into window._nsContext to avoid JSON-in-attribute escaping.
+window._nsMark = async function(key, optionIndex) {
+  const listing = window._nsContext && window._nsContext[key];
+  if (!listing) return;
+  await markNotSuitable(listing, optionIndex);
+  // Close any open menu
+  document.querySelectorAll('.popup-ns-menu').forEach(m => { m.style.display = 'none'; });
+  // Refresh listings + pipeline pins
+  if (typeof renderListings === 'function') renderListings();
+  if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+  // Close any open Leaflet popup so the user gets immediate feedback
+  if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+};
+window._nsClear = async function(key) {
+  const listing = window._nsContext && window._nsContext[key];
+  if (!listing) return;
+  await clearNotSuitable(listing);
+  if (typeof renderListings === 'function') renderListings();
+  if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+  if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+};
+
+// V75.1a fix — Leaflet popups parse inline `onclick` strings inconsistently
+// across browsers (Safari especially), and popup HTML gets re-rendered when
+// async cadastre data resolves — so per-popup listeners would also become
+// stale. Use event delegation on the map container so listeners survive both
+// fresh opens and content swaps.
+//
+// The popup HTML uses data-* attributes:
+//   data-ns-toggle           → button that opens the snooze menu
+//   data-ns-mark="key|idx"   → menu items that call markNotSuitable
+//   data-ns-clear="key"      → reinstate button
+document.addEventListener('click', (ev) => {
+  const target = ev.target;
+
+  // Toggle menu
+  const toggle = target.closest('[data-ns-toggle]');
+  if (toggle) {
+    ev.stopPropagation();
+    const menu = toggle.parentElement.querySelector('.popup-ns-menu');
+    if (menu) menu.style.display = (menu.style.display === 'none' ? 'block' : 'none');
+    return;
+  }
+
+  // Pick a snooze duration
+  const markBtn = target.closest('[data-ns-mark]');
+  if (markBtn) {
+    ev.stopPropagation();
+    const [key, idxStr] = markBtn.dataset.nsMark.split('|');
+    const idx = parseInt(idxStr, 10);
+    const listing = window._nsContext && window._nsContext[key];
+    if (!listing) return;
+    (async () => {
+      await markNotSuitable(listing, idx);
+      if (typeof renderListings === 'function') renderListings();
+      if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+      if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+      // V75.1c — also clear any temporary click marker placed by selectPropertyAtPoint
+      // so a marker dropped on bare ground (not a listing pin) disappears too.
+      if (typeof clearParcelSelection === 'function') clearParcelSelection();
+    })();
+    return;
+  }
+
+  // Clear (reinstate)
+  const clearBtn = target.closest('[data-ns-clear]');
+  if (clearBtn) {
+    ev.stopPropagation();
+    const key = clearBtn.dataset.nsClear;
+    const listing = window._nsContext && window._nsContext[key];
+    if (!listing) return;
+    (async () => {
+      await clearNotSuitable(listing);
+      if (typeof renderListings === 'function') renderListings();
+      if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+      if (typeof map !== 'undefined' && map.closePopup) map.closePopup();
+      if (typeof clearParcelSelection === 'function') clearParcelSelection();
+    })();
+    return;
+  }
+});
