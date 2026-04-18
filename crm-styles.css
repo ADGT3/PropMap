@@ -409,6 +409,10 @@
   font-weight: 600;
   color: var(--text);
 }
+.crm-view-title-icon {
+  font-size: 18px;
+  color: var(--muted);
+}
 /* Tabs pushed right-of-title */
 .crm-view-header .crm-view-tabs {
   margin-left: 16px;

@@ -34,7 +34,10 @@ header {
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex-shrink: 0;
-  z-index: 1000;
+  /* V75.2a — must sit above module views (z-index 1500) so the user-menu
+     dropdown is visible when a module is open. Module views start at
+     top: 56px so they don't overlap the header anyway. */
+  z-index: 2500;
   position: relative;
 }
 
