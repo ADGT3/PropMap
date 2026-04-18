@@ -232,10 +232,14 @@ header {
 }
 
 .overlay-panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
+  /* V75.2 — Overlays button moved into basemap row at bottom-left of map;
+     panel now pops upward from there. Fixed positioning since the panel is
+     no longer nested inside a top-header anchor element. */
+  position: fixed;
+  left: 12px;
+  bottom: 56px;      /* above the basemap row (which sits at ~12px+row height) */
   width: 320px;
+  max-height: calc(100vh - 200px);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -243,7 +247,6 @@ header {
   z-index: 2000;
   display: none;
   flex-direction: column;
-  max-height: calc(100vh - 80px);
   overflow: hidden;
 }
 .overlay-panel.visible { display: flex; }
@@ -2365,10 +2368,7 @@ header {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin: 0 16px;
   padding: 0 8px;
-  border-left: 1px solid var(--border);
-  border-right: 1px solid var(--border);
   height: 34px;
 }
 
@@ -2400,45 +2400,6 @@ header {
   background: var(--accent);
   color: #fff;
   opacity: 0.92;
-}
-
-/* ─── Secondary bar (below main header) ──────────────────────────────────── */
-.module-bar {
-  position: fixed;
-  top: 56px;
-  left: 0;
-  right: 0;
-  height: 40px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  padding: 0 24px;
-  z-index: 950;
-}
-/* Hide the bar entirely when no slot is visible (Mapping mode).
-   Router sets body[data-route] on every navigation. */
-body[data-route="mapping"] .module-bar { display: none; }
-
-.module-bar-slot {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  width: 100%;
-}
-.module-bar-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-/* When secondary bar is visible, push existing full-screen views down further */
-body[data-route="pipeline"] .kanban-view,
-body[data-route="crm"]      #crmView,
-body[data-route="finance"]  .finance-view,
-body[data-route="settings"] .settings-view {
-  inset: 96px 0 0 0;
-  top: 96px;
 }
 
 /* ─── System Settings view ───────────────────────────────────────────────── */
@@ -2502,13 +2463,22 @@ body[data-route="settings"] .settings-view {
   border-bottom: 1px solid var(--border);
 }
 
-/* ─── Listings toggle moved into sidebar header ──────────────────────────── */
+/* ─── Listings pins toggle (in sidebar header) ───────────────────────────── */
 .sidebar-listings-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
   font-size: 11px;
-  padding: 5px 10px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  white-space: nowrap;
+  transition: border-color 0.12s, color 0.12s;
 }
 .sidebar-listings-toggle .dot {
   width: 7px;
@@ -2516,13 +2486,17 @@ body[data-route="settings"] .settings-view {
   border-radius: 50%;
   background: var(--muted);
   display: inline-block;
-}
-.sidebar-listings-toggle.active .dot {
-  background: var(--green, #1a6b3a);
+  transition: background 0.12s;
 }
 .sidebar-listings-toggle.active {
   color: var(--text);
   border-color: var(--green, #1a6b3a);
+}
+.sidebar-listings-toggle.active .dot {
+  background: var(--green, #1a6b3a);
+}
+.sidebar-listings-toggle:hover {
+  color: var(--text);
 }
 
 /* ─── Overlays button in basemap row ─────────────────────────────────────── */
@@ -2546,23 +2520,38 @@ body[data-route="settings"] .settings-view {
   line-height: 1.3;
 }
 
-/* ─── Header layout adjustment for new module nav ────────────────────────── */
-/* Push header-controls (search + user menu) to the right; module-nav sits
-   between logo and header-controls. */
+/* ─── Header layout for new module nav ───────────────────────────────────── */
+/* Order: logo | search | module-nav | user-menu.  Module nav right-aligned. */
 header {
   justify-content: flex-start;
 }
-header > .header-controls {
-  margin-left: auto;
+header .module-nav {
+  margin-left: auto;   /* push nav + user menu to the right */
+}
+header .user-menu-anchor {
+  margin-left: 8px;
+}
+header .address-search {
+  flex: 0 1 320px;     /* allow search to shrink if needed */
+  margin-left: 16px;
 }
 
-/* Narrower search on small screens — the module nav is what matters */
+/* Narrower buttons on small screens */
 @media (max-width: 1100px) {
   .module-nav-btn {
     padding: 6px 8px;
     font-size: 11px;
   }
-  .address-search {
-    max-width: 220px;
+  header .address-search {
+    flex-basis: 220px;
   }
+}
+
+/* V75.2 — Hide Leaflet map controls (zoom +/- buttons, basemap row, etc.)
+   when we're not on the Mapping route. The controls are `position: absolute`
+   inside #map; without this rule they remain visible even when the map is
+   completely covered by a full-viewport module view (CRM / Pipeline / Finance
+   / Settings), appearing as a floating "+" tab on the left of those screens. */
+body:not([data-route="mapping"]) .leaflet-control-container {
+  display: none;
 }

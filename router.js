@@ -125,13 +125,7 @@
       btn.classList.toggle('active', btn.dataset.moduleNav === route.module);
     });
 
-    // Secondary bar — show the one matching this module, hide others
-    document.querySelectorAll('[data-module-bar]').forEach(bar => {
-      bar.style.display = (bar.dataset.moduleBar === route.module) ? '' : 'none';
-    });
-
     // Body data-route attribute lets CSS target per-route states
-    // (e.g. hide secondary bar on Mapping, adjust inset for views)
     document.body.dataset.route = route.module;
 
     // Document title

@@ -16,7 +16,17 @@
   <header>
     <div class="logo">property<span>map</span></div>
 
-    <!-- Module nav — top-level buttons that switch main content -->
+    <!-- Search — always visible in header, operates on map regardless of active module -->
+    <div class="address-search" id="addressSearch">
+      <div class="address-input-wrap">
+        <span class="search-icon">&#9906;</span>
+        <input type="text" id="addressInput" placeholder="Search address or suburb&hellip;" autocomplete="off"/>
+        <button class="search-clear" id="searchClear" title="Clear">&#x2715;</button>
+      </div>
+      <ul class="search-suggestions" id="searchSuggestions"></ul>
+    </div>
+
+    <!-- Module nav + user menu — right-aligned (ml-auto via header CSS) -->
     <nav class="module-nav">
       <button class="module-nav-btn active" data-module-nav="mapping"  onclick="Router.navigate('/mapping')">🗺 Mapping</button>
       <button class="module-nav-btn"        data-module-nav="pipeline" onclick="Router.navigate('/pipeline')">⬡ Pipeline</button>
@@ -33,60 +43,24 @@
       </div>
     </nav>
 
-    <div class="header-controls">
-
-      <!-- Address search — always visible in header, operates on map regardless of active module -->
-      <div class="address-search" id="addressSearch">
-        <div class="address-input-wrap">
-          <span class="search-icon">&#9906;</span>
-          <input type="text" id="addressInput" placeholder="Search address or suburb&hellip;" autocomplete="off"/>
-          <button class="search-clear" id="searchClear" title="Clear">&#x2715;</button>
+    <!-- User menu — far right -->
+    <div class="user-menu-anchor" id="userMenuAnchor">
+      <button class="panel-btn user-menu-btn" id="userMenuBtn" title="Account" style="display:none">
+        <span class="user-menu-avatar" id="userMenuAvatar">?</span>
+        <span class="user-menu-name" id="userMenuName"></span>
+        <span style="font-size:10px">▾</span>
+      </button>
+      <div class="user-menu-dropdown" id="userMenuDropdown">
+        <div class="user-menu-header">
+          <div class="user-menu-full-name" id="userMenuFullName"></div>
+          <div class="user-menu-email" id="userMenuEmail"></div>
+          <div class="user-menu-role" id="userMenuRole"></div>
         </div>
-        <ul class="search-suggestions" id="searchSuggestions"></ul>
+        <button class="tools-dropdown-item user-menu-settings" id="userMenuSettings" style="display:none">⚙ System Settings</button>
+        <button class="tools-dropdown-item" id="userMenuLogout">Sign out</button>
       </div>
-
-      <!-- User menu -->
-      <div class="user-menu-anchor" id="userMenuAnchor">
-        <button class="panel-btn user-menu-btn" id="userMenuBtn" title="Account" style="display:none">
-          <span class="user-menu-avatar" id="userMenuAvatar">?</span>
-          <span class="user-menu-name" id="userMenuName"></span>
-          <span style="font-size:10px">▾</span>
-        </button>
-        <div class="user-menu-dropdown" id="userMenuDropdown">
-          <div class="user-menu-header">
-            <div class="user-menu-full-name" id="userMenuFullName"></div>
-            <div class="user-menu-email" id="userMenuEmail"></div>
-            <div class="user-menu-role" id="userMenuRole"></div>
-          </div>
-          <button class="tools-dropdown-item user-menu-settings" id="userMenuSettings" style="display:none">⚙ System Settings</button>
-          <button class="tools-dropdown-item" id="userMenuLogout">Sign out</button>
-        </div>
-      </div>
-
     </div>
   </header>
-
-  <!-- Secondary bar — content changes per active module. Hidden when Mapping is active. -->
-  <div class="module-bar" id="moduleBar">
-    <div class="module-bar-slot" data-module-bar="pipeline" style="display:none">
-      <span class="module-bar-title">Pipeline</span>
-      <!-- Future: workflow filter dropdown -->
-    </div>
-    <div class="module-bar-slot" data-module-bar="crm" style="display:none">
-      <span class="module-bar-title">CRM</span>
-      <!-- CRM sub-tabs live inside the CRM view itself for V75.2 —
-           they can be hoisted here in a later version if wanted. -->
-    </div>
-    <div class="module-bar-slot" data-module-bar="finance" style="display:none">
-      <span class="module-bar-title">Finance</span>
-    </div>
-    <div class="module-bar-slot" data-module-bar="tools" style="display:none">
-      <span class="module-bar-title">Tools</span>
-    </div>
-    <div class="module-bar-slot" data-module-bar="settings" style="display:none">
-      <span class="module-bar-title">System Settings</span>
-    </div>
-  </div>
 
   <!-- Stubs for legacy IDs that existing JS still references. These are
        hidden and not user-visible — they exist so addEventListener calls
@@ -179,8 +153,8 @@
             <p><span id="listingCount">0</span> properties found</p>
           </div>
           <div style="display:flex;gap:6px;align-items:center">
-            <button class="panel-btn sidebar-listings-toggle active" id="listingsPanelToggle" title="Hide listings on map">
-              <span class="dot"></span> Show pins
+            <button class="sidebar-listings-toggle active" id="listingsPanelToggle" title="Show/hide pins on map">
+              <span class="dot"></span> Pins
             </button>
             <button class="filter-toggle-btn" id="filterToggleBtn">⚙ Filter <span class="filter-active-count" id="filterActiveCount"></span></button>
           </div>
