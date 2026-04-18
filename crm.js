@@ -13,13 +13,26 @@
 const CRM_BASE = '/api/contacts';
 
 const ROLES = [
-  { value: 'vendor',      label: 'Vendor'       },
-  { value: 'purchaser',   label: 'Purchaser'     },
-  { value: 'agent',       label: 'Agent'         },
-  { value: 'buyers_agent',label: "Buyer's Agent" },
-  { value: 'referrer',    label: 'Referrer'      },
-  { value: 'solicitor',   label: 'Solicitor'     },
+  // Property-scope — belongs to the property itself across deals
+  { value: 'vendor',           label: 'Vendor',           scopes: ['property'] },
+  { value: 'owner',            label: 'Owner',            scopes: ['property'] },
+  { value: 'property_manager', label: 'Property Manager', scopes: ['property'] },
+  // Deal-scope — specific to a given deal
+  { value: 'agent',            label: 'Agent',            scopes: ['deal'] },
+  { value: 'buyers_agent',     label: "Buyer's Agent",    scopes: ['deal'] },
+  { value: 'purchaser',        label: 'Purchaser',        scopes: ['deal'] },
+  { value: 'enquirer',         label: 'Enquirer',         scopes: ['deal'] },
+  // Mixed-scope — can be linked to either
+  { value: 'solicitor',        label: 'Solicitor',        scopes: ['property', 'deal'] },
+  { value: 'referrer',         label: 'Referrer',         scopes: ['property', 'deal'] },
 ];
+function rolesForScope(scope) {
+  return ROLES.filter(r => r.scopes.includes(scope));
+}
+function roleLabel(id) {
+  const r = ROLES.find(x => x.value === id);
+  return r ? r.label : id;
+}
 
 const SOURCES = [
   'Our Website',
@@ -820,56 +833,79 @@ function renderCRMView(container) {
       // PropMap access = allowed to log in AND has propmap (or wildcard) module
       const hasPropMapAccess = c.can_login && (accessModules.includes('*') || accessModules.includes('propmap'));
 
-      // Site Access section — only rendered when viewer is admin OR viewing self
+      // V75.2d — Split legacy "Linked Properties" into two sections based on
+      // entity_type. The backend's contact_properties query returns both.
+      const propLinks = Array.isArray(props) ? props.filter(p => p.entity_type === 'property') : [];
+      const dealLinks = Array.isArray(props) ? props.filter(p => p.entity_type === 'deal')     : [];
+
+      // Stage label map — used in Deals section badges
+      const dealStageLabels = {
+        'shortlisted': 'Shortlisted',
+        'under-dd':    'Under DD',
+        'offer':       'Offer',
+        'acquired':    'Acquired',
+        'not-proceeded': 'Not Proceeded',
+        'archived':    'Archived',
+      };
+      const workflowLabels = {
+        'acquisition': 'Acquisition',
+        'buyer_enquiry': 'Enquiry',
+        'agency_sales': 'Listing',
+      };
+
+      // Site Access section — only rendered when viewer is admin OR viewing self.
+      // V75.2d — now collapsible; defaults to COLLAPSED.
       const siteAccessHtml = (canManage || isSelf) ? `
-        <div class="crm-drawer-section">
-          <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
-            Site Access
+        <div class="crm-drawer-section crm-section-collapsible" data-section="site-access" data-collapsed="1">
+          <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+            <span class="crm-section-header-left"><span class="crm-section-chev">▸</span> Site Access</span>
             <button class="crm-access-pw-btn kb-add-offer-btn" ${canChangePw ? '' : 'disabled'}>
               ${hasPassword ? (isSelf && !canManage ? 'Change my password' : 'Reset password') : 'Set password'}
             </button>
           </div>
-          <div class="crm-access-grid">
-            <label class="crm-access-row ${canManage && hasPassword ? '' : 'disabled'}">
-              <input type="checkbox" class="crm-access-propmap"
-                     ${hasPropMapAccess ? 'checked' : ''}
-                     ${canManage && hasPassword ? '' : 'disabled'}>
-              <div>
-                <div class="crm-access-label">PropMap Access</div>
-                <div class="crm-access-hint">${hasPassword ? 'Allows sign-in and use of the property map. CRM and Finance modules will become separate toggles.' : 'Set a password first, then enable access.'}</div>
+          <div class="crm-section-body" style="display:none">
+            <div class="crm-access-grid">
+              <label class="crm-access-row ${canManage && hasPassword ? '' : 'disabled'}">
+                <input type="checkbox" class="crm-access-propmap"
+                       ${hasPropMapAccess ? 'checked' : ''}
+                       ${canManage && hasPassword ? '' : 'disabled'}>
+                <div>
+                  <div class="crm-access-label">PropMap Access</div>
+                  <div class="crm-access-hint">${hasPassword ? 'Allows sign-in and use of the property map. CRM and Finance modules will become separate toggles.' : 'Set a password first, then enable access.'}</div>
+                </div>
+              </label>
+              <label class="crm-access-row ${canManage ? '' : 'disabled'}">
+                <input type="checkbox" class="crm-access-is-admin"
+                       ${c.is_admin ? 'checked' : ''}
+                       ${canManage ? '' : 'disabled'}>
+                <div>
+                  <div class="crm-access-label">Administrator</div>
+                  <div class="crm-access-hint">Can manage site access for all contacts.</div>
+                </div>
+              </label>
+              <div class="crm-access-row readonly">
+                <div class="crm-access-label">Last login</div>
+                <div class="crm-access-hint">${lastLogin}</div>
               </div>
-            </label>
-            <label class="crm-access-row ${canManage ? '' : 'disabled'}">
-              <input type="checkbox" class="crm-access-is-admin"
-                     ${c.is_admin ? 'checked' : ''}
-                     ${canManage ? '' : 'disabled'}>
-              <div>
-                <div class="crm-access-label">Administrator</div>
-                <div class="crm-access-hint">Can manage site access for all contacts.</div>
-              </div>
-            </label>
-            <div class="crm-access-row readonly">
-              <div class="crm-access-label">Last login</div>
-              <div class="crm-access-hint">${lastLogin}</div>
             </div>
-          </div>
 
-          <div class="crm-access-actions">
-            <span class="crm-access-status"></span>
-          </div>
+            <div class="crm-access-actions">
+              <span class="crm-access-status"></span>
+            </div>
 
-          <div class="crm-access-pw-form" style="display:none;margin-top:10px">
-            ${(isSelf && !canManage) ? `
-              <label class="crm-access-label">Current password</label>
-              <input type="password" class="kb-input crm-access-pw-current" autocomplete="current-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
-            ` : ''}
-            <label class="crm-access-label">New password (min 8 chars)</label>
-            <input type="password" class="kb-input crm-access-pw-new" autocomplete="new-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
-            <label class="crm-access-label">Confirm new password</label>
-            <input type="password" class="kb-input crm-access-pw-confirm" autocomplete="new-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
-            <div style="display:flex;gap:6px">
-              <button class="crm-access-pw-save kb-add-offer-btn">Save password</button>
-              <button class="crm-access-pw-cancel">Cancel</button>
+            <div class="crm-access-pw-form" style="display:none;margin-top:10px">
+              ${(isSelf && !canManage) ? `
+                <label class="crm-access-label">Current password</label>
+                <input type="password" class="kb-input crm-access-pw-current" autocomplete="current-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
+              ` : ''}
+              <label class="crm-access-label">New password (min 8 chars)</label>
+              <input type="password" class="kb-input crm-access-pw-new" autocomplete="new-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
+              <label class="crm-access-label">Confirm new password</label>
+              <input type="password" class="kb-input crm-access-pw-confirm" autocomplete="new-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
+              <div style="display:flex;gap:6px">
+                <button class="crm-access-pw-save kb-add-offer-btn">Save password</button>
+                <button class="crm-access-pw-cancel">Cancel</button>
+              </div>
             </div>
           </div>
         </div>` : '';
@@ -899,62 +935,99 @@ function renderCRMView(container) {
 
           ${siteAccessHtml}
 
-          <div class="crm-drawer-section">
-            <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
-              Linked Properties
+          <div class="crm-drawer-section crm-section-collapsible" data-section="linked-properties">
+            <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Linked Properties <span class="crm-section-count">(${propLinks.length})</span></span>
               <button class="crm-detail-add-prop-btn kb-add-offer-btn">+ Link Property</button>
             </div>
-            <div id="crmDetailPropsList">
-              ${props.length ? props.map(p => `
-                <div class="crm-prop-row" data-pipeline-id="${p.pipeline_id}">
-                  <span class="crm-prop-address">${p.address || '—'}${p.suburb ? ", " + p.suburb : ""}</span>
-                  <a href="#" class="crm-prop-id-link" data-pipeline-id="${p.pipeline_id}" title="Open in pipeline">${p.pipeline_id}</a>
-                  <select class="crm-prop-role-sel kb-input" data-pipeline-id="${p.pipeline_id}" style="font-size:11px;padding:2px 4px;width:auto">
-                    ${ROLES.map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
+            <div class="crm-section-body">
+              <div id="crmDetailPropsList">
+                ${propLinks.length ? propLinks.map(p => `
+                  <div class="crm-prop-row" data-entity-type="property" data-entity-id="${p.entity_id}">
+                    <span class="crm-prop-address">${p.address || '—'}${p.suburb ? ", " + p.suburb : ""}</span>
+                    <select class="crm-prop-role-sel kb-input" data-entity-type="property" data-entity-id="${p.entity_id}" style="font-size:11px;padding:2px 4px;width:auto">
+                      ${rolesForScope('property').map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
+                    </select>
+                    <button class="crm-prop-unlink-btn" data-entity-type="property" data-entity-id="${p.entity_id}" title="Remove">✕</button>
+                  </div>`).join("") : '<div class="crm-empty">No linked properties</div>'}
+              </div>
+              <div class="crm-detail-add-prop-form" style="display:none;margin-top:8px">
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <select class="kb-input crm-prop-select" style="flex:2;font-size:12px">
+                    <option value="">Select property…</option>
+                    ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
                   </select>
-                  <button class="crm-prop-unlink-btn" data-pipeline-id="${p.pipeline_id}" title="Remove">✕</button>
-                </div>`).join("") : "<div class=\"crm-empty\">No linked properties</div>"}
-            </div>
-            <div class="crm-detail-add-prop-form" style="display:none;margin-top:8px">
-              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                <select class="kb-input crm-prop-select" style="flex:2;font-size:12px">
-                  <option value="">Select property…</option>
-                  ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
-                </select>
-                <select class="kb-input crm-prop-role-new" style="font-size:12px">
-                  ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
-                </select>
-                <button class="crm-prop-link-save kb-add-offer-btn">Link</button>
-                <button class="crm-prop-link-cancel">Cancel</button>
+                  <select class="kb-input crm-prop-role-new" style="font-size:12px">
+                    ${rolesForScope('property').map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                  </select>
+                  <button class="crm-prop-link-save kb-add-offer-btn">Link</button>
+                  <button class="crm-prop-link-cancel">Cancel</button>
+                </div>
               </div>
             </div>
           </div>
 
-          <div class="crm-drawer-section">
-            <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
-              Notes <span style="font-weight:400;color:var(--text-secondary)">(${notes.length})</span>
-              <button class="crm-drawer-add-note-btn kb-add-offer-btn">+ Add Note</button>
+          <div class="crm-drawer-section crm-section-collapsible" data-section="deals">
+            <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${dealLinks.length})</span></span>
+              <button class="crm-detail-add-deal-btn kb-add-offer-btn">+ Link Deal</button>
             </div>
-            <div class="crm-drawer-note-input" style="display:none;margin-bottom:10px">
-              <textarea class="kb-input crm-drawer-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
-              <div style="display:flex;gap:6px;margin-top:4px;align-items:center;flex-wrap:wrap">
-                <select class="kb-input crm-drawer-note-prop" style="flex:1;font-size:12px;min-width:140px">
-                  <option value="">No property</option>
-                  ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
-                </select>
-                <button class="crm-drawer-note-save kb-add-offer-btn">Save Note</button>
-                <button class="crm-drawer-note-cancel">Cancel</button>
+            <div class="crm-section-body">
+              <div id="crmDetailDealsList">
+                ${dealLinks.length ? dealLinks.map(d => `
+                  <div class="crm-deal-row" data-entity-type="deal" data-entity-id="${d.entity_id}">
+                    <a href="#" class="crm-deal-open" data-deal-id="${d.entity_id}" title="Open in pipeline">${d.address || d.entity_id}${d.suburb ? ", " + d.suburb : ""}</a>
+                    <span class="crm-deal-badge crm-deal-badge-workflow">${workflowLabels[d.workflow] || d.workflow || 'Acquisition'}</span>
+                    <span class="crm-deal-badge crm-deal-badge-stage">${dealStageLabels[d.stage] || d.stage || '—'}</span>
+                    <select class="crm-prop-role-sel kb-input" data-entity-type="deal" data-entity-id="${d.entity_id}" style="font-size:11px;padding:2px 4px;width:auto">
+                      ${rolesForScope('deal').map(r => `<option value="${r.value}" ${r.value === d.role ? "selected" : ""}>${r.label}</option>`).join("")}
+                    </select>
+                    <button class="crm-prop-unlink-btn" data-entity-type="deal" data-entity-id="${d.entity_id}" title="Remove">✕</button>
+                  </div>`).join("") : '<div class="crm-empty">No deals linked</div>'}
+              </div>
+              <div class="crm-detail-add-deal-form" style="display:none;margin-top:8px">
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <select class="kb-input crm-deal-select" style="flex:2;font-size:12px">
+                    <option value="">Select deal…</option>
+                    ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
+                  </select>
+                  <select class="kb-input crm-deal-role-new" style="font-size:12px">
+                    ${rolesForScope('deal').map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                  </select>
+                  <button class="crm-deal-link-save kb-add-offer-btn">Link</button>
+                  <button class="crm-deal-link-cancel">Cancel</button>
+                </div>
               </div>
             </div>
-            <div class="crm-drawer-notes-list">
-              ${notes.length ? notes.map(n => `
-                <div class="crm-note-entry" data-note-id="${n.id}">
-                  <div class="crm-note-meta">
-                    <span class="crm-note-date">${formatNoteDate(n.created_at)}${n.property_address ? ` · <span class="crm-note-prop">${n.property_address}</span>` : ""}</span>
-                    <button class="crm-note-delete" data-id="${n.id}">✕</button>
-                  </div>
-                  <div class="crm-note-text">${n.note_text}</div>
-                </div>`).join("") : "<div class=\"crm-empty\">No notes yet</div>"}
+          </div>
+
+          <div class="crm-drawer-section crm-section-collapsible" data-section="notes">
+            <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Notes <span class="crm-section-count">(${notes.length})</span></span>
+              <button class="crm-drawer-add-note-btn kb-add-offer-btn">+ Add Note</button>
+            </div>
+            <div class="crm-section-body">
+              <div class="crm-drawer-note-input" style="display:none;margin-bottom:10px">
+                <textarea class="kb-input crm-drawer-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+                <div style="display:flex;gap:6px;margin-top:4px;align-items:center;flex-wrap:wrap">
+                  <select class="kb-input crm-drawer-note-prop" style="flex:1;font-size:12px;min-width:140px">
+                    <option value="">No property</option>
+                    ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
+                  </select>
+                  <button class="crm-drawer-note-save kb-add-offer-btn">Save Note</button>
+                  <button class="crm-drawer-note-cancel">Cancel</button>
+                </div>
+              </div>
+              <div class="crm-drawer-notes-list">
+                ${notes.length ? notes.map(n => `
+                  <div class="crm-note-entry" data-note-id="${n.id}">
+                    <div class="crm-note-meta">
+                      <span class="crm-note-date">${formatNoteDate(n.created_at)}${n.property_address ? ` · <span class="crm-note-prop">${n.property_address}</span>` : ""}</span>
+                      <button class="crm-note-delete" data-id="${n.id}">✕</button>
+                    </div>
+                    <div class="crm-note-text">${n.note_text}</div>
+                  </div>`).join("") : '<div class="crm-empty">No notes yet</div>'}
+              </div>
             </div>
           </div>
 
@@ -965,38 +1038,94 @@ function renderCRMView(container) {
         renderContactDrawer(drawer, c, () => renderContactDetail(drawer, contactId, onDone));
       });
 
-      // Property management
+      // ── Collapsible sections ─────────────────────────────────────────────
+      // Section state is per-render (no persistence); clicking the header
+      // toggles the body and chev. Initial collapsed state comes from
+      // data-collapsed="1" on the section (set in the HTML above).
+      drawer.querySelectorAll(".crm-section-collapsible").forEach(section => {
+        const header = section.querySelector(".crm-section-header");
+        const body   = section.querySelector(".crm-section-body");
+        const chev   = section.querySelector(".crm-section-chev");
+        const startCollapsed = section.dataset.collapsed === "1";
+        if (startCollapsed) {
+          body.style.display = "none";
+          chev.textContent   = "▸";
+        }
+        // Toggle on header click — but not when clicking a button/select/etc
+        // inside the header (add buttons, role dropdowns, etc. would otherwise
+        // collapse the section when used)
+        header.addEventListener("click", (e) => {
+          if (e.target.closest("button, select, input, textarea, a")) return;
+          const isOpen = body.style.display !== "none";
+          body.style.display = isOpen ? "none" : "";
+          chev.textContent   = isOpen ? "▸" : "▾";
+        });
+      });
+
+      // ── Linked Properties section (entity_type = 'property') ─────────────
       const addPropBtn  = drawer.querySelector(".crm-detail-add-prop-btn");
       const addPropForm = drawer.querySelector(".crm-detail-add-prop-form");
       const propsList   = drawer.querySelector("#crmDetailPropsList");
 
-      addPropBtn.addEventListener("click", () => { addPropForm.style.display = ""; addPropBtn.style.display = "none"; });
-      drawer.querySelector(".crm-prop-link-cancel").addEventListener("click", () => { addPropForm.style.display = "none"; addPropBtn.style.display = ""; });
-      drawer.querySelector(".crm-prop-link-save").addEventListener("click", async () => {
-        const pipelineId = drawer.querySelector(".crm-prop-select").value;
-        const role       = drawer.querySelector(".crm-prop-role-new").value;
-        if (!pipelineId) return;
-        await apiPost({ action: "link", contact_id: contactId, pipeline_id: pipelineId, role });
+      addPropBtn?.addEventListener("click", () => { addPropForm.style.display = ""; addPropBtn.style.display = "none"; });
+      drawer.querySelector(".crm-prop-link-cancel")?.addEventListener("click", () => { addPropForm.style.display = "none"; addPropBtn.style.display = ""; });
+      drawer.querySelector(".crm-prop-link-save")?.addEventListener("click", async () => {
+        const entityId = drawer.querySelector(".crm-prop-select").value;
+        const role     = drawer.querySelector(".crm-prop-role-new").value;
+        if (!entityId) return;
+        await apiPost({ action: "link", contact_id: contactId, entity_type: "property", entity_id: entityId, role_id: role });
         renderContactDetail(drawer, contactId, onDone);
       });
-      propsList.querySelectorAll(".crm-prop-role-sel").forEach(sel => {
-        sel.addEventListener("change", async () => {
-          await apiPost({ action: "link", contact_id: contactId, pipeline_id: sel.dataset.pipelineId, role: sel.value });
-        });
+
+      // ── Deals section (entity_type = 'deal') ─────────────────────────────
+      const addDealBtn  = drawer.querySelector(".crm-detail-add-deal-btn");
+      const addDealForm = drawer.querySelector(".crm-detail-add-deal-form");
+      const dealsList   = drawer.querySelector("#crmDetailDealsList");
+
+      addDealBtn?.addEventListener("click", () => { addDealForm.style.display = ""; addDealBtn.style.display = "none"; });
+      drawer.querySelector(".crm-deal-link-cancel")?.addEventListener("click", () => { addDealForm.style.display = "none"; addDealBtn.style.display = ""; });
+      drawer.querySelector(".crm-deal-link-save")?.addEventListener("click", async () => {
+        const entityId = drawer.querySelector(".crm-deal-select").value;
+        const role     = drawer.querySelector(".crm-deal-role-new").value;
+        if (!entityId) return;
+        await apiPost({ action: "link", contact_id: contactId, entity_type: "deal", entity_id: entityId, role_id: role });
+        renderContactDetail(drawer, contactId, onDone);
       });
-      propsList.querySelectorAll(".crm-prop-id-link").forEach(link => {
+
+      // Deal row click → open that deal's card modal in the Pipeline module
+      dealsList?.querySelectorAll(".crm-deal-open").forEach(link => {
         link.addEventListener("click", (e) => {
           e.preventDefault();
-          const pid = link.dataset.pipelineId;
-          if (typeof window.openPipelineItem === 'function') {
-            window.openPipelineItem(pid);
-          }
+          const dealId = link.dataset.dealId;
+          if (window.Router) Router.navigate(`/pipeline/deal/${dealId}`);
         });
       });
-      propsList.querySelectorAll(".crm-prop-unlink-btn").forEach(btn => {
+
+      // Role change on either a property or deal row (same selector class,
+      // different entity_type in the dataset)
+      drawer.querySelectorAll(".crm-prop-role-sel").forEach(sel => {
+        sel.addEventListener("change", async () => {
+          await apiPost({
+            action:      "link",
+            contact_id:  contactId,
+            entity_type: sel.dataset.entityType,
+            entity_id:   sel.dataset.entityId,
+            role_id:     sel.value,
+          });
+        });
+      });
+
+      // Unlink — same class used in both sections, entity_type tells us which
+      drawer.querySelectorAll(".crm-prop-unlink-btn").forEach(btn => {
         btn.addEventListener("click", async () => {
-          if (!confirm("Remove this property link?")) return;
-          await apiPost({ action: "unlink", contact_id: contactId, pipeline_id: btn.dataset.pipelineId });
+          const what = btn.dataset.entityType === "deal" ? "deal link" : "property link";
+          if (!confirm(`Remove this ${what}?`)) return;
+          await apiPost({
+            action:      "unlink",
+            contact_id:  contactId,
+            entity_type: btn.dataset.entityType,
+            entity_id:   btn.dataset.entityId,
+          });
           renderContactDetail(drawer, contactId, onDone);
         });
       });
