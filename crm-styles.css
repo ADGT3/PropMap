@@ -805,6 +805,8 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -847,7 +849,8 @@
 .crm-deal-row:last-child { border-bottom: none; }
 
 .crm-deal-open,
-.crm-prop-open {
+.crm-prop-open,
+.crm-org-contact-open {
   flex: 1 1 160px;
   min-width: 140px;
   color: var(--accent);
@@ -856,7 +859,8 @@
   text-decoration: none;
 }
 .crm-deal-open:hover,
-.crm-prop-open:hover { text-decoration: underline; }
+.crm-prop-open:hover,
+.crm-org-contact-open:hover { text-decoration: underline; }
 
 .crm-deal-badge {
   font-size: 10px;

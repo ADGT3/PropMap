@@ -918,7 +918,7 @@ function renderCRMView(container) {
               <input type="password" class="kb-input crm-access-pw-confirm" autocomplete="new-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
               <div style="display:flex;gap:6px">
                 <button class="crm-access-pw-save kb-add-offer-btn">Save password</button>
-                <button class="crm-access-pw-cancel">Cancel</button>
+                <button class="crm-access-pw-cancel crm-cancel-btn">Cancel</button>
               </div>
             </div>
           </div>
@@ -975,7 +975,7 @@ function renderCRMView(container) {
                     ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-prop-link-save kb-add-offer-btn">Link</button>
-                  <button class="crm-prop-link-cancel">Cancel</button>
+                  <button class="crm-prop-link-cancel crm-cancel-btn">Cancel</button>
                 </div>
               </div>
             </div>
@@ -1009,7 +1009,7 @@ function renderCRMView(container) {
                     ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-deal-link-save kb-add-offer-btn">Link</button>
-                  <button class="crm-deal-link-cancel">Cancel</button>
+                  <button class="crm-deal-link-cancel crm-cancel-btn">Cancel</button>
                 </div>
               </div>
             </div>
@@ -1025,7 +1025,7 @@ function renderCRMView(container) {
                 <textarea class="kb-input crm-modal-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
                 <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
                   <button class="crm-modal-note-save kb-add-offer-btn">Save Note</button>
-                  <button class="crm-modal-note-cancel">Cancel</button>
+                  <button class="crm-modal-note-cancel crm-cancel-btn">Cancel</button>
                 </div>
               </div>
               <div class="crm-modal-notes-list">
@@ -1524,7 +1524,7 @@ function renderCRMView(container) {
           </div>
           <div style="display:flex;gap:8px;margin-top:12px">
             <button class="crm-org-save-btn kb-add-offer-btn">${isEdit ? 'Save Changes' : 'Create'}</button>
-            ${isEdit ? '<button class="crm-org-edit-cancel">Cancel</button>' : ''}
+            ${isEdit ? '<button class="crm-org-edit-cancel crm-cancel-btn">Cancel</button>' : ''}
           </div>
         </div>
       ` : `
@@ -1567,17 +1567,15 @@ function renderCRMView(container) {
                   ${available.map(c => `<option value="${c.id}">${displayName(c)}${c.org_name ? ' · ' + c.org_name : ''}</option>`).join('')}
                 </select>
                 <button class="crm-org-contact-link-save kb-add-offer-btn">Add</button>
-                <button class="crm-org-contact-link-cancel">Cancel</button>
+                <button class="crm-org-contact-link-cancel crm-cancel-btn">Cancel</button>
               </div>
             </div>
             <div id="crmOrgContactsList">
               ${orgContacts.length ? orgContacts.map(c => `
-                <div class="crm-org-contact-row" data-contact-id="${c.id}">
-                  <div class="crm-org-contact-info">
-                    <span class="crm-org-contact-name" data-contact-id="${c.id}">${displayName(c)}</span>
-                    <span class="crm-org-contact-meta">${[c.mobile, c.email].filter(Boolean).join(' · ')}</span>
-                  </div>
-                  <button class="crm-org-contact-remove" data-contact-id="${c.id}" title="Remove from org">✕</button>
+                <div class="crm-prop-row" data-contact-id="${c.id}">
+                  <a href="#" class="crm-org-contact-open" data-contact-id="${c.id}" title="Open contact">${displayName(c)}</a>
+                  <span class="crm-org-contact-meta">${[c.mobile, c.email].filter(Boolean).join(' · ')}</span>
+                  <button class="crm-prop-unlink-btn crm-org-contact-remove" data-contact-id="${c.id}" title="Remove from org">✕</button>
                 </div>`).join('') : '<div class="crm-empty">No contacts in this organisation</div>'}
             </div>
           </div>` : ''}
@@ -1648,8 +1646,9 @@ function renderCRMView(container) {
       });
 
       // Click contact name → open contact detail (same modal as the contacts list)
-      modal.querySelectorAll('.crm-org-contact-name').forEach(el => {
-        el.addEventListener('click', () => {
+      modal.querySelectorAll('.crm-org-contact-open').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.preventDefault();
           renderContactDetail(modal, parseInt(el.dataset.contactId), () => render());
         });
       });
