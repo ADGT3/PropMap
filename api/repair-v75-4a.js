@@ -39,11 +39,11 @@ async function fetchNswCadastre(lat, lng) {
   try {
     const params = new URLSearchParams({
       f:              'json',
-      geometry:       JSON.stringify({ x: lng, y: lat, spatialReference: { wkid: 4326 } }),
+      geometry:       `${lng},${lat}`,
       geometryType:   'esriGeometryPoint',
       inSR:           '4326',
       spatialRel:     'esriSpatialRelIntersects',
-      outFields:      'lotidstring,OBJECTID,Shape__Area',
+      outFields:      'lotidstring',
       returnGeometry: 'false',
     });
     const r = await fetch(`${NSW_CADASTRE_URL}?${params}`, {
@@ -55,7 +55,8 @@ async function fetchNswCadastre(lat, lng) {
     if (!f) return null;
     return {
       lotid:   f.attributes?.lotidstring || null,
-      areaSqm: f.attributes?.Shape__Area || null,
+      // NSW public cadastre doesn't expose Shape__Area on this layer
+      areaSqm: null,
     };
   } catch (err) {
     console.warn('[repair-v75-4a] cadastre fetch failed:', err.message);
@@ -81,12 +82,27 @@ async function fetchReverseGeocode(lat, lng) {
     const a = j.address;
     return {
       address: a.ShortLabel || a.Address || null,
-      suburb:  a.City || a.Neighborhood || a.District || null,
+      // NOTE: ArcGIS .City returns the LGA (e.g. "Camden") not the suburb
+      // (e.g. "Bringelly") for Sydney outer areas. We don't trust it here —
+      // the repair preserves the existing suburb from the DB. .Neighborhood
+      // is sometimes the suburb but often blank; exposed for debugging.
+      suburb_neighborhood: a.Neighborhood || null,
+      suburb_district:     a.District || null,
+      suburb_city:         a.City || null,
     };
   } catch (err) {
     console.warn('[repair-v75-4a] reverse-geocode failed:', err.message);
     return null;
   }
+}
+
+// Returns the lowercased street-name portion of an address (minus number prefix)
+// Used to check whether a geocoded address refers to the same road as the stored one.
+function extractStreetName(addr) {
+  if (!addr) return '';
+  const s = String(addr).trim();
+  // Strip leading number(s) or "Lot N"
+  return s.replace(/^lot\s+\d+\s+/i, '').replace(/^[\d/-]+\s+/, '').toLowerCase();
 }
 
 // Find candidate child Property rows needing repair.
@@ -125,6 +141,18 @@ async function dryRun(res) {
       fetchNswCadastre(p.lat, p.lng),
       fetchReverseGeocode(p.lat, p.lng),
     ]);
+    // Street-name safety: only propose a new address if the geocoded street
+    // name matches the stored one (modulo "Lot N" junk in the stored copy).
+    const storedStreet = extractStreetName(p.address);
+    const geocodedStreet = extractStreetName(geocode?.address);
+    // If stored address was garbage ("Lot N ...") the stored street IS the
+    // aggregate (e.g. "16-48 Loftus Road") — do a looser "contains" check
+    const storedWasGarbage = String(p.address || '').startsWith('Lot ');
+    const streetMatches = storedWasGarbage
+      ? storedStreet && geocodedStreet && storedStreet.includes(geocodedStreet.split(' ').slice(1).join(' '))
+      : storedStreet === geocodedStreet;
+    const safeToReplaceAddress = !!(geocode?.address && (storedWasGarbage ? streetMatches : true));
+
     previews.push({
       id: p.id,
       parcel_id: p.parcel_id,
@@ -134,16 +162,23 @@ async function dryRun(res) {
         address: p.address,
         suburb:  p.suburb,
         lot_dps: p.lot_dps,
-        area_sqm: p.area_sqm,
       },
       proposed: {
-        address: geocode?.address || null,
-        suburb:  geocode?.suburb  || null,
-        lot_dps: cadastre?.lotid  || null,
-        area_sqm: cadastre?.areaSqm || null,
+        address: safeToReplaceAddress ? geocode.address : p.address, // keep current if street mismatch
+        // Preserve existing suburb — geocoder returns LGA not suburb here
+        suburb:  p.suburb,
+        lot_dps: cadastre?.lotid || p.lot_dps,
+      },
+      geocode_raw: {
+        address:            geocode?.address || null,
+        suburb_neighborhood: geocode?.suburb_neighborhood || null,
+        suburb_district:    geocode?.suburb_district || null,
+        suburb_city:        geocode?.suburb_city || null,
       },
       has_cadastre: !!cadastre?.lotid,
       has_geocode:  !!geocode?.address,
+      street_match: streetMatches,
+      address_will_change: safeToReplaceAddress && geocode.address !== p.address,
     });
   }
 
@@ -184,36 +219,42 @@ async function execute(res) {
       fetchNswCadastre(p.lat, p.lng),
       fetchReverseGeocode(p.lat, p.lng),
     ]);
-    const newAddress = geocode?.address || null;
-    const newSuburb  = geocode?.suburb  || null;
-    const newLotDps  = cadastre?.lotid  || null;
-    const newArea    = cadastre?.areaSqm || null;
 
-    // Preserve existing non-garbage address if geocode failed; clear garbage
-    const addrIsGarbage = String(p.address || '').startsWith('Lot ');
-    const keepAddr = addrIsGarbage ? null : p.address;
+    const storedStreet = extractStreetName(p.address);
+    const geocodedStreet = extractStreetName(geocode?.address);
+    const storedWasGarbage = String(p.address || '').startsWith('Lot ');
+    const streetMatches = storedWasGarbage
+      ? storedStreet && geocodedStreet && storedStreet.includes(geocodedStreet.split(' ').slice(1).join(' '))
+      : storedStreet === geocodedStreet;
+    const safeToReplaceAddress = !!(geocode?.address && (storedWasGarbage ? streetMatches : true));
+
+    const newAddress = safeToReplaceAddress
+      ? geocode.address
+      : (storedWasGarbage ? null : p.address); // null so COALESCE falls through to existing if garbage + no replacement
+
+    const newLotDps = cadastre?.lotid || null;
 
     await sql`
       UPDATE properties
       SET
-        address    = COALESCE(${newAddress}, ${keepAddr}, address),
-        suburb     = COALESCE(${newSuburb},  suburb),
-        lot_dps    = COALESCE(${newLotDps},  NULLIF(lot_dps, '')),
-        area_sqm   = COALESCE(${newArea},    area_sqm),
+        address    = COALESCE(${newAddress}, address),
+        lot_dps    = COALESCE(${newLotDps}, NULLIF(lot_dps, '')),
         updated_at = now()
       WHERE id = ${p.id}`;
 
     propertyUpdates.push({
       id: p.id,
+      old_address: p.address,
       new_address: newAddress,
-      new_suburb:  newSuburb,
       new_lot_dps: newLotDps,
       had_geocode:  !!geocode?.address,
       had_cadastre: !!cadastre?.lotid,
+      street_match: streetMatches,
+      address_changed: safeToReplaceAddress && geocode?.address !== p.address,
     });
   }
 
-  // Parcel names — pick up the newly-set suburbs from children
+  // Parcel names — suburb is already correct in the DB, append to parcel.name
   const parcels = await sql`SELECT id, name FROM parcels`;
   const parcelUpdates = [];
   for (const pa of parcels) {
