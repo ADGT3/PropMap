@@ -32,51 +32,106 @@ export default async function handler(req, res) {
     switch (req.method) {
 
       case 'GET': {
-        const { id, workflow, status, property_id } = req.query;
+        const { id, workflow, status, property_id, parcel_id } = req.query;
 
-        if (id) {
-          // Single deal with property joined + entity_contacts summary
-          const dealRows = await sql`
-            SELECT d.*, row_to_json(p.*) AS property
-            FROM deals d LEFT JOIN properties p ON p.id = d.property_id
-            WHERE d.id = ${id}`;
-          if (!dealRows.length) return res.status(404).json({ error: 'Not found' });
-          return res.status(200).json(dealRows[0]);
+        // V75.4: deals can be on a property or a parcel.
+        // We join both and let the frontend pick which to use based on whether
+        // parcel_id or property_id is set on the deal row.
+        // For parcel-scoped deals we also expand the list of properties in that parcel.
+
+        async function fetchAndExpand(rows) {
+          if (!rows.length) return rows;
+          // Collect parcel ids used by any of these deals and fetch their properties
+          const parcelIds = [...new Set(rows.filter(r => r.parcel_id).map(r => r.parcel_id))];
+          let parcelPropsByParcel = {};
+          if (parcelIds.length) {
+            const pRows = await sql`
+              SELECT * FROM properties WHERE parcel_id = ANY(${parcelIds}) ORDER BY address`;
+            pRows.forEach(p => {
+              (parcelPropsByParcel[p.parcel_id] ||= []).push(p);
+            });
+          }
+          return rows.map(r => ({
+            ...r,
+            parcel_properties: r.parcel_id ? (parcelPropsByParcel[r.parcel_id] || []) : null,
+          }));
         }
 
-        // Filtered list
+        if (id) {
+          const dealRows = await sql`
+            SELECT d.*,
+              row_to_json(p.*)  AS property,
+              row_to_json(pa.*) AS parcel
+            FROM deals d
+            LEFT JOIN properties p  ON p.id  = d.property_id
+            LEFT JOIN parcels    pa ON pa.id = d.parcel_id
+            WHERE d.id = ${id}`;
+          if (!dealRows.length) return res.status(404).json({ error: 'Not found' });
+          const expanded = await fetchAndExpand(dealRows);
+          return res.status(200).json(expanded[0]);
+        }
+
+        // Filtered lists
+        if (parcel_id) {
+          const rows = await sql`
+            SELECT d.*,
+              row_to_json(p.*)  AS property,
+              row_to_json(pa.*) AS parcel
+            FROM deals d
+            LEFT JOIN properties p  ON p.id  = d.property_id
+            LEFT JOIN parcels    pa ON pa.id = d.parcel_id
+            WHERE d.parcel_id = ${parcel_id}
+            ORDER BY d.opened_at DESC`;
+          return res.status(200).json(await fetchAndExpand(rows));
+        }
         if (property_id) {
           const rows = await sql`
-            SELECT d.*, row_to_json(p.*) AS property
-            FROM deals d LEFT JOIN properties p ON p.id = d.property_id
+            SELECT d.*,
+              row_to_json(p.*)  AS property,
+              row_to_json(pa.*) AS parcel
+            FROM deals d
+            LEFT JOIN properties p  ON p.id  = d.property_id
+            LEFT JOIN parcels    pa ON pa.id = d.parcel_id
             WHERE d.property_id = ${property_id}
             ORDER BY d.opened_at DESC`;
-          return res.status(200).json(rows);
+          return res.status(200).json(await fetchAndExpand(rows));
         }
 
         if (workflow && status) {
           const rows = await sql`
-            SELECT d.*, row_to_json(p.*) AS property
-            FROM deals d LEFT JOIN properties p ON p.id = d.property_id
+            SELECT d.*,
+              row_to_json(p.*)  AS property,
+              row_to_json(pa.*) AS parcel
+            FROM deals d
+            LEFT JOIN properties p  ON p.id  = d.property_id
+            LEFT JOIN parcels    pa ON pa.id = d.parcel_id
             WHERE d.workflow = ${workflow} AND d.status = ${status}
             ORDER BY d.updated_at DESC`;
-          return res.status(200).json(rows);
+          return res.status(200).json(await fetchAndExpand(rows));
         }
         if (workflow) {
           const rows = await sql`
-            SELECT d.*, row_to_json(p.*) AS property
-            FROM deals d LEFT JOIN properties p ON p.id = d.property_id
+            SELECT d.*,
+              row_to_json(p.*)  AS property,
+              row_to_json(pa.*) AS parcel
+            FROM deals d
+            LEFT JOIN properties p  ON p.id  = d.property_id
+            LEFT JOIN parcels    pa ON pa.id = d.parcel_id
             WHERE d.workflow = ${workflow}
             ORDER BY d.updated_at DESC`;
-          return res.status(200).json(rows);
+          return res.status(200).json(await fetchAndExpand(rows));
         }
 
         // Unfiltered full list
         const rows = await sql`
-          SELECT d.*, row_to_json(p.*) AS property
-          FROM deals d LEFT JOIN properties p ON p.id = d.property_id
+          SELECT d.*,
+            row_to_json(p.*)  AS property,
+            row_to_json(pa.*) AS parcel
+          FROM deals d
+          LEFT JOIN properties p  ON p.id  = d.property_id
+          LEFT JOIN parcels    pa ON pa.id = d.parcel_id
           ORDER BY d.updated_at DESC`;
-        return res.status(200).json(rows);
+        return res.status(200).json(await fetchAndExpand(rows));
       }
 
       case 'POST': {
@@ -103,36 +158,52 @@ export default async function handler(req, res) {
           return res.status(200).json(rows[0]);
         }
 
-        // Start a new deal on an existing property, optionally seeding financials
-        if (body.action === 'new_on_property') {
+        // Start a new deal on an existing property OR parcel, optionally seeding financials
+        if (body.action === 'new_on_property' || body.action === 'new_on_parcel') {
           const {
-            property_id,
-            workflow = 'acquisition',
-            stage    = 'shortlisted',
-            data     = {},
+            property_id  = null,
+            parcel_id    = null,
+            workflow     = 'acquisition',
+            stage        = 'shortlisted',
+            data         = {},
             seed_financials_from, // optional deal_id to seed from
           } = body;
-          if (!property_id) return res.status(400).json({ error: 'property_id required' });
+          if (!property_id && !parcel_id)  return res.status(400).json({ error: 'property_id or parcel_id required' });
+          if ( property_id &&  parcel_id)  return res.status(400).json({ error: 'specify exactly one of property_id or parcel_id' });
 
-          // Verify property exists
-          const pRows = await sql`SELECT id FROM properties WHERE id = ${property_id}`;
-          if (!pRows.length) return res.status(404).json({ error: 'Property not found' });
+          // Verify target exists
+          if (property_id) {
+            const pRows = await sql`SELECT id FROM properties WHERE id = ${property_id}`;
+            if (!pRows.length) return res.status(404).json({ error: 'Property not found' });
+          } else {
+            const pRows = await sql`SELECT id FROM parcels WHERE id = ${parcel_id}`;
+            if (!pRows.length) return res.status(404).json({ error: 'Parcel not found' });
+          }
 
           const id = newDealId();
           const dataJson = JSON.stringify({ addedAt: Date.now(), ...data });
 
           const dealRows = await sql`
-            INSERT INTO deals (id, property_id, workflow, stage, status, data)
-            VALUES (${id}, ${property_id}, ${workflow}, ${stage}, 'active', ${dataJson}::jsonb)
+            INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data)
+            VALUES (${id}, ${property_id}, ${parcel_id}, ${workflow}, ${stage}, 'active', ${dataJson}::jsonb)
             RETURNING *`;
 
           // Seed financials — find most recent prior deal's financial record if not specified
           let seedFrom = seed_financials_from || null;
-          if (!seedFrom) {
+          if (!seedFrom && property_id) {
             const prior = await sql`
               SELECT d.id FROM deals d
               JOIN property_financials pf ON pf.deal_id = d.id
               WHERE d.property_id = ${property_id} AND d.id <> ${id}
+              ORDER BY d.opened_at DESC LIMIT 1`;
+            if (prior.length) seedFrom = prior[0].id;
+          }
+          // For parcel deals, look for prior parcel-scoped financials
+          if (!seedFrom && parcel_id) {
+            const prior = await sql`
+              SELECT d.id FROM deals d
+              JOIN property_financials pf ON pf.deal_id = d.id
+              WHERE d.parcel_id = ${parcel_id} AND d.id <> ${id}
               ORDER BY d.opened_at DESC LIMIT 1`;
             if (prior.length) seedFrom = prior[0].id;
           }
@@ -155,17 +226,19 @@ export default async function handler(req, res) {
         // Plain create
         const {
           id = newDealId(),
-          property_id,
+          property_id = null,
+          parcel_id   = null,
           workflow = 'acquisition',
           stage    = 'shortlisted',
           status   = 'active',
           data     = {},
         } = body;
-        if (!property_id) return res.status(400).json({ error: 'property_id required' });
+        if (!property_id && !parcel_id) return res.status(400).json({ error: 'property_id or parcel_id required' });
+        if ( property_id &&  parcel_id) return res.status(400).json({ error: 'specify exactly one of property_id or parcel_id' });
         const dataJson = JSON.stringify({ addedAt: Date.now(), ...data });
         const rows = await sql`
-          INSERT INTO deals (id, property_id, workflow, stage, status, data)
-          VALUES (${id}, ${property_id}, ${workflow}, ${stage}, ${status}, ${dataJson}::jsonb)
+          INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data)
+          VALUES (${id}, ${property_id}, ${parcel_id}, ${workflow}, ${stage}, ${status}, ${dataJson}::jsonb)
           ON CONFLICT (id) DO NOTHING
           RETURNING *`;
         if (!rows.length) {

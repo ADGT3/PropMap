@@ -139,16 +139,21 @@ export default async function handler(req, res) {
         // ── All entity links for a contact
         if (contact_entities || contact_properties) {
           if (!contact_id) return res.status(400).json({ error: 'contact_id required' });
-          // Return a list with property address etc enriched where possible
+          // V75.4: now supports entity_type='parcel' links too, and deals that
+          // target a parcel instead of a property. For deals-on-parcels, the
+          // address is derived from the parcel's name (set at creation to the
+          // merged title).
           const rows = await sql`
             SELECT ec.entity_type, ec.entity_id, ec.role_id AS role, ec.linked_at,
               CASE
-                WHEN ec.entity_type = 'deal'     THEN COALESCE(p_via_deal.address,  ec.entity_id)
-                WHEN ec.entity_type = 'property' THEN COALESCE(p_direct.address,    ec.entity_id)
+                WHEN ec.entity_type = 'deal' AND d.property_id IS NOT NULL THEN COALESCE(p_via_deal.address, ec.entity_id)
+                WHEN ec.entity_type = 'deal' AND d.parcel_id   IS NOT NULL THEN COALESCE(pa_via_deal.name, ec.entity_id)
+                WHEN ec.entity_type = 'property' THEN COALESCE(p_direct.address, ec.entity_id)
+                WHEN ec.entity_type = 'parcel'   THEN COALESCE(pa_direct.name,  ec.entity_id)
                 ELSE ec.entity_id
               END AS address,
               CASE
-                WHEN ec.entity_type = 'deal'     THEN p_via_deal.suburb
+                WHEN ec.entity_type = 'deal' AND d.property_id IS NOT NULL THEN p_via_deal.suburb
                 WHEN ec.entity_type = 'property' THEN p_direct.suburb
                 ELSE NULL
               END AS suburb,
@@ -161,8 +166,10 @@ export default async function handler(req, res) {
               d.status   AS deal_status
             FROM entity_contacts ec
             LEFT JOIN deals d ON d.id = ec.entity_id AND ec.entity_type = 'deal'
-            LEFT JOIN properties p_via_deal ON p_via_deal.id = d.property_id
-            LEFT JOIN properties p_direct   ON p_direct.id   = ec.entity_id AND ec.entity_type = 'property'
+            LEFT JOIN properties p_via_deal  ON p_via_deal.id  = d.property_id
+            LEFT JOIN parcels    pa_via_deal ON pa_via_deal.id = d.parcel_id
+            LEFT JOIN properties p_direct    ON p_direct.id    = ec.entity_id AND ec.entity_type = 'property'
+            LEFT JOIN parcels    pa_direct   ON pa_direct.id   = ec.entity_id AND ec.entity_type = 'parcel'
             WHERE ec.contact_id = ${parseInt(contact_id)}
             ORDER BY ec.linked_at DESC`;
           return res.status(200).json(rows);

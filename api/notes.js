@@ -52,24 +52,40 @@ function resolveAuthor(session) {
 }
 
 // Enrich notes with source display info when listing for a contact's combined
-// feed. For entity_type='deal' / 'property' we join to look up address.
+// feed. V75.4: now handles parcel entities and deals-on-parcels.
 async function enrichNotes(rows) {
   if (!rows.length) return rows;
-  const dealIds = [...new Set(rows.filter(r => r.entity_type === 'deal').map(r => r.entity_id))];
-  const propIds = [...new Set(rows.filter(r => r.entity_type === 'property').map(r => r.entity_id))];
+  const dealIds   = [...new Set(rows.filter(r => r.entity_type === 'deal').map(r => r.entity_id))];
+  const propIds   = [...new Set(rows.filter(r => r.entity_type === 'property').map(r => r.entity_id))];
+  const parcelIds = [...new Set(rows.filter(r => r.entity_type === 'parcel').map(r => r.entity_id))];
 
-  const dealMap = {};
-  const propMap = {};
+  const dealMap   = {};
+  const propMap   = {};
+  const parcelMap = {};
   if (dealIds.length) {
+    // Deal row may be on a property OR a parcel; fetch both and pick whichever is set
     const dealRows = await sql`
-      SELECT d.id, p.address, p.suburb
-      FROM deals d LEFT JOIN properties p ON p.id = d.property_id
+      SELECT d.id,
+             p.address  AS prop_address,  p.suburb AS prop_suburb,
+             pa.name    AS parcel_name
+      FROM deals d
+      LEFT JOIN properties p  ON p.id  = d.property_id
+      LEFT JOIN parcels    pa ON pa.id = d.parcel_id
       WHERE d.id = ANY(${dealIds})`;
-    dealRows.forEach(r => { dealMap[r.id] = { address: r.address, suburb: r.suburb }; });
+    dealRows.forEach(r => {
+      dealMap[r.id] = {
+        address: r.prop_address || r.parcel_name,
+        suburb:  r.prop_suburb  || null,
+      };
+    });
   }
   if (propIds.length) {
     const propRows = await sql`SELECT id, address, suburb FROM properties WHERE id = ANY(${propIds})`;
     propRows.forEach(r => { propMap[r.id] = { address: r.address, suburb: r.suburb }; });
+  }
+  if (parcelIds.length) {
+    const parcelRows = await sql`SELECT id, name FROM parcels WHERE id = ANY(${parcelIds})`;
+    parcelRows.forEach(r => { parcelMap[r.id] = { name: r.name }; });
   }
 
   return rows.map(r => {
@@ -80,6 +96,9 @@ async function enrichNotes(rows) {
     } else if (r.entity_type === 'property') {
       const m = propMap[r.entity_id];
       source_label = m ? `Property — ${m.address || r.entity_id}` : `Property — ${r.entity_id}`;
+    } else if (r.entity_type === 'parcel') {
+      const m = parcelMap[r.entity_id];
+      source_label = m ? `Parcel — ${m.name || r.entity_id}` : `Parcel — ${r.entity_id}`;
     } else if (r.entity_type === 'contact') {
       source_label = 'Contact';
     } else {
