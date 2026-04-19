@@ -825,6 +825,9 @@
 .crm-section-header {
   cursor: pointer;
   user-select: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 .crm-section-header:hover .crm-section-chev { color: var(--accent); }
 .crm-section-header-left {

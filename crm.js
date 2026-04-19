@@ -895,7 +895,7 @@ function renderCRMView(container) {
       // V75.2d — now collapsible; defaults to COLLAPSED.
       const siteAccessHtml = (canManage || isSelf) ? `
         <div class="crm-modal-section crm-section-collapsible" data-section="site-access" data-collapsed="1">
-          <div class="crm-modal-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="crm-modal-section-title crm-section-header">
             <span class="crm-section-header-left"><span class="crm-section-chev">▸</span> Site Access</span>
             <button class="crm-access-pw-btn kb-add-offer-btn" ${canChangePw ? '' : 'disabled'}>
               ${hasPassword ? (isSelf && !canManage ? 'Change my password' : 'Reset password') : 'Set password'}
@@ -974,7 +974,7 @@ function renderCRMView(container) {
           ${siteAccessHtml}
 
           <div class="crm-modal-section crm-section-collapsible" data-section="linked-properties">
-            <div class="crm-modal-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Linked Properties <span class="crm-section-count">(${propLinks.length})</span></span>
               <button class="crm-detail-add-prop-btn kb-add-offer-btn">+ Link Property</button>
             </div>
@@ -1006,7 +1006,7 @@ function renderCRMView(container) {
           </div>
 
           <div class="crm-modal-section crm-section-collapsible" data-section="deals">
-            <div class="crm-modal-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${dealLinks.length})</span></span>
               <button class="crm-detail-add-deal-btn kb-add-offer-btn">+ Link Deal</button>
             </div>
@@ -1040,7 +1040,7 @@ function renderCRMView(container) {
           </div>
 
           <div class="crm-modal-section crm-section-collapsible" data-section="notes">
-            <div class="crm-modal-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Notes <span class="crm-section-count">(${notes.length})</span></span>
               <button class="crm-modal-add-note-btn kb-add-offer-btn">+ Add Note</button>
             </div>
