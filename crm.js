@@ -665,18 +665,41 @@ function renderCRMView(container) {
         <span class="crm-view-title"><svg class="module-header-icon"><use href="#icon-crm"/></svg> CRM</span>
         <div class="crm-view-tabs">
           <button class="crm-tab active" data-tab="contacts">Contacts</button>
-          <button class="crm-tab" data-tab="organisations">Organisations</button>
+          <button class="crm-tab"        data-tab="properties">Properties</button>
+          <button class="crm-tab"        data-tab="parcels">Parcels</button>
+          <button class="crm-tab"        data-tab="organisations">Organisations</button>
         </div>
         <button class="crm-view-add-btn" id="crmViewAddBtn">+ New Contact</button>
       </div>
       <div class="crm-view-body">
         <div class="crm-tab-pane active" id="crm-pane-contacts"></div>
-        <div class="crm-tab-pane" id="crm-pane-organisations"></div>
+        <div class="crm-tab-pane"        id="crm-pane-properties"></div>
+        <div class="crm-tab-pane"        id="crm-pane-parcels"></div>
+        <div class="crm-tab-pane"        id="crm-pane-organisations"></div>
       </div>
     </div>
     <div class="crm-modal-overlay" id="crmModalOverlay" style="display:none">
       <div class="crm-modal" id="crmModal"></div>
     </div>`;
+
+  // Add-button label/handler per tab
+  function configureAddButton(tabName) {
+    const btn = container.querySelector('#crmViewAddBtn');
+    if (tabName === 'contacts') {
+      btn.textContent = '+ New Contact';
+      btn.style.display = '';
+      btn.onclick = () => openModal(modal => renderContactModal(modal, null, () => { closeModal(); loadContactsPane(); }));
+    } else if (tabName === 'organisations') {
+      btn.textContent = '+ New Organisation';
+      btn.style.display = '';
+      btn.onclick = () => openModal(modal => renderOrgModal(modal, null, () => { closeModal(); loadOrgsPane(); }));
+    } else {
+      // Properties and Parcels don't support direct create from the CRM in V75.4
+      // — they're created via map ⌘-click or by adding a pipeline deal.
+      btn.style.display = 'none';
+      btn.onclick = null;
+    }
+  }
 
   // Tab switching
   container.querySelectorAll('.crm-tab').forEach(tab => {
@@ -685,7 +708,10 @@ function renderCRMView(container) {
       container.querySelectorAll('.crm-tab-pane').forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       container.querySelector(`#crm-pane-${tab.dataset.tab}`).classList.add('active');
-      if (tab.dataset.tab === 'contacts') loadContactsPane();
+      configureAddButton(tab.dataset.tab);
+      if (tab.dataset.tab === 'contacts')      loadContactsPane();
+      if (tab.dataset.tab === 'properties')    loadPropertiesPane();
+      if (tab.dataset.tab === 'parcels')       loadParcelsPane();
       if (tab.dataset.tab === 'organisations') loadOrgsPane();
     });
   });
@@ -705,10 +731,8 @@ function renderCRMView(container) {
   }
   window._crmCloseModal = closeModal;
 
-  // + New Contact button
-  container.querySelector('#crmViewAddBtn').addEventListener('click', () => {
-    openModal(modal => renderContactModal(modal, null, () => { closeModal(); loadContactsPane(); }));
-  });
+  // + Add button wired by configureAddButton() based on active tab
+  configureAddButton('contacts');
 
   // ── Contacts pane ──────────────────────────────────────────────────────────
 
@@ -1656,6 +1680,453 @@ function renderCRMView(container) {
 
     render();
   }
+
+  // ── Parcels pane (V75.4) ───────────────────────────────────────────────────
+
+  let parcelSearch = '';
+
+  async function loadParcelsPane() {
+    const pane = container.querySelector('#crm-pane-parcels');
+    pane.innerHTML = `
+      <div class="crm-pane-toolbar">
+        <input class="kb-input crm-view-search" placeholder="Search parcels…" value="${parcelSearch}">
+      </div>
+      <div class="crm-contact-table-wrap">
+        <table class="crm-contact-table">
+          <thead><tr>
+            <th>Title</th>
+            <th>Properties</th>
+            <th>Active Deal</th>
+            <th>Not Suitable</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="crmParcelTableBody"><tr><td colspan="5" class="crm-loading">Loading…</td></tr></tbody>
+        </table>
+      </div>`;
+
+    pane.querySelector('.crm-view-search').addEventListener('input', e => {
+      parcelSearch = e.target.value;
+      renderParcelRows();
+    });
+
+    await renderParcelRows();
+  }
+
+  // Cache so search is instant (parcel counts stay small)
+  let _parcelsCache = null;
+  async function renderParcelRows() {
+    const pane  = container.querySelector('#crm-pane-parcels');
+    const tbody = pane?.querySelector('#crmParcelTableBody');
+    if (!tbody) return;
+
+    try {
+      if (!_parcelsCache) {
+        const [parcels, deals] = await Promise.all([
+          fetch('/api/parcels').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/deals').then(r => r.ok ? r.json() : []).catch(() => []),
+        ]);
+        // Index deals by parcel_id to find the active deal quickly
+        const dealsByParcel = {};
+        for (const d of deals) {
+          if (!d.parcel_id) continue;
+          (dealsByParcel[d.parcel_id] ||= []).push(d);
+        }
+        _parcelsCache = parcels.map(p => {
+          const pDeals = dealsByParcel[p.id] || [];
+          const active = pDeals.find(d => d.status === 'active') || null;
+          return {
+            ...p,
+            _deals:       pDeals,
+            _activeDeal:  active,
+          };
+        });
+      }
+
+      const q = parcelSearch.trim().toLowerCase();
+      const rows = q
+        ? _parcelsCache.filter(p => (p.name || '').toLowerCase().includes(q))
+        : _parcelsCache;
+
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="crm-empty">${q ? 'No parcels match' : 'No parcels yet'}</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = '';
+      const now = Date.now();
+      for (const p of rows) {
+        const tr = document.createElement('tr');
+        tr.className = 'crm-contact-tr';
+        const count = p.property_count || 0;
+        const stageBadge = p._activeDeal
+          ? `<span class="crm-deal-badge crm-deal-badge-stage">${p._activeDeal.stage}</span>`
+          : '<span style="color:var(--text-secondary);font-size:12px">No active</span>';
+        // Not-suitable can be timestamptz (future) or 'infinity' for permanent
+        let nsBadge = '—';
+        if (p.not_suitable_until) {
+          const t = p.not_suitable_until === 'infinity' || String(p.not_suitable_until).includes('infinity')
+            ? null
+            : new Date(p.not_suitable_until).getTime();
+          const active = t === null || (t && t > now);
+          if (active) {
+            const label = t === null ? 'Permanent' : `Until ${new Date(p.not_suitable_until).toLocaleDateString()}`;
+            nsBadge = `<span class="listing-ns-badge">${label}</span>`;
+          }
+        }
+        tr.innerHTML = `
+          <td class="crm-td-name"><strong>${p.name || p.id}</strong></td>
+          <td>${count}</td>
+          <td>${stageBadge}</td>
+          <td>${nsBadge}</td>
+          <td class="crm-td-actions"></td>`;
+        tr.querySelector('.crm-td-name').addEventListener('click', () => {
+          openModal(modal => renderParcelModal(modal, p.id, () => {
+            closeModal();
+            _parcelsCache = null;       // invalidate cache on close
+            renderParcelRows();
+          }));
+        });
+        tbody.appendChild(tr);
+      }
+    } catch (err) {
+      console.error('[parcels] fetch failed:', err);
+      tbody.innerHTML = `<tr><td colspan="5" class="crm-empty">Failed to load parcels</td></tr>`;
+    }
+  }
+
+  // ── Parcel modal (V75.4) ───────────────────────────────────────────────────
+
+  async function renderParcelModal(modal, parcelId, onDone) {
+    modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
+    try {
+      const [parcel, parcelDeals, parcelContacts, parcelNotes] = await Promise.all([
+        fetch(`/api/parcels?id=${encodeURIComponent(parcelId)}&expand=properties`).then(r => r.ok ? r.json() : null),
+        fetch(`/api/deals?parcel_id=${encodeURIComponent(parcelId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`/api/contacts?entity_type=parcel&entity_id=${encodeURIComponent(parcelId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`/api/notes?entity_type=parcel&entity_id=${encodeURIComponent(parcelId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+      ]);
+      if (!parcel) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
+
+      const props   = Array.isArray(parcel.properties) ? parcel.properties : [];
+      const title   = parcel.name || (window.formatParcelTitle ? window.formatParcelTitle(props) : parcel.id);
+      const totalArea = props.reduce((s, p) => s + (p.area_sqm || 0), 0);
+      const suburbs  = [...new Set(props.map(p => p.suburb).filter(Boolean))];
+
+      // Active deal detection for the smart-button section header
+      const activeDeal = parcelDeals.find(d => d.status === 'active') || null;
+      const closedCount = parcelDeals.filter(d => d.status !== 'active').length;
+
+      // Not-suitable state
+      const nsRaw = parcel.not_suitable_until;
+      const nsActive = !!(nsRaw && (String(nsRaw).includes('infinity') || new Date(nsRaw).getTime() > Date.now()));
+      const nsLabel = !nsActive ? '' :
+        (String(nsRaw).includes('infinity') ? 'Permanent' : `Until ${new Date(nsRaw).toLocaleDateString()}`);
+
+      // Deal stage labels
+      const workflowLabels = { acquisition: 'Acquisition', buyer_enquiry: 'Enquiry', agency_sales: 'Listing' };
+
+      modal.innerHTML = `
+        <div class="crm-modal-header">
+          <div>
+            <div class="crm-modal-title">${title}</div>
+            <div class="crm-modal-subtitle">${props.length} propert${props.length === 1 ? 'y' : 'ies'}${totalArea ? ' · ' + Math.round(totalArea).toLocaleString() + ' m²' : ''}${suburbs.length > 0 ? ' · ' + suburbs.join(', ') : ''}</div>
+          </div>
+          <button class="crm-modal-close">✕</button>
+        </div>
+        <div class="crm-modal-body">
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="details">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Parcel Details</span>
+            </div>
+            <div class="crm-section-body">
+              <div class="crm-detail-grid">
+                <div class="crm-detail-label">Parcel Name</div>
+                <div>
+                  <input class="kb-input crm-parcel-name-input" type="text" value="${(parcel.name || '').replace(/"/g,'&quot;')}" placeholder="${title}" style="width:100%;box-sizing:border-box;font-size:13px">
+                </div>
+                <div class="crm-detail-label">Merged Title</div><div>${title}</div>
+                <div class="crm-detail-label">Total Area</div><div>${totalArea ? Math.round(totalArea).toLocaleString() + ' m²' : '—'}</div>
+                <div class="crm-detail-label">Parcel ID</div><div><code style="font-size:11px">${parcel.id}</code></div>
+              </div>
+              <div style="margin-top:8px"><button class="crm-parcel-name-save kb-add-offer-btn" style="display:none">Save Name</button></div>
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="not-suitable" ${nsActive ? '' : 'data-collapsed="1"'}>
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">${nsActive ? '▾' : '▸'}</span> Not Suitable ${nsActive ? `<span class="listing-ns-badge" style="margin-left:6px">${nsLabel}</span>` : ''}</span>
+            </div>
+            <div class="crm-section-body" ${nsActive ? '' : 'style="display:none"'}>
+              ${nsActive ? `
+                <div style="margin-bottom:8px">Flagged as not suitable · <strong>${nsLabel}</strong></div>
+                ${parcel.not_suitable_reason ? `<div class="crm-detail-label" style="margin-bottom:4px">Reason</div><div style="margin-bottom:8px">${parcel.not_suitable_reason}</div>` : ''}
+                <button class="crm-parcel-clear-ns-btn kb-add-offer-btn">Clear flag</button>
+              ` : `
+                <div style="color:var(--text-secondary);font-size:12px;margin-bottom:8px">Not flagged. Use the map pin popup's snooze controls to mark individual properties, or set a parcel-wide flag here.</div>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <select class="kb-input crm-parcel-ns-snooze" style="font-size:12px">
+                    <option value="30d">30 days</option>
+                    <option value="90d">90 days</option>
+                    <option value="6m">6 months</option>
+                    <option value="1y">1 year</option>
+                    <option value="permanent">Permanent</option>
+                  </select>
+                  <input class="kb-input crm-parcel-ns-reason" type="text" placeholder="Reason (optional)" style="flex:1;font-size:12px">
+                  <button class="crm-parcel-set-ns-btn kb-add-offer-btn">Mark</button>
+                </div>
+              `}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="properties">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Properties <span class="crm-section-count">(${props.length})</span></span>
+            </div>
+            <div class="crm-section-body">
+              ${props.length ? props.map((p, i) => `
+                <div class="crm-prop-row" data-property-id="${p.id}">
+                  <span style="flex-shrink:0;font-size:11px;color:var(--text-secondary);min-width:18px">${i + 1}.</span>
+                  <span class="crm-prop-address">${p.address || '—'}${p.suburb ? ', ' + p.suburb : ''}</span>
+                  <span style="font-size:11px;color:var(--text-secondary)">${p.lot_dps || ''}</span>
+                  <span style="font-size:11px;color:var(--text-secondary)">${p.area_sqm ? Math.round(p.area_sqm).toLocaleString() + ' m²' : ''}</span>
+                  <button class="crm-prop-unlink-btn crm-parcel-remove-prop" data-property-id="${p.id}" title="Remove from parcel">✕</button>
+                </div>`).join('') : '<div class="crm-empty">No properties — this parcel is orphaned and can be deleted</div>'}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="deals">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${parcelDeals.length})</span></span>
+              ${activeDeal
+                ? `<button class="crm-parcel-open-deal-btn kb-add-offer-btn" data-deal-id="${activeDeal.id}">Open Active Deal</button>`
+                : `<button class="crm-parcel-new-deal-btn kb-add-offer-btn">+ New Deal${closedCount ? ` <span style="font-weight:400;font-size:10px;color:rgba(255,255,255,0.75)">(history: ${closedCount} closed)</span>` : ''}</button>`
+              }
+            </div>
+            <div class="crm-section-body">
+              ${parcelDeals.length ? parcelDeals.map(d => `
+                <div class="crm-deal-row">
+                  <a href="#" class="crm-deal-open" data-deal-id="${d.id}">${d.id}</a>
+                  <span class="crm-deal-badge crm-deal-badge-workflow">${workflowLabels[d.workflow] || d.workflow}</span>
+                  <span class="crm-deal-badge crm-deal-badge-stage">${d.stage}</span>
+                  <span class="crm-deal-badge crm-deal-badge-stage">${d.status}</span>
+                </div>`).join('') : '<div class="crm-empty">No deals on this parcel</div>'}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="contacts">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Contacts <span class="crm-section-count">(${parcelContacts.length})</span></span>
+            </div>
+            <div class="crm-section-body">
+              ${parcelContacts.length ? parcelContacts.map(c => `
+                <div class="crm-prop-row">
+                  <a href="#" class="crm-org-contact-open" data-contact-id="${c.id}">${displayName(c)}</a>
+                  <span class="crm-org-contact-meta">${[c.mobile, c.email].filter(Boolean).join(' · ')}</span>
+                  <span style="font-size:11px;color:var(--text-secondary)">${c.role || ''}</span>
+                </div>`).join('') : '<div class="crm-empty">No contacts linked to this parcel</div>'}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="notes">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Notes <span class="crm-section-count">(${parcelNotes.length})</span></span>
+              <button class="crm-parcel-add-note-btn kb-add-offer-btn">+ Add Note</button>
+            </div>
+            <div class="crm-section-body">
+              <div class="crm-parcel-note-input" style="display:none;margin-bottom:10px">
+                <textarea class="kb-input crm-parcel-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+                <div style="display:flex;gap:6px;margin-top:4px">
+                  <button class="crm-parcel-note-save kb-add-offer-btn">Save Note</button>
+                  <button class="crm-parcel-note-cancel crm-cancel-btn">Cancel</button>
+                </div>
+              </div>
+              <div class="crm-parcel-notes-list">
+                ${parcelNotes.length ? parcelNotes.map(n => {
+                  const author = n.author_name || 'Unknown';
+                  const taggedName = [n.tagged_first_name, n.tagged_last_name].filter(Boolean).join(' ').trim();
+                  const taggedBadge = taggedName ? ` <span class="kb-note-contact-badge">@${taggedName}</span>` : '';
+                  return `
+                    <div class="crm-note-entry" data-note-id="${n.id}">
+                      <div class="crm-note-meta">
+                        <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}${taggedBadge}</span>
+                        <button class="crm-note-delete" data-id="${n.id}">✕</button>
+                      </div>
+                      <div class="crm-note-text">${n.note_text}</div>
+                    </div>`;
+                }).join('') : '<div class="crm-empty">No notes yet</div>'}
+              </div>
+            </div>
+          </div>
+
+        </div>`;
+
+      // ── Handlers ─────────────────────────────────────────────────────────
+
+      modal.querySelector('.crm-modal-close').addEventListener('click', onDone);
+
+      // Collapsibles (same pattern as contact modal)
+      modal.querySelectorAll('.crm-section-collapsible').forEach(section => {
+        const header = section.querySelector('.crm-section-header');
+        const body   = section.querySelector('.crm-section-body');
+        const chev   = section.querySelector('.crm-section-chev');
+        const startCollapsed = section.dataset.collapsed === '1';
+        if (startCollapsed) { body.style.display = 'none'; chev.textContent = '▸'; }
+        header.addEventListener('click', (e) => {
+          if (e.target.closest('button, select, input, textarea, a')) return;
+          const isOpen = body.style.display !== 'none';
+          body.style.display = isOpen ? 'none' : '';
+          chev.textContent   = isOpen ? '▸' : '▾';
+        });
+      });
+
+      // Name save — show button only when input changed from existing
+      const nameInput = modal.querySelector('.crm-parcel-name-input');
+      const nameSave  = modal.querySelector('.crm-parcel-name-save');
+      const origName  = parcel.name || '';
+      nameInput.addEventListener('input', () => {
+        nameSave.style.display = nameInput.value.trim() !== origName ? '' : 'none';
+      });
+      nameSave.addEventListener('click', async () => {
+        await fetch('/api/parcels', {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: parcel.id, name: nameInput.value.trim() }),
+        });
+        renderParcelModal(modal, parcelId, onDone);
+      });
+
+      // Not-suitable set / clear
+      modal.querySelector('.crm-parcel-set-ns-btn')?.addEventListener('click', async () => {
+        const snoozeVal = modal.querySelector('.crm-parcel-ns-snooze').value;
+        const reason    = modal.querySelector('.crm-parcel-ns-reason').value.trim() || null;
+        const until = snoozeVal === 'permanent' ? 'permanent' :
+          new Date(Date.now() + ({ '30d': 30, '90d': 90, '6m': 180, '1y': 365 }[snoozeVal] * 86400000)).toISOString();
+        await fetch('/api/parcels', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_not_suitable', id: parcel.id, until, reason }),
+        });
+        renderParcelModal(modal, parcelId, onDone);
+      });
+      modal.querySelector('.crm-parcel-clear-ns-btn')?.addEventListener('click', async () => {
+        await fetch('/api/parcels', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'clear_not_suitable', id: parcel.id }),
+        });
+        renderParcelModal(modal, parcelId, onDone);
+      });
+
+      // Remove a property from parcel
+      modal.querySelectorAll('.crm-parcel-remove-prop').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Remove this property from the parcel? The property will still exist standalone.')) return;
+          await fetch('/api/parcels', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'remove_property', id: parcel.id, property_id: btn.dataset.propertyId }),
+          });
+          renderParcelModal(modal, parcelId, onDone);
+        });
+      });
+
+      // Deal-row actions
+      modal.querySelector('.crm-parcel-open-deal-btn')?.addEventListener('click', (e) => {
+        if (window.Router) Router.navigate(`/pipeline/deal/${e.currentTarget.dataset.dealId}`);
+      });
+      modal.querySelectorAll('.crm-deal-open').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (window.Router) Router.navigate(`/pipeline/deal/${a.dataset.dealId}`);
+        });
+      });
+      modal.querySelector('.crm-parcel-new-deal-btn')?.addEventListener('click', async () => {
+        const r = await fetch('/api/deals', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'new_on_parcel', parcel_id: parcel.id }),
+        });
+        if (r.ok) {
+          const d = await r.json();
+          if (window.Router) Router.navigate(`/pipeline/deal/${d.id}`);
+        }
+      });
+
+      // Contact row click → open contact modal
+      modal.querySelectorAll('.crm-org-contact-open').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          const cid = parseInt(a.dataset.contactId);
+          renderContactDetail(modal, cid, () => renderParcelModal(modal, parcelId, onDone));
+        });
+      });
+
+      // Notes add / delete
+      const addNoteBtn = modal.querySelector('.crm-parcel-add-note-btn');
+      const noteInput  = modal.querySelector('.crm-parcel-note-input');
+      addNoteBtn.addEventListener('click', () => { noteInput.style.display = ''; addNoteBtn.style.display = 'none'; modal.querySelector('.crm-parcel-note-text').focus(); });
+      modal.querySelector('.crm-parcel-note-cancel').addEventListener('click', () => { noteInput.style.display = 'none'; addNoteBtn.style.display = ''; });
+      modal.querySelector('.crm-parcel-note-save').addEventListener('click', async () => {
+        const text = modal.querySelector('.crm-parcel-note-text').value.trim();
+        if (!text) return;
+        await fetch('/api/notes', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entity_type: 'parcel', entity_id: parcel.id, note_text: text }),
+        });
+        renderParcelModal(modal, parcelId, onDone);
+      });
+      modal.querySelectorAll('.crm-note-delete').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Delete this note?')) return;
+          await fetch(`/api/notes?id=${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+          renderParcelModal(modal, parcelId, onDone);
+        });
+      });
+
+    } catch (err) {
+      console.error('[renderParcelModal]', err);
+      modal.innerHTML = '<div class="crm-modal-loading">Error loading parcel</div>';
+    }
+  }
+
+  // ── Properties pane (V75.5 placeholder) ────────────────────────────────────
+
+  async function loadPropertiesPane() {
+    const pane = container.querySelector('#crm-pane-properties');
+    pane.innerHTML = `
+      <div style="padding:48px 24px;text-align:center;color:var(--text-secondary);font-size:13px">
+        <div style="font-size:18px;margin-bottom:8px">🏡</div>
+        <div style="font-weight:500;margin-bottom:4px">Properties tab coming in V75.5</div>
+        <div>Individual property records — for aggregated Parcels, see the Parcels tab.</div>
+      </div>`;
+  }
+
+  // ── Public navigation hook for router deep links ───────────────────────────
+  // window.CRM.navigateTo('parcels', 'parcel-123') → switches to Parcels tab
+  // and opens the parcel modal. Called from router.js for /crm/parcels/:id and
+  // future /crm/contacts/:id, /crm/properties/:id, /crm/organisations/:id.
+  window.CRM.navigateTo = (subRoute, entityId) => {
+    const tabMap = {
+      contacts:      'contacts',
+      properties:    'properties',
+      parcels:       'parcels',
+      organisations: 'organisations',
+    };
+    const tabName = tabMap[subRoute];
+    if (!tabName) return;
+    const tabBtn = container.querySelector(`.crm-tab[data-tab="${tabName}"]`);
+    if (tabBtn && !tabBtn.classList.contains('active')) tabBtn.click();
+    if (!entityId) return;
+    // Deep-link: open the relevant modal
+    if (tabName === 'contacts') {
+      openModal(modal => renderContactDetail(modal, parseInt(entityId), () => closeModal()));
+    } else if (tabName === 'parcels') {
+      openModal(modal => renderParcelModal(modal, entityId, () => closeModal()));
+    }
+    // properties + organisations deep-linking lands in V75.5/later
+  };
 
   // Initial load
   loadContactsPane();

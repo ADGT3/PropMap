@@ -1097,14 +1097,33 @@ map.on('click', function (e) {
     clearParcelSelection();
     _activeListingId = null;
     document.querySelectorAll('.listing-card').forEach(c => c.classList.remove('active'));
-  } else if (clickMarker) {
-    const d = clickMarkerData || { lat: clickMarker.getLatLng().lat, lng: clickMarker.getLatLng().lng, label: '', lga: '', lotDP: null, areaSqm: null, zoneCode: null, listing: null, parcelLayer: null };
-    const pinHtml1 = `<div class="search-pin" style="background:#1a4a8a;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">1</span></div>`;
-    clickMarker.setIcon(L.divIcon({ className: '', html: pinHtml1, iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -30] }));
-    if (d.parcelLayer) { parcelLayer = null; }
-    _selectedParcels.push({ lat: d.lat, lng: d.lng, label: d.label, lga: d.lga, lotDP: d.lotDP, areaSqm: d.areaSqm, zoneCode: d.zoneCode, listing: d.listing, marker: clickMarker, parcelLayer: d.parcelLayer });
-    clickMarker = null;
-    clickMarkerData = null;
+  } else if (_selectedParcels.length === 0 && (clickMarker || clickMarkerData)) {
+    // V75.4: promote the provisional single-click selection into _selectedParcels[0]
+    // BEFORE the new meta-click adds its pin. Handles the case where async
+    // reverse-geocode has nulled `clickMarker` — we reconstruct from the
+    // persisted data and re-drop the pin as blue-#1.
+    let marker = clickMarker;
+    let d = clickMarkerData;
+
+    if (!marker && d) {
+      // Reconstruct the first pin from persisted data
+      const pinHtml1 = `<div class="search-pin" style="background:#1a4a8a;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">1</span></div>`;
+      marker = L.marker([d.lat, d.lng], {
+        icon: L.divIcon({ className: '', html: pinHtml1, iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -30] }),
+      }).addTo(map);
+    } else if (marker) {
+      // Repaint existing green pin as blue-#1
+      if (!d) d = { lat: marker.getLatLng().lat, lng: marker.getLatLng().lng, label: '', lga: '', lotDP: null, areaSqm: null, zoneCode: null, listing: null, parcelLayer: null };
+      const pinHtml1 = `<div class="search-pin" style="background:#1a4a8a;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">1</span></div>`;
+      marker.setIcon(L.divIcon({ className: '', html: pinHtml1, iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -30] }));
+    }
+
+    if (d && marker) {
+      if (d.parcelLayer) { parcelLayer = null; }
+      _selectedParcels.push({ lat: d.lat, lng: d.lng, label: d.label, lga: d.lga, lotDP: d.lotDP, areaSqm: d.areaSqm, zoneCode: d.zoneCode, listing: d.listing, marker, parcelLayer: d.parcelLayer });
+      clickMarker = null;
+      clickMarkerData = null;
+    }
     renderMultiSelectBar();
   }
 
