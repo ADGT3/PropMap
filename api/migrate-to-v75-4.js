@@ -185,23 +185,39 @@ async function execute(req, res) {
         const lotsArr      = Array.isArray(oldProp.parcels) ? oldProp.parcels : [];
         if (lotsArr.length < 1) continue;
 
-        // Create the new Parcel with a fresh timestamp id
+        // Create the new Parcel with a fresh timestamp id.
+        // Name includes suburb so the CRM list shows full context.
         const newParcelId = 'parcel-' + (Date.now() + splitCount);
+        const parcelName = [oldProp.address, oldProp.suburb].filter(Boolean).join(', ');
         await sql`
           INSERT INTO parcels (id, name, not_suitable_until, not_suitable_reason)
           VALUES (${newParcelId},
-                  ${oldProp.address || null},
+                  ${parcelName || null},
                   ${oldProp.not_suitable_until || null},
                   ${oldProp.not_suitable_reason || null})`;
 
-        // Create N new Property rows, one per lot entry in the JSONB
+        // Create N new Property rows, one per lot entry in the JSONB.
+        // Each entry has { lat, lng, label } where label is "Address, Suburb"
+        // — we parse that for the per-property address.
         const newPropertyIds = [];
         let idx = 0;
         for (const lot of lotsArr) {
           idx++;
           const newPropId = `property-${Date.now()}-${splitCount}-${idx}`;
-          const address   = lot.address || `Lot ${idx} ${oldProp.address || ''}`.trim();
-          const suburb    = lot.suburb  || oldProp.suburb  || '';
+          // Prefer explicit .address (rare), otherwise parse from .label
+          let address = lot.address || '';
+          let suburb  = lot.suburb  || oldProp.suburb || '';
+          if (!address && lot.label) {
+            const s = String(lot.label).trim();
+            const commaIdx = s.lastIndexOf(',');
+            if (commaIdx > 0) {
+              address = s.slice(0, commaIdx).trim();
+              if (!lot.suburb) suburb = s.slice(commaIdx + 1).trim();
+            } else {
+              address = s;
+            }
+          }
+          if (!address) address = `Lot ${idx} ${oldProp.address || ''}`.trim();
           const lat       = lot.lat     ?? oldProp.lat     ?? null;
           const lng       = lot.lng     ?? oldProp.lng     ?? null;
           const lotDp     = lot.lot_dps || lot.lotDP       || '';
