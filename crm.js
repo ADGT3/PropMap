@@ -2133,14 +2133,578 @@ function renderCRMView(container) {
 
   // ── Properties pane (V75.5 placeholder) ────────────────────────────────────
 
+  // ── Properties pane (V75.5) ────────────────────────────────────────────────
+  let propertySearch = '';
+  let _propertiesCache = null;
+
+  // Expose cache-bust hook for external code that mutates properties.
+  // Same pattern as invalidateParcelsCache (V75.4d.3).
+  if (window.CRM) {
+    window.CRM.invalidatePropertiesCache = () => {
+      _propertiesCache = null;
+      const pane = container.querySelector('#crm-pane-properties');
+      if (pane && pane.classList.contains('active')) {
+        renderPropertyRows();
+      }
+    };
+  }
+
   async function loadPropertiesPane() {
     const pane = container.querySelector('#crm-pane-properties');
     pane.innerHTML = `
-      <div style="padding:48px 24px;text-align:center;color:var(--text-secondary);font-size:13px">
-        <div style="font-size:18px;margin-bottom:8px">🏡</div>
-        <div style="font-weight:500;margin-bottom:4px">Properties tab coming in V75.5</div>
-        <div>Individual property records — for aggregated Parcels, see the Parcels tab.</div>
+      <div class="crm-contacts-toolbar">
+        <input class="kb-input crm-view-search" placeholder="Search properties (address, suburb, lot/DP)…" value="${propertySearch}">
+      </div>
+      <div class="crm-contact-table-wrap">
+        <table class="crm-contact-table">
+          <thead><tr>
+            <th>Address</th>
+            <th>Suburb</th>
+            <th>Lot/DP</th>
+            <th>Domain</th>
+            <th>Deal</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="crmPropertyTableBody"><tr><td colspan="6" class="crm-loading">Loading…</td></tr></tbody>
+        </table>
       </div>`;
+
+    pane.querySelector('.crm-view-search').addEventListener('input', e => {
+      propertySearch = e.target.value;
+      renderPropertyRows();
+    });
+
+    await renderPropertyRows();
+  }
+
+  async function renderPropertyRows() {
+    const pane  = container.querySelector('#crm-pane-properties');
+    const tbody = pane?.querySelector('#crmPropertyTableBody');
+    if (!tbody) return;
+
+    try {
+      if (!_propertiesCache) {
+        const [properties, deals, parcels] = await Promise.all([
+          fetch('/api/properties').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/deals').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/parcels').then(r => r.ok ? r.json() : []).catch(() => []),
+        ]);
+
+        // Index deals by property_id (for direct deals — not parcel deals)
+        const dealsByProperty = {};
+        for (const d of deals) {
+          if (!d.property_id) continue;
+          (dealsByProperty[d.property_id] ||= []).push(d);
+        }
+        // Index parcels by id for parent lookup
+        const parcelsById = {};
+        for (const p of parcels) parcelsById[p.id] = p;
+
+        _propertiesCache = properties.map(p => {
+          const pDeals = dealsByProperty[p.id] || [];
+          const active = pDeals.find(d => d.status === 'active') || null;
+          return {
+            ...p,
+            _deals:      pDeals,
+            _activeDeal: active,
+            _parcel:     p.parcel_id ? (parcelsById[p.parcel_id] || null) : null,
+          };
+        });
+      }
+
+      const q = propertySearch.trim().toLowerCase();
+      const rows = q
+        ? _propertiesCache.filter(p => {
+            const blob = [p.address, p.suburb, p.lot_dps, p.state_prop_id].filter(Boolean).join(' ').toLowerCase();
+            return blob.includes(q);
+          })
+        : _propertiesCache;
+
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="6" class="crm-empty">${q ? 'No properties match' : 'No properties yet'}</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = '';
+      for (const p of rows) {
+        const tr = document.createElement('tr');
+        tr.className = 'crm-contact-tr';
+
+        const addr = p.address || '(no address)';
+        const suburb = p.suburb || '';
+        const lotDp = p.lot_dps || '';
+        const listingUrl = p.listing_url || '';
+        const domBadge = listingUrl
+          ? `<a href="${listingUrl}" target="_blank" rel="noopener" class="domain-badge" onclick="event.stopPropagation()">
+               <img src="https://ui-avatars.com/api/?name=D&size=12&background=1ea765&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain
+             </a>`
+          : '';
+
+        // Deal badge — if active deal exists, show stage badge as link
+        const dealBadge = p._activeDeal
+          ? `<a href="#" class="crm-deal-open" data-deal-id="${p._activeDeal.id}" onclick="event.stopPropagation()"><span class="crm-deal-badge crm-deal-badge-stage">${p._activeDeal.stage}</span></a>`
+          : (p._parcel
+              ? `<span style="color:var(--text-secondary);font-size:11px">in parcel</span>`
+              : '<span style="color:var(--text-secondary);font-size:12px">—</span>');
+
+        tr.innerHTML = `
+          <td class="crm-td-name"><strong>${addr}</strong></td>
+          <td>${suburb}</td>
+          <td style="font-size:11px;color:var(--text-secondary)">${lotDp}</td>
+          <td>${domBadge}</td>
+          <td>${dealBadge}</td>
+          <td class="crm-td-actions"></td>`;
+
+        tr.querySelector('.crm-td-name').addEventListener('click', () => {
+          openModal(modal => renderPropertyModal(modal, p.id, () => {
+            closeModal();
+            _propertiesCache = null;
+            renderPropertyRows();
+          }));
+        });
+
+        // Deal link — wire the open-deal link
+        tr.querySelector('.crm-deal-open')?.addEventListener('click', (e) => {
+          e.preventDefault();
+          const dealId = e.currentTarget.dataset.dealId;
+          if (dealId && typeof window.openPipelineItem === 'function') {
+            closeModal();
+            window.openPipelineItem(dealId);
+          }
+        });
+
+        tbody.appendChild(tr);
+      }
+    } catch (err) {
+      console.error('[properties] fetch failed:', err);
+      tbody.innerHTML = `<tr><td colspan="6" class="crm-empty">Failed to load properties</td></tr>`;
+    }
+  }
+
+  // ── Property modal (V75.5) ─────────────────────────────────────────────────
+  async function renderPropertyModal(modal, propertyId, onDone) {
+    modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
+    try {
+      const [properties, allDeals, allParcels, propContacts, propNotes] = await Promise.all([
+        fetch('/api/properties').then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch('/api/deals').then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch('/api/parcels').then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`/api/contacts?entity_type=property&entity_id=${encodeURIComponent(propertyId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`/api/notes?entity_type=property&entity_id=${encodeURIComponent(propertyId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+      ]);
+      const property = properties.find(p => p.id === propertyId);
+      if (!property) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
+
+      const parcel = property.parcel_id ? allParcels.find(x => x.id === property.parcel_id) : null;
+      const propertyDeals = allDeals.filter(d => d.property_id === propertyId);
+      const activeDeal  = propertyDeals.find(d => d.status === 'active') || null;
+      const closedCount = propertyDeals.filter(d => d.status !== 'active').length;
+
+      // Not-suitable state
+      const nsRaw = property.not_suitable_until;
+      const nsActive = !!(nsRaw && (String(nsRaw).includes('infinity') || new Date(nsRaw).getTime() > Date.now()));
+      const nsLabel = !nsActive ? '' :
+        (String(nsRaw).includes('infinity') ? 'Permanent' : `Until ${new Date(nsRaw).toLocaleDateString()}`);
+
+      const workflowLabels = { acquisition: 'Acquisition', buyer_enquiry: 'Enquiry', agency_sales: 'Listing' };
+
+      // Delete constraints: refuse if has deals or is part of a parcel
+      const hasDeals = propertyDeals.length > 0;
+      const inParcel = !!parcel;
+      const deleteDisabled = hasDeals || inParcel;
+      const deleteTooltip = hasDeals ? `Cannot delete — ${propertyDeals.length} deal${propertyDeals.length === 1 ? '' : 's'} reference this property`
+                          : inParcel  ? `Cannot delete — property is part of parcel "${parcel.name}". Remove from parcel first.`
+                          : 'Delete this property';
+
+      // Domain badge (same markup as listing-panel)
+      const listingUrl = property.listing_url || '';
+      const domBadge = listingUrl
+        ? `<a href="${listingUrl}" target="_blank" rel="noopener" class="domain-badge" style="display:inline-flex">
+             <img src="https://ui-avatars.com/api/?name=D&size=12&background=1ea765&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain
+           </a>`
+        : '<span style="color:var(--text-secondary);font-size:12px">—</span>';
+
+      modal.innerHTML = `
+        <div class="crm-modal-header">
+          <div>
+            <div class="crm-modal-title">${property.address || property.id}${property.suburb ? ', ' + property.suburb : ''}</div>
+            <div class="crm-modal-subtitle">${property.lot_dps || ''}${property.area_sqm ? ' · ' + Math.round(property.area_sqm).toLocaleString() + ' m²' : ''}</div>
+          </div>
+          <button class="crm-modal-close">✕</button>
+        </div>
+        <div class="crm-modal-body">
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="details">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Property Details</span>
+            </div>
+            <div class="crm-section-body">
+              <div class="crm-detail-grid">
+                <div class="crm-detail-label">Address</div>
+                <div><input class="kb-input crm-prop-address-input" type="text" value="${(property.address || '').replace(/"/g,'&quot;')}" style="width:100%;box-sizing:border-box;font-size:13px"></div>
+                <div class="crm-detail-label">Suburb</div>
+                <div><input class="kb-input crm-prop-suburb-input" type="text" value="${(property.suburb || '').replace(/"/g,'&quot;')}" style="width:100%;box-sizing:border-box;font-size:13px"></div>
+                <div class="crm-detail-label">Lot/DP</div>
+                <div><input class="kb-input crm-prop-lotdp-input" type="text" value="${(property.lot_dps || '').replace(/"/g,'&quot;')}" style="width:100%;box-sizing:border-box;font-size:13px"></div>
+                <div class="crm-detail-label">Area</div>
+                <div>${property.area_sqm ? Math.round(property.area_sqm).toLocaleString() + ' m²' : '—'}</div>
+                <div class="crm-detail-label">Coordinates</div>
+                <div style="font-size:12px;color:var(--text-secondary)">${property.lat != null && property.lng != null ? `${property.lat.toFixed(6)}, ${property.lng.toFixed(6)}` : '—'}</div>
+                <div class="crm-detail-label">State Prop ID</div>
+                <div><code style="font-size:11px">${property.state_prop_id || '—'}</code></div>
+                <div class="crm-detail-label">Domain</div>
+                <div>${domBadge}</div>
+                <div class="crm-detail-label">Parcel</div>
+                <div>${parcel ? `<a href="#" class="crm-prop-open-parcel" data-parcel-id="${parcel.id}">${parcel.name || parcel.id}</a>` : '<span style="color:var(--text-secondary);font-size:12px">Not in a parcel</span>'}</div>
+                <div class="crm-detail-label">Property ID</div>
+                <div><code style="font-size:11px">${property.id}</code></div>
+              </div>
+              <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <button class="crm-prop-save-btn kb-add-offer-btn" style="display:none">Save Changes</button>
+                <div style="margin-left:auto">
+                  <button class="crm-prop-delete-btn kb-add-offer-btn"
+                    style="background:#c0392b${deleteDisabled ? ';opacity:0.5;cursor:not-allowed' : ''}"
+                    ${deleteDisabled ? 'disabled' : ''}
+                    title="${deleteTooltip}">
+                    Delete Property
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="not-suitable" ${nsActive ? '' : 'data-collapsed="1"'}>
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">${nsActive ? '▾' : '▸'}</span> Not Suitable ${nsActive ? `<span class="listing-ns-badge" style="margin-left:6px">${nsLabel}</span>` : ''}</span>
+            </div>
+            <div class="crm-section-body" ${nsActive ? '' : 'style="display:none"'}>
+              ${nsActive ? `
+                <div style="margin-bottom:8px">Flagged as not suitable · <strong>${nsLabel}</strong></div>
+                ${property.not_suitable_reason ? `<div class="crm-detail-label" style="margin-bottom:4px">Reason</div><div style="margin-bottom:8px">${property.not_suitable_reason}</div>` : ''}
+                <button class="crm-prop-clear-ns-btn kb-add-offer-btn">Clear flag</button>
+              ` : `
+                <div style="color:var(--text-secondary);font-size:12px;margin-bottom:8px">Not flagged.</div>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <select class="kb-input crm-prop-ns-snooze" style="font-size:12px">
+                    <option value="30d">30 days</option>
+                    <option value="90d">90 days</option>
+                    <option value="6m">6 months</option>
+                    <option value="1y">1 year</option>
+                    <option value="permanent">Permanent</option>
+                  </select>
+                  <input class="kb-input crm-prop-ns-reason" type="text" placeholder="Reason (optional)" style="flex:1;font-size:12px">
+                  <button class="crm-prop-set-ns-btn kb-add-offer-btn">Mark</button>
+                </div>
+              `}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="deals">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${propertyDeals.length})</span></span>
+              ${activeDeal
+                ? `<button class="crm-prop-open-deal-btn kb-add-offer-btn" data-deal-id="${activeDeal.id}">Open Active Deal</button>`
+                : (inParcel ? '' : `<button class="crm-prop-new-deal-btn kb-add-offer-btn">+ New Deal${closedCount ? ` <span style="font-weight:400;font-size:10px;color:rgba(255,255,255,0.75)">(history: ${closedCount} closed)</span>` : ''}</button>`)
+              }
+            </div>
+            <div class="crm-section-body">
+              ${inParcel && !propertyDeals.length ? '<div class="crm-empty" style="padding:10px 0;color:var(--text-secondary);font-size:12px">Deals for properties in a parcel are tracked at the parcel level.</div>' : ''}
+              ${propertyDeals.length ? propertyDeals.map(d => `
+                <div class="crm-deal-row">
+                  <a href="#" class="crm-deal-open" data-deal-id="${d.id}">${d.id}</a>
+                  <span class="crm-deal-badge crm-deal-badge-workflow">${workflowLabels[d.workflow] || d.workflow}</span>
+                  <span class="crm-deal-badge crm-deal-badge-stage">${d.stage}</span>
+                  <span class="crm-deal-badge crm-deal-badge-stage">${d.status}</span>
+                </div>`).join('') : (inParcel ? '' : '<div class="crm-empty">No deals on this property</div>')}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="contacts">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Contacts <span class="crm-section-count">(${propContacts.length})</span></span>
+            </div>
+            <div class="crm-section-body">
+              ${propContacts.length ? propContacts.map(c => `
+                <div class="crm-prop-row">
+                  <a href="#" class="crm-org-contact-open" data-contact-id="${c.id}">${displayName(c)}</a>
+                  <span class="crm-org-contact-meta">${[c.mobile, c.email].filter(Boolean).join(' · ')}</span>
+                  <span style="font-size:11px;color:var(--text-secondary)">${c.role || ''}</span>
+                </div>`).join('') : '<div class="crm-empty">No contacts linked to this property</div>'}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="notes">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Notes <span class="crm-section-count">(${propNotes.length})</span></span>
+              <button class="crm-prop-add-note-btn kb-add-offer-btn">+ Add Note</button>
+            </div>
+            <div class="crm-section-body">
+              <div class="crm-prop-note-input" style="display:none;margin-bottom:10px">
+                <textarea class="kb-input crm-prop-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+                <div style="display:flex;gap:6px;margin-top:4px">
+                  <button class="crm-prop-note-save kb-add-offer-btn">Save Note</button>
+                  <button class="crm-prop-note-cancel crm-cancel-btn">Cancel</button>
+                </div>
+              </div>
+              <div class="crm-prop-notes-list">
+                ${propNotes.length ? propNotes.map(n => {
+                  const author = n.author_name || 'Unknown';
+                  const taggedName = [n.tagged_first_name, n.tagged_last_name].filter(Boolean).join(' ').trim();
+                  const taggedBadge = taggedName ? ` <span class="kb-note-contact-badge">@${taggedName}</span>` : '';
+                  return `
+                    <div class="crm-note-entry" data-note-id="${n.id}">
+                      <div class="crm-note-meta">
+                        <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}${taggedBadge}</span>
+                        <button class="crm-note-delete" data-id="${n.id}">✕</button>
+                      </div>
+                      <div class="crm-note-text">${n.note_text}</div>
+                    </div>`;
+                }).join('') : '<div class="crm-empty">No notes yet</div>'}
+              </div>
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="map" ${property.lat != null && property.lng != null ? '' : 'data-collapsed="1"'}>
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">${property.lat != null ? '▾' : '▸'}</span> Map Location</span>
+            </div>
+            <div class="crm-section-body" ${property.lat != null ? '' : 'style="display:none"'}>
+              ${property.lat != null && property.lng != null
+                ? `<div class="crm-prop-map" style="height:240px;border-radius:6px;overflow:hidden;border:1px solid var(--border)"></div>
+                   <div style="font-size:11px;color:var(--text-secondary);margin-top:4px">Click the pin to view on the main map.</div>`
+                : '<div class="crm-empty">No coordinates stored</div>'}
+            </div>
+          </div>
+
+        </div>`;
+
+      // ── Wire up modal interactions ─────────────────────────────────────────
+
+      // Close
+      modal.querySelector('.crm-modal-close').addEventListener('click', () => onDone());
+
+      // Collapsible sections
+      modal.querySelectorAll('.crm-section-header').forEach(h => {
+        h.addEventListener('click', (e) => {
+          // Don't toggle if clicking a button inside the header
+          if (e.target.closest('button, a')) return;
+          const section = h.closest('.crm-section-collapsible');
+          const body = section.querySelector('.crm-section-body');
+          const chev = h.querySelector('.crm-section-chev');
+          if (body.style.display === 'none') {
+            body.style.display = '';
+            if (chev) chev.textContent = '▾';
+            section.removeAttribute('data-collapsed');
+          } else {
+            body.style.display = 'none';
+            if (chev) chev.textContent = '▸';
+            section.setAttribute('data-collapsed', '1');
+          }
+        });
+      });
+
+      // Details edit — Save button appears on any change
+      const addrInput  = modal.querySelector('.crm-prop-address-input');
+      const subInput   = modal.querySelector('.crm-prop-suburb-input');
+      const lotInput   = modal.querySelector('.crm-prop-lotdp-input');
+      const saveBtn    = modal.querySelector('.crm-prop-save-btn');
+      const origAddr   = property.address || '';
+      const origSub    = property.suburb || '';
+      const origLot    = property.lot_dps || '';
+      const toggleSave = () => {
+        const dirty = addrInput.value.trim() !== origAddr
+                   || subInput.value.trim()  !== origSub
+                   || lotInput.value.trim()  !== origLot;
+        saveBtn.style.display = dirty ? '' : 'none';
+      };
+      addrInput.addEventListener('input', toggleSave);
+      subInput.addEventListener('input',  toggleSave);
+      lotInput.addEventListener('input',  toggleSave);
+      saveBtn.addEventListener('click', async () => {
+        await fetch('/api/properties', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id:      property.id,
+            address: addrInput.value.trim() || null,
+            suburb:  subInput.value.trim()  || null,
+            lot_dps: lotInput.value.trim()  || null,
+          }),
+        });
+        // Re-render modal to refresh
+        renderPropertyModal(modal, propertyId, onDone);
+      });
+
+      // Delete property
+      modal.querySelector('.crm-prop-delete-btn')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        if (btn.disabled) return;
+        if (!confirm(`Delete this property?\n\nThis cannot be undone.`)) return;
+        const r = await fetch(`/api/properties?id=${encodeURIComponent(property.id)}`, { method: 'DELETE' });
+        if (r.ok) {
+          onDone();
+        } else {
+          const err = await r.json().catch(() => ({}));
+          alert(`Failed to delete: ${err.error || r.status}`);
+        }
+      });
+
+      // Not-suitable set/clear
+      modal.querySelector('.crm-prop-set-ns-btn')?.addEventListener('click', async () => {
+        const snoozeVal = modal.querySelector('.crm-prop-ns-snooze').value;
+        const reason    = modal.querySelector('.crm-prop-ns-reason').value.trim() || null;
+        const until = snoozeVal === 'permanent' ? 'permanent' :
+          new Date(Date.now() + ({ '30d': 30, '90d': 90, '6m': 180, '1y': 365 }[snoozeVal] * 86400000)).toISOString();
+        await fetch('/api/properties', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_not_suitable', id: property.id, until, reason }),
+        });
+        renderPropertyModal(modal, propertyId, onDone);
+      });
+      modal.querySelector('.crm-prop-clear-ns-btn')?.addEventListener('click', async () => {
+        await fetch('/api/properties', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'clear_not_suitable', id: property.id }),
+        });
+        renderPropertyModal(modal, propertyId, onDone);
+      });
+
+      // Open active deal / open any deal link
+      modal.querySelector('.crm-prop-open-deal-btn')?.addEventListener('click', (e) => {
+        const dealId = e.currentTarget.dataset.dealId;
+        if (dealId && typeof window.openPipelineItem === 'function') {
+          onDone();
+          window.openPipelineItem(dealId);
+        }
+      });
+      modal.querySelectorAll('.crm-deal-open').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          const dealId = a.dataset.dealId;
+          if (dealId && typeof window.openPipelineItem === 'function') {
+            onDone();
+            window.openPipelineItem(dealId);
+          }
+        });
+      });
+
+      // New deal on property
+      modal.querySelector('.crm-prop-new-deal-btn')?.addEventListener('click', async () => {
+        const r = await fetch('/api/deals', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'new_on_property', property_id: property.id, workflow: 'acquisition', stage: 'shortlisted' }),
+        });
+        if (r.ok) {
+          const { id: newDealId } = await r.json();
+          if (newDealId && typeof window.openPipelineItem === 'function') {
+            onDone();
+            window.openPipelineItem(newDealId);
+          }
+        } else {
+          const err = await r.json().catch(() => ({}));
+          alert(`Failed to create deal: ${err.error || r.status}`);
+        }
+      });
+
+      // Open parcel from the details grid link
+      modal.querySelector('.crm-prop-open-parcel')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        const pid = e.currentTarget.dataset.parcelId;
+        if (pid && window.CRM?.navigateTo) {
+          onDone();
+          window.CRM.navigateTo('parcels', pid);
+        }
+      });
+
+      // Contact link — use existing openContactDrawer if available
+      modal.querySelectorAll('.crm-org-contact-open').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          const cid = a.dataset.contactId;
+          if (cid && typeof openContactDrawer === 'function') openContactDrawer(cid);
+        });
+      });
+
+      // Notes — add, save, cancel, delete
+      const addNoteBtn  = modal.querySelector('.crm-prop-add-note-btn');
+      const noteInput   = modal.querySelector('.crm-prop-note-input');
+      const noteTextEl  = modal.querySelector('.crm-prop-note-text');
+      const noteSaveBtn = modal.querySelector('.crm-prop-note-save');
+      const noteCancelBtn = modal.querySelector('.crm-prop-note-cancel');
+      addNoteBtn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        noteInput.style.display = '';
+        noteTextEl.focus();
+      });
+      noteCancelBtn?.addEventListener('click', () => {
+        noteInput.style.display = 'none';
+        noteTextEl.value = '';
+      });
+      noteSaveBtn?.addEventListener('click', async () => {
+        const text = noteTextEl.value.trim();
+        if (!text) return;
+        await fetch('/api/notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entity_type: 'property', entity_id: property.id, note_text: text }),
+        });
+        renderPropertyModal(modal, propertyId, onDone);
+      });
+      modal.querySelectorAll('.crm-note-delete').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const nid = btn.dataset.id;
+          if (!nid || !confirm('Delete this note?')) return;
+          await fetch(`/api/notes?id=${encodeURIComponent(nid)}`, { method: 'DELETE' });
+          renderPropertyModal(modal, propertyId, onDone);
+        });
+      });
+
+      // Render the map preview if we have coords
+      if (property.lat != null && property.lng != null) {
+        const mapEl = modal.querySelector('.crm-prop-map');
+        if (mapEl && typeof L !== 'undefined') {
+          // Defer to next tick so the container has layout
+          setTimeout(() => {
+            try {
+              const miniMap = L.map(mapEl, {
+                center: [property.lat, property.lng],
+                zoom: 17,
+                zoomControl: true,
+                attributionControl: false,
+                dragging: true,
+                scrollWheelZoom: false,
+                doubleClickZoom: false,
+                boxZoom: false,
+                keyboard: false,
+              });
+              L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+              }).addTo(miniMap);
+              // Draw polygon if we have rings
+              const firstParcel = Array.isArray(property.parcels) ? property.parcels[0] : null;
+              if (firstParcel?.rings?.length) {
+                const leafletRings = firstParcel.rings.map(ring => ring.map(([lng, lat]) => [lat, lng]));
+                const poly = L.polygon(leafletRings, {
+                  color: '#1a6b3a', weight: 2, fillColor: '#1a6b3a', fillOpacity: 0.15,
+                }).addTo(miniMap);
+                miniMap.fitBounds(poly.getBounds(), { padding: [20, 20], maxZoom: 18 });
+              } else {
+                L.marker([property.lat, property.lng]).addTo(miniMap);
+              }
+              miniMap.invalidateSize();
+            } catch (err) {
+              console.warn('[property-modal] mini-map render failed:', err);
+            }
+          }, 50);
+        }
+      }
+    } catch (err) {
+      console.error('[property-modal]', err);
+      modal.innerHTML = '<div class="crm-modal-loading">Error loading property</div>';
+    }
   }
 
   // ── Public navigation hook for router deep links ───────────────────────────

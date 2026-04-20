@@ -371,6 +371,11 @@ function addToPipeline(listing) {
   if (kanbanVisible) renderBoard();
   showKanbanToast(`${listing.address} added to pipeline`);
 
+  // V75.5: new property was created (or upserted) — refresh CRM Properties cache
+  if (window.CRM?.invalidatePropertiesCache) {
+    window.CRM.invalidatePropertiesCache();
+  }
+
   // Async — fetch Lot/DP from cadastre if not already present
   if (!pipeline[id].property._lotDPs && window.fetchLotDP) {
     const _lat = lat ?? parcels[0]?.lat ?? null;
@@ -430,6 +435,12 @@ async function removeFromPipeline(id) {
   // the parcel. Invalidate the CRM Parcels cache so it stays in sync.
   if (wasParcel && window.CRM?.invalidateParcelsCache) {
     window.CRM.invalidateParcelsCache();
+  }
+  // V75.5: any deal removal may have removed a property (if not a parcel-deal,
+  // the property was deleted via cascade; for parcel-deals the child properties
+  // were deleted server-side by the orphan cleanup). Invalidate Properties cache.
+  if (window.CRM?.invalidatePropertiesCache) {
+    window.CRM.invalidatePropertiesCache();
   }
 }
 
