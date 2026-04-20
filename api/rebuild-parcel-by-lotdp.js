@@ -1,50 +1,55 @@
 /**
  * api/rebuild-parcel-by-lotdp.js
  *
- * Rebuilds a Parcel's child Properties from an authoritative Lot/DP list.
+ * Rebuilds a Parcel's child Properties from client-pre-resolved Lot data.
  *
- * The V75.4 migration split synthetic multi-parcel rows into child Properties
- * by unpacking the imprecise ⌘-click lat/lng coordinates. This worked when
- * clicks landed unambiguously in a single cadastral lot, but failed when:
- *   - Two clicks fell inside the same lot (duplicate)
- *   - A click landed near a lot boundary and NSW's Property layer returned
- *     a different frontage address (the Wentworth Road vs Northern Road case)
- *
- * This endpoint bypasses lat/lng entirely. The caller supplies the list of
- * authoritative Lot/DPs for a Parcel, and we rebuild:
- *   1. Look up each Lot/DP in NSW cadastre to get polygon + centroid + address
- *   2. DELETE all existing child Properties of this Parcel
- *   3. CREATE N new child Properties, one per Lot/DP, with centroid lat/lng
- *      and authoritative address from NSW Property layer
- *
- * Note this is DESTRUCTIVE — any linked contacts, notes, or other references
- * to the deleted children are lost. Entity_contacts and notes pointing at
- * the Parcel itself are preserved (they reference parcel_id, not property_id).
+ * DESIGN NOTE: Earlier versions did NSW Spatial Portal lookups server-side,
+ * but Vercel→NSW was unreliable (frequent timeouts on Lot 2//DP1280952 and
+ * similar). Since browser→NSW is fast and reliable, the lookups moved to
+ * the client (window.NSWLookup in nsw-lookup-client.js). This endpoint now
+ * accepts pre-resolved property records and writes them to the DB.
  *
  * POST /api/rebuild-parcel-by-lotdp
- *   body: { parcel_id: string, lots: string[] }
- *   e.g.  { parcel_id: "parcel-1776557748108",
- *           lots: ["17//DP1222679", "18//DP1222679", "2//DP1280952"] }
+ *   body: {
+ *     parcel_id: string,
+ *     properties: [
+ *       {
+ *         lot_dps:       string,   // required, e.g. "17//DP1222679"
+ *         address:       string,   // e.g. "1178 The Northern Road"
+ *         suburb:        string?,
+ *         state_prop_id: string?,  // NSW propid
+ *         lat:           number,
+ *         lng:           number,
+ *         area_sqm:      number?,
+ *         rings:         array?,   // GeoJSON-style lot polygon
+ *       },
+ *       ...
+ *     ]
+ *   }
  *
  * Returns { ok, deleted_count, created_count, created_properties: [...] }
  *
- * Admin-only. Not idempotent (each call deletes + recreates).
+ * DESTRUCTIVE: deletes all existing child Properties of the Parcel,
+ * then inserts the new ones. Refuses if any existing child has its own
+ * Deal (separate from the Parcel's deal) — those deals would be orphaned.
+ *
+ * Admin-only.
  */
 
 import { neon } from '@neondatabase/serverless';
 import { requireSession, requireAdmin } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
-import { lookupByLotDP } from '../lib/nsw-lookup.js';
 const sql = neon(getDatabaseUrl());
 
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
   if (!session) return;
   if (!requireAdmin(session, res)) return;
-
   try {
     if (req.method === 'POST') return await execute(req, res);
-    if (req.method === 'GET')  return await previewInfo(req, res);
+    if (req.method === 'GET')  return res.status(200).json({
+      hint: 'POST with { parcel_id, properties: [{lot_dps, address, suburb, state_prop_id, lat, lng, area_sqm, rings}] }',
+    });
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (err) {
     console.error('[rebuild-parcel-by-lotdp] fatal:', err);
@@ -52,65 +57,27 @@ export default async function handler(req, res) {
   }
 }
 
-// GET with ?parcel_id=X&lots=17//DP1222679,18//DP1222679 → dry-run preview
-async function previewInfo(req, res) {
-  const { parcel_id, lots } = req.query;
-  if (!parcel_id) return res.status(400).json({ error: 'parcel_id required' });
-  if (!lots)      return res.status(400).json({ error: 'lots required (comma-separated)' });
-
-  const lotList = String(lots).split(',').map(s => s.trim()).filter(Boolean);
-
-  const parcel = (await sql`SELECT * FROM parcels WHERE id = ${parcel_id}`)[0];
-  if (!parcel) return res.status(404).json({ error: 'Parcel not found' });
-
-  const existingChildren = await sql`SELECT id, address, suburb, lot_dps FROM properties WHERE parcel_id = ${parcel_id}`;
-
-  const lookups = [];
-  for (const l of lotList) {
-    const record = await lookupByLotDP(l);
-    lookups.push({ input: l, result: record });
-  }
-
-  return res.status(200).json({
-    action: 'DRY_RUN',
-    parcel: { id: parcel.id, name: parcel.name },
-    existing_children_to_delete: existingChildren,
-    proposed_new_children: lookups,
-    lookup_failures: lookups.filter(x => !x.result).map(x => x.input),
-  });
-}
-
 async function execute(req, res) {
   const body = req.body || {};
-  const { parcel_id, lots } = body;
-  if (!parcel_id)          return res.status(400).json({ error: 'parcel_id required' });
-  if (!Array.isArray(lots) || !lots.length) return res.status(400).json({ error: 'lots array required' });
+  const { parcel_id, properties } = body;
+  if (!parcel_id) return res.status(400).json({ error: 'parcel_id required' });
+  if (!Array.isArray(properties) || !properties.length) {
+    return res.status(400).json({ error: 'properties array required (non-empty)' });
+  }
+
+  // Minimal validation
+  for (const [i, p] of properties.entries()) {
+    if (!p.lot_dps) return res.status(400).json({ error: `properties[${i}].lot_dps required` });
+    if (typeof p.lat !== 'number' || typeof p.lng !== 'number') {
+      return res.status(400).json({ error: `properties[${i}] lat/lng required as numbers` });
+    }
+  }
 
   // Verify parcel exists
   const parcel = (await sql`SELECT * FROM parcels WHERE id = ${parcel_id}`)[0];
   if (!parcel) return res.status(404).json({ error: 'Parcel not found' });
 
-  // Look up all lots FIRST — if any fails, we abort without touching the DB
-  const lookups = [];
-  for (const l of lots) {
-    const record = await lookupByLotDP(l);
-    if (!record) {
-      return res.status(422).json({
-        error: `Lot/DP '${l}' not found in NSW cadastre`,
-        partial_results: lookups,
-      });
-    }
-    lookups.push({ input: l, result: record });
-  }
-
-  // All lookups succeeded — safe to mutate.
-  // 1. Delete existing child Properties (cascades via FK will drop their
-  //    entity_contacts / notes on entity_type='property' — parcel-level
-  //    contacts and notes are unaffected since they reference parcel_id).
-  //    We have to clear parcel_id from any deals targeting these properties
-  //    first… actually no: deals on the PARCEL use parcel_id; deals on
-  //    properties point at specific property_ids and would be orphaned.
-  //    Check and refuse if any deals reference these children directly.
+  // Refuse if any existing child has its own Deal (would orphan the deal)
   const existingChildren = await sql`SELECT id FROM properties WHERE parcel_id = ${parcel_id}`;
   const childIds = existingChildren.map(c => c.id);
   if (childIds.length) {
@@ -118,30 +85,30 @@ async function execute(req, res) {
       SELECT id, property_id FROM deals WHERE property_id = ANY(${childIds})`;
     if (dealsOnChildren.length) {
       return res.status(409).json({
-        error: 'Cannot rebuild — some child properties have their own deals',
+        error: 'Cannot rebuild — some existing child properties have their own deals',
         deals: dealsOnChildren,
         hint: 'Reassign deals to the parcel, or delete them, before rebuilding',
       });
     }
-    // Safe to delete
+    // Delete existing children (cascades clear their entity_contacts / notes)
     await sql`DELETE FROM properties WHERE id = ANY(${childIds})`;
   }
 
-  // 2. Create new child Properties from lookup results
+  // Insert new children
   const created = [];
-  let idx = 0;
   const now = Date.now();
-  for (const { input, result: r } of lookups) {
+  let idx = 0;
+  for (const p of properties) {
     idx++;
     const newPropId = `property-${now}-${idx}`;
-    // The single-element parcels JSONB keeps the lot polygon for map rendering
+    // Single-element parcels JSONB keeps the lot polygon for map rendering
     const lotPolygonEntry = {
-      lat:   r.lat,
-      lng:   r.lng,
-      label: `${r.address}${r.suburb ? ', ' + r.suburb : ''}`,
-      lot_dps: r.lotidstring,
+      lat:     p.lat,
+      lng:     p.lng,
+      label:   `${p.address || p.lot_dps}${p.suburb ? ', ' + p.suburb : ''}`,
+      lot_dps: p.lot_dps,
     };
-    if (r.rings) lotPolygonEntry.rings = r.rings;
+    if (p.rings) lotPolygonEntry.rings = p.rings;
     const selfParcelsJson = JSON.stringify([lotPolygonEntry]);
 
     await sql`
@@ -150,31 +117,31 @@ async function execute(req, res) {
         parcels, property_count, parcel_id, state_prop_id
       ) VALUES (
         ${newPropId},
-        ${r.address || input},
-        ${r.suburb  || null},
-        ${r.lat},
-        ${r.lng},
-        ${r.lotidstring},
-        ${r.areaSqm},
+        ${p.address || p.lot_dps},
+        ${p.suburb  || null},
+        ${p.lat},
+        ${p.lng},
+        ${p.lot_dps},
+        ${p.area_sqm || null},
         ${selfParcelsJson}::jsonb,
         1,
         ${parcel_id},
-        ${r.propid}
+        ${p.state_prop_id || null}
       )`;
 
     created.push({
       id:            newPropId,
-      lot_dps:       r.lotidstring,
-      address:       r.address,
-      suburb:        r.suburb,
-      state_prop_id: r.propid,
-      lat:           r.lat,
-      lng:           r.lng,
-      area_sqm:      r.areaSqm,
+      lot_dps:       p.lot_dps,
+      address:       p.address,
+      suburb:        p.suburb,
+      state_prop_id: p.state_prop_id,
+      lat:           p.lat,
+      lng:           p.lng,
+      area_sqm:      p.area_sqm,
     });
   }
 
-  // 3. Update the parcel's updated_at stamp + rebuild name with suburb if not set
+  // Update parcel's updated_at + append suburb to name if missing
   const needsRename = !parcel.name || !parcel.name.includes(',');
   if (needsRename && created[0]?.suburb) {
     const currentNameBase = (parcel.name || '').split(',')[0].trim();
