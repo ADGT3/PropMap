@@ -2275,6 +2275,8 @@ async function _createParcelFromSelection(selections) {
 
     // Invalidate CRM Parcels cache
     if (window.CRM?.invalidateParcelsCache) window.CRM.invalidateParcelsCache();
+    // V75.5: new parcel came with N new child properties
+    if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
 
     // V75.4d: Auto-DD for the new parcel using the average centroid.
     // Matches the single-property flow which runs DD in addToPipeline().

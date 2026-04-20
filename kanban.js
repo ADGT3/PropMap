@@ -292,10 +292,16 @@ async function dbDelete(id, wasParcel = false) {
 
 // ── savePipeline — write to both cache and DB ─────────────────────────────────
 // Called after every mutation. id = the specific entry that changed (or null = full sync).
+// Returns a Promise that resolves once the DB write has completed. Callers
+// that don't care can ignore the returned value — sync behaviour is
+// preserved. Callers that need to know the write has committed (e.g. the
+// CRM cache invalidation after addToPipeline) can await it.
 function savePipeline(changedId) {
   cacheSave(pipeline);
-  if (changedId && pipeline[changedId]) dbSave(changedId, pipeline[changedId]);
+  let writePromise = Promise.resolve();
+  if (changedId && pipeline[changedId]) writePromise = dbSave(changedId, pipeline[changedId]);
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+  return writePromise;
 }
 
 // ── Init — load from DB, fall back to localStorage ───────────────────────────
@@ -366,10 +372,19 @@ function addToPipeline(listing) {
     },
     dd: {}
   };
-  savePipeline(id);
+  const savedPromise = savePipeline(id);
   updateAddButtons();
   if (kanbanVisible) renderBoard();
   showKanbanToast(`${listing.address} added to pipeline`);
+
+  // V75.5: new property was created (or upserted) — refresh CRM Properties
+  // cache AFTER the DB write has committed. Without the await, the re-fetch
+  // from /api/properties would race the save and miss the new row.
+  savedPromise.then(() => {
+    if (window.CRM?.invalidatePropertiesCache) {
+      window.CRM.invalidatePropertiesCache();
+    }
+  }).catch(() => {});
 
   // Async — fetch Lot/DP from cadastre if not already present
   if (!pipeline[id].property._lotDPs && window.fetchLotDP) {
@@ -430,6 +445,12 @@ async function removeFromPipeline(id) {
   // the parcel. Invalidate the CRM Parcels cache so it stays in sync.
   if (wasParcel && window.CRM?.invalidateParcelsCache) {
     window.CRM.invalidateParcelsCache();
+  }
+  // V75.5: any deal removal may have removed a property (if not a parcel-deal,
+  // the property was deleted via cascade; for parcel-deals the child properties
+  // were deleted server-side by the orphan cleanup). Invalidate Properties cache.
+  if (window.CRM?.invalidatePropertiesCache) {
+    window.CRM.invalidatePropertiesCache();
   }
 }
 
@@ -1089,7 +1110,8 @@ ${rows.join('')}`;
             : `<div class="kb-modal-lotdp" style="font-size:11px;color:#bbb;margin-top:3px">Lot/DP loading…</div>`}
           ${p._listingUrl ? `<a href="${p._listingUrl}" target="_blank" rel="noopener" class="kb-domain-link" style="display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none">↗ View on Domain</a>` : ''}
         </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0" class="crm-modal-header-actions">
+          <button class="kb-modal-delete crm-modal-delete" title="Delete">Delete</button>
           <button class="kb-modal-close" title="Close">✕</button>
         </div>
       </div>
@@ -1168,6 +1190,15 @@ ${rows.join('')}`;
 
   // Close
   overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
+
+  // V75.5.2: Delete deal from inside modal. Confirm → reuse removeFromPipeline
+  // which already handles: pipeline dict removal, DB delete, parcel orphan-
+  // cleanup, refreshPipelinePins, and CRM cache invalidation.
+  overlay.querySelector('.kb-modal-delete')?.addEventListener('click', async () => {
+    if (!confirm('Confirm delete')) return;
+    overlay.remove();
+    await removeFromPipeline(id);
+  });
   // Finance picker — delegate clicks on all .kb-fin-pick-btn rows
   function parsePickerPrice(s) {
     if (!s) return null;

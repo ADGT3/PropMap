@@ -623,6 +623,37 @@
   flex-shrink: 0;
 }
 .crm-modal-close:hover { background: var(--surface2); color: var(--text); }
+
+/* V75.5.2: header-level action buttons (Delete + Close cluster) */
+.crm-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.crm-modal-delete {
+  background: transparent;
+  border: 1px solid #c0392b;
+  color: #c0392b;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  transition: all 0.15s;
+}
+.crm-modal-delete:hover:not(:disabled) {
+  background: #c0392b;
+  color: #fff;
+}
+.crm-modal-delete:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
 .crm-modal-body {
   flex: 1;
   overflow-y: auto;
