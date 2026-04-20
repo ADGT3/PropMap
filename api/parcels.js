@@ -156,8 +156,13 @@ export default async function handler(req, res) {
             hint: 'Close or reassign deals before deleting the parcel',
           });
         }
+        // V75.4d: delete child properties first. The `properties.parcel_id` FK
+        // is ON DELETE SET NULL so deleting the parcel alone would leave
+        // properties orphaned (parcel_id cleared, but rows still exist). We
+        // want them gone when the parcel goes.
+        const children = await sql`DELETE FROM properties WHERE parcel_id = ${id} RETURNING id`;
         await sql`DELETE FROM parcels WHERE id = ${id}`;
-        return res.status(200).json({ ok: true });
+        return res.status(200).json({ ok: true, properties_deleted: children.length });
       }
 
       default:
