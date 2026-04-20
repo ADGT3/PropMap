@@ -2259,12 +2259,27 @@ async function _createParcelFromSelection(selections) {
     _updatePipelineLoadingOverlay(overlay, 'Refreshing pipeline…');
     if (typeof clearParcelSelection === 'function') clearParcelSelection();
     if (typeof dbLoad === 'function') {
+      console.log('[parcel-create] calling dbLoad()');
       const dict = await dbLoad();
+      console.log('[parcel-create] dbLoad returned', dict ? Object.keys(dict).length + ' entries' : 'null');
       if (dict && typeof pipeline !== 'undefined') {
         Object.keys(pipeline).forEach(k => delete pipeline[k]);
         Object.assign(pipeline, dict);
-        if (typeof renderBoard === 'function') renderBoard();
+        console.log('[parcel-create] pipeline now has', Object.keys(pipeline).length, 'keys');
+        if (typeof renderBoard === 'function') {
+          console.log('[parcel-create] calling renderBoard()');
+          renderBoard();
+        } else {
+          console.warn('[parcel-create] renderBoard not defined');
+        }
+        if (typeof window.refreshPipelinePins === 'function') {
+          window.refreshPipelinePins();
+        }
+      } else {
+        console.warn('[parcel-create] pipeline not defined or dict null');
       }
+    } else {
+      console.warn('[parcel-create] dbLoad not defined');
     }
 
     if (typeof showKanbanToast === 'function') {

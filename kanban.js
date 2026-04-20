@@ -272,14 +272,17 @@ async function dbSave(id, entry) {
   }
 }
 
-async function dbDelete(id) {
+async function dbDelete(id, wasParcel = false) {
   if (!dbAvailable) return;
   try {
-    // Deleting the property cascades to deals and entity_contacts via FK.
-    // For parcel deals: we delete the deal directly (and let the parcel persist
-    // — the user can delete the parcel separately from the Parcels CRM tab).
-    const entry = pipeline[id];
-    if (entry && entry._isParcel) {
+    // V75.4d: route to the right endpoint based on whether this was a parcel-deal
+    // (caller passes this because by the time we're called, the entry is already
+    // removed from the in-memory pipeline dict).
+    //
+    // For parcel-deals: DELETE /api/deals — the deals.js DELETE handler also
+    // cleans up the orphaned parcel + its children if no other deals reference it.
+    // For property-deals: DELETE /api/properties cascades to the deal via FK.
+    if (wasParcel) {
       await fetch(`${DEALS_API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
     } else {
       await fetch(`${PROPERTIES_API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -411,9 +414,12 @@ function addToPipeline(listing) {
 
 function removeFromPipeline(id) {
   const sid = String(id);
+  // V75.4d: capture whether this was a parcel-deal BEFORE deleting from dict
+  // so dbDelete can route to the right endpoint (deals vs properties).
+  const wasParcel = !!pipeline[sid]?._isParcel;
   delete pipeline[sid];
   cacheSave(pipeline);
-  dbDelete(sid);
+  dbDelete(sid, wasParcel);
   updateAddButtons();
   renderBoard();
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
