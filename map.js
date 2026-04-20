@@ -2184,60 +2184,65 @@ async function _createParcelFromSelection(selections) {
     }
   }
 
-  // Look up each selected lat/lng
-  const resolvedByLot = new Map();  // lot_dps → property record (dedupe key)
-  const failures = [];
-  for (const [i, s] of selections.entries()) {
-    try {
-      const r = await window.NSWLookup.lookupByLatLng(s.lat, s.lng);
-      if (!r || !r.lotidstring) {
-        failures.push({ index: i + 1, lat: s.lat, lng: s.lng, reason: 'no lot match' });
-        continue;
-      }
-      // Dedupe: if two clicks hit same lot, keep the first
-      if (!resolvedByLot.has(r.lotidstring)) {
-        // For Property-polygon rings we use the Lot's own geometry if present,
-        // but NSWLookup.lookupByLatLng doesn't return rings — rings only come
-        // from lookupByLotDP. That's fine; Kanban map rendering can fall back
-        // to centroid pins.
-        resolvedByLot.set(r.lotidstring, {
-          lot_dps:       r.lotidstring,
-          address:       r.address,
-          suburb:        r.suburb,
-          state_prop_id: r.propid,
-          lat:           s.lat,
-          lng:           s.lng,
-          area_sqm:      r.areaSqm || null,
-          rings:         null,
-        });
-      }
-    } catch (err) {
-      failures.push({ index: i + 1, lat: s.lat, lng: s.lng, reason: err.message });
-    }
-  }
+  // Show loading overlay + lock the button to prevent double-submit
+  const overlay = _showPipelineLoadingOverlay('Looking up NSW cadastre…');
+  _lockPipelineButton(true);
 
-  if (failures.length) {
-    const msg = failures.map(f => `  • Pin #${f.index}: ${f.reason}`).join('\n');
-    alert(`Could not resolve all selected points to NSW lots:\n${msg}\n\nAdjust your selection and try again.`);
-    return;
-  }
-
-  const dedupedCount = selections.length - resolvedByLot.size;
-  const properties = Array.from(resolvedByLot.values());
-
-  if (properties.length < 2) {
-    alert(`Only ${properties.length} unique lot${properties.length === 1 ? '' : 's'} in selection — a Parcel needs 2 or more. Your ${selections.length} clicks resolved to ${properties.length} unique lots.`);
-    return;
-  }
-
-  if (dedupedCount > 0) {
-    const ok = confirm(`Your ${selections.length} clicks resolved to ${properties.length} unique lots (${dedupedCount} duplicate${dedupedCount === 1 ? '' : 's'} collapsed).\n\nCreate Parcel?`);
-    if (!ok) return;
-  }
-
-  // POST to the new endpoint
-  let result;
   try {
+    // Look up each selected lat/lng
+    const resolvedByLot = new Map();
+    const failures = [];
+    let resolvedCount = 0;
+    for (const [i, s] of selections.entries()) {
+      _updatePipelineLoadingOverlay(overlay, `Resolving lot ${i + 1} of ${selections.length}…`);
+      try {
+        const r = await window.NSWLookup.lookupByLatLng(s.lat, s.lng);
+        if (!r || !r.lotidstring) {
+          failures.push({ index: i + 1, reason: 'no lot match' });
+          continue;
+        }
+        if (!resolvedByLot.has(r.lotidstring)) {
+          resolvedByLot.set(r.lotidstring, {
+            lot_dps:       r.lotidstring,
+            address:       r.address,
+            suburb:        r.suburb,
+            state_prop_id: r.propid,
+            lat:           s.lat,
+            lng:           s.lng,
+            area_sqm:      r.areaSqm || null,
+            rings:         null,
+          });
+        }
+        resolvedCount++;
+      } catch (err) {
+        failures.push({ index: i + 1, reason: err.message });
+      }
+    }
+
+    if (failures.length) {
+      const msg = failures.map(f => `  • Pin #${f.index}: ${f.reason}`).join('\n');
+      alert(`Could not resolve all selected points to NSW lots:\n${msg}\n\nAdjust your selection and try again.`);
+      return;
+    }
+
+    const dedupedCount = selections.length - resolvedByLot.size;
+    const properties = Array.from(resolvedByLot.values());
+
+    if (properties.length < 2) {
+      alert(`Only ${properties.length} unique lot${properties.length === 1 ? '' : 's'} in selection — a Parcel needs 2 or more. Your ${selections.length} clicks resolved to ${properties.length} unique lots.`);
+      return;
+    }
+
+    if (dedupedCount > 0) {
+      // Pause the loading overlay for the confirm dialog so it's readable
+      _hidePipelineLoadingOverlay(overlay);
+      const ok = confirm(`Your ${selections.length} clicks resolved to ${properties.length} unique lots (${dedupedCount} duplicate${dedupedCount === 1 ? '' : 's'} collapsed).\n\nCreate Parcel?`);
+      if (!ok) return;
+      _showPipelineLoadingOverlay('Creating parcel…', overlay);
+    }
+
+    _updatePipelineLoadingOverlay(overlay, 'Saving parcel…');
+
     const r = await fetch('/api/create-parcel-from-lookup', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2248,20 +2253,11 @@ async function _createParcelFromSelection(selections) {
       alert(`Failed to create parcel: ${err.error || r.status}`);
       return;
     }
-    result = await r.json();
-  } catch (err) {
-    alert(`Network error creating parcel: ${err.message}`);
-    return;
-  }
+    await r.json();
 
-  // Success — clear map selection, reload pipeline data
-  if (typeof clearParcelSelection === 'function') clearParcelSelection();
-  if (typeof loadPipelineData === 'function') {
-    await loadPipelineData();
-  } else if (typeof reloadPipeline === 'function') {
-    await reloadPipeline();
-  } else {
-    // Fallback: kanban.js exposes dbLoad() which repopulates the dict
+    // Success — clear map selection, reload pipeline data
+    _updatePipelineLoadingOverlay(overlay, 'Refreshing pipeline…');
+    if (typeof clearParcelSelection === 'function') clearParcelSelection();
     if (typeof dbLoad === 'function') {
       const dict = await dbLoad();
       if (dict && typeof pipeline !== 'undefined') {
@@ -2270,11 +2266,58 @@ async function _createParcelFromSelection(selections) {
         if (typeof renderBoard === 'function') renderBoard();
       }
     }
-  }
 
-  if (typeof showKanbanToast === 'function') {
-    showKanbanToast(`Parcel created — ${properties.length} properties linked`);
+    if (typeof showKanbanToast === 'function') {
+      showKanbanToast(`Parcel created — ${properties.length} properties linked`);
+    }
+  } catch (err) {
+    console.error('[parcel-create]', err);
+    alert(`Network error creating parcel: ${err.message}`);
+  } finally {
+    _hidePipelineLoadingOverlay(overlay);
+    _lockPipelineButton(false);
   }
+}
+
+// Full-screen loading overlay used during async parcel create
+function _showPipelineLoadingOverlay(message, existing) {
+  let el = existing;
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'pipeline-loading-overlay';
+    el.style.cssText = `
+      position:fixed; inset:0; z-index:10000;
+      background:rgba(0,0,0,0.45);
+      display:flex; align-items:center; justify-content:center;
+      font-family:'DM Sans',sans-serif;`;
+    el.innerHTML = `
+      <div style="background:#fff;border-radius:10px;padding:24px 28px;box-shadow:0 6px 24px rgba(0,0,0,0.25);text-align:center;min-width:260px">
+        <div class="pipeline-spinner" style="width:32px;height:32px;border:3px solid #d0d0d0;border-top-color:#1a4a8a;border-radius:50%;animation:pl-spin 0.7s linear infinite;margin:0 auto 12px"></div>
+        <div class="pipeline-loading-msg" style="font-size:14px;color:#222">${message}</div>
+      </div>
+      <style>@keyframes pl-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}</style>`;
+    document.body.appendChild(el);
+  } else {
+    el.style.display = '';
+    _updatePipelineLoadingOverlay(el, message);
+  }
+  return el;
+}
+function _updatePipelineLoadingOverlay(el, message) {
+  if (!el) return;
+  const msg = el.querySelector('.pipeline-loading-msg');
+  if (msg) msg.textContent = message;
+}
+function _hidePipelineLoadingOverlay(el) {
+  if (el) el.remove();
+}
+// Lock/unlock all popup pipeline buttons to prevent double-submit
+function _lockPipelineButton(locked) {
+  document.querySelectorAll('.map-popup-pipeline-btn, [data-pipeline-button], button[onclick*="addCurrentSelectionToPipeline"]').forEach(b => {
+    b.disabled = locked;
+    b.style.opacity = locked ? '0.6' : '';
+    b.style.cursor  = locked ? 'wait' : '';
+  });
 }
 
 // Expose so the popup's inline onclick can call it

@@ -1849,7 +1849,17 @@ function renderCRMView(container) {
                 <div class="crm-detail-label">Total Area</div><div>${totalArea ? Math.round(totalArea).toLocaleString() + ' m²' : '—'}</div>
                 <div class="crm-detail-label">Parcel ID</div><div><code style="font-size:11px">${parcel.id}</code></div>
               </div>
-              <div style="margin-top:8px"><button class="crm-parcel-name-save kb-add-offer-btn" style="display:none">Save Name</button></div>
+              <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <button class="crm-parcel-name-save kb-add-offer-btn" style="display:none">Save Name</button>
+                <div style="margin-left:auto">
+                  <button class="crm-parcel-delete-btn kb-add-offer-btn"
+                    style="background:#c0392b${parcelDeals.length ? ';opacity:0.5;cursor:not-allowed' : ''}"
+                    ${parcelDeals.length ? 'disabled' : ''}
+                    title="${parcelDeals.length ? `Cannot delete — ${parcelDeals.length} deal${parcelDeals.length === 1 ? '' : 's'} reference this parcel` : 'Delete this parcel and its properties'}">
+                    Delete Parcel
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1994,6 +2004,22 @@ function renderCRMView(container) {
           body: JSON.stringify({ id: parcel.id, name: nameInput.value.trim() }),
         });
         renderParcelModal(modal, parcelId, onDone);
+      });
+
+      // V75.4d: Delete parcel — confirm, then DELETE. API refuses if deals exist (409).
+      modal.querySelector('.crm-parcel-delete-btn')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        if (btn.disabled) return;
+        const propCount = props.length;
+        const msg = `Delete this parcel and its ${propCount} propert${propCount === 1 ? 'y' : 'ies'}?\n\nThis cannot be undone.`;
+        if (!confirm(msg)) return;
+        const r = await fetch(`/api/parcels?id=${encodeURIComponent(parcel.id)}`, { method: 'DELETE' });
+        if (r.ok) {
+          onDone();
+        } else {
+          const err = await r.json().catch(() => ({}));
+          alert(`Failed to delete: ${err.error || r.status}`);
+        }
       });
 
       // Not-suitable set / clear
