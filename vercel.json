@@ -1,4 +1,8 @@
 {
+  "functions": {
+    "api/rebuild-parcel-by-lotdp.js": { "maxDuration": 30 },
+    "api/repair-v75-4c.js":           { "maxDuration": 60 }
+  },
   "rewrites": [
     { "source": "/api/tiles/:path*", "destination": "/api/tiles" },
     { "source": "/api/(.*)", "destination": "/api/$1" },
