@@ -48,10 +48,13 @@ export default async function handler(req, res) {
 
         // List all — used by kanban bootstrap
         // V75.3: dd column dropped; DD now lives per-deal in deals.data.dd
+        // V75.4: parcel_id added for parcel membership
+        // V75.4c: state_prop_id (nullable) for NSW propid cross-reference
         const rows = await sql`
           SELECT id, address, suburb, lat, lng, lot_dps, area_sqm,
                  parcels, property_count, domain_listing_id, listing_url,
-                 agent, not_suitable_until, not_suitable_reason, updated_at
+                 agent, not_suitable_until, not_suitable_reason,
+                 parcel_id, state_prop_id, updated_at
           FROM properties ORDER BY updated_at DESC`;
         return res.status(200).json(rows);
       }

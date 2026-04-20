@@ -61,21 +61,59 @@ function cacheSave(p) {
 // cars, waterStatus, zone } }
 
 function dealRowToInternal(row) {
-  const p        = row.property || {};
-  const dealData = row.data     || {};
-  return {
-    stage:   row.stage || 'shortlisted',
-    note:    dealData.note    || '',
-    // V75.3: notes are NO LONGER stored inline on the deal. They live in the
-    // `notes` table and are fetched on demand. We keep a client-side cache
-    // loaded lazily by fetchNotesForCard(dealId).
-    notes:   [],
-    addedAt: dealData.addedAt || (row.opened_at ? Date.parse(row.opened_at) : Date.now()),
-    terms:   dealData.terms   || null,
-    offers:  dealData.offers  || [],
-    // V75.3: DD is now per-deal (deals.data.dd), not per-property
-    dd:      (typeof dealData.dd === 'object' && dealData.dd !== null) ? dealData.dd : {},
-    property: {
+  const dealData = row.data || {};
+  const isParcel = !!row.parcel_id;
+
+  // Build the "property" shape that the rest of Kanban expects. For parcel
+  // deals we aggregate across all constituent properties; for property deals
+  // we use the single joined property directly.
+  let propertyShape;
+  if (isParcel) {
+    const pa     = row.parcel || {};
+    const kids   = Array.isArray(row.parcel_properties) ? row.parcel_properties : [];
+    // Merged title — parcel.name is the snapshot at creation; if missing,
+    // compute from kids using the formatter utility.
+    const title = pa.name || (typeof window !== 'undefined' && window.formatParcelTitle
+      ? window.formatParcelTitle(kids.map(k => ({ address: k.address, suburb: k.suburb })))
+      : kids.map(k => k.address).join(' & '));
+    // Aggregate area + centroid
+    const totalArea = kids.reduce((s, k) => s + (k.area_sqm || 0), 0);
+    const avgLat = kids.length ? kids.reduce((s, k) => s + (k.lat ?? 0), 0) / kids.length : null;
+    const avgLng = kids.length ? kids.reduce((s, k) => s + (k.lng ?? 0), 0) / kids.length : null;
+    // Concat all lot_dps for display
+    const allLotDPs = kids.map(k => k.lot_dps).filter(Boolean).join(', ');
+    // Aggregate parcels JSONB from each kid for the map polygon renderer
+    const allPolygons = kids.flatMap(k => Array.isArray(k.parcels) ? k.parcels : []);
+    propertyShape = {
+      id:             row.parcel_id,   // use parcel id in the .id slot for compatibility
+      address:        title,
+      suburb:         (kids[0] && kids[0].suburb) || '',
+      lat:            avgLat,
+      lng:            avgLng,
+      _lotDPs:        allLotDPs,
+      _areaSqm:       totalArea || null,
+      _parcels:       allPolygons,
+      _propertyCount: kids.length,
+      _agent:         null,
+      _listingUrl:    null,
+      domain_id:      null,
+      not_suitable_until:  pa.not_suitable_until  || null,
+      not_suitable_reason: pa.not_suitable_reason || null,
+      price:          dealData.price       || 'Unknown',
+      type:           dealData.type        || 'land',
+      beds:           dealData.beds        || 0,
+      baths:          dealData.baths       || 0,
+      cars:           dealData.cars        || 0,
+      waterStatus:    dealData.waterStatus || 'outside',
+      zone:           dealData.zone        || 'all',
+      _isParcel:      true,
+      _parcelId:      row.parcel_id,
+      _parcelName:    pa.name || '',
+      _parcelProperties: kids,
+    };
+  } else {
+    const p = row.property || {};
+    propertyShape = {
       id:             row.property_id,
       address:        p.address || '',
       suburb:         p.suburb  || '',
@@ -90,7 +128,6 @@ function dealRowToInternal(row) {
       domain_id:      p.domain_listing_id ?? null,
       not_suitable_until:  p.not_suitable_until  || null,
       not_suitable_reason: p.not_suitable_reason || null,
-      // Listing-ish fields stored in deal.data (not first-class on properties)
       price:          dealData.price       || 'Unknown',
       type:           dealData.type        || 'land',
       beds:           dealData.beds        || 0,
@@ -98,7 +135,25 @@ function dealRowToInternal(row) {
       cars:           dealData.cars        || 0,
       waterStatus:    dealData.waterStatus || 'outside',
       zone:           dealData.zone        || 'all',
-    },
+      _isParcel:      false,
+    };
+  }
+
+  return {
+    stage:   row.stage || 'shortlisted',
+    note:    dealData.note    || '',
+    // V75.3: notes live in `notes` table, fetched lazily by fetchNotesForDeal
+    notes:   [],
+    addedAt: dealData.addedAt || (row.opened_at ? Date.parse(row.opened_at) : Date.now()),
+    terms:   dealData.terms   || null,
+    offers:  dealData.offers  || [],
+    // V75.3: DD per-deal
+    dd:      (typeof dealData.dd === 'object' && dealData.dd !== null) ? dealData.dd : {},
+    property: propertyShape,
+    // V75.4: expose the parcel id/name at the top level for kanban-side code
+    _isParcel:     isParcel,
+    _parcelId:     row.parcel_id   || null,
+    _dealId:       row.id,
   };
 }
 
@@ -126,9 +181,8 @@ function internalToDealPayload(id, entry) {
   const p = entry.property || {};
   const stage  = entry.stage || 'shortlisted';
   const status = (stage === 'lost') ? 'lost' : (stage === 'acquired' ? 'won' : 'active');
-  return {
+  const payload = {
     id,
-    property_id: id,
     workflow:    'acquisition',
     stage,
     status,
@@ -150,6 +204,13 @@ function internalToDealPayload(id, entry) {
       zone:        p.zone,
     },
   };
+  // V75.4: parcel deals vs property deals — exactly one of these must be set.
+  if (entry._isParcel && entry._parcelId) {
+    payload.parcel_id = entry._parcelId;
+  } else {
+    payload.property_id = id;
+  }
+  return payload;
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
@@ -169,24 +230,28 @@ async function dbLoad() {
 }
 
 // Save an entry — writes property first (needed as FK target for the deal), then deal.
+// V75.4: parcel deals skip the property upsert (their properties are separate
+// records with their own parcel_id FK, managed via the Parcel modal).
 async function dbSave(id, entry) {
   if (!dbAvailable) return;
   try {
-    const propPayload = internalToPropertyPayload(id, entry);
     const dealPayload = internalToDealPayload(id, entry);
 
-    // PUT property first (will 404 if it doesn't exist yet → fall through to create)
-    let propRes = await fetch(PROPERTIES_API, {
-      method:  'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(propPayload),
-    });
-    if (propRes.status === 404) {
-      propRes = await fetch(PROPERTIES_API, {
-        method:  'POST',
+    if (!entry._isParcel) {
+      const propPayload = internalToPropertyPayload(id, entry);
+      // PUT property first (will 404 if it doesn't exist yet → fall through to create)
+      let propRes = await fetch(PROPERTIES_API, {
+        method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(propPayload),
       });
+      if (propRes.status === 404) {
+        propRes = await fetch(PROPERTIES_API, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(propPayload),
+        });
+      }
     }
 
     // Then deal — same pattern
@@ -210,8 +275,15 @@ async function dbSave(id, entry) {
 async function dbDelete(id) {
   if (!dbAvailable) return;
   try {
-    // Deleting the property cascades to deals and entity_contacts via FK
-    await fetch(`${PROPERTIES_API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    // Deleting the property cascades to deals and entity_contacts via FK.
+    // For parcel deals: we delete the deal directly (and let the parcel persist
+    // — the user can delete the parcel separately from the Parcels CRM tab).
+    const entry = pipeline[id];
+    if (entry && entry._isParcel) {
+      await fetch(`${DEALS_API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    } else {
+      await fetch(`${PROPERTIES_API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    }
   } catch (_) {}
 }
 

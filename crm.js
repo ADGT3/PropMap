@@ -665,18 +665,41 @@ function renderCRMView(container) {
         <span class="crm-view-title"><svg class="module-header-icon"><use href="#icon-crm"/></svg> CRM</span>
         <div class="crm-view-tabs">
           <button class="crm-tab active" data-tab="contacts">Contacts</button>
-          <button class="crm-tab" data-tab="organisations">Organisations</button>
+          <button class="crm-tab"        data-tab="properties">Properties</button>
+          <button class="crm-tab"        data-tab="parcels">Parcels</button>
+          <button class="crm-tab"        data-tab="organisations">Organisations</button>
         </div>
         <button class="crm-view-add-btn" id="crmViewAddBtn">+ New Contact</button>
       </div>
       <div class="crm-view-body">
         <div class="crm-tab-pane active" id="crm-pane-contacts"></div>
-        <div class="crm-tab-pane" id="crm-pane-organisations"></div>
+        <div class="crm-tab-pane"        id="crm-pane-properties"></div>
+        <div class="crm-tab-pane"        id="crm-pane-parcels"></div>
+        <div class="crm-tab-pane"        id="crm-pane-organisations"></div>
       </div>
     </div>
-    <div class="crm-drawer-overlay" id="crmDrawerOverlay" style="display:none">
-      <div class="crm-drawer" id="crmDrawer"></div>
+    <div class="crm-modal-overlay" id="crmModalOverlay" style="display:none">
+      <div class="crm-modal" id="crmModal"></div>
     </div>`;
+
+  // Add-button label/handler per tab
+  function configureAddButton(tabName) {
+    const btn = container.querySelector('#crmViewAddBtn');
+    if (tabName === 'contacts') {
+      btn.textContent = '+ New Contact';
+      btn.style.display = '';
+      btn.onclick = () => openModal(modal => renderContactModal(modal, null, () => { closeModal(); loadContactsPane(); }));
+    } else if (tabName === 'organisations') {
+      btn.textContent = '+ New Organisation';
+      btn.style.display = '';
+      btn.onclick = () => openModal(modal => renderOrgModal(modal, null, () => { closeModal(); loadOrgsPane(); }));
+    } else {
+      // Properties and Parcels don't support direct create from the CRM in V75.4
+      // — they're created via map ⌘-click or by adding a pipeline deal.
+      btn.style.display = 'none';
+      btn.onclick = null;
+    }
+  }
 
   // Tab switching
   container.querySelectorAll('.crm-tab').forEach(tab => {
@@ -685,30 +708,31 @@ function renderCRMView(container) {
       container.querySelectorAll('.crm-tab-pane').forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       container.querySelector(`#crm-pane-${tab.dataset.tab}`).classList.add('active');
-      if (tab.dataset.tab === 'contacts') loadContactsPane();
+      configureAddButton(tab.dataset.tab);
+      if (tab.dataset.tab === 'contacts')      loadContactsPane();
+      if (tab.dataset.tab === 'properties')    loadPropertiesPane();
+      if (tab.dataset.tab === 'parcels')       loadParcelsPane();
       if (tab.dataset.tab === 'organisations') loadOrgsPane();
     });
   });
 
-  // Drawer helpers
-  function openDrawer(renderFn) {
-    const overlay = container.querySelector('#crmDrawerOverlay');
-    const drawer  = container.querySelector('#crmDrawer');
+  // Modal helpers
+  function openModal(renderFn) {
+    const overlay = container.querySelector('#crmModalOverlay');
+    const modal  = container.querySelector('#crmModal');
     overlay.style.display = '';
-    renderFn(drawer);
-    overlay.addEventListener('click', e => { if (e.target === overlay) closeDrawer(); }, { once: true });
+    renderFn(modal);
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); }, { once: true });
   }
-  function closeDrawer() {
-    const overlay = container.querySelector('#crmDrawerOverlay');
+  function closeModal() {
+    const overlay = container.querySelector('#crmModalOverlay');
     overlay.style.display = 'none';
-    container.querySelector('#crmDrawer').innerHTML = '';
+    container.querySelector('#crmModal').innerHTML = '';
   }
-  window._crmCloseDrawer = closeDrawer;
+  window._crmCloseModal = closeModal;
 
-  // + New Contact button
-  container.querySelector('#crmViewAddBtn').addEventListener('click', () => {
-    openDrawer(drawer => renderContactDrawer(drawer, null, () => { closeDrawer(); loadContactsPane(); }));
-  });
+  // + Add button wired by configureAddButton() based on active tab
+  configureAddButton('contacts');
 
   // ── Contacts pane ──────────────────────────────────────────────────────────
 
@@ -778,11 +802,11 @@ function renderCRMView(container) {
           </td>`;
 
         tr.querySelector('.crm-td-name').addEventListener('click', () => {
-          openDrawer(drawer => renderContactDetail(drawer, c.id, () => { closeDrawer(); fetchContacts(); }));
+          openModal(modal => renderContactDetail(modal, c.id, () => { closeModal(); fetchContacts(); }));
         });
         tr.querySelector('.crm-view-edit-btn').addEventListener('click', e => {
           e.stopPropagation();
-          openDrawer(drawer => renderContactDrawer(drawer, c, () => { closeDrawer(); fetchContacts(); }));
+          openModal(modal => renderContactModal(modal, c, () => { closeModal(); fetchContacts(); }));
         });
         tr.querySelector('.crm-view-delete-btn').addEventListener('click', async e => {
           e.stopPropagation();
@@ -821,10 +845,10 @@ function renderCRMView(container) {
     }
   }
 
-  // ── Contact detail drawer ──────────────────────────────────────────────────
+  // ── Contact detail modal ──────────────────────────────────────────────────
 
-  async function renderContactDetail(drawer, contactId, onDone) {
-    drawer.innerHTML = '<div class="crm-drawer-loading">Loading…</div>';
+  async function renderContactDetail(modal, contactId, onDone) {
+    modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
     try {
       const [contactData, notes, props, allPipeline, me] = await Promise.all([
         apiGet({ id: contactId }),
@@ -834,7 +858,7 @@ function renderCRMView(container) {
         fetch('/api/auth/me').then(r => r.json()).catch(() => ({ authenticated: false })),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
-      if (!c) { drawer.innerHTML = '<div class="crm-drawer-loading">Not found</div>'; return; }
+      if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
 
       const viewerIsAdmin = !!(me && me.authenticated && me.user && me.user.isAdmin);
       const viewerId      = me && me.authenticated && me.user ? String(me.user.id) : '';
@@ -870,8 +894,8 @@ function renderCRMView(container) {
       // Site Access section — only rendered when viewer is admin OR viewing self.
       // V75.2d — now collapsible; defaults to COLLAPSED.
       const siteAccessHtml = (canManage || isSelf) ? `
-        <div class="crm-drawer-section crm-section-collapsible" data-section="site-access" data-collapsed="1">
-          <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+        <div class="crm-modal-section crm-section-collapsible" data-section="site-access" data-collapsed="1">
+          <div class="crm-modal-section-title crm-section-header">
             <span class="crm-section-header-left"><span class="crm-section-chev">▸</span> Site Access</span>
             <button class="crm-access-pw-btn kb-add-offer-btn" ${canChangePw ? '' : 'disabled'}>
               ${hasPassword ? (isSelf && !canManage ? 'Change my password' : 'Reset password') : 'Set password'}
@@ -918,27 +942,27 @@ function renderCRMView(container) {
               <input type="password" class="kb-input crm-access-pw-confirm" autocomplete="new-password" style="width:100%;margin-bottom:8px;box-sizing:border-box">
               <div style="display:flex;gap:6px">
                 <button class="crm-access-pw-save kb-add-offer-btn">Save password</button>
-                <button class="crm-access-pw-cancel">Cancel</button>
+                <button class="crm-access-pw-cancel crm-cancel-btn">Cancel</button>
               </div>
             </div>
           </div>
         </div>` : '';
 
-      drawer.innerHTML = `
-        <div class="crm-drawer-header">
+      modal.innerHTML = `
+        <div class="crm-modal-header">
           <div>
-            <div class="crm-drawer-title">${displayName(c)}</div>
-            <div class="crm-drawer-subtitle">${[c.org_name, c.mobile, c.email].filter(Boolean).join(" · ")}</div>
+            <div class="crm-modal-title">${displayName(c)}</div>
+            <div class="crm-modal-subtitle">${[c.org_name, c.mobile, c.email].filter(Boolean).join(" · ")}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
-            <button class="crm-drawer-edit-btn kb-add-offer-btn">✎ Edit</button>
-            <button class="crm-drawer-close">✕</button>
+            <button class="crm-modal-edit-btn kb-add-offer-btn">✎ Edit</button>
+            <button class="crm-modal-close">✕</button>
           </div>
         </div>
-        <div class="crm-drawer-body">
+        <div class="crm-modal-body">
 
-          <div class="crm-drawer-section">
-            <div class="crm-drawer-section-title">Contact Details</div>
+          <div class="crm-modal-section">
+            <div class="crm-modal-section-title">Contact Details</div>
             <div class="crm-detail-grid">
               ${c.mobile   ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
               ${c.email    ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
@@ -949,8 +973,8 @@ function renderCRMView(container) {
 
           ${siteAccessHtml}
 
-          <div class="crm-drawer-section crm-section-collapsible" data-section="linked-properties">
-            <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="crm-modal-section crm-section-collapsible" data-section="linked-properties">
+            <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Linked Properties <span class="crm-section-count">(${propLinks.length})</span></span>
               <button class="crm-detail-add-prop-btn kb-add-offer-btn">+ Link Property</button>
             </div>
@@ -975,14 +999,14 @@ function renderCRMView(container) {
                     ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-prop-link-save kb-add-offer-btn">Link</button>
-                  <button class="crm-prop-link-cancel">Cancel</button>
+                  <button class="crm-prop-link-cancel crm-cancel-btn">Cancel</button>
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="crm-drawer-section crm-section-collapsible" data-section="deals">
-            <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="crm-modal-section crm-section-collapsible" data-section="deals">
+            <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${dealLinks.length})</span></span>
               <button class="crm-detail-add-deal-btn kb-add-offer-btn">+ Link Deal</button>
             </div>
@@ -1009,26 +1033,26 @@ function renderCRMView(container) {
                     ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-deal-link-save kb-add-offer-btn">Link</button>
-                  <button class="crm-deal-link-cancel">Cancel</button>
+                  <button class="crm-deal-link-cancel crm-cancel-btn">Cancel</button>
                 </div>
               </div>
             </div>
           </div>
 
-          <div class="crm-drawer-section crm-section-collapsible" data-section="notes">
-            <div class="crm-drawer-section-title crm-section-header" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="crm-modal-section crm-section-collapsible" data-section="notes">
+            <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Notes <span class="crm-section-count">(${notes.length})</span></span>
-              <button class="crm-drawer-add-note-btn kb-add-offer-btn">+ Add Note</button>
+              <button class="crm-modal-add-note-btn kb-add-offer-btn">+ Add Note</button>
             </div>
             <div class="crm-section-body">
-              <div class="crm-drawer-note-input" style="display:none;margin-bottom:10px">
-                <textarea class="kb-input crm-drawer-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+              <div class="crm-modal-note-input" style="display:none;margin-bottom:10px">
+                <textarea class="kb-input crm-modal-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
                 <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
-                  <button class="crm-drawer-note-save kb-add-offer-btn">Save Note</button>
-                  <button class="crm-drawer-note-cancel">Cancel</button>
+                  <button class="crm-modal-note-save kb-add-offer-btn">Save Note</button>
+                  <button class="crm-modal-note-cancel crm-cancel-btn">Cancel</button>
                 </div>
               </div>
-              <div class="crm-drawer-notes-list">
+              <div class="crm-modal-notes-list">
                 ${notes.length ? notes.map(n => {
                   const author = n.author_name || 'Unknown';
                   const sourceBadge = n.source_label
@@ -1049,16 +1073,16 @@ function renderCRMView(container) {
 
         </div>`;
 
-      drawer.querySelector(".crm-drawer-close").addEventListener("click", onDone);
-      drawer.querySelector(".crm-drawer-edit-btn").addEventListener("click", () => {
-        renderContactDrawer(drawer, c, () => renderContactDetail(drawer, contactId, onDone));
+      modal.querySelector(".crm-modal-close").addEventListener("click", onDone);
+      modal.querySelector(".crm-modal-edit-btn").addEventListener("click", () => {
+        renderContactModal(modal, c, () => renderContactDetail(modal, contactId, onDone));
       });
 
       // ── Collapsible sections ─────────────────────────────────────────────
       // Section state is per-render (no persistence); clicking the header
       // toggles the body and chev. Initial collapsed state comes from
       // data-collapsed="1" on the section (set in the HTML above).
-      drawer.querySelectorAll(".crm-section-collapsible").forEach(section => {
+      modal.querySelectorAll(".crm-section-collapsible").forEach(section => {
         const header = section.querySelector(".crm-section-header");
         const body   = section.querySelector(".crm-section-body");
         const chev   = section.querySelector(".crm-section-chev");
@@ -1079,33 +1103,33 @@ function renderCRMView(container) {
       });
 
       // ── Linked Properties section (entity_type = 'property') ─────────────
-      const addPropBtn  = drawer.querySelector(".crm-detail-add-prop-btn");
-      const addPropForm = drawer.querySelector(".crm-detail-add-prop-form");
-      const propsList   = drawer.querySelector("#crmDetailPropsList");
+      const addPropBtn  = modal.querySelector(".crm-detail-add-prop-btn");
+      const addPropForm = modal.querySelector(".crm-detail-add-prop-form");
+      const propsList   = modal.querySelector("#crmDetailPropsList");
 
       addPropBtn?.addEventListener("click", () => { addPropForm.style.display = ""; addPropBtn.style.display = "none"; });
-      drawer.querySelector(".crm-prop-link-cancel")?.addEventListener("click", () => { addPropForm.style.display = "none"; addPropBtn.style.display = ""; });
-      drawer.querySelector(".crm-prop-link-save")?.addEventListener("click", async () => {
-        const entityId = drawer.querySelector(".crm-prop-select").value;
-        const role     = drawer.querySelector(".crm-prop-role-new").value;
+      modal.querySelector(".crm-prop-link-cancel")?.addEventListener("click", () => { addPropForm.style.display = "none"; addPropBtn.style.display = ""; });
+      modal.querySelector(".crm-prop-link-save")?.addEventListener("click", async () => {
+        const entityId = modal.querySelector(".crm-prop-select").value;
+        const role     = modal.querySelector(".crm-prop-role-new").value;
         if (!entityId) return;
         await apiPost({ action: "link", contact_id: contactId, entity_type: "property", entity_id: entityId, role_id: role });
-        renderContactDetail(drawer, contactId, onDone);
+        renderContactDetail(modal, contactId, onDone);
       });
 
       // ── Deals section (entity_type = 'deal') ─────────────────────────────
-      const addDealBtn  = drawer.querySelector(".crm-detail-add-deal-btn");
-      const addDealForm = drawer.querySelector(".crm-detail-add-deal-form");
-      const dealsList   = drawer.querySelector("#crmDetailDealsList");
+      const addDealBtn  = modal.querySelector(".crm-detail-add-deal-btn");
+      const addDealForm = modal.querySelector(".crm-detail-add-deal-form");
+      const dealsList   = modal.querySelector("#crmDetailDealsList");
 
       addDealBtn?.addEventListener("click", () => { addDealForm.style.display = ""; addDealBtn.style.display = "none"; });
-      drawer.querySelector(".crm-deal-link-cancel")?.addEventListener("click", () => { addDealForm.style.display = "none"; addDealBtn.style.display = ""; });
-      drawer.querySelector(".crm-deal-link-save")?.addEventListener("click", async () => {
-        const entityId = drawer.querySelector(".crm-deal-select").value;
-        const role     = drawer.querySelector(".crm-deal-role-new").value;
+      modal.querySelector(".crm-deal-link-cancel")?.addEventListener("click", () => { addDealForm.style.display = "none"; addDealBtn.style.display = ""; });
+      modal.querySelector(".crm-deal-link-save")?.addEventListener("click", async () => {
+        const entityId = modal.querySelector(".crm-deal-select").value;
+        const role     = modal.querySelector(".crm-deal-role-new").value;
         if (!entityId) return;
         await apiPost({ action: "link", contact_id: contactId, entity_type: "deal", entity_id: entityId, role_id: role });
-        renderContactDetail(drawer, contactId, onDone);
+        renderContactDetail(modal, contactId, onDone);
       });
 
       // Deal row click → open that deal's card modal in the Pipeline module
@@ -1117,7 +1141,7 @@ function renderCRMView(container) {
         });
       });
 
-      // Property address click → open property drawer (V75.4). For now the
+      // Property address click → open property modal (V75.4). For now the
       // route is a no-op if CRM.navigateTo isn't defined; falls back to a
       // brief notice so users don't wonder why nothing happened.
       propsList?.querySelectorAll(".crm-prop-open").forEach(link => {
@@ -1130,7 +1154,7 @@ function renderCRMView(container) {
 
       // Role change on either a property or deal row (same selector class,
       // different entity_type in the dataset)
-      drawer.querySelectorAll(".crm-prop-role-sel").forEach(sel => {
+      modal.querySelectorAll(".crm-prop-role-sel").forEach(sel => {
         sel.addEventListener("change", async () => {
           await apiPost({
             action:      "link",
@@ -1143,7 +1167,7 @@ function renderCRMView(container) {
       });
 
       // Unlink — same class used in both sections, entity_type tells us which
-      drawer.querySelectorAll(".crm-prop-unlink-btn").forEach(btn => {
+      modal.querySelectorAll(".crm-prop-unlink-btn").forEach(btn => {
         btn.addEventListener("click", async () => {
           const what = btn.dataset.entityType === "deal" ? "deal link" : "property link";
           if (!confirm(`Remove this ${what}?`)) return;
@@ -1153,17 +1177,17 @@ function renderCRMView(container) {
             entity_type: btn.dataset.entityType,
             entity_id:   btn.dataset.entityId,
           });
-          renderContactDetail(drawer, contactId, onDone);
+          renderContactDetail(modal, contactId, onDone);
         });
       });
 
       // Notes (V75.3 — /api/notes)
-      const addNoteBtn = drawer.querySelector(".crm-drawer-add-note-btn");
-      const noteInput  = drawer.querySelector(".crm-drawer-note-input");
-      addNoteBtn.addEventListener("click", () => { noteInput.style.display = ""; addNoteBtn.style.display = "none"; drawer.querySelector(".crm-drawer-note-text").focus(); });
-      drawer.querySelector(".crm-drawer-note-cancel").addEventListener("click", () => { noteInput.style.display = "none"; addNoteBtn.style.display = ""; });
-      drawer.querySelector(".crm-drawer-note-save").addEventListener("click", async () => {
-        const text = drawer.querySelector(".crm-drawer-note-text").value.trim();
+      const addNoteBtn = modal.querySelector(".crm-modal-add-note-btn");
+      const noteInput  = modal.querySelector(".crm-modal-note-input");
+      addNoteBtn.addEventListener("click", () => { noteInput.style.display = ""; addNoteBtn.style.display = "none"; modal.querySelector(".crm-modal-note-text").focus(); });
+      modal.querySelector(".crm-modal-note-cancel").addEventListener("click", () => { noteInput.style.display = "none"; addNoteBtn.style.display = ""; });
+      modal.querySelector(".crm-modal-note-save").addEventListener("click", async () => {
+        const text = modal.querySelector(".crm-modal-note-text").value.trim();
         if (!text) return;
         await fetch('/api/notes', {
           method:  'POST',
@@ -1176,18 +1200,18 @@ function renderCRMView(container) {
             // attached to THIS contact already; tagging would be redundant
           }),
         });
-        renderContactDetail(drawer, contactId, onDone);
+        renderContactDetail(modal, contactId, onDone);
       });
-      drawer.querySelectorAll(".crm-note-delete").forEach(btn => {
+      modal.querySelectorAll(".crm-note-delete").forEach(btn => {
         btn.addEventListener("click", async () => {
           if (!confirm("Delete this note?")) return;
           await fetch(`/api/notes?id=${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
-          renderContactDetail(drawer, contactId, onDone);
+          renderContactDetail(modal, contactId, onDone);
         });
       });
 
       // ── Site Access handlers ───────────────────────────────────────────────
-      const statusEl = drawer.querySelector(".crm-access-status");
+      const statusEl = modal.querySelector(".crm-access-status");
       const setStatus = (msg, isErr = false) => {
         if (!statusEl) return;
         statusEl.textContent = msg || '';
@@ -1213,8 +1237,8 @@ function renderCRMView(container) {
         }
       }
 
-      const propmapEl = drawer.querySelector(".crm-access-propmap");
-      const isAdminEl = drawer.querySelector(".crm-access-is-admin");
+      const propmapEl = modal.querySelector(".crm-access-propmap");
+      const isAdminEl = modal.querySelector(".crm-access-is-admin");
 
       if (propmapEl) {
         propmapEl.addEventListener('change', async (e) => {
@@ -1242,10 +1266,10 @@ function renderCRMView(container) {
       }
 
       // Password form toggle + save
-      const pwBtn     = drawer.querySelector(".crm-access-pw-btn");
-      const pwForm    = drawer.querySelector(".crm-access-pw-form");
-      const pwCancel  = drawer.querySelector(".crm-access-pw-cancel");
-      const pwSave    = drawer.querySelector(".crm-access-pw-save");
+      const pwBtn     = modal.querySelector(".crm-access-pw-btn");
+      const pwForm    = modal.querySelector(".crm-access-pw-form");
+      const pwCancel  = modal.querySelector(".crm-access-pw-cancel");
+      const pwSave    = modal.querySelector(".crm-access-pw-save");
       if (pwBtn && pwForm) {
         pwBtn.addEventListener('click', () => {
           pwForm.style.display = pwForm.style.display === 'none' ? '' : 'none';
@@ -1255,16 +1279,16 @@ function renderCRMView(container) {
         pwCancel.addEventListener('click', () => {
           pwForm.style.display = 'none';
           ['.crm-access-pw-current','.crm-access-pw-new','.crm-access-pw-confirm'].forEach(sel => {
-            const el = drawer.querySelector(sel); if (el) el.value = '';
+            const el = modal.querySelector(sel); if (el) el.value = '';
           });
           setStatus('');
         });
       }
       if (pwSave) {
         pwSave.addEventListener('click', async () => {
-          const currentEl = drawer.querySelector(".crm-access-pw-current");
-          const newEl     = drawer.querySelector(".crm-access-pw-new");
-          const confirmEl = drawer.querySelector(".crm-access-pw-confirm");
+          const currentEl = modal.querySelector(".crm-access-pw-current");
+          const newEl     = modal.querySelector(".crm-access-pw-new");
+          const confirmEl = modal.querySelector(".crm-access-pw-confirm");
           const newPw = newEl.value;
           const confPw = confirmEl.value;
           if (newPw.length < 8) { setStatus('Password must be at least 8 characters', true); return; }
@@ -1281,7 +1305,7 @@ function renderCRMView(container) {
             const d = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
             setStatus('Password saved');
-            setTimeout(() => renderContactDetail(drawer, contactId, onDone), 800);
+            setTimeout(() => renderContactDetail(modal, contactId, onDone), 800);
           } catch (err) {
             setStatus(err.message || 'Save failed', true);
           }
@@ -1290,20 +1314,20 @@ function renderCRMView(container) {
 
     } catch (err) {
       console.error("[CRM] renderContactDetail failed:", err);
-      drawer.innerHTML = `<div class="crm-drawer-loading">Error loading contact</div>`;
+      modal.innerHTML = `<div class="crm-modal-loading">Error loading contact</div>`;
     }
   }
 
-    // ── Contact edit/create drawer ─────────────────────────────────────────────
+    // ── Contact edit/create modal ─────────────────────────────────────────────
 
-  function renderContactDrawer(drawer, prefill, onDone) {
+  function renderContactModal(modal, prefill, onDone) {
     const isEdit = !!prefill?.id;
-    drawer.innerHTML = `
-      <div class="crm-drawer-header">
-        <div class="crm-drawer-title">${isEdit ? 'Edit Contact' : 'New Contact'}</div>
-        <button class="crm-drawer-close">✕</button>
+    modal.innerHTML = `
+      <div class="crm-modal-header">
+        <div class="crm-modal-title">${isEdit ? 'Edit Contact' : 'New Contact'}</div>
+        <button class="crm-modal-close">✕</button>
       </div>
-      <div class="crm-drawer-body">
+      <div class="crm-modal-body">
         <div class="crm-form-inner">
           <div class="crm-form-row">
             <div class="kb-field-wrap">
@@ -1346,28 +1370,28 @@ function renderCRMView(container) {
         </div>
       </div>`;
 
-    drawer.querySelector('.crm-drawer-close').addEventListener('click', onDone);
-    drawer.querySelector('.crm-cancel-btn').addEventListener('click', onDone);
+    modal.querySelector('.crm-modal-close').addEventListener('click', onDone);
+    modal.querySelector('.crm-cancel-btn').addEventListener('click', onDone);
 
     // Org typeahead
     let selectedOrgId = prefill?.organisation_id || null;
-    const orgTA = buildOrgTypeahead(drawer.querySelector('.crm-org-wrap'), (id) => { selectedOrgId = id; });
+    const orgTA = buildOrgTypeahead(modal.querySelector('.crm-org-wrap'), (id) => { selectedOrgId = id; });
     if (prefill?.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
 
     // Source field — reveal Other input when selected
-    wireSourceField(drawer);
+    wireSourceField(modal);
 
     // Duplicate detection (new only)
     if (!isEdit) {
-      const dupWrap = drawer.querySelector('.crm-duplicate-warning-wrap');
+      const dupWrap = modal.querySelector('.crm-duplicate-warning-wrap');
       let dupTimer;
       const checkDups = () => {
         clearTimeout(dupTimer);
         dupTimer = setTimeout(async () => {
-          const first  = drawer.querySelector('.crm-first').value.trim();
-          const last   = drawer.querySelector('.crm-last').value.trim();
-          const email  = drawer.querySelector('.crm-email').value.trim();
-          const mobile = drawer.querySelector('.crm-mobile').value.trim();
+          const first  = modal.querySelector('.crm-first').value.trim();
+          const last   = modal.querySelector('.crm-last').value.trim();
+          const email  = modal.querySelector('.crm-email').value.trim();
+          const mobile = modal.querySelector('.crm-mobile').value.trim();
           const dups   = await checkDuplicates(first, last, email, mobile);
           renderDuplicateWarning(dupWrap, dups, existing => {
             if (!confirm(`Link existing contact "${displayName(existing)}" instead?`)) return;
@@ -1376,20 +1400,20 @@ function renderCRMView(container) {
         }, 500);
       };
       ['crm-first','crm-last','crm-email','crm-mobile'].forEach(cls => {
-        drawer.querySelector(`.${cls}`)?.addEventListener('input', checkDups);
+        modal.querySelector(`.${cls}`)?.addEventListener('input', checkDups);
       });
     }
 
     // Save
-    drawer.querySelector('.crm-save-btn').addEventListener('click', async () => {
-      const first = drawer.querySelector('.crm-first').value.trim();
-      if (!first) { drawer.querySelector('.crm-first').focus(); return; }
-      const sourceVal = readSourceField(drawer);
+    modal.querySelector('.crm-save-btn').addEventListener('click', async () => {
+      const first = modal.querySelector('.crm-first').value.trim();
+      if (!first) { modal.querySelector('.crm-first').focus(); return; }
+      const sourceVal = readSourceField(modal);
       const data = {
         first_name:      first,
-        last_name:       drawer.querySelector('.crm-last').value.trim(),
-        mobile:          drawer.querySelector('.crm-mobile').value.trim(),
-        email:           drawer.querySelector('.crm-email').value.trim(),
+        last_name:       modal.querySelector('.crm-last').value.trim(),
+        mobile:          modal.querySelector('.crm-mobile').value.trim(),
+        email:           modal.querySelector('.crm-email').value.trim(),
         organisation_id: selectedOrgId,
         source:          sourceVal || prefill?.source || 'Other',
       };
@@ -1402,7 +1426,7 @@ function renderCRMView(container) {
     });
 
     // Delete (edit only)
-    drawer.querySelector('.crm-delete-btn')?.addEventListener('click', async () => {
+    modal.querySelector('.crm-delete-btn')?.addEventListener('click', async () => {
       if (!confirm(`Permanently delete ${displayName(prefill)}? This cannot be undone.`)) return;
       await apiDelete({ id: prefill.id });
       onDone();
@@ -1432,7 +1456,7 @@ function renderCRMView(container) {
     });
 
     pane.querySelector('#orgAddBtn').addEventListener('click', () => {
-      openDrawer(drawer => renderOrgDrawer(drawer, null, () => { closeDrawer(); loadOrgsPane(); }));
+      openModal(modal => renderOrgModal(modal, null, () => { closeModal(); loadOrgsPane(); }));
     });
 
     async function fetchOrgs(q = '') {
@@ -1453,14 +1477,14 @@ function renderCRMView(container) {
             <button class="crm-view-edit-btn" title="Edit">✎</button>
             <button class="crm-view-delete-btn" title="Delete" style="color:#c0392b">🗑</button>
           </td>`;
-        // Click on name → open drawer in view mode
+        // Click on name → open modal in view mode
         tr.querySelector('.crm-td-name').addEventListener('click', () => {
-          openDrawer(drawer => renderOrgDrawer(drawer, org, () => { closeDrawer(); fetchOrgs(orgSearch); }));
+          openModal(modal => renderOrgModal(modal, org, () => { closeModal(); fetchOrgs(orgSearch); }));
         });
-        // ✎ → open drawer, will go straight to edit mode via handler below
+        // ✎ → open modal, will go straight to edit mode via handler below
         tr.querySelector('.crm-view-edit-btn').addEventListener('click', (e) => {
           e.stopPropagation();
-          openDrawer(drawer => renderOrgDrawer(drawer, { ...org, _startInEditMode: true }, () => { closeDrawer(); fetchOrgs(orgSearch); }));
+          openModal(modal => renderOrgModal(modal, { ...org, _startInEditMode: true }, () => { closeModal(); fetchOrgs(orgSearch); }));
         });
         tr.querySelector('.crm-view-delete-btn').addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -1475,12 +1499,12 @@ function renderCRMView(container) {
     fetchOrgs();
   }
 
-  async function renderOrgDrawer(drawer, prefill, onDone) {
+  async function renderOrgModal(modal, prefill, onDone) {
     const isEdit = !!prefill?.id;
     let editMode = !isEdit || !!prefill?._startInEditMode;   // new orgs or ✎ click start in edit mode
 
     async function render() {
-      drawer.innerHTML = '<div class="crm-drawer-loading">Loading…</div>';
+      modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
 
       const [orgContacts, allContacts] = isEdit ? await Promise.all([
         apiGet({ org_contacts: prefill.id }).catch(() => []),
@@ -1498,8 +1522,8 @@ function renderCRMView(container) {
 
       // ── Details section: read mode vs edit mode ────────────────────────────
       const detailsHtml = editMode ? `
-        <div class="crm-drawer-section">
-          <div class="crm-drawer-section-title">${isEdit ? 'Edit Organisation' : 'New Organisation'}</div>
+        <div class="crm-modal-section">
+          <div class="crm-modal-section-title">${isEdit ? 'Edit Organisation' : 'New Organisation'}</div>
           <div class="crm-form-row">
             <div class="kb-field-wrap" style="flex:1">
               <label class="kb-field-label">Name *</label>
@@ -1524,12 +1548,12 @@ function renderCRMView(container) {
           </div>
           <div style="display:flex;gap:8px;margin-top:12px">
             <button class="crm-org-save-btn kb-add-offer-btn">${isEdit ? 'Save Changes' : 'Create'}</button>
-            ${isEdit ? '<button class="crm-org-edit-cancel">Cancel</button>' : ''}
+            ${isEdit ? '<button class="crm-org-edit-cancel crm-cancel-btn">Cancel</button>' : ''}
           </div>
         </div>
       ` : `
-        <div class="crm-drawer-section">
-          <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+        <div class="crm-modal-section">
+          <div class="crm-modal-section-title" style="display:flex;justify-content:space-between;align-items:center">
             Organisation Details
             <button class="crm-org-edit-btn kb-add-offer-btn">✎ Edit</button>
           </div>
@@ -1542,21 +1566,21 @@ function renderCRMView(container) {
         </div>
       `;
 
-      drawer.innerHTML = `
-        <div class="crm-drawer-header">
+      modal.innerHTML = `
+        <div class="crm-modal-header">
           <div>
-            <div class="crm-drawer-title">${orgName || 'New Organisation'}</div>
-            ${isEdit ? `<div class="crm-drawer-subtitle">${orgContacts.length} contact${orgContacts.length === 1 ? '' : 's'}</div>` : ''}
+            <div class="crm-modal-title">${orgName || 'New Organisation'}</div>
+            ${isEdit ? `<div class="crm-modal-subtitle">${orgContacts.length} contact${orgContacts.length === 1 ? '' : 's'}</div>` : ''}
           </div>
-          <button class="crm-drawer-close">✕</button>
+          <button class="crm-modal-close">✕</button>
         </div>
-        <div class="crm-drawer-body">
+        <div class="crm-modal-body">
 
           ${detailsHtml}
 
           ${isEdit ? `
-          <div class="crm-drawer-section">
-            <div class="crm-drawer-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <div class="crm-modal-section">
+            <div class="crm-modal-section-title" style="display:flex;justify-content:space-between;align-items:center">
               Contacts (${orgContacts.length})
               <button class="crm-org-add-contact-btn kb-add-offer-btn">+ Add Contact</button>
             </div>
@@ -1567,17 +1591,15 @@ function renderCRMView(container) {
                   ${available.map(c => `<option value="${c.id}">${displayName(c)}${c.org_name ? ' · ' + c.org_name : ''}</option>`).join('')}
                 </select>
                 <button class="crm-org-contact-link-save kb-add-offer-btn">Add</button>
-                <button class="crm-org-contact-link-cancel">Cancel</button>
+                <button class="crm-org-contact-link-cancel crm-cancel-btn">Cancel</button>
               </div>
             </div>
             <div id="crmOrgContactsList">
               ${orgContacts.length ? orgContacts.map(c => `
-                <div class="crm-org-contact-row" data-contact-id="${c.id}">
-                  <div class="crm-org-contact-info">
-                    <span class="crm-org-contact-name" data-contact-id="${c.id}">${displayName(c)}</span>
-                    <span class="crm-org-contact-meta">${[c.mobile, c.email].filter(Boolean).join(' · ')}</span>
-                  </div>
-                  <button class="crm-org-contact-remove" data-contact-id="${c.id}" title="Remove from org">✕</button>
+                <div class="crm-prop-row" data-contact-id="${c.id}">
+                  <a href="#" class="crm-org-contact-open" data-contact-id="${c.id}" title="Open contact">${displayName(c)}</a>
+                  <span class="crm-org-contact-meta">${[c.mobile, c.email].filter(Boolean).join(' · ')}</span>
+                  <button class="crm-prop-unlink-btn crm-org-contact-remove" data-contact-id="${c.id}" title="Remove from org">✕</button>
                 </div>`).join('') : '<div class="crm-empty">No contacts in this organisation</div>'}
             </div>
           </div>` : ''}
@@ -1585,27 +1607,27 @@ function renderCRMView(container) {
         </div>`;
 
       // ── Handlers ───────────────────────────────────────────────────────────
-      drawer.querySelector('.crm-drawer-close').addEventListener('click', onDone);
+      modal.querySelector('.crm-modal-close').addEventListener('click', onDone);
 
       // Enter edit mode (existing org)
-      drawer.querySelector('.crm-org-edit-btn')?.addEventListener('click', () => {
+      modal.querySelector('.crm-org-edit-btn')?.addEventListener('click', () => {
         editMode = true;
         render();
       });
 
       // Cancel edit (existing org)
-      drawer.querySelector('.crm-org-edit-cancel')?.addEventListener('click', () => {
+      modal.querySelector('.crm-org-edit-cancel')?.addEventListener('click', () => {
         editMode = false;
         render();
       });
 
       // Save (create or update)
-      drawer.querySelector('.crm-org-save-btn')?.addEventListener('click', async () => {
-        const name    = drawer.querySelector('.crm-org-name').value.trim();
-        const phone   = drawer.querySelector('.crm-org-phone').value.trim();
-        const email   = drawer.querySelector('.crm-org-email').value.trim();
-        const website = drawer.querySelector('.crm-org-website').value.trim();
-        if (!name) { drawer.querySelector('.crm-org-name').focus(); return; }
+      modal.querySelector('.crm-org-save-btn')?.addEventListener('click', async () => {
+        const name    = modal.querySelector('.crm-org-name').value.trim();
+        const phone   = modal.querySelector('.crm-org-phone').value.trim();
+        const email   = modal.querySelector('.crm-org-email').value.trim();
+        const website = modal.querySelector('.crm-org-website').value.trim();
+        if (!name) { modal.querySelector('.crm-org-name').focus(); return; }
         try {
           if (isEdit) {
             await apiPut({ org_id: prefill.id, name, phone, email, website });
@@ -1627,19 +1649,19 @@ function renderCRMView(container) {
       if (!isEdit) return;
 
       // Add contact to org
-      const addContactBtn  = drawer.querySelector('.crm-org-add-contact-btn');
-      const addContactForm = drawer.querySelector('.crm-org-add-contact-form');
+      const addContactBtn  = modal.querySelector('.crm-org-add-contact-btn');
+      const addContactForm = modal.querySelector('.crm-org-add-contact-form');
       addContactBtn?.addEventListener('click', () => { addContactForm.style.display = ''; addContactBtn.style.display = 'none'; });
-      drawer.querySelector('.crm-org-contact-link-cancel')?.addEventListener('click', () => { addContactForm.style.display = 'none'; addContactBtn.style.display = ''; });
-      drawer.querySelector('.crm-org-contact-link-save')?.addEventListener('click', async () => {
-        const contactId = drawer.querySelector('.crm-org-contact-select').value;
+      modal.querySelector('.crm-org-contact-link-cancel')?.addEventListener('click', () => { addContactForm.style.display = 'none'; addContactBtn.style.display = ''; });
+      modal.querySelector('.crm-org-contact-link-save')?.addEventListener('click', async () => {
+        const contactId = modal.querySelector('.crm-org-contact-select').value;
         if (!contactId) return;
         await apiPost({ action: 'set_org', contact_id: parseInt(contactId), organisation_id: prefill.id });
         render();
       });
 
       // Remove contact from org
-      drawer.querySelectorAll('.crm-org-contact-remove').forEach(btn => {
+      modal.querySelectorAll('.crm-org-contact-remove').forEach(btn => {
         btn.addEventListener('click', async () => {
           if (!confirm('Remove this contact from the organisation?')) return;
           await apiPost({ action: 'set_org', contact_id: parseInt(btn.dataset.contactId), organisation_id: null });
@@ -1647,16 +1669,464 @@ function renderCRMView(container) {
         });
       });
 
-      // Click contact name → open contact detail (same drawer as the contacts list)
-      drawer.querySelectorAll('.crm-org-contact-name').forEach(el => {
-        el.addEventListener('click', () => {
-          renderContactDetail(drawer, parseInt(el.dataset.contactId), () => render());
+      // Click contact name → open contact detail (same modal as the contacts list)
+      modal.querySelectorAll('.crm-org-contact-open').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.preventDefault();
+          renderContactDetail(modal, parseInt(el.dataset.contactId), () => render());
         });
       });
     }
 
     render();
   }
+
+  // ── Parcels pane (V75.4) ───────────────────────────────────────────────────
+
+  let parcelSearch = '';
+
+  async function loadParcelsPane() {
+    const pane = container.querySelector('#crm-pane-parcels');
+    pane.innerHTML = `
+      <div class="crm-pane-toolbar">
+        <input class="kb-input crm-view-search" placeholder="Search parcels…" value="${parcelSearch}">
+      </div>
+      <div class="crm-contact-table-wrap">
+        <table class="crm-contact-table">
+          <thead><tr>
+            <th>Title</th>
+            <th>Properties</th>
+            <th>Active Deal</th>
+            <th>Not Suitable</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="crmParcelTableBody"><tr><td colspan="5" class="crm-loading">Loading…</td></tr></tbody>
+        </table>
+      </div>`;
+
+    pane.querySelector('.crm-view-search').addEventListener('input', e => {
+      parcelSearch = e.target.value;
+      renderParcelRows();
+    });
+
+    await renderParcelRows();
+  }
+
+  // Cache so search is instant (parcel counts stay small)
+  let _parcelsCache = null;
+  async function renderParcelRows() {
+    const pane  = container.querySelector('#crm-pane-parcels');
+    const tbody = pane?.querySelector('#crmParcelTableBody');
+    if (!tbody) return;
+
+    try {
+      if (!_parcelsCache) {
+        const [parcels, deals] = await Promise.all([
+          fetch('/api/parcels').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/deals').then(r => r.ok ? r.json() : []).catch(() => []),
+        ]);
+        // Index deals by parcel_id to find the active deal quickly
+        const dealsByParcel = {};
+        for (const d of deals) {
+          if (!d.parcel_id) continue;
+          (dealsByParcel[d.parcel_id] ||= []).push(d);
+        }
+        _parcelsCache = parcels.map(p => {
+          const pDeals = dealsByParcel[p.id] || [];
+          const active = pDeals.find(d => d.status === 'active') || null;
+          return {
+            ...p,
+            _deals:       pDeals,
+            _activeDeal:  active,
+          };
+        });
+      }
+
+      const q = parcelSearch.trim().toLowerCase();
+      const rows = q
+        ? _parcelsCache.filter(p => (p.name || '').toLowerCase().includes(q))
+        : _parcelsCache;
+
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="crm-empty">${q ? 'No parcels match' : 'No parcels yet'}</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = '';
+      const now = Date.now();
+      for (const p of rows) {
+        const tr = document.createElement('tr');
+        tr.className = 'crm-contact-tr';
+        const count = p.property_count || 0;
+        const stageBadge = p._activeDeal
+          ? `<span class="crm-deal-badge crm-deal-badge-stage">${p._activeDeal.stage}</span>`
+          : '<span style="color:var(--text-secondary);font-size:12px">No active</span>';
+        // Not-suitable can be timestamptz (future) or 'infinity' for permanent
+        let nsBadge = '—';
+        if (p.not_suitable_until) {
+          const t = p.not_suitable_until === 'infinity' || String(p.not_suitable_until).includes('infinity')
+            ? null
+            : new Date(p.not_suitable_until).getTime();
+          const active = t === null || (t && t > now);
+          if (active) {
+            const label = t === null ? 'Permanent' : `Until ${new Date(p.not_suitable_until).toLocaleDateString()}`;
+            nsBadge = `<span class="listing-ns-badge">${label}</span>`;
+          }
+        }
+        tr.innerHTML = `
+          <td class="crm-td-name"><strong>${p.name || p.id}</strong></td>
+          <td>${count}</td>
+          <td>${stageBadge}</td>
+          <td>${nsBadge}</td>
+          <td class="crm-td-actions"></td>`;
+        tr.querySelector('.crm-td-name').addEventListener('click', () => {
+          openModal(modal => renderParcelModal(modal, p.id, () => {
+            closeModal();
+            _parcelsCache = null;       // invalidate cache on close
+            renderParcelRows();
+          }));
+        });
+        tbody.appendChild(tr);
+      }
+    } catch (err) {
+      console.error('[parcels] fetch failed:', err);
+      tbody.innerHTML = `<tr><td colspan="5" class="crm-empty">Failed to load parcels</td></tr>`;
+    }
+  }
+
+  // ── Parcel modal (V75.4) ───────────────────────────────────────────────────
+
+  async function renderParcelModal(modal, parcelId, onDone) {
+    modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
+    try {
+      const [parcel, parcelDeals, parcelContacts, parcelNotes] = await Promise.all([
+        fetch(`/api/parcels?id=${encodeURIComponent(parcelId)}&expand=properties`).then(r => r.ok ? r.json() : null),
+        fetch(`/api/deals?parcel_id=${encodeURIComponent(parcelId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`/api/contacts?entity_type=parcel&entity_id=${encodeURIComponent(parcelId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`/api/notes?entity_type=parcel&entity_id=${encodeURIComponent(parcelId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+      ]);
+      if (!parcel) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
+
+      const props   = Array.isArray(parcel.properties) ? parcel.properties : [];
+      const title   = parcel.name || (window.formatParcelTitle ? window.formatParcelTitle(props) : parcel.id);
+      const totalArea = props.reduce((s, p) => s + (p.area_sqm || 0), 0);
+      const suburbs  = [...new Set(props.map(p => p.suburb).filter(Boolean))];
+
+      // Active deal detection for the smart-button section header
+      const activeDeal = parcelDeals.find(d => d.status === 'active') || null;
+      const closedCount = parcelDeals.filter(d => d.status !== 'active').length;
+
+      // Not-suitable state
+      const nsRaw = parcel.not_suitable_until;
+      const nsActive = !!(nsRaw && (String(nsRaw).includes('infinity') || new Date(nsRaw).getTime() > Date.now()));
+      const nsLabel = !nsActive ? '' :
+        (String(nsRaw).includes('infinity') ? 'Permanent' : `Until ${new Date(nsRaw).toLocaleDateString()}`);
+
+      // Deal stage labels
+      const workflowLabels = { acquisition: 'Acquisition', buyer_enquiry: 'Enquiry', agency_sales: 'Listing' };
+
+      modal.innerHTML = `
+        <div class="crm-modal-header">
+          <div>
+            <div class="crm-modal-title">${title}</div>
+            <div class="crm-modal-subtitle">${props.length} propert${props.length === 1 ? 'y' : 'ies'}${totalArea ? ' · ' + Math.round(totalArea).toLocaleString() + ' m²' : ''}${suburbs.length > 0 ? ' · ' + suburbs.join(', ') : ''}</div>
+          </div>
+          <button class="crm-modal-close">✕</button>
+        </div>
+        <div class="crm-modal-body">
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="details">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Parcel Details</span>
+            </div>
+            <div class="crm-section-body">
+              <div class="crm-detail-grid">
+                <div class="crm-detail-label">Parcel Name</div>
+                <div>
+                  <input class="kb-input crm-parcel-name-input" type="text" value="${(parcel.name || '').replace(/"/g,'&quot;')}" placeholder="${title}" style="width:100%;box-sizing:border-box;font-size:13px">
+                </div>
+                <div class="crm-detail-label">Merged Title</div><div>${title}</div>
+                <div class="crm-detail-label">Total Area</div><div>${totalArea ? Math.round(totalArea).toLocaleString() + ' m²' : '—'}</div>
+                <div class="crm-detail-label">Parcel ID</div><div><code style="font-size:11px">${parcel.id}</code></div>
+              </div>
+              <div style="margin-top:8px"><button class="crm-parcel-name-save kb-add-offer-btn" style="display:none">Save Name</button></div>
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="not-suitable" ${nsActive ? '' : 'data-collapsed="1"'}>
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">${nsActive ? '▾' : '▸'}</span> Not Suitable ${nsActive ? `<span class="listing-ns-badge" style="margin-left:6px">${nsLabel}</span>` : ''}</span>
+            </div>
+            <div class="crm-section-body" ${nsActive ? '' : 'style="display:none"'}>
+              ${nsActive ? `
+                <div style="margin-bottom:8px">Flagged as not suitable · <strong>${nsLabel}</strong></div>
+                ${parcel.not_suitable_reason ? `<div class="crm-detail-label" style="margin-bottom:4px">Reason</div><div style="margin-bottom:8px">${parcel.not_suitable_reason}</div>` : ''}
+                <button class="crm-parcel-clear-ns-btn kb-add-offer-btn">Clear flag</button>
+              ` : `
+                <div style="color:var(--text-secondary);font-size:12px;margin-bottom:8px">Not flagged. Use the map pin popup's snooze controls to mark individual properties, or set a parcel-wide flag here.</div>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <select class="kb-input crm-parcel-ns-snooze" style="font-size:12px">
+                    <option value="30d">30 days</option>
+                    <option value="90d">90 days</option>
+                    <option value="6m">6 months</option>
+                    <option value="1y">1 year</option>
+                    <option value="permanent">Permanent</option>
+                  </select>
+                  <input class="kb-input crm-parcel-ns-reason" type="text" placeholder="Reason (optional)" style="flex:1;font-size:12px">
+                  <button class="crm-parcel-set-ns-btn kb-add-offer-btn">Mark</button>
+                </div>
+              `}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="properties">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Properties <span class="crm-section-count">(${props.length})</span></span>
+            </div>
+            <div class="crm-section-body">
+              ${props.length ? props.map((p, i) => `
+                <div class="crm-prop-row" data-property-id="${p.id}">
+                  <span style="flex-shrink:0;font-size:11px;color:var(--text-secondary);min-width:18px">${i + 1}.</span>
+                  <span class="crm-prop-address">${p.address || '—'}${p.suburb ? ', ' + p.suburb : ''}</span>
+                  <span style="font-size:11px;color:var(--text-secondary)">${p.lot_dps || ''}</span>
+                  <span style="font-size:11px;color:var(--text-secondary)">${p.area_sqm ? Math.round(p.area_sqm).toLocaleString() + ' m²' : ''}</span>
+                  <button class="crm-prop-unlink-btn crm-parcel-remove-prop" data-property-id="${p.id}" title="Remove from parcel">✕</button>
+                </div>`).join('') : '<div class="crm-empty">No properties — this parcel is orphaned and can be deleted</div>'}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="deals">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${parcelDeals.length})</span></span>
+              ${activeDeal
+                ? `<button class="crm-parcel-open-deal-btn kb-add-offer-btn" data-deal-id="${activeDeal.id}">Open Active Deal</button>`
+                : `<button class="crm-parcel-new-deal-btn kb-add-offer-btn">+ New Deal${closedCount ? ` <span style="font-weight:400;font-size:10px;color:rgba(255,255,255,0.75)">(history: ${closedCount} closed)</span>` : ''}</button>`
+              }
+            </div>
+            <div class="crm-section-body">
+              ${parcelDeals.length ? parcelDeals.map(d => `
+                <div class="crm-deal-row">
+                  <a href="#" class="crm-deal-open" data-deal-id="${d.id}">${d.id}</a>
+                  <span class="crm-deal-badge crm-deal-badge-workflow">${workflowLabels[d.workflow] || d.workflow}</span>
+                  <span class="crm-deal-badge crm-deal-badge-stage">${d.stage}</span>
+                  <span class="crm-deal-badge crm-deal-badge-stage">${d.status}</span>
+                </div>`).join('') : '<div class="crm-empty">No deals on this parcel</div>'}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="contacts">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Contacts <span class="crm-section-count">(${parcelContacts.length})</span></span>
+            </div>
+            <div class="crm-section-body">
+              ${parcelContacts.length ? parcelContacts.map(c => `
+                <div class="crm-prop-row">
+                  <a href="#" class="crm-org-contact-open" data-contact-id="${c.id}">${displayName(c)}</a>
+                  <span class="crm-org-contact-meta">${[c.mobile, c.email].filter(Boolean).join(' · ')}</span>
+                  <span style="font-size:11px;color:var(--text-secondary)">${c.role || ''}</span>
+                </div>`).join('') : '<div class="crm-empty">No contacts linked to this parcel</div>'}
+            </div>
+          </div>
+
+          <div class="crm-modal-section crm-section-collapsible" data-section="notes">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Notes <span class="crm-section-count">(${parcelNotes.length})</span></span>
+              <button class="crm-parcel-add-note-btn kb-add-offer-btn">+ Add Note</button>
+            </div>
+            <div class="crm-section-body">
+              <div class="crm-parcel-note-input" style="display:none;margin-bottom:10px">
+                <textarea class="kb-input crm-parcel-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
+                <div style="display:flex;gap:6px;margin-top:4px">
+                  <button class="crm-parcel-note-save kb-add-offer-btn">Save Note</button>
+                  <button class="crm-parcel-note-cancel crm-cancel-btn">Cancel</button>
+                </div>
+              </div>
+              <div class="crm-parcel-notes-list">
+                ${parcelNotes.length ? parcelNotes.map(n => {
+                  const author = n.author_name || 'Unknown';
+                  const taggedName = [n.tagged_first_name, n.tagged_last_name].filter(Boolean).join(' ').trim();
+                  const taggedBadge = taggedName ? ` <span class="kb-note-contact-badge">@${taggedName}</span>` : '';
+                  return `
+                    <div class="crm-note-entry" data-note-id="${n.id}">
+                      <div class="crm-note-meta">
+                        <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}${taggedBadge}</span>
+                        <button class="crm-note-delete" data-id="${n.id}">✕</button>
+                      </div>
+                      <div class="crm-note-text">${n.note_text}</div>
+                    </div>`;
+                }).join('') : '<div class="crm-empty">No notes yet</div>'}
+              </div>
+            </div>
+          </div>
+
+        </div>`;
+
+      // ── Handlers ─────────────────────────────────────────────────────────
+
+      modal.querySelector('.crm-modal-close').addEventListener('click', onDone);
+
+      // Collapsibles (same pattern as contact modal)
+      modal.querySelectorAll('.crm-section-collapsible').forEach(section => {
+        const header = section.querySelector('.crm-section-header');
+        const body   = section.querySelector('.crm-section-body');
+        const chev   = section.querySelector('.crm-section-chev');
+        const startCollapsed = section.dataset.collapsed === '1';
+        if (startCollapsed) { body.style.display = 'none'; chev.textContent = '▸'; }
+        header.addEventListener('click', (e) => {
+          if (e.target.closest('button, select, input, textarea, a')) return;
+          const isOpen = body.style.display !== 'none';
+          body.style.display = isOpen ? 'none' : '';
+          chev.textContent   = isOpen ? '▸' : '▾';
+        });
+      });
+
+      // Name save — show button only when input changed from existing
+      const nameInput = modal.querySelector('.crm-parcel-name-input');
+      const nameSave  = modal.querySelector('.crm-parcel-name-save');
+      const origName  = parcel.name || '';
+      nameInput.addEventListener('input', () => {
+        nameSave.style.display = nameInput.value.trim() !== origName ? '' : 'none';
+      });
+      nameSave.addEventListener('click', async () => {
+        await fetch('/api/parcels', {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: parcel.id, name: nameInput.value.trim() }),
+        });
+        renderParcelModal(modal, parcelId, onDone);
+      });
+
+      // Not-suitable set / clear
+      modal.querySelector('.crm-parcel-set-ns-btn')?.addEventListener('click', async () => {
+        const snoozeVal = modal.querySelector('.crm-parcel-ns-snooze').value;
+        const reason    = modal.querySelector('.crm-parcel-ns-reason').value.trim() || null;
+        const until = snoozeVal === 'permanent' ? 'permanent' :
+          new Date(Date.now() + ({ '30d': 30, '90d': 90, '6m': 180, '1y': 365 }[snoozeVal] * 86400000)).toISOString();
+        await fetch('/api/parcels', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_not_suitable', id: parcel.id, until, reason }),
+        });
+        renderParcelModal(modal, parcelId, onDone);
+      });
+      modal.querySelector('.crm-parcel-clear-ns-btn')?.addEventListener('click', async () => {
+        await fetch('/api/parcels', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'clear_not_suitable', id: parcel.id }),
+        });
+        renderParcelModal(modal, parcelId, onDone);
+      });
+
+      // Remove a property from parcel
+      modal.querySelectorAll('.crm-parcel-remove-prop').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Remove this property from the parcel? The property will still exist standalone.')) return;
+          await fetch('/api/parcels', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'remove_property', id: parcel.id, property_id: btn.dataset.propertyId }),
+          });
+          renderParcelModal(modal, parcelId, onDone);
+        });
+      });
+
+      // Deal-row actions
+      modal.querySelector('.crm-parcel-open-deal-btn')?.addEventListener('click', (e) => {
+        if (window.Router) Router.navigate(`/pipeline/deal/${e.currentTarget.dataset.dealId}`);
+      });
+      modal.querySelectorAll('.crm-deal-open').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (window.Router) Router.navigate(`/pipeline/deal/${a.dataset.dealId}`);
+        });
+      });
+      modal.querySelector('.crm-parcel-new-deal-btn')?.addEventListener('click', async () => {
+        const r = await fetch('/api/deals', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'new_on_parcel', parcel_id: parcel.id }),
+        });
+        if (r.ok) {
+          const d = await r.json();
+          if (window.Router) Router.navigate(`/pipeline/deal/${d.id}`);
+        }
+      });
+
+      // Contact row click → open contact modal
+      modal.querySelectorAll('.crm-org-contact-open').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          const cid = parseInt(a.dataset.contactId);
+          renderContactDetail(modal, cid, () => renderParcelModal(modal, parcelId, onDone));
+        });
+      });
+
+      // Notes add / delete
+      const addNoteBtn = modal.querySelector('.crm-parcel-add-note-btn');
+      const noteInput  = modal.querySelector('.crm-parcel-note-input');
+      addNoteBtn.addEventListener('click', () => { noteInput.style.display = ''; addNoteBtn.style.display = 'none'; modal.querySelector('.crm-parcel-note-text').focus(); });
+      modal.querySelector('.crm-parcel-note-cancel').addEventListener('click', () => { noteInput.style.display = 'none'; addNoteBtn.style.display = ''; });
+      modal.querySelector('.crm-parcel-note-save').addEventListener('click', async () => {
+        const text = modal.querySelector('.crm-parcel-note-text').value.trim();
+        if (!text) return;
+        await fetch('/api/notes', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ entity_type: 'parcel', entity_id: parcel.id, note_text: text }),
+        });
+        renderParcelModal(modal, parcelId, onDone);
+      });
+      modal.querySelectorAll('.crm-note-delete').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Delete this note?')) return;
+          await fetch(`/api/notes?id=${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+          renderParcelModal(modal, parcelId, onDone);
+        });
+      });
+
+    } catch (err) {
+      console.error('[renderParcelModal]', err);
+      modal.innerHTML = '<div class="crm-modal-loading">Error loading parcel</div>';
+    }
+  }
+
+  // ── Properties pane (V75.5 placeholder) ────────────────────────────────────
+
+  async function loadPropertiesPane() {
+    const pane = container.querySelector('#crm-pane-properties');
+    pane.innerHTML = `
+      <div style="padding:48px 24px;text-align:center;color:var(--text-secondary);font-size:13px">
+        <div style="font-size:18px;margin-bottom:8px">🏡</div>
+        <div style="font-weight:500;margin-bottom:4px">Properties tab coming in V75.5</div>
+        <div>Individual property records — for aggregated Parcels, see the Parcels tab.</div>
+      </div>`;
+  }
+
+  // ── Public navigation hook for router deep links ───────────────────────────
+  // window.CRM.navigateTo('parcels', 'parcel-123') → switches to Parcels tab
+  // and opens the parcel modal. Called from router.js for /crm/parcels/:id and
+  // future /crm/contacts/:id, /crm/properties/:id, /crm/organisations/:id.
+  window.CRM.navigateTo = (subRoute, entityId) => {
+    const tabMap = {
+      contacts:      'contacts',
+      properties:    'properties',
+      parcels:       'parcels',
+      organisations: 'organisations',
+    };
+    const tabName = tabMap[subRoute];
+    if (!tabName) return;
+    const tabBtn = container.querySelector(`.crm-tab[data-tab="${tabName}"]`);
+    if (tabBtn && !tabBtn.classList.contains('active')) tabBtn.click();
+    if (!entityId) return;
+    // Deep-link: open the relevant modal
+    if (tabName === 'contacts') {
+      openModal(modal => renderContactDetail(modal, parseInt(entityId), () => closeModal()));
+    } else if (tabName === 'parcels') {
+      openModal(modal => renderParcelModal(modal, entityId, () => closeModal()));
+    }
+    // properties + organisations deep-linking lands in V75.5/later
+  };
 
   // Initial load
   loadContactsPane();
