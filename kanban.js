@@ -1110,7 +1110,8 @@ ${rows.join('')}`;
             : `<div class="kb-modal-lotdp" style="font-size:11px;color:#bbb;margin-top:3px">Lot/DP loading…</div>`}
           ${p._listingUrl ? `<a href="${p._listingUrl}" target="_blank" rel="noopener" class="kb-domain-link" style="display:inline-block;margin-top:4px;font-size:11px;color:#1ea765;font-weight:600;text-decoration:none">↗ View on Domain</a>` : ''}
         </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0" class="crm-modal-header-actions">
+          <button class="kb-modal-delete crm-modal-delete" title="Delete">Delete</button>
           <button class="kb-modal-close" title="Close">✕</button>
         </div>
       </div>
@@ -1189,6 +1190,15 @@ ${rows.join('')}`;
 
   // Close
   overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
+
+  // V75.5.2: Delete deal from inside modal. Confirm → reuse removeFromPipeline
+  // which already handles: pipeline dict removal, DB delete, parcel orphan-
+  // cleanup, refreshPipelinePins, and CRM cache invalidation.
+  overlay.querySelector('.kb-modal-delete')?.addEventListener('click', async () => {
+    if (!confirm('Confirm delete')) return;
+    overlay.remove();
+    await removeFromPipeline(id);
+  });
   // Finance picker — delegate clicks on all .kb-fin-pick-btn rows
   function parsePickerPrice(s) {
     if (!s) return null;

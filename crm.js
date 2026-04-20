@@ -731,6 +731,42 @@ function renderCRMView(container) {
   }
   window._crmCloseModal = closeModal;
 
+  // V75.5.2: Sync in-memory pipeline state + map pins + CRM caches after a
+  // CRM modal deletes a Parcel or Property directly (bypassing Kanban's
+  // removeFromPipeline). The server DELETE cascades to deals; this helper
+  // makes the in-memory pipeline dict and map pins catch up.
+  //
+  // Pass ONE of { parcelId, propertyId }. The helper:
+  //   - Finds any pipeline[] entries whose deal references the entity and
+  //     removes them from the dict
+  //   - Calls refreshPipelinePins() to redraw star pins off the updated dict
+  //   - Invalidates both CRM Parcels and Properties caches
+  function _syncAfterEntityDelete({ parcelId, propertyId } = {}) {
+    try {
+      if (typeof pipeline !== 'undefined' && pipeline) {
+        const toDelete = [];
+        for (const [dealId, entry] of Object.entries(pipeline)) {
+          if (!entry) continue;
+          // Parcel-deals use entry._parcelId; property-deals reference property.id (== dealId for non-parcel)
+          if (parcelId && entry._parcelId === parcelId) { toDelete.push(dealId); continue; }
+          if (propertyId && (entry.property?.id === propertyId || dealId === propertyId)) {
+            toDelete.push(dealId);
+          }
+        }
+        for (const k of toDelete) delete pipeline[k];
+        if (toDelete.length && typeof cacheSave === 'function') cacheSave(pipeline);
+        if (toDelete.length && typeof renderBoard === 'function') renderBoard();
+      }
+    } catch (err) {
+      console.warn('[crm sync] pipeline scrub failed:', err);
+    }
+    if (typeof window.refreshPipelinePins === 'function') {
+      window.refreshPipelinePins();
+    }
+    if (window.CRM?.invalidateParcelsCache)    window.CRM.invalidateParcelsCache();
+    if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+  }
+
   // + Add button wired by configureAddButton() based on active tab
   configureAddButton('contacts');
 
@@ -1845,7 +1881,14 @@ function renderCRMView(container) {
             <div class="crm-modal-title">${title}</div>
             <div class="crm-modal-subtitle">${props.length} propert${props.length === 1 ? 'y' : 'ies'}${totalArea ? ' · ' + Math.round(totalArea).toLocaleString() + ' m²' : ''}${suburbs.length > 0 ? ' · ' + suburbs.join(', ') : ''}</div>
           </div>
-          <button class="crm-modal-close">✕</button>
+          <div class="crm-modal-header-actions">
+            <button class="crm-parcel-delete-btn crm-modal-delete"
+              ${parcelDeals.length ? 'disabled' : ''}
+              title="${parcelDeals.length ? `Cannot delete — ${parcelDeals.length} deal${parcelDeals.length === 1 ? '' : 's'} reference this parcel` : 'Delete'}">
+              Delete
+            </button>
+            <button class="crm-modal-close">✕</button>
+          </div>
         </div>
         <div class="crm-modal-body">
 
@@ -1863,17 +1906,7 @@ function renderCRMView(container) {
                 <div class="crm-detail-label">Total Area</div><div>${totalArea ? Math.round(totalArea).toLocaleString() + ' m²' : '—'}</div>
                 <div class="crm-detail-label">Parcel ID</div><div><code style="font-size:11px">${parcel.id}</code></div>
               </div>
-              <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:8px">
-                <button class="crm-parcel-name-save kb-add-offer-btn" style="display:none">Save Name</button>
-                <div style="margin-left:auto">
-                  <button class="crm-parcel-delete-btn kb-add-offer-btn"
-                    style="background:#c0392b${parcelDeals.length ? ';opacity:0.5;cursor:not-allowed' : ''}"
-                    ${parcelDeals.length ? 'disabled' : ''}
-                    title="${parcelDeals.length ? `Cannot delete — ${parcelDeals.length} deal${parcelDeals.length === 1 ? '' : 's'} reference this parcel` : 'Delete this parcel and its properties'}">
-                    Delete Parcel
-                  </button>
-                </div>
-              </div>
+              <div style="margin-top:8px"><button class="crm-parcel-name-save kb-add-offer-btn" style="display:none">Save Name</button></div>
             </div>
           </div>
 
@@ -2024,11 +2057,11 @@ function renderCRMView(container) {
       modal.querySelector('.crm-parcel-delete-btn')?.addEventListener('click', async (e) => {
         const btn = e.currentTarget;
         if (btn.disabled) return;
-        const propCount = props.length;
-        const msg = `Delete this parcel and its ${propCount} propert${propCount === 1 ? 'y' : 'ies'}?\n\nThis cannot be undone.`;
-        if (!confirm(msg)) return;
+        if (!confirm('Confirm delete')) return;
         const r = await fetch(`/api/parcels?id=${encodeURIComponent(parcel.id)}`, { method: 'DELETE' });
         if (r.ok) {
+          // V75.5.2: sync in-memory pipeline dict, map pins, and CRM caches
+          _syncAfterEntityDelete({ parcelId: parcel.id });
           onDone();
         } else {
           const err = await r.json().catch(() => ({}));
@@ -2334,7 +2367,14 @@ function renderCRMView(container) {
             <div class="crm-modal-title">${property.address || property.id}${property.suburb ? ', ' + property.suburb : ''}</div>
             <div class="crm-modal-subtitle">${property.lot_dps || ''}${property.area_sqm ? ' · ' + Math.round(property.area_sqm).toLocaleString() + ' m²' : ''}</div>
           </div>
-          <button class="crm-modal-close">✕</button>
+          <div class="crm-modal-header-actions">
+            <button class="crm-prop-delete-btn crm-modal-delete"
+              ${deleteDisabled ? 'disabled' : ''}
+              title="${deleteTooltip}">
+              Delete
+            </button>
+            <button class="crm-modal-close">✕</button>
+          </div>
         </div>
         <div class="crm-modal-body">
 
@@ -2363,16 +2403,8 @@ function renderCRMView(container) {
                 <div class="crm-detail-label">Property ID</div>
                 <div><code style="font-size:11px">${property.id}</code></div>
               </div>
-              <div style="margin-top:8px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+              <div style="margin-top:8px">
                 <button class="crm-prop-save-btn kb-add-offer-btn" style="display:none">Save Changes</button>
-                <div style="margin-left:auto">
-                  <button class="crm-prop-delete-btn kb-add-offer-btn"
-                    style="background:#c0392b${deleteDisabled ? ';opacity:0.5;cursor:not-allowed' : ''}"
-                    ${deleteDisabled ? 'disabled' : ''}
-                    title="${deleteTooltip}">
-                    Delete Property
-                  </button>
-                </div>
               </div>
             </div>
           </div>
@@ -2540,12 +2572,15 @@ function renderCRMView(container) {
       });
 
       // Delete property
+      // V75.5.2: Delete property — confirm, then DELETE. API refuses if has deals.
       modal.querySelector('.crm-prop-delete-btn')?.addEventListener('click', async (e) => {
         const btn = e.currentTarget;
         if (btn.disabled) return;
-        if (!confirm(`Delete this property?\n\nThis cannot be undone.`)) return;
+        if (!confirm('Confirm delete')) return;
         const r = await fetch(`/api/properties?id=${encodeURIComponent(property.id)}`, { method: 'DELETE' });
         if (r.ok) {
+          // Sync in-memory pipeline dict, map pins, and CRM caches
+          _syncAfterEntityDelete({ propertyId: property.id });
           onDone();
         } else {
           const err = await r.json().catch(() => ({}));
