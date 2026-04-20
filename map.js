@@ -2253,7 +2253,8 @@ async function _createParcelFromSelection(selections) {
       alert(`Failed to create parcel: ${err.error || r.status}`);
       return;
     }
-    await r.json();
+    const result = await r.json();
+    const newDealId = result?.deal?.id || result?.parcel?.id;
 
     // Success — clear map selection, reload pipeline data
     _updatePipelineLoadingOverlay(overlay, 'Refreshing pipeline…');
@@ -2280,6 +2281,15 @@ async function _createParcelFromSelection(selections) {
       }
     } else {
       console.warn('[parcel-create] dbLoad not defined');
+    }
+
+    // Hide overlay before navigating so the Kanban view gets the focus
+    _hidePipelineLoadingOverlay(overlay);
+
+    // V75.4d: open the Kanban card modal for the newly-created deal.
+    // openPipelineItem handles both "open Kanban view" + "open card modal".
+    if (newDealId && typeof window.openPipelineItem === 'function') {
+      setTimeout(() => window.openPipelineItem(newDealId), 100);
     }
 
     if (typeof showKanbanToast === 'function') {
