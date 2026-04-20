@@ -2286,6 +2286,12 @@ async function _createParcelFromSelection(selections) {
     // Hide overlay before navigating so the Kanban view gets the focus
     _hidePipelineLoadingOverlay(overlay);
 
+    // V75.4d: invalidate CRM Parcels cache so the list shows the new one
+    // next time the user opens that tab (or immediately if it's currently open).
+    if (window.CRM?.invalidateParcelsCache) {
+      window.CRM.invalidateParcelsCache();
+    }
+
     // V75.4d: open the Kanban card modal for the newly-created deal.
     // openPipelineItem handles both "open Kanban view" + "open card modal".
     if (newDealId && typeof window.openPipelineItem === 'function') {

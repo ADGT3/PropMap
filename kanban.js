@@ -423,6 +423,11 @@ function removeFromPipeline(id) {
   updateAddButtons();
   renderBoard();
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+  // V75.4d: if this was a parcel-deal, the server may have auto-cleaned
+  // the parcel. Invalidate the CRM Parcels cache so it stays in sync.
+  if (wasParcel && window.CRM?.invalidateParcelsCache) {
+    window.CRM.invalidateParcelsCache();
+  }
 }
 
 function moveToStage(id, stageId) {

@@ -1714,6 +1714,20 @@ function renderCRMView(container) {
 
   // Cache so search is instant (parcel counts stay small)
   let _parcelsCache = null;
+
+  // Expose a cache-bust hook for external code that mutates parcels
+  // (e.g. map.js after creating a parcel via +Pipeline multi-select).
+  // If the Parcels tab is currently active, also re-render it.
+  if (window.CRM) {
+    window.CRM.invalidateParcelsCache = () => {
+      _parcelsCache = null;
+      const pane = container.querySelector('#crm-pane-parcels');
+      if (pane && pane.classList.contains('active')) {
+        renderParcelRows();
+      }
+    };
+  }
+
   async function renderParcelRows() {
     const pane  = container.querySelector('#crm-pane-parcels');
     const tbody = pane?.querySelector('#crmParcelTableBody');
