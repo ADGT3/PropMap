@@ -292,10 +292,16 @@ async function dbDelete(id, wasParcel = false) {
 
 // ── savePipeline — write to both cache and DB ─────────────────────────────────
 // Called after every mutation. id = the specific entry that changed (or null = full sync).
+// Returns a Promise that resolves once the DB write has completed. Callers
+// that don't care can ignore the returned value — sync behaviour is
+// preserved. Callers that need to know the write has committed (e.g. the
+// CRM cache invalidation after addToPipeline) can await it.
 function savePipeline(changedId) {
   cacheSave(pipeline);
-  if (changedId && pipeline[changedId]) dbSave(changedId, pipeline[changedId]);
+  let writePromise = Promise.resolve();
+  if (changedId && pipeline[changedId]) writePromise = dbSave(changedId, pipeline[changedId]);
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+  return writePromise;
 }
 
 // ── Init — load from DB, fall back to localStorage ───────────────────────────
@@ -366,15 +372,19 @@ function addToPipeline(listing) {
     },
     dd: {}
   };
-  savePipeline(id);
+  const savedPromise = savePipeline(id);
   updateAddButtons();
   if (kanbanVisible) renderBoard();
   showKanbanToast(`${listing.address} added to pipeline`);
 
-  // V75.5: new property was created (or upserted) — refresh CRM Properties cache
-  if (window.CRM?.invalidatePropertiesCache) {
-    window.CRM.invalidatePropertiesCache();
-  }
+  // V75.5: new property was created (or upserted) — refresh CRM Properties
+  // cache AFTER the DB write has committed. Without the await, the re-fetch
+  // from /api/properties would race the save and miss the new row.
+  savedPromise.then(() => {
+    if (window.CRM?.invalidatePropertiesCache) {
+      window.CRM.invalidatePropertiesCache();
+    }
+  }).catch(() => {});
 
   // Async — fetch Lot/DP from cadastre if not already present
   if (!pipeline[id].property._lotDPs && window.fetchLotDP) {

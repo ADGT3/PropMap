@@ -2152,8 +2152,8 @@ function renderCRMView(container) {
   async function loadPropertiesPane() {
     const pane = container.querySelector('#crm-pane-properties');
     pane.innerHTML = `
-      <div class="crm-contacts-toolbar">
-        <input class="kb-input crm-view-search" placeholder="Search properties (address, suburb, lot/DP)…" value="${propertySearch}">
+      <div class="crm-pane-toolbar">
+        <input class="kb-input crm-view-search" placeholder="Search properties…" value="${propertySearch}">
       </div>
       <div class="crm-contact-table-wrap">
         <table class="crm-contact-table">
@@ -2190,24 +2190,30 @@ function renderCRMView(container) {
           fetch('/api/parcels').then(r => r.ok ? r.json() : []).catch(() => []),
         ]);
 
-        // Index deals by property_id (for direct deals — not parcel deals)
+        // Index deals by both property_id and parcel_id
         const dealsByProperty = {};
+        const dealsByParcel = {};
         for (const d of deals) {
-          if (!d.property_id) continue;
-          (dealsByProperty[d.property_id] ||= []).push(d);
+          if (d.property_id) (dealsByProperty[d.property_id] ||= []).push(d);
+          if (d.parcel_id)   (dealsByParcel[d.parcel_id]     ||= []).push(d);
         }
-        // Index parcels by id for parent lookup
         const parcelsById = {};
         for (const p of parcels) parcelsById[p.id] = p;
 
         _propertiesCache = properties.map(p => {
           const pDeals = dealsByProperty[p.id] || [];
           const active = pDeals.find(d => d.status === 'active') || null;
+          const parcel = p.parcel_id ? (parcelsById[p.parcel_id] || null) : null;
+          // V75.5: if the property is a parcel-child, surface the parcel's active deal
+          // as the "effective" deal for this row. Parcel-children don't have their own
+          // deals; the parcel-level deal drives the lifecycle.
+          const parcelActive = parcel ? (dealsByParcel[parcel.id] || []).find(d => d.status === 'active') : null;
           return {
             ...p,
-            _deals:      pDeals,
-            _activeDeal: active,
-            _parcel:     p.parcel_id ? (parcelsById[p.parcel_id] || null) : null,
+            _deals:            pDeals,
+            _activeDeal:       active,
+            _parcel:           parcel,
+            _parcelActiveDeal: parcelActive,
           };
         });
       }
@@ -2240,12 +2246,11 @@ function renderCRMView(container) {
              </a>`
           : '';
 
-        // Deal badge — if active deal exists, show stage badge as link
-        const dealBadge = p._activeDeal
-          ? `<a href="#" class="crm-deal-open" data-deal-id="${p._activeDeal.id}" onclick="event.stopPropagation()"><span class="crm-deal-badge crm-deal-badge-stage">${p._activeDeal.stage}</span></a>`
-          : (p._parcel
-              ? `<span style="color:var(--text-secondary);font-size:11px">in parcel</span>`
-              : '<span style="color:var(--text-secondary);font-size:12px">—</span>');
+        // Deal badge: prefer direct active deal; else parcel's active deal (for parcel-children); else dash
+        const effectiveDeal = p._activeDeal || p._parcelActiveDeal || null;
+        const dealBadge = effectiveDeal
+          ? `<a href="#" class="crm-deal-open" data-deal-id="${effectiveDeal.id}" onclick="event.stopPropagation()"><span class="crm-deal-badge crm-deal-badge-stage">${effectiveDeal.stage}</span></a>`
+          : '<span style="color:var(--text-secondary);font-size:12px">—</span>';
 
         tr.innerHTML = `
           <td class="crm-td-name"><strong>${addr}</strong></td>
@@ -2263,7 +2268,6 @@ function renderCRMView(container) {
           }));
         });
 
-        // Deal link — wire the open-deal link
         tr.querySelector('.crm-deal-open')?.addEventListener('click', (e) => {
           e.preventDefault();
           const dealId = e.currentTarget.dataset.dealId;
@@ -2671,30 +2675,39 @@ function renderCRMView(container) {
             try {
               const miniMap = L.map(mapEl, {
                 center: [property.lat, property.lng],
-                zoom: 17,
-                zoomControl: true,
+                zoom: 16,               // V75.5: one step out from 17
+                zoomControl: true,      // +/- buttons (matches main map)
                 attributionControl: false,
                 dragging: true,
-                scrollWheelZoom: false,
-                doubleClickZoom: false,
+                scrollWheelZoom: true,  // match main map interactivity
+                doubleClickZoom: true,
                 boxZoom: false,
                 keyboard: false,
               });
               L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
                 maxZoom: 19,
               }).addTo(miniMap);
-              // Draw polygon if we have rings
+
+              // Look for rings in the property's parcels JSONB (normalized shape
+              // from V75.4c/d onward: parcels[0].rings = [[[lng,lat],...]])
               const firstParcel = Array.isArray(property.parcels) ? property.parcels[0] : null;
-              if (firstParcel?.rings?.length) {
-                const leafletRings = firstParcel.rings.map(ring => ring.map(([lng, lat]) => [lat, lng]));
+              const rings = firstParcel?.rings;
+              if (Array.isArray(rings) && rings.length && Array.isArray(rings[0]) && rings[0].length) {
+                const leafletRings = rings.map(ring => ring.map(([lng, lat]) => [lat, lng]));
                 const poly = L.polygon(leafletRings, {
-                  color: '#1a6b3a', weight: 2, fillColor: '#1a6b3a', fillOpacity: 0.15,
+                  color:       '#1a6b3a',
+                  weight:      2,
+                  fillColor:   '#1a6b3a',
+                  fillOpacity: 0.15,
                 }).addTo(miniMap);
-                miniMap.fitBounds(poly.getBounds(), { padding: [20, 20], maxZoom: 18 });
+                // Size to polygon but bounded by zoom 17 so we're not pixel-glued
+                miniMap.fitBounds(poly.getBounds(), { padding: [20, 20], maxZoom: 17 });
               } else {
                 L.marker([property.lat, property.lng]).addTo(miniMap);
               }
-              miniMap.invalidateSize();
+              // Leaflet needs a size recalc when it initialises inside a
+              // currently-hidden container (collapsed section)
+              setTimeout(() => miniMap.invalidateSize(), 100);
             } catch (err) {
               console.warn('[property-modal] mini-map render failed:', err);
             }
