@@ -426,6 +426,10 @@ const lblStyle    = `color:#888;font-size:11px;text-transform:uppercase;letter-s
 let clickMarker     = null;
 let clickMarkerData = null;
 let parcelLayer     = null;
+// V75.4d: separate layer for multi-polygon highlight when user clicks a
+// parcel's pipeline star pin. Drawn fresh each click, cleared on any
+// new single-property selection or clearParcelSelection.
+let _parcelHighlightLayer = null;
 
 // Multi-select: array of selected parcels { lat, lng, label, lotDP, areaSqm, zoneCode, listing, marker, parcelLayer }
 const _selectedParcels = [];
@@ -773,6 +777,7 @@ function clearParcelSelection() {
   _selectedParcels.length = 0;
   if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; clickMarkerData = null; }
   if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
+  if (_parcelHighlightLayer) { map.removeLayer(_parcelHighlightLayer); _parcelHighlightLayer = null; }
   renderMultiSelectBar();
 }
 
@@ -787,6 +792,8 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   // the single-select parcelLayer so it doesn't linger under the new pins.
   if (clickMarker && !addToSelection) { map.removeLayer(clickMarker); clickMarker = null; }
   if (parcelLayer) { map.removeLayer(parcelLayer); parcelLayer = null; }
+  // V75.4d: clear any parcel-children highlight from a previous pipeline-pin click
+  if (_parcelHighlightLayer) { map.removeLayer(_parcelHighlightLayer); _parcelHighlightLayer = null; }
 
   // Helper: wrap inner content in the outer popup shell
   function popupHtml(inner) {
@@ -2170,6 +2177,9 @@ async function addCurrentSelectionToPipeline() {
 // multi-selection. All NSW lookups happen client-side. Aborts (with alert)
 // if any lat/lng fails to resolve — we don't want to create half-populated
 // parcels that require later repair.
+//
+// Matches single-property "+ Pipeline" behaviour: stays on the map, shows
+// the elegant bottom toast, does NOT auto-open the Kanban card modal.
 async function _createParcelFromSelection(selections) {
   if (!window.NSWLookup) {
     alert('NSW lookup helper not loaded. Reload the page and try again.');
@@ -2184,17 +2194,17 @@ async function _createParcelFromSelection(selections) {
     }
   }
 
-  // Show loading overlay + lock the button to prevent double-submit
-  const overlay = _showPipelineLoadingOverlay('Looking up NSW cadastre…');
-  _lockPipelineButton(true);
+  // Lightweight feedback: disable the popup button + change label.
+  // The user sees their popup stay in place with "Creating…" text, not a heavy
+  // modal blocking the whole page.
+  _setPipelineButtonState('creating', 'Looking up NSW…');
 
   try {
     // Look up each selected lat/lng
     const resolvedByLot = new Map();
     const failures = [];
-    let resolvedCount = 0;
     for (const [i, s] of selections.entries()) {
-      _updatePipelineLoadingOverlay(overlay, `Resolving lot ${i + 1} of ${selections.length}…`);
+      _setPipelineButtonState('creating', `Lot ${i + 1} of ${selections.length}…`);
       try {
         const r = await window.NSWLookup.lookupByLatLng(s.lat, s.lng);
         if (!r || !r.lotidstring) {
@@ -2210,10 +2220,9 @@ async function _createParcelFromSelection(selections) {
             lat:           s.lat,
             lng:           s.lng,
             area_sqm:      r.areaSqm || null,
-            rings:         null,
+            rings:         r.rings || null,
           });
         }
-        resolvedCount++;
       } catch (err) {
         failures.push({ index: i + 1, reason: err.message });
       }
@@ -2234,14 +2243,11 @@ async function _createParcelFromSelection(selections) {
     }
 
     if (dedupedCount > 0) {
-      // Pause the loading overlay for the confirm dialog so it's readable
-      _hidePipelineLoadingOverlay(overlay);
       const ok = confirm(`Your ${selections.length} clicks resolved to ${properties.length} unique lots (${dedupedCount} duplicate${dedupedCount === 1 ? '' : 's'} collapsed).\n\nCreate Parcel?`);
       if (!ok) return;
-      _showPipelineLoadingOverlay('Creating parcel…', overlay);
     }
 
-    _updatePipelineLoadingOverlay(overlay, 'Saving parcel…');
+    _setPipelineButtonState('creating', 'Saving…');
 
     const r = await fetch('/api/create-parcel-from-lookup', {
       method:  'POST',
@@ -2256,98 +2262,79 @@ async function _createParcelFromSelection(selections) {
     const result = await r.json();
     const newDealId = result?.deal?.id || result?.parcel?.id;
 
-    // Success — clear map selection, reload pipeline data
-    _updatePipelineLoadingOverlay(overlay, 'Refreshing pipeline…');
-    if (typeof clearParcelSelection === 'function') clearParcelSelection();
+    // Refresh pipeline dict + map pins
     if (typeof dbLoad === 'function') {
-      console.log('[parcel-create] calling dbLoad()');
       const dict = await dbLoad();
-      console.log('[parcel-create] dbLoad returned', dict ? Object.keys(dict).length + ' entries' : 'null');
       if (dict && typeof pipeline !== 'undefined') {
         Object.keys(pipeline).forEach(k => delete pipeline[k]);
         Object.assign(pipeline, dict);
-        console.log('[parcel-create] pipeline now has', Object.keys(pipeline).length, 'keys');
-        if (typeof renderBoard === 'function') {
-          console.log('[parcel-create] calling renderBoard()');
-          renderBoard();
-        } else {
-          console.warn('[parcel-create] renderBoard not defined');
-        }
-        if (typeof window.refreshPipelinePins === 'function') {
-          window.refreshPipelinePins();
-        }
-      } else {
-        console.warn('[parcel-create] pipeline not defined or dict null');
+        if (typeof renderBoard === 'function') renderBoard();
+        if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
       }
-    } else {
-      console.warn('[parcel-create] dbLoad not defined');
     }
 
-    // Hide overlay before navigating so the Kanban view gets the focus
-    _hidePipelineLoadingOverlay(overlay);
+    // Invalidate CRM Parcels cache
+    if (window.CRM?.invalidateParcelsCache) window.CRM.invalidateParcelsCache();
 
-    // V75.4d: invalidate CRM Parcels cache so the list shows the new one
-    // next time the user opens that tab (or immediately if it's currently open).
-    if (window.CRM?.invalidateParcelsCache) {
-      window.CRM.invalidateParcelsCache();
+    // V75.4d: Auto-DD for the new parcel using the average centroid.
+    // Matches the single-property flow which runs DD in addToPipeline().
+    if (newDealId && window.queryDDRisks && pipeline?.[newDealId]?.property) {
+      const p = pipeline[newDealId].property;
+      const lat = p.lat;
+      const lng = p.lng;
+      if (lat && lng) {
+        console.log('[DD] Querying risks for parcel', newDealId, lat, lng);
+        queryDDRisks(lat, lng).then(dd => {
+          if (!pipeline[newDealId]) return;
+          pipeline[newDealId].dd = pipeline[newDealId].dd || {};
+          // Don't overwrite user-set values (status set by user)
+          for (const [key, val] of Object.entries(dd || {})) {
+            if (!pipeline[newDealId].dd[key]?.status) {
+              pipeline[newDealId].dd[key] = val;
+            }
+          }
+          if (typeof savePipeline === 'function') savePipeline(newDealId);
+        }).catch(err => console.warn('[DD] parcel query failed:', err));
+      }
     }
 
-    // V75.4d: open the Kanban card modal for the newly-created deal.
-    // openPipelineItem handles both "open Kanban view" + "open card modal".
-    if (newDealId && typeof window.openPipelineItem === 'function') {
-      setTimeout(() => window.openPipelineItem(newDealId), 100);
-    }
+    // Clear map selection so no stale pins linger
+    if (typeof clearParcelSelection === 'function') clearParcelSelection();
 
+    // Elegant toast — same as single-property "+ Pipeline"
     if (typeof showKanbanToast === 'function') {
-      showKanbanToast(`Parcel created — ${properties.length} properties linked`);
+      const title = result?.parcel?.name || `${properties.length} properties`;
+      showKanbanToast(`${title} added to pipeline`);
     }
   } catch (err) {
     console.error('[parcel-create]', err);
     alert(`Network error creating parcel: ${err.message}`);
   } finally {
-    _hidePipelineLoadingOverlay(overlay);
-    _lockPipelineButton(false);
+    _setPipelineButtonState('idle');
   }
 }
 
-// Full-screen loading overlay used during async parcel create
-function _showPipelineLoadingOverlay(message, existing) {
-  let el = existing;
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'pipeline-loading-overlay';
-    el.style.cssText = `
-      position:fixed; inset:0; z-index:10000;
-      background:rgba(0,0,0,0.45);
-      display:flex; align-items:center; justify-content:center;
-      font-family:'DM Sans',sans-serif;`;
-    el.innerHTML = `
-      <div style="background:#fff;border-radius:10px;padding:24px 28px;box-shadow:0 6px 24px rgba(0,0,0,0.25);text-align:center;min-width:260px">
-        <div class="pipeline-spinner" style="width:32px;height:32px;border:3px solid #d0d0d0;border-top-color:#1a4a8a;border-radius:50%;animation:pl-spin 0.7s linear infinite;margin:0 auto 12px"></div>
-        <div class="pipeline-loading-msg" style="font-size:14px;color:#222">${message}</div>
-      </div>
-      <style>@keyframes pl-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}</style>`;
-    document.body.appendChild(el);
-  } else {
-    el.style.display = '';
-    _updatePipelineLoadingOverlay(el, message);
-  }
-  return el;
-}
-function _updatePipelineLoadingOverlay(el, message) {
-  if (!el) return;
-  const msg = el.querySelector('.pipeline-loading-msg');
-  if (msg) msg.textContent = message;
-}
-function _hidePipelineLoadingOverlay(el) {
-  if (el) el.remove();
-}
-// Lock/unlock all popup pipeline buttons to prevent double-submit
-function _lockPipelineButton(locked) {
+// Pipeline button state helper — lightweight in-place feedback for the map
+// popup's "+ Pipeline" button during async parcel create. Matches the
+// single-property "instant" feel but lets the user know multi-select
+// creates are taking longer because of NSW lookups.
+function _setPipelineButtonState(state, message) {
+  // The button lives inside Leaflet popup HTML which we don't fully control;
+  // match by inline-onclick attribute and class markers used in the popup.
   document.querySelectorAll('.map-popup-pipeline-btn, [data-pipeline-button], button[onclick*="addCurrentSelectionToPipeline"]').forEach(b => {
-    b.disabled = locked;
-    b.style.opacity = locked ? '0.6' : '';
-    b.style.cursor  = locked ? 'wait' : '';
+    if (state === 'creating') {
+      // Remember original text once
+      if (!b.dataset.origText) b.dataset.origText = b.textContent;
+      b.disabled = true;
+      b.style.opacity = '0.75';
+      b.style.cursor = 'wait';
+      b.textContent = message || 'Working…';
+    } else {
+      b.disabled = false;
+      b.style.opacity = '';
+      b.style.cursor = '';
+      if (b.dataset.origText) { b.textContent = b.dataset.origText; delete b.dataset.origText; }
+    }
   });
 }
 
@@ -3276,16 +3263,26 @@ window._renderPipelinePins = function () {
     if (!item?.property) return;
     if (!PIPELINE_PIN_STAGES.has(item.stage)) return;
 
-    const p   = item.property;
-    // lat/lng stored on _parcels array, not directly on property
-    const firstParcel = (p._parcels && p._parcels.length > 0) ? p._parcels[0] : null;
-    const lat = firstParcel?.lat ?? null;
-    const lng = firstParcel?.lng ?? null;
-    if (!lat || !lng) return;
+    const p = item.property;
+    const isParcel = !!item._isParcel;
+
+    // V75.4d: one star pin per deal. For parcels, use the centroid (p.lat/p.lng
+    // — dealRowToInternal computes this as the average of children). Clicking
+    // the pin will highlight ALL constituent polygons (see click handler below).
+    let pinLat = null, pinLng = null;
+    if (isParcel) {
+      pinLat = (typeof p.lat === 'number') ? p.lat : null;
+      pinLng = (typeof p.lng === 'number') ? p.lng : null;
+    } else {
+      const firstParcel = (p._parcels && p._parcels.length > 0) ? p._parcels[0] : null;
+      pinLat = firstParcel?.lat ?? null;
+      pinLng = firstParcel?.lng ?? null;
+    }
+    if (pinLat == null || pinLng == null) return;
 
     // V75.1 — hide pin if property is flagged not-suitable (unless toggle is on)
     if (!_activeFilters.showSnoozed) {
-      if (isNotSuitable({ id: p.domain_id, lat, lng })) return;
+      if (isNotSuitable({ id: p.domain_id, lat: pinLat, lng: pinLng })) return;
     }
 
     const address = p.address || '';
@@ -3302,22 +3299,28 @@ window._renderPipelinePins = function () {
       className: 'pipeline-map-pin',
     });
 
-    const marker = L.marker([lat, lng], { icon, zIndexOffset: 500 });
+    const marker = L.marker([pinLat, pinLng], { icon, zIndexOffset: 500 });
 
     marker.on('click', () => {
-      // Same behaviour as any other pin — selectPropertyAtPoint
       const srlupEntry  = overlayRegistry['nsw-srlup'];
       const zoningEntry = overlayRegistry['nsw-land-zoning'];
       const floodEntry  = overlayRegistry['nsw-flood'];
       const roadsEntry  = overlayRegistry['nsw-future-roads'];
-      selectPropertyAtPoint(
-        { lat, lng },
-        !!(srlupEntry  && srlupEntry.def.enabled),
-        !!(zoningEntry && zoningEntry.def.enabled),
-        !!(floodEntry  && floodEntry.def.enabled),
-        !!(roadsEntry  && roadsEntry.def.enabled),
-        null
-      );
+
+      // V75.4d: for parcels, highlight ALL child polygons at once. Fall back
+      // to single-point selection for children missing rings.
+      if (isParcel && Array.isArray(p._parcels) && p._parcels.length) {
+        _highlightParcelChildren(p._parcels, item);
+      } else {
+        selectPropertyAtPoint(
+          { lat: pinLat, lng: pinLng },
+          !!(srlupEntry  && srlupEntry.def.enabled),
+          !!(zoningEntry && zoningEntry.def.enabled),
+          !!(floodEntry  && floodEntry.def.enabled),
+          !!(roadsEntry  && roadsEntry.def.enabled),
+          null
+        );
+      }
     });
 
     markers.push(marker);
@@ -3327,6 +3330,61 @@ window._renderPipelinePins = function () {
     _pipelinePinLayer = L.layerGroup(markers).addTo(map);
   }
 };
+
+// V75.4d: multi-polygon outline for parcel pipeline pins. Draws green
+// outlines around every constituent property's polygon that has rings
+// stored. Children without rings get a pulsing centroid dot as a fallback.
+// The layer is cleared and redrawn on each call.
+function _highlightParcelChildren(parcelsArr, item) {
+  if (_parcelHighlightLayer) {
+    map.removeLayer(_parcelHighlightLayer);
+    _parcelHighlightLayer = null;
+  }
+  // Also clear single-parcel outline so we don't have stacked strokes
+  if (parcelLayer) { map.removeLayer(parcelLayer); parcelLayer = null; }
+  if (clickMarker) { map.removeLayer(clickMarker); clickMarker = null; clickMarkerData = null; }
+
+  const layers = [];
+  const bounds = L.latLngBounds([]);
+
+  for (const par of parcelsArr) {
+    if (!par) continue;
+
+    if (Array.isArray(par.rings) && par.rings.length) {
+      // Leaflet expects [lat, lng] per vertex; source is [lng, lat]
+      const leafletRings = par.rings.map(ring =>
+        ring.map(([lng, lat]) => [lat, lng])
+      );
+      const poly = L.polygon(leafletRings, {
+        color:       '#1a6b3a',
+        weight:      2.5,
+        opacity:     1,
+        fillColor:   '#1a6b3a',
+        fillOpacity: 0.08,
+        dashArray:   null,
+        interactive: false,
+      });
+      layers.push(poly);
+      leafletRings.forEach(r => r.forEach(([lat, lng]) => bounds.extend([lat, lng])));
+    } else if (typeof par.lat === 'number' && typeof par.lng === 'number') {
+      // Fallback: small green dot at the centroid (for children without rings)
+      const dot = L.circleMarker([par.lat, par.lng], {
+        radius:      8,
+        color:       '#1a6b3a',
+        weight:      2,
+        fillColor:   '#1a6b3a',
+        fillOpacity: 0.3,
+        interactive: false,
+      });
+      layers.push(dot);
+      bounds.extend([par.lat, par.lng]);
+    }
+  }
+
+  if (!layers.length) return;
+  _parcelHighlightLayer = L.layerGroup(layers).addTo(map);
+  if (bounds.isValid()) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 });
+}
 
 // ─── Public API for kanban ────────────────────────────────────────────────────
 // Called by kanban.js when the address link is clicked for a multi-parcel entry.
