@@ -142,6 +142,7 @@ export default async function handler(req, res) {
             property_count     = COALESCE(${body.property_count ?? null}, property_count),
             domain_listing_id  = COALESCE(${body.domain_listing_id ?? null}, domain_listing_id),
             listing_url        = COALESCE(${body.listing_url    ?? null}, listing_url),
+            state_prop_id      = COALESCE(${body.state_prop_id  ?? null}, state_prop_id),
             updated_at         = now()
           WHERE id = ${id}
           RETURNING *`;
