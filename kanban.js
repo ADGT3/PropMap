@@ -412,14 +412,17 @@ function addToPipeline(listing) {
   }
 }
 
-function removeFromPipeline(id) {
+async function removeFromPipeline(id) {
   const sid = String(id);
   // V75.4d: capture whether this was a parcel-deal BEFORE deleting from dict
   // so dbDelete can route to the right endpoint (deals vs properties).
   const wasParcel = !!pipeline[sid]?._isParcel;
   delete pipeline[sid];
   cacheSave(pipeline);
-  dbDelete(sid, wasParcel);
+  // V75.4d.5: AWAIT dbDelete so the cache-invalidate below happens AFTER the
+  // server commit. Without the await, the subsequent re-fetch from
+  // invalidateParcelsCache races the DELETE and still sees the stale parcel.
+  await dbDelete(sid, wasParcel);
   updateAddButtons();
   renderBoard();
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
