@@ -268,8 +268,35 @@ export default async function handler(req, res) {
       case 'DELETE': {
         const { id } = req.query;
         if (!id) return res.status(400).json({ error: 'id required' });
+
+        // V75.4d: before deleting the deal, check if it's on a parcel.
+        // If so, and that parcel has no OTHER deals, the parcel will be
+        // orphaned — so we clean it up too (which cascades to its child
+        // properties via FK). A parcel that has other deals stays.
+        const dealBefore = (await sql`SELECT parcel_id FROM deals WHERE id = ${id}`)[0];
+        const parcelId = dealBefore?.parcel_id || null;
+
         await sql`DELETE FROM deals WHERE id = ${id}`;
-        return res.status(200).json({ ok: true });
+
+        let parcelDeleted = false;
+        let propertiesDeleted = 0;
+        if (parcelId) {
+          const otherDeals = await sql`SELECT 1 FROM deals WHERE parcel_id = ${parcelId} LIMIT 1`;
+          if (otherDeals.length === 0) {
+            // Before deleting the parcel, explicitly delete its child properties.
+            // The `properties.parcel_id` FK uses ON DELETE SET NULL (not CASCADE),
+            // so deleting the parcel alone would leave the children orphaned.
+            const children = await sql`DELETE FROM properties WHERE parcel_id = ${parcelId} RETURNING id`;
+            propertiesDeleted = children.length;
+            await sql`DELETE FROM parcels WHERE id = ${parcelId}`;
+            parcelDeleted = true;
+          }
+        }
+        return res.status(200).json({
+          ok: true,
+          parcel_deleted: parcelDeleted,
+          properties_deleted: propertiesDeleted,
+        });
       }
 
       default:
