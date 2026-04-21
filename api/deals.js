@@ -32,7 +32,7 @@ export default async function handler(req, res) {
     switch (req.method) {
 
       case 'GET': {
-        const { id, workflow, status, property_id, parcel_id, board_id } = req.query;
+        const { id, workflow, status, property_id, parcel_id, board_id, search } = req.query;
 
         // V75.4: deals can be on a property or a parcel.
         // We join both and let the frontend pick which to use based on whether
@@ -91,6 +91,26 @@ export default async function handler(req, res) {
           if (!dealRows.length) return res.status(404).json({ error: 'Not found' });
           const expanded = await fetchAndExpand(dealRows);
           return res.status(200).json(expanded[0]);
+        }
+
+        // V76.2.1: search — matches deal id, property address, or parcel name.
+        // Returns max 20 rows, most-recently-updated first.
+        if (search) {
+          const q = `%${String(search).trim()}%`;
+          const rows = await sql`
+            SELECT d.*,
+              row_to_json(p.*)  AS property,
+              row_to_json(pa.*) AS parcel
+            FROM deals d
+            LEFT JOIN properties p  ON p.id  = d.property_id
+            LEFT JOIN parcels    pa ON pa.id = d.parcel_id
+            WHERE d.id ILIKE ${q}
+               OR p.address ILIKE ${q}
+               OR p.suburb  ILIKE ${q}
+               OR pa.name   ILIKE ${q}
+            ORDER BY d.updated_at DESC
+            LIMIT 20`;
+          return res.status(200).json(await fetchAndExpand(rows));
         }
 
         // Filtered lists
