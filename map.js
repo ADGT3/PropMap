@@ -3523,18 +3523,39 @@ window.reSelectParcels = function(parcels) {
     return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
   }
 
-  // ── Shoelace area (m²) ──
+  // ── Shoelace area (m²) — equirectangular projection around centroid ──
+  // V75.5.3: previous version multiplied each vertex's lng by a per-edge
+  // mPerLng, which is not a valid planar projection — the shoelace
+  // cross-terms don't cancel correctly. Projecting all vertices into a
+  // single flat metre plane (anchored at the polygon's own centroid) gives
+  // accurate results to well under 0.1% for property-scale polygons at
+  // Sydney latitudes.
   function polygonArea(pts) {
-    let area = 0;
     const n = pts.length;
+    if (n < 3) return 0;
+
+    // 1) Find centroid (simple average — fine for projection anchor)
+    let sumLat = 0, sumLng = 0;
+    for (const p of pts) { sumLat += p.lat; sumLng += p.lng; }
+    const cLat = sumLat / n;
+    const cLng = sumLng / n;
+
+    // 2) Project each vertex to metres relative to the centroid.
+    //    x = (lng - cLng) * metresPerDegLng(cLat)
+    //    y = (lat - cLat) * metresPerDegLat
+    const mPerLat = 111320;
+    const mPerLng = Math.cos(cLat * Math.PI / 180) * 111320;
+    const xy = pts.map(p => ({
+      x: (p.lng - cLng) * mPerLng,
+      y: (p.lat - cLat) * mPerLat,
+    }));
+
+    // 3) Shoelace in planar coordinates
+    let area = 0;
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n;
-      // Convert to approximate metres using mean lat
-      const lat = (pts[i].lat + pts[j].lat) / 2;
-      const mPerLng = Math.cos(lat * Math.PI / 180) * 111320;
-      const mPerLat = 111320;
-      area += (pts[i].lng * mPerLng) * (pts[j].lat * mPerLat);
-      area -= (pts[j].lng * mPerLng) * (pts[i].lat * mPerLat);
+      area += xy[i].x * xy[j].y;
+      area -= xy[j].x * xy[i].y;
     }
     return Math.abs(area / 2);
   }
@@ -3672,7 +3693,8 @@ window.reSelectParcels = function(parcels) {
     map.getContainer().style.cursor = '';
     measureActive = false;
     window._measureActive = false;
-    if (window._updateMeasureClearBtn) window._updateMeasureClearBtn(false);
+    // V75.5.3: keep Clear button visible while a measurement result is still
+    // drawn on the map — only hide when clearMeasure() actually removes it.
   }
 
   function clearMeasure() {
