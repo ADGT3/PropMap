@@ -580,8 +580,11 @@ function moveToColumn(id, target) {
   savePipeline(id);
 }
 
-// V75.6.2: render the board selector bar inside Header 2.
-// Controls: board selector (auto-width) · + Board · Edit Columns · Delete Board
+// V75.6.4: render the board selector bar once, then only update the select's
+// selected value and the Delete button's disabled state on subsequent calls.
+// Replacing innerHTML on every renderBoard() caused a race where the user's
+// change event fired on a detached <select> (kanban visible but board didn't
+// switch until the second click).
 function _renderBoardSelectorBar() {
   const bar = document.getElementById('kanbanBoardToolbar');
   if (!bar) return;
@@ -595,29 +598,58 @@ function _renderBoardSelectorBar() {
   const active     = boards.find(b => b.id === currentBoardId);
   const adminProbe = !!window._pipelineIsAdmin;
 
-  // Determine whether the Delete button should be enabled for the current board.
-  // Server will also enforce — this is just UI hint.
-  //  - System boards: only admins may delete, and only if no deals
-  //  - User boards:   only owner or admin, and only if no deals
-  // We don't know the owner here reliably (it's numeric id); rely on the
-  // boards list having `owner_id` — matches session contactId (string-int).
-  // The server will reject on permission, so we optimistically enable for
-  // system/admins and for any non-system board if you're the session user.
+  // Whether Delete Board is enabled for the current selection
   let canDeleteCurrent = false;
   if (active) {
     if (active.is_system) canDeleteCurrent = adminProbe;
-    else                   canDeleteCurrent = true; // server decides
+    else                   canDeleteCurrent = true;
   }
 
+  // FAST-PATH: toolbar already built — patch state instead of rebuilding DOM
+  const existing = bar.querySelector('#kanbanBoardSelect');
+  if (existing) {
+    // Sync selected board
+    if (existing.value !== currentBoardId) existing.value = currentBoardId;
+    // Sync Delete button
+    const delBtn = bar.querySelector('#kanbanDeleteBoardBtn');
+    if (delBtn) {
+      delBtn.disabled = !canDeleteCurrent;
+      delBtn.title    = canDeleteCurrent ? 'Delete this board' : 'You cannot delete this board';
+    }
+    // Boards list might have new entries (e.g. just created one).
+    // Regenerate only the <option>s — not the <select> element itself,
+    // so the change-listener stays bound.
+    const expectedOpts = [];
+    if (sysBoards.length) {
+      expectedOpts.push('<optgroup label="System Boards">');
+      for (const b of sysBoards) expectedOpts.push(`<option value="${b.id}">${b.name}</option>`);
+      expectedOpts.push('</optgroup>');
+    }
+    if (userBoards.length) {
+      expectedOpts.push('<optgroup label="My Boards">');
+      for (const b of userBoards) expectedOpts.push(`<option value="${b.id}">${b.name}</option>`);
+      expectedOpts.push('</optgroup>');
+    }
+    const expectedHtml = expectedOpts.join('');
+    // Cheap diff: set innerHTML on <select> body only if content differs.
+    // This preserves the <select> node so its bound listener isn't detached.
+    if (existing.innerHTML.replace(/\s+/g, '') !== expectedHtml.replace(/\s+/g, '')) {
+      existing.innerHTML = expectedHtml;
+      existing.value = currentBoardId;
+    }
+    return;
+  }
+
+  // FIRST BUILD: construct the toolbar and wire handlers once
   const options = [];
   if (sysBoards.length) {
     options.push('<optgroup label="System Boards">');
-    for (const b of sysBoards) options.push(`<option value="${b.id}" ${b.id === currentBoardId ? 'selected' : ''}>${b.name}</option>`);
+    for (const b of sysBoards) options.push(`<option value="${b.id}">${b.name}</option>`);
     options.push('</optgroup>');
   }
   if (userBoards.length) {
     options.push('<optgroup label="My Boards">');
-    for (const b of userBoards) options.push(`<option value="${b.id}" ${b.id === currentBoardId ? 'selected' : ''}>${b.name}</option>`);
+    for (const b of userBoards) options.push(`<option value="${b.id}">${b.name}</option>`);
     options.push('</optgroup>');
   }
 
@@ -628,13 +660,14 @@ function _renderBoardSelectorBar() {
     <button class="kb-toolbar-btn kb-toolbar-btn-danger" id="kanbanDeleteBoardBtn" ${canDeleteCurrent ? '' : 'disabled'} title="${canDeleteCurrent ? 'Delete this board' : 'You cannot delete this board'}">Delete Board</button>
   `;
 
-  bar.querySelector('#kanbanBoardSelect').addEventListener('change', async (e) => {
+  // Set selected AFTER options are in the DOM
+  const sel = bar.querySelector('#kanbanBoardSelect');
+  sel.value = currentBoardId;
+
+  sel.addEventListener('change', async (e) => {
     currentBoardId = e.target.value;
-    // V75.6.3: fast-switch — do not refetch /api/boards (columns are already
-    // in memory from initial load / after column edits). Parallelise the two
-    // per-board fetches instead of awaiting them sequentially.
-    // Render the empty columns immediately so the user sees the switch,
-    // then fill in cards once deals arrive.
+    // V75.6.3: fast-switch — don't refetch /api/boards. Parallelise deal fetches.
+    // Render immediately so the user sees the switch; fill in cards on arrival.
     pipeline = {};
     renderBoard();
 
