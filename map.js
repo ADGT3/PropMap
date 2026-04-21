@@ -3565,9 +3565,13 @@ window.reSelectParcels = function(parcels) {
   }
 
   function formatArea(m2) {
-    if (m2 >= 1e6)  return (m2 / 1e6).toFixed(2) + ' km²';
-    if (m2 >= 10000) return (m2 / 10000).toFixed(2) + ' ha';
-    return Math.round(m2) + ' m²';
+    // V75.5.5: always m² with acres in brackets.
+    // 1 acre = 4046.8564224 m²
+    const acres = m2 / 4046.8564224;
+    const acreStr = acres >= 10
+      ? acres.toFixed(1) + ' ac'
+      : acres.toFixed(2) + ' ac';
+    return Math.round(m2).toLocaleString() + ' m² (' + acreStr + ')';
   }
 
   function startMeasure(mode) {
