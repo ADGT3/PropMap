@@ -640,6 +640,14 @@ function _renderBoardSelectorBar() {
     else                   canDeleteCurrent = true;
   }
 
+  // V76.2: strip the "+ New Action" button when the current board isn't an
+  // action board. renderActionsBoard() re-adds it when it runs.
+  const isActionBoard = active?.board_type === 'action';
+  if (!isActionBoard) {
+    const existingNewAction = bar.querySelector('#kbNewActionBtn');
+    if (existingNewAction) existingNewAction.remove();
+  }
+
   // FAST-PATH: toolbar already built — patch state instead of rebuilding DOM
   const existing = bar.querySelector('#kanbanBoardSelect');
   if (existing) {
@@ -1600,12 +1608,14 @@ async function fetchContactsForAssignee() {
   } catch (_) { return []; }
 }
 
-function _formatEffortDuration(val, unit) {
-  if (val == null || val === '') return '—';
-  const n = Number(val);
-  if (Number.isNaN(n)) return '—';
-  const label = unit === 'y' ? 'yr' : unit === 'm' ? 'mo' : 'day';
-  return `${n} ${label}${n === 1 ? '' : 's'}`;
+// V76.2.1: effort/duration are stored as integer days. Format like
+// `formatSettlement()` does for settlement ("90 days"). Accepts the stored
+// integer directly.
+function _formatDaysShort(days) {
+  if (days == null || days === '') return '—';
+  const n = Number(days);
+  if (Number.isNaN(n) || n <= 0) return '—';
+  return `${n} day${n === 1 ? '' : 's'}`;
 }
 
 function _formatDateShort(iso) {
@@ -1651,16 +1661,21 @@ async function renderActionsBoard(board) {
   _actionsCache = actions;
   boardEl.innerHTML = '';
 
-  // "New Action" button — docked top-right of the board area
-  const toolbar = document.createElement('div');
-  toolbar.className = 'kb-actions-toolbar';
-  toolbar.innerHTML = `
-    <button class="kb-toolbar-btn kb-toolbar-btn-primary" id="kbNewActionBtn">+ New Action</button>
-  `;
-  toolbar.querySelector('#kbNewActionBtn').addEventListener('click', () => {
-    openActionModal(null, { assignee_id: window._sessionUserId || null });
-  });
-  boardEl.appendChild(toolbar);
+  // V76.2: "+ New Action" lives in Header 2 (`.kanban-header-controls`)
+  // alongside the board selector, per the Header-2 toolbar convention.
+  // Inject it into the existing toolbar if not already present.
+  const headerToolbar = document.getElementById('kanbanBoardToolbar');
+  if (headerToolbar && !headerToolbar.querySelector('#kbNewActionBtn')) {
+    const btn = document.createElement('button');
+    btn.id = 'kbNewActionBtn';
+    btn.className = 'kb-toolbar-btn kb-toolbar-btn-primary';
+    btn.textContent = '+ New Action';
+    btn.title = 'Create a new action';
+    btn.addEventListener('click', () => {
+      openActionModal(null, { assignee_id: window._sessionUserId || null });
+    });
+    headerToolbar.appendChild(btn);
+  }
 
   const cols = (activeBoard.columns || []).slice().sort((a, b) => a.sort_order - b.sort_order);
 
@@ -1712,11 +1727,11 @@ async function renderActionsBoard(board) {
             ${dealLabel ? `<span title="${_escapeHtml(a.deal?.label || '')}">${_escapeHtml(dealLabel)}</span>` : ''}
           </div>
         ` : ''}
-        ${(a.effort_value || a.duration_value) ? `
+        ${(a.effort_days || a.duration_days) ? `
           <div class="kb-action-effort">
-            ${a.effort_value ? `Effort: ${_formatEffortDuration(a.effort_value, a.effort_unit)}` : ''}
-            ${a.effort_value && a.duration_value ? ' · ' : ''}
-            ${a.duration_value ? `Duration: ${_formatEffortDuration(a.duration_value, a.duration_unit)}` : ''}
+            ${a.effort_days ? `Effort: ${_formatDaysShort(a.effort_days)}` : ''}
+            ${a.effort_days && a.duration_days ? ' · ' : ''}
+            ${a.duration_days ? `Duration: ${_formatDaysShort(a.duration_days)}` : ''}
           </div>
         ` : ''}
       `;
@@ -1838,25 +1853,11 @@ async function openActionModal(id, defaults) {
         <div class="kb-action-row">
           <div class="kb-action-field">
             <label>Effort</label>
-            <div class="kb-action-effort-input">
-              <input type="number" step="0.5" min="0" id="kbActionEffortVal" value="${action?.effort_value ?? ''}" placeholder="e.g. 2">
-              <select id="kbActionEffortUnit">
-                <option value="d" ${(action?.effort_unit || 'd') === 'd' ? 'selected' : ''}>days</option>
-                <option value="m" ${action?.effort_unit === 'm' ? 'selected' : ''}>months</option>
-                <option value="y" ${action?.effort_unit === 'y' ? 'selected' : ''}>years</option>
-              </select>
-            </div>
+            <input type="text" id="kbActionEffort" placeholder="e.g. 2d, 3m, 1y" value="${action?.effort_days ? formatSettlement(String(action.effort_days)) : ''}">
           </div>
           <div class="kb-action-field">
             <label>Duration</label>
-            <div class="kb-action-effort-input">
-              <input type="number" step="0.5" min="0" id="kbActionDurVal" value="${action?.duration_value ?? ''}" placeholder="e.g. 5">
-              <select id="kbActionDurUnit">
-                <option value="d" ${(action?.duration_unit || 'd') === 'd' ? 'selected' : ''}>days</option>
-                <option value="m" ${action?.duration_unit === 'm' ? 'selected' : ''}>months</option>
-                <option value="y" ${action?.duration_unit === 'y' ? 'selected' : ''}>years</option>
-              </select>
-            </div>
+            <input type="text" id="kbActionDuration" placeholder="e.g. 5d, 2m, 1y" value="${action?.duration_days ? formatSettlement(String(action.duration_days)) : ''}">
           </div>
         </div>
         <div class="kb-action-row">
@@ -1917,10 +1918,8 @@ async function openActionModal(id, defaults) {
     const payload = {
       description:    desc,
       assignee_id:    parseInt(assigneeSel, 10),
-      effort_value:   wrap.querySelector('#kbActionEffortVal').value || null,
-      effort_unit:    wrap.querySelector('#kbActionEffortUnit').value,
-      duration_value: wrap.querySelector('#kbActionDurVal').value || null,
-      duration_unit:  wrap.querySelector('#kbActionDurUnit').value,
+      effort_days:    parseSettlementDays(wrap.querySelector('#kbActionEffort').value) || null,
+      duration_days:  parseSettlementDays(wrap.querySelector('#kbActionDuration').value) || null,
       due_date:       wrap.querySelector('#kbActionDue').value || null,
       reminder_date:  wrap.querySelector('#kbActionReminder').value || null,
     };
@@ -1981,6 +1980,18 @@ async function openActionModal(id, defaults) {
 
   // Focus the description on open
   setTimeout(() => wrap.querySelector('#kbActionDesc')?.focus(), 50);
+
+  // V76.2.1: normalise effort/duration on blur — "2m" → "60 days", "1y" → "365 days"
+  // Matches the behaviour of the Settlement input on the deal modal.
+  ['#kbActionEffort', '#kbActionDuration'].forEach(sel => {
+    const el = wrap.querySelector(sel);
+    if (!el) return;
+    el.addEventListener('blur', () => {
+      const v = el.value.trim();
+      if (!v) return;
+      el.value = formatSettlement(v);
+    });
+  });
 }
 
 /**

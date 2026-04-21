@@ -2911,12 +2911,6 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   gap: 12px;
 }
 .kb-action-row .kb-action-field { flex: 1; }
-.kb-action-effort-input {
-  display: flex;
-  gap: 6px;
-}
-.kb-action-effort-input input { flex: 1; }
-.kb-action-effort-input select { flex: 0 0 90px; }
 .kb-action-deal-link {
   padding: 8px 10px;
   background: var(--surface2, #f8fafc);
