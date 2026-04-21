@@ -630,11 +630,18 @@ function _renderBoardSelectorBar() {
 
   bar.querySelector('#kanbanBoardSelect').addEventListener('change', async (e) => {
     currentBoardId = e.target.value;
-    // V75.6.2: refetch boards so the active board's columns are guaranteed
-    // up to date (e.g. if another tab edited them, or after column saves).
-    await loadBoards();
-    await loadUserDealOrder();
-    const dict = await dbLoad();
+    // V75.6.3: fast-switch — do not refetch /api/boards (columns are already
+    // in memory from initial load / after column edits). Parallelise the two
+    // per-board fetches instead of awaiting them sequentially.
+    // Render the empty columns immediately so the user sees the switch,
+    // then fill in cards once deals arrive.
+    pipeline = {};
+    renderBoard();
+
+    const [dict, _order] = await Promise.all([
+      dbLoad(),
+      loadUserDealOrder(),
+    ]);
     if (dict) {
       Object.keys(pipeline).forEach(k => delete pipeline[k]);
       Object.assign(pipeline, dict);
