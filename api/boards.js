@@ -115,7 +115,10 @@ async function handlePost(req, res, userId, admin) {
     INSERT INTO boards (id, name, owner_id, is_system, sort_order)
     VALUES (${id}, ${name.trim()}, ${is_system ? null : userId}, ${is_system}, ${sort_order})`;
 
-  const cols = Array.isArray(columns) && columns.length ? columns : defaultColumns();
+  // V75.6.2: new boards start with NO columns by default. The user adds
+  // columns via "Edit Columns". Callers can still supply columns[] in the
+  // POST body (used e.g. by a future "clone board" feature).
+  const cols = Array.isArray(columns) ? columns : [];
   const createdCols = [];
   for (let i = 0; i < cols.length; i++) {
     const c = cols[i];
@@ -233,14 +236,4 @@ function canWrite(board, userId, admin) {
 }
 function slugify(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40);
-}
-function defaultColumns() {
-  return [
-    { name: 'Shortlisted',  stage_slug: 'shortlisted',  show_on_map: true,  is_terminal: false, color: '#f39c12' },
-    { name: 'Under DD',     stage_slug: 'under-dd',     show_on_map: true,  is_terminal: false, color: '#8e44ad' },
-    { name: 'Offer',        stage_slug: 'offer',        show_on_map: true,  is_terminal: false, color: '#2980b9' },
-    { name: 'Acquired',     stage_slug: 'acquired',     show_on_map: true,  is_terminal: false, color: '#27ae60' },
-    { name: 'Not Suitable', stage_slug: 'not-suitable', show_on_map: false, is_terminal: true,  color: '#95a5a6' },
-    { name: 'Lost',         stage_slug: 'lost',         show_on_map: false, is_terminal: true,  color: '#c0392b' },
-  ];
 }
