@@ -35,19 +35,20 @@
  */
 
 import { neon } from '@neondatabase/serverless';
-import { requireSession } from '../lib/auth.js';
+import { requireSession, isAdmin } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
 const sql = neon(getDatabaseUrl());
-
-function isAdmin(session) {
-  return !!(session?.is_admin || session?.isAdmin);
-}
 
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
   if (!session) return;
-  const userId = session.contact_id || session.contactId || null;
-  const admin  = isAdmin(session);
+  // V75.6: session.sub holds the contact id (string) — auth.js JWT payload shape.
+  // 'fallback' means the env-var fallback admin; treat that as an "admin-no-contact"
+  // case so admins can still manage system boards but user boards require a real user.
+  // Coerce to int — contacts.id is INTEGER in schema, and boards.owner_id matches.
+  const userIdRaw = (session.sub && session.sub !== 'fallback') ? session.sub : null;
+  const userId    = userIdRaw != null ? parseInt(userIdRaw, 10) : null;
+  const admin     = isAdmin(session);
 
   try {
     if (req.method === 'GET')    return await handleGet(req, res, userId, admin);

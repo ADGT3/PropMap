@@ -23,8 +23,12 @@ const sql = neon(getDatabaseUrl());
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
   if (!session) return;
-  const userId = session.contact_id || session.contactId || null;
-  if (!userId) return res.status(400).json({ error: 'Session user id missing' });
+  // V75.6: session.sub holds the contact id — auth.js JWT payload shape.
+  // Fallback admin has sub='fallback' which isn't a real contact row.
+  // Coerce to int: deal_user_order.user_id is INTEGER (matches contacts.id).
+  const userIdRaw = (session.sub && session.sub !== 'fallback') ? session.sub : null;
+  const userId    = userIdRaw != null ? parseInt(userIdRaw, 10) : null;
+  if (!userId) return res.status(400).json({ error: 'Session user id missing; deal-ordering requires a real user account' });
 
   try {
     if (req.method === 'GET') {
