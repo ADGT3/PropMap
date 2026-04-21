@@ -101,8 +101,11 @@ async function handleGet(req, res, userId, admin) {
 // ── POST (create) ───────────────────────────────────────────────────────────
 async function handlePost(req, res, userId, admin) {
   const body = req.body || {};
-  const { name, is_system = false, sort_order = 0, columns } = body;
+  const { name, is_system = false, sort_order = 0, columns, board_type = 'deal' } = body;
   if (!name?.trim()) return res.status(400).json({ error: 'name required' });
+  if (!['deal','action'].includes(board_type)) {
+    return res.status(400).json({ error: "board_type must be 'deal' or 'action'" });
+  }
 
   if (is_system && !admin) return res.status(403).json({ error: 'Admin required to create system boards' });
   if (!is_system && !userId) return res.status(400).json({ error: 'Session user id missing; cannot create user board' });
@@ -112,8 +115,8 @@ async function handlePost(req, res, userId, admin) {
     : `usr_${userId}_${Date.now()}`;
 
   await sql`
-    INSERT INTO boards (id, name, owner_id, is_system, sort_order)
-    VALUES (${id}, ${name.trim()}, ${is_system ? null : userId}, ${is_system}, ${sort_order})`;
+    INSERT INTO boards (id, name, owner_id, is_system, sort_order, board_type)
+    VALUES (${id}, ${name.trim()}, ${is_system ? null : userId}, ${is_system}, ${sort_order}, ${board_type})`;
 
   // V75.6.2: new boards start with NO columns by default. The user adds
   // columns via "Edit Columns". Callers can still supply columns[] in the
@@ -183,12 +186,14 @@ async function handlePut(req, res, userId, admin) {
     }
     const toDelete = [...existingIds].filter(x => !keepIds.has(x));
     if (toDelete.length) {
-      // Check no deals reference these columns
-      const refs = await sql`SELECT id FROM deals WHERE column_id = ANY(${toDelete}) LIMIT 1`;
-      if (refs.length) {
+      // V75.7: check both deals and actions
+      const dealRefs   = await sql`SELECT id FROM deals   WHERE column_id = ANY(${toDelete}) LIMIT 1`;
+      const actionRefs = await sql`SELECT id FROM actions WHERE column_id = ANY(${toDelete}) LIMIT 1`;
+      if (dealRefs.length || actionRefs.length) {
         return res.status(409).json({
-          error: 'Cannot remove columns that still have deals. Move deals to another column first.',
-          deals_in_removed_columns: refs.length,
+          error: 'Cannot remove columns that still have items. Move them to another column first.',
+          deals_in_removed_columns:   dealRefs.length,
+          actions_in_removed_columns: actionRefs.length,
         });
       }
       await sql`DELETE FROM board_columns WHERE id = ANY(${toDelete})`;
@@ -210,14 +215,27 @@ async function handleDelete(req, res, userId, admin) {
   const board = rows[0];
   if (!canWrite(board, userId, admin)) return res.status(403).json({ error: 'Forbidden' });
 
-  const deals = await sql`SELECT id FROM deals WHERE board_id = ${id} LIMIT 1`;
-  if (deals.length) {
-    const count = (await sql`SELECT COUNT(*)::int AS n FROM deals WHERE board_id = ${id}`)[0].n;
-    return res.status(409).json({
-      error: 'Cannot delete board with existing deals',
-      deal_count: count,
-      hint: 'Move or delete deals before removing the board.',
-    });
+  // V75.7: deal boards block on deals, action boards block on actions
+  if (board.board_type === 'action') {
+    const acts = await sql`SELECT id FROM actions WHERE board_id = ${id} LIMIT 1`;
+    if (acts.length) {
+      const count = (await sql`SELECT COUNT(*)::int AS n FROM actions WHERE board_id = ${id}`)[0].n;
+      return res.status(409).json({
+        error: 'Cannot delete board with existing actions',
+        action_count: count,
+        hint: 'Move or delete actions before removing the board.',
+      });
+    }
+  } else {
+    const deals = await sql`SELECT id FROM deals WHERE board_id = ${id} LIMIT 1`;
+    if (deals.length) {
+      const count = (await sql`SELECT COUNT(*)::int AS n FROM deals WHERE board_id = ${id}`)[0].n;
+      return res.status(409).json({
+        error: 'Cannot delete board with existing deals',
+        deal_count: count,
+        hint: 'Move or delete deals before removing the board.',
+      });
+    }
   }
   await sql`DELETE FROM boards WHERE id = ${id}`;  // cascades to board_columns
   return res.status(200).json({ ok: true });

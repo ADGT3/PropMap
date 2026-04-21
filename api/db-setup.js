@@ -36,6 +36,7 @@ export default async function handler(req, res) {
         contact_properties_ready: names.includes('contact_properties'),
         contact_notes_ready:      names.includes('contact_notes'),
         contacts_auth_ready:      authColsReady,
+        actions_ready:            names.includes('actions'),
       });
     } catch (err) {
       return res.status(500).json({ error: err.message });
@@ -179,6 +180,56 @@ export default async function handler(req, res) {
         'Facebook','Letter Drop','Door Knocking','Walk-In','Signboard',
         'Cold-Calling','Open House','Referral','Other'
       )`);
+
+    // ── V75.7: Actions ───────────────────────────────────────────────────────
+    // board_type distinguishes deal kanban from action kanban. Existing rows
+    // default to 'deal'. Actions table has its own column_id/board_id refs
+    // into the shared boards/board_columns infrastructure.
+    await run('ALTER boards: add board_type', () => sql`
+      ALTER TABLE boards ADD COLUMN IF NOT EXISTS board_type TEXT NOT NULL DEFAULT 'deal'`);
+
+    await run('CHECK CONSTRAINT boards.board_type', async () => {
+      const existing = await sql`
+        SELECT 1 FROM information_schema.check_constraints
+        WHERE constraint_name = 'boards_board_type_check' LIMIT 1`;
+      if (!existing.length) {
+        await sql`ALTER TABLE boards
+          ADD CONSTRAINT boards_board_type_check CHECK (board_type IN ('deal','action'))`;
+      }
+    });
+
+    await run('CREATE TABLE actions', () => sql`
+      CREATE TABLE IF NOT EXISTS actions (
+        id              SERIAL      PRIMARY KEY,
+        description     TEXT        NOT NULL,
+        assignee_id     INTEGER     NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
+        creator_id      INTEGER     REFERENCES contacts(id) ON DELETE SET NULL,
+        deal_id         TEXT        REFERENCES deals(id) ON DELETE SET NULL,
+        effort_value    NUMERIC,
+        effort_unit     TEXT        CHECK (effort_unit IS NULL OR effort_unit IN ('d','m','y')),
+        duration_value  NUMERIC,
+        duration_unit   TEXT        CHECK (duration_unit IS NULL OR duration_unit IN ('d','m','y')),
+        due_date        DATE,
+        reminder_date   DATE,
+        status          TEXT        NOT NULL DEFAULT 'todo'
+                        CHECK (status IN ('todo','wip','due','done','void')),
+        board_id        TEXT        REFERENCES boards(id) ON DELETE SET NULL,
+        column_id       TEXT        REFERENCES board_columns(id) ON DELETE SET NULL,
+        column_order    INTEGER     NOT NULL DEFAULT 0,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`);
+
+    await run('CREATE INDEX actions_assignee_idx', () => sql`
+      CREATE INDEX IF NOT EXISTS actions_assignee_idx ON actions (assignee_id)`);
+    await run('CREATE INDEX actions_deal_idx', () => sql`
+      CREATE INDEX IF NOT EXISTS actions_deal_idx ON actions (deal_id)`);
+    await run('CREATE INDEX actions_board_idx', () => sql`
+      CREATE INDEX IF NOT EXISTS actions_board_idx ON actions (board_id)`);
+    await run('CREATE INDEX actions_column_idx', () => sql`
+      CREATE INDEX IF NOT EXISTS actions_column_idx ON actions (column_id, column_order)`);
+    await run('CREATE INDEX actions_due_date_idx', () => sql`
+      CREATE INDEX IF NOT EXISTS actions_due_date_idx ON actions (due_date) WHERE status IN ('todo','wip')`);
 
     const allOk = results.every(r => r.ok);
     return res.status(allOk ? 200 : 207).json({ allOk, results });

@@ -51,9 +51,31 @@ export default async function handler(req, res) {
               (parcelPropsByParcel[p.parcel_id] ||= []).push(p);
             });
           }
+          // V75.7: has_due_action flag — which deals have at least one action
+          // currently in status='due' (or overdue todo/wip). Single query,
+          // reused across all returned deals.
+          const dealIds = rows.map(r => r.id);
+          const dueSet = new Set();
+          if (dealIds.length) {
+            try {
+              const dueRows = await sql`
+                SELECT DISTINCT deal_id FROM actions
+                 WHERE deal_id = ANY(${dealIds})
+                   AND (
+                     status = 'due'
+                     OR (status IN ('todo','wip') AND due_date IS NOT NULL AND due_date <= CURRENT_DATE)
+                   )`;
+              dueRows.forEach(r => { if (r.deal_id) dueSet.add(r.deal_id); });
+            } catch (err) {
+              // Actions table may not exist on an older DB — fail soft so
+              // the deals list still loads.
+              if (!/relation .* does not exist/i.test(err.message)) throw err;
+            }
+          }
           return rows.map(r => ({
             ...r,
             parcel_properties: r.parcel_id ? (parcelPropsByParcel[r.parcel_id] || []) : null,
+            has_due_action:    dueSet.has(r.id),
           }));
         }
 
