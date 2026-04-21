@@ -915,6 +915,141 @@ header {
   color: var(--muted);
 }
 
+/* V75.6 — Board toolbar above the Kanban board */
+.kanban-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13px;
+}
+.kanban-toolbar:empty { display: none; }
+.kb-toolbar-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.kb-board-select {
+  padding: 4px 8px;
+  font-size: 13px;
+  min-width: 180px;
+}
+.kb-toolbar-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: inherit;
+}
+.kb-toolbar-btn:hover {
+  background: var(--surface2);
+  border-color: var(--text-secondary);
+}
+
+/* V75.6 — Edit columns modal */
+.kb-editcols-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'DM Sans', sans-serif;
+}
+.kb-editcols-modal {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  width: 640px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.kb-editcols-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.kb-editcols-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.kb-editcols-close {
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.kb-editcols-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+.kb-editcols-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.kb-editcols-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.kb-editcols-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.kb-editcols-drag {
+  cursor: grab;
+  color: var(--text-secondary);
+  font-size: 14px;
+  user-select: none;
+}
+.kb-col-del {
+  background: none;
+  border: none;
+  color: #c0392b;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+}
+.kb-col-del:hover { background: #fdecea; border-radius: 3px; }
+.kb-editcols-add {
+  margin-top: 12px;
+  width: 100%;
+}
+.kb-editcols-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+.kb-editcols-cancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
 /* ─── Board ───────────────────────────────────────────────────────────────── */
 .kanban-board {
   display: flex;

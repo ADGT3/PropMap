@@ -3244,8 +3244,27 @@ runDomainSearch();
 
 // ─── Pipeline map pins ────────────────────────────────────────────────────────
 
-const PIPELINE_PIN_STAGES = new Set(['shortlisted', 'under-dd', 'offer', 'acquired']);
+// V75.6: fallback stage set — used only if boards haven't loaded or the
+// entry predates the board model. The real source of truth is the current
+// board's columns with their `show_on_map` flags.
+const PIPELINE_PIN_STAGES_FALLBACK = new Set(['shortlisted', 'under-dd', 'offer', 'acquired']);
 let _pipelinePinLayer = null;
+
+// Decide whether a pipeline entry's current column should render a star pin.
+// Uses window.getPipelineStages() (exposed by kanban.js) which returns the
+// CURRENT board's columns[] with their show_on_map flags. Falls back to the
+// legacy stage-slug check if no stages are available.
+function _shouldRenderPipelinePin(item) {
+  const stages = (window.getPipelineStages && window.getPipelineStages()) || [];
+  if (!stages.length) {
+    return PIPELINE_PIN_STAGES_FALLBACK.has(item.stage);
+  }
+  // Match by column id first (V75.6 entries have _columnId), then by stage slug
+  const col = stages.find(s => s.id === item._columnId)
+           || stages.find(s => s.stage_slug === item.stage);
+  if (!col) return PIPELINE_PIN_STAGES_FALLBACK.has(item.stage);
+  return col.show_on_map !== false;  // default to true if not specified
+}
 
 window._renderPipelinePins = function () {
   // Remove existing pipeline pin layer
@@ -3263,7 +3282,8 @@ window._renderPipelinePins = function () {
 
   Object.entries(pipelineData).forEach(([id, item]) => {
     if (!item?.property) return;
-    if (!PIPELINE_PIN_STAGES.has(item.stage)) return;
+    // V75.6: per-column map visibility
+    if (!_shouldRenderPipelinePin(item)) return;
 
     const p = item.property;
     const isParcel = !!item._isParcel;

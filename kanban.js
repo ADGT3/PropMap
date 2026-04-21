@@ -15,16 +15,61 @@
  *   - Removed from the board
  */
 
-// ─── Stage definitions ────────────────────────────────────────────────────────
+// ─── Stage / Board state (V75.6) ──────────────────────────────────────────────
+//
+// V75.6 introduces Boards (replaces the hard-coded workflow concept). STAGES
+// below is the system-acquisition fallback — real stages come from the
+// currently-selected board's columns[]. See resolveCurrentStages().
 
+// Fallback stage set — matches system Acquisition board's columns
 const STAGES = [
-  { id: 'shortlisted',   label: 'Shortlisted',   color: '#f39c12' },
-  { id: 'under-dd',      label: 'Under DD',       color: '#8e44ad' },
-  { id: 'offer',         label: 'Offer',          color: '#2980b9' },
-  { id: 'acquired',      label: 'Acquired',       color: '#27ae60' },
-  { id: 'not-suitable',  label: 'Not Suitable',   color: '#95a5a6' },
-  { id: 'lost',          label: 'Lost',           color: '#c0392b' },
+  { id: 'shortlisted',   label: 'Shortlisted',   color: '#f39c12', show_on_map: true,  is_terminal: false },
+  { id: 'under-dd',      label: 'Under DD',      color: '#8e44ad', show_on_map: true,  is_terminal: false },
+  { id: 'offer',         label: 'Offer',         color: '#2980b9', show_on_map: true,  is_terminal: false },
+  { id: 'acquired',      label: 'Acquired',      color: '#27ae60', show_on_map: true,  is_terminal: false },
+  { id: 'not-suitable',  label: 'Not Suitable',  color: '#95a5a6', show_on_map: false, is_terminal: true  },
+  { id: 'lost',          label: 'Lost',          color: '#c0392b', show_on_map: false, is_terminal: true  },
 ];
+
+// Boards loaded from /api/boards. Populated on init (async). If the
+// API is unreachable or returns empty, Kanban falls back to STAGES.
+let boards         = [];           // [{ id, name, is_system, columns: [...] }]
+let currentBoardId = 'sys_acquisition'; // default to system Acquisition
+let userDealOrder  = {};           // { dealId: column_order } per-user, per current board
+
+// Returns the STAGES-like array for the current board. Falls back to the
+// static STAGES constant if no boards are loaded yet. Each returned entry
+// has { id: column.id, label, color, show_on_map, is_terminal, stage_slug }
+// where `stage_slug` is used for backward-compat with legacy pipeline[]
+// entries that still have `.stage` set to a string like 'shortlisted'.
+function resolveCurrentStages() {
+  const b = boards.find(x => x.id === currentBoardId);
+  if (!b || !Array.isArray(b.columns) || !b.columns.length) return STAGES;
+  return b.columns.map(c => ({
+    id:           c.id,                 // column id (e.g. "sys_acquisition_shortlisted")
+    stage_slug:   c.stage_slug || c.id, // slug for legacy matching
+    label:        c.name,
+    color:        c.color || '#95a5a6',
+    show_on_map:  !!c.show_on_map,
+    is_terminal:  !!c.is_terminal,
+  }));
+}
+
+// Map a legacy pipeline entry's .stage slug to the current board's column id.
+// Needed because in-memory pipeline entries still carry the historical
+// `stage` string (e.g. 'shortlisted') while the board drives column ids.
+function stageToColumnId(stageSlug, boardId) {
+  const b = boards.find(x => x.id === (boardId || currentBoardId));
+  if (!b) return stageSlug;
+  const col = b.columns?.find(c => c.stage_slug === stageSlug || c.id === stageSlug);
+  return col ? col.id : stageSlug;
+}
+function columnIdToStage(columnId, boardId) {
+  const b = boards.find(x => x.id === (boardId || currentBoardId));
+  if (!b) return columnId;
+  const col = b.columns?.find(c => c.id === columnId);
+  return col ? (col.stage_slug || col.id) : columnId;
+}
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -154,6 +199,10 @@ function dealRowToInternal(row) {
     _isParcel:     isParcel,
     _parcelId:     row.parcel_id   || null,
     _dealId:       row.id,
+    // V75.6: Board + column identity — new source of truth. Legacy `.stage`
+    // preserved above for backward compat during the transition.
+    _boardId:      row.board_id    || null,
+    _columnId:     row.column_id   || null,
   };
 }
 
@@ -181,11 +230,18 @@ function internalToDealPayload(id, entry) {
   const p = entry.property || {};
   const stage  = entry.stage || 'shortlisted';
   const status = (stage === 'lost') ? 'lost' : (stage === 'acquired' ? 'won' : 'active');
+  // V75.6: also persist board_id / column_id so moves across boards/columns stick.
+  // Entry.columnId is authoritative going forward; fall back to derivation for legacy
+  // in-memory entries still keyed only by .stage.
+  const boardId  = entry._boardId  || currentBoardId;
+  const columnId = entry._columnId || stageToColumnId(stage, boardId);
   const payload = {
     id,
     workflow:    'acquisition',
     stage,
     status,
+    board_id:    boardId,
+    column_id:   columnId,
     data: {
       note:    entry.note    || '',
       // V75.3: notes[] no longer stored inline — lives in `notes` table
@@ -214,9 +270,40 @@ function internalToDealPayload(id, entry) {
 }
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
+// V75.6: load the list of boards visible to this user. Call once during
+// bootstrap (before dbLoad) so resolveCurrentStages has data to work with.
+async function loadBoards() {
+  try {
+    const res = await fetch('/api/boards');
+    if (!res.ok) throw new Error(res.status);
+    boards = await res.json();
+    // If the current selection isn't valid (e.g. first load), pick the first
+    // system board (Acquisition by convention, sort_order 0).
+    if (!boards.find(b => b.id === currentBoardId)) {
+      const firstSys = boards.find(b => b.is_system) || boards[0];
+      if (firstSys) currentBoardId = firstSys.id;
+    }
+  } catch (err) {
+    console.warn('[boards] load failed, using fallback STAGES:', err.message);
+    boards = [];
+  }
+}
+
+// V75.6: load per-user card order for the current board
+async function loadUserDealOrder() {
+  try {
+    const res = await fetch(`/api/deal-order?board_id=${encodeURIComponent(currentBoardId)}`);
+    if (!res.ok) { userDealOrder = {}; return; }
+    userDealOrder = await res.json();
+  } catch (_) {
+    userDealOrder = {};
+  }
+}
+
 async function dbLoad() {
   try {
-    const res = await fetch(`${DEALS_API}?workflow=acquisition`);
+    // V75.6: filter by currently-selected board_id so each board shows only its own deals
+    const res = await fetch(`${DEALS_API}?board_id=${encodeURIComponent(currentBoardId)}`);
     if (!res.ok) throw new Error(res.status);
     const rows = await res.json();
     dbAvailable = true;
@@ -309,6 +396,10 @@ async function initPipeline() {
   // Load from localStorage immediately so board is usable at once
   pipeline = cacheLoad();
   updateAddButtons();
+
+  // V75.6: load boards + per-user ordering first, then the deal list
+  await loadBoards();
+  await loadUserDealOrder();
 
   // Then try to sync from DB in background
   const remote = await dbLoad();
@@ -455,10 +546,255 @@ async function removeFromPipeline(id) {
 }
 
 function moveToStage(id, stageId) {
-  if (pipeline[id]) {
-    pipeline[id].stage = stageId;
-    savePipeline(id);
+  // V75.6: legacy wrapper. `stageId` is a stage slug (e.g. 'under-dd') or
+  // a column id — we route through moveToColumn which handles both.
+  moveToColumn(id, stageId);
+}
+
+// V75.6: move a deal to a target column. `target` may be a column id
+// (preferred — "sys_acquisition_under-dd") or a legacy stage slug
+// ("under-dd"). Either way we update entry.stage + entry._columnId and
+// persist via savePipeline.
+function moveToColumn(id, target) {
+  const entry = pipeline[id];
+  if (!entry) return;
+  const board = boards.find(b => b.id === (entry._boardId || currentBoardId));
+  const col = board?.columns?.find(c => c.id === target || c.stage_slug === target);
+  if (col) {
+    entry._columnId = col.id;
+    entry.stage     = col.stage_slug || col.id;
+    entry._boardId  = board.id;
+  } else {
+    // Fallback: no board loaded, just set the slug
+    entry.stage = target;
+    entry._columnId = null;
   }
+  savePipeline(id);
+}
+
+// V75.6: render the board selector bar above the columns. Placed into
+// #kanbanBoardToolbar (inserted into the kanban header by bootstrap).
+function _renderBoardSelectorBar() {
+  const bar = document.getElementById('kanbanBoardToolbar');
+  if (!bar) return;
+  if (!boards.length) {
+    bar.innerHTML = '';
+    return;
+  }
+
+  const sysBoards  = boards.filter(b =>  b.is_system);
+  const userBoards = boards.filter(b => !b.is_system);
+
+  const options = [];
+  if (sysBoards.length) {
+    options.push('<optgroup label="System Boards">');
+    for (const b of sysBoards) options.push(`<option value="${b.id}" ${b.id === currentBoardId ? 'selected' : ''}>${b.name}</option>`);
+    options.push('</optgroup>');
+  }
+  if (userBoards.length) {
+    options.push('<optgroup label="My Boards">');
+    for (const b of userBoards) options.push(`<option value="${b.id}" ${b.id === currentBoardId ? 'selected' : ''}>${b.name}</option>`);
+    options.push('</optgroup>');
+  }
+
+  bar.innerHTML = `
+    <label class="kb-toolbar-label">Board:</label>
+    <select class="kb-input kb-board-select" id="kanbanBoardSelect">${options.join('')}</select>
+    <button class="kb-toolbar-btn" id="kanbanNewBoardBtn" title="Create a new board">+ New Board</button>
+    <button class="kb-toolbar-btn" id="kanbanEditColumnsBtn" title="Edit this board's columns">⚙ Edit Columns</button>
+    <span class="kb-toolbar-spacer" style="flex:1"></span>
+  `;
+
+  bar.querySelector('#kanbanBoardSelect').addEventListener('change', async (e) => {
+    currentBoardId = e.target.value;
+    await loadUserDealOrder();
+    const dict = await dbLoad();
+    if (dict) {
+      Object.keys(pipeline).forEach(k => delete pipeline[k]);
+      Object.assign(pipeline, dict);
+    }
+    cacheSave(pipeline);
+    renderBoard();
+    if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+  });
+
+  bar.querySelector('#kanbanNewBoardBtn').addEventListener('click', () => openNewBoardModal());
+  bar.querySelector('#kanbanEditColumnsBtn').addEventListener('click', () => openEditColumnsModal());
+}
+
+// V75.6: create new board modal — prompts for name + lets user pick
+// is_system flag (admin only). Default columns seeded server-side.
+async function openNewBoardModal() {
+  const name = prompt('New board name:');
+  if (!name || !name.trim()) return;
+
+  // Is admin? Check session via /api/auth/me (cheap cached endpoint)
+  let isAdmin = false;
+  try {
+    const me = await fetch('/api/auth/me').then(r => r.ok ? r.json() : null);
+    isAdmin = !!(me?.is_admin || me?.isAdmin);
+  } catch (_) {}
+  const is_system = isAdmin ? confirm('Make this a System Board (visible to all users)? Cancel = personal board.') : false;
+
+  try {
+    const r = await fetch('/api/boards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name.trim(), is_system }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      alert(`Failed: ${err.error || r.status}`);
+      return;
+    }
+    const newBoard = await r.json();
+    await loadBoards();
+    currentBoardId = newBoard.id;
+    await loadUserDealOrder();
+    const dict = await dbLoad();
+    if (dict) {
+      Object.keys(pipeline).forEach(k => delete pipeline[k]);
+      Object.assign(pipeline, dict);
+    }
+    renderBoard();
+  } catch (err) {
+    alert(`Network error: ${err.message}`);
+  }
+}
+
+// V75.6: edit-columns modal for the current board. Lets user add/remove
+// columns and toggle show_on_map per column. On save, does a PUT to
+// /api/boards which replaces the column set.
+async function openEditColumnsModal() {
+  const b = boards.find(x => x.id === currentBoardId);
+  if (!b) return;
+
+  // Read-only preview: fresh columns snapshot (mutable during the session)
+  const cols = b.columns.map(c => ({
+    id:           c.id,
+    name:         c.name,
+    stage_slug:   c.stage_slug,
+    show_on_map:  c.show_on_map,
+    is_terminal:  c.is_terminal,
+    color:        c.color || '#95a5a6',
+  }));
+
+  // Build simple overlay HTML
+  const overlay = document.createElement('div');
+  overlay.className = 'kb-editcols-overlay';
+  overlay.innerHTML = `
+    <div class="kb-editcols-modal">
+      <div class="kb-editcols-header">
+        <div class="kb-editcols-title">Edit Columns — ${b.name}</div>
+        <button class="kb-editcols-close">✕</button>
+      </div>
+      <div class="kb-editcols-body">
+        <table class="kb-editcols-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Name</th>
+              <th title="Color dot">Color</th>
+              <th title="Show on map">Map</th>
+              <th title="Terminal column (closes deal)">Terminal</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody class="kb-editcols-rows"></tbody>
+        </table>
+        <button class="kb-toolbar-btn kb-editcols-add">+ Add Column</button>
+      </div>
+      <div class="kb-editcols-footer">
+        <button class="kb-editcols-cancel">Cancel</button>
+        <button class="kb-editcols-save kb-add-offer-btn">Save Changes</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const rowsEl = overlay.querySelector('.kb-editcols-rows');
+  const renderRows = () => {
+    rowsEl.innerHTML = '';
+    cols.forEach((c, i) => {
+      const tr = document.createElement('tr');
+      tr.draggable = true;
+      tr.dataset.idx = i;
+      tr.innerHTML = `
+        <td><span class="kb-editcols-drag" title="Drag to reorder">≡</span></td>
+        <td><input class="kb-input kb-col-name" value="${(c.name || '').replace(/"/g,'&quot;')}" style="width:140px"></td>
+        <td><input class="kb-col-color" type="color" value="${c.color}"></td>
+        <td><input class="kb-col-showmap" type="checkbox" ${c.show_on_map ? 'checked' : ''}></td>
+        <td><input class="kb-col-terminal" type="checkbox" ${c.is_terminal ? 'checked' : ''}></td>
+        <td><button class="kb-col-del" title="Remove column">✕</button></td>`;
+      tr.querySelector('.kb-col-name').addEventListener('input',  e => { cols[i].name = e.target.value; });
+      tr.querySelector('.kb-col-color').addEventListener('input', e => { cols[i].color = e.target.value; });
+      tr.querySelector('.kb-col-showmap').addEventListener('change', e => { cols[i].show_on_map = e.target.checked; });
+      tr.querySelector('.kb-col-terminal').addEventListener('change', e => { cols[i].is_terminal = e.target.checked; });
+      tr.querySelector('.kb-col-del').addEventListener('click', () => {
+        cols.splice(i, 1);
+        renderRows();
+      });
+      // Simple drag-reorder
+      tr.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('text/plain', String(i));
+      });
+      tr.addEventListener('dragover', e => e.preventDefault());
+      tr.addEventListener('drop', e => {
+        e.preventDefault();
+        const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        const toIdx   = parseInt(tr.dataset.idx, 10);
+        if (isNaN(fromIdx) || isNaN(toIdx) || fromIdx === toIdx) return;
+        const [moved] = cols.splice(fromIdx, 1);
+        cols.splice(toIdx, 0, moved);
+        renderRows();
+      });
+      rowsEl.appendChild(tr);
+    });
+  };
+  renderRows();
+
+  overlay.querySelector('.kb-editcols-add').addEventListener('click', () => {
+    cols.push({
+      id:          null,
+      name:        'New Column',
+      stage_slug:  null,
+      show_on_map: true,
+      is_terminal: false,
+      color:       '#95a5a6',
+    });
+    renderRows();
+  });
+  overlay.querySelector('.kb-editcols-close').addEventListener('click',  () => overlay.remove());
+  overlay.querySelector('.kb-editcols-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('.kb-editcols-save').addEventListener('click', async () => {
+    // Assign sort_order from current order
+    const payload = cols.map((c, idx) => ({
+      ...c,
+      sort_order: idx,
+    }));
+    try {
+      const r = await fetch('/api/boards', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: b.id, columns: payload }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert(`Failed: ${err.error || r.status}${err.deals_in_removed_columns ? ` (${err.deals_in_removed_columns} deal(s) blocking)` : ''}`);
+        return;
+      }
+      overlay.remove();
+      await loadBoards();
+      const dict = await dbLoad();
+      if (dict) {
+        Object.keys(pipeline).forEach(k => delete pipeline[k]);
+        Object.assign(pipeline, dict);
+      }
+      renderBoard();
+      if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+    } catch (err) {
+      alert(`Network error: ${err.message}`);
+    }
+  });
 }
 
 // ─── Notes (V75.3 — unified /api/notes backend) ──────────────────────────────
@@ -778,27 +1114,48 @@ function renderBoard() {
   const board = document.getElementById('kanbanBoard');
   board.innerHTML = '';
 
-  STAGES.forEach(stage => {
-    const cards = Object.entries(pipeline)
-      .filter(([, v]) => v.stage === stage.id)
-      .sort((a, b) => a[1].addedAt - b[1].addedAt);
+  // V75.6: render the board-selector UI bar above the columns
+  _renderBoardSelectorBar();
+
+  // V75.6: dynamic stages from currently-selected board
+  const stages = resolveCurrentStages();
+
+  stages.forEach(stage => {
+    // Match pipeline entries to this column. Primary match: entry._columnId === stage.id.
+    // Secondary (legacy/fallback): entry.stage === stage.stage_slug (for entries
+    // that don't yet have _columnId populated).
+    const entries = Object.entries(pipeline).filter(([, v]) => {
+      if (v._columnId) return v._columnId === stage.id;
+      return v.stage === stage.stage_slug;
+    });
+
+    // Sort: per-user column_order wins if present, else fall back to addedAt asc
+    entries.sort((a, b) => {
+      const oa = userDealOrder[a[0]];
+      const ob = userDealOrder[b[0]];
+      if (oa != null && ob != null) return oa - ob;
+      if (oa != null) return -1;
+      if (ob != null) return 1;
+      return (a[1].addedAt || 0) - (b[1].addedAt || 0);
+    });
 
     const col = document.createElement('div');
     col.className = 'kb-col';
     col.dataset.stage = stage.id;
+    col.dataset.columnId = stage.id;
 
     col.innerHTML = `
       <div class="kb-col-header">
         <span class="kb-stage-dot" style="background:${stage.color}"></span>
         <span class="kb-stage-label">${stage.label}</span>
-        <span class="kb-count">${cards.length}</span>
+        <span class="kb-count">${entries.length}</span>
       </div>
-      <div class="kb-cards" data-stage="${stage.id}"></div>
+      <div class="kb-cards" data-stage="${stage.id}" data-column-id="${stage.id}"></div>
     `;
 
     const cardsEl = col.querySelector('.kb-cards');
 
-    cards.forEach(([id, item]) => {
+    entries.forEach(([id, item]) => {
       const p = item.property;
       if (!p) return; // skip malformed entries
       const card = document.createElement('div');
@@ -816,8 +1173,10 @@ function renderBoard() {
       const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
       const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
 
-      const stageOptions = STAGES.map(s =>
-        `<option value="${s.id}" ${s.id === item.stage ? 'selected' : ''}>${s.label}</option>`
+      // V75.6: stage select dropdown lists all columns of CURRENT board.
+      // The value submitted is the column id (not the legacy stage slug).
+      const stageOptions = stages.map(s =>
+        `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
       ).join('');
 
       card.innerHTML = `
@@ -840,14 +1199,15 @@ function renderBoard() {
       // Drag
       card.addEventListener('dragstart', e => {
         e.dataTransfer.setData('text/plain', id);
+        e.dataTransfer.effectAllowed = 'move';
         card.classList.add('dragging');
       });
       card.addEventListener('dragend', () => card.classList.remove('dragging'));
 
-      // Stage select change
+      // Stage select change — argument is the TARGET column id in the current board
       card.querySelector('.kb-stage-select').addEventListener('change', function (e) {
         e.stopPropagation();
-        moveToStage(id, this.value);
+        moveToColumn(id, this.value);
         renderBoard();
       });
 
@@ -885,20 +1245,76 @@ function renderBoard() {
       cardsEl.appendChild(card);
     });
 
-    // Drop zone
+    // Drop zone — V75.6: also supports intra-column reordering
+    // dragover: compute the "insertion index" by measuring the mouse Y
+    // against each card's midline. Highlights the drop zone + shows the
+    // cursor where it would land.
+    function computeInsertIndex(e) {
+      const cards = [...cardsEl.querySelectorAll('.kb-card:not(.dragging)')];
+      for (let i = 0; i < cards.length; i++) {
+        const rect = cards[i].getBoundingClientRect();
+        if (e.clientY < rect.top + rect.height / 2) return i;
+      }
+      return cards.length;
+    }
     cardsEl.addEventListener('dragover', e => {
       e.preventDefault();
       cardsEl.classList.add('drag-over');
+      // Move a visual placeholder marker to the insertion point
+      const idx = computeInsertIndex(e);
+      cardsEl.dataset.dropIdx = String(idx);
     });
     cardsEl.addEventListener('dragleave', () => cardsEl.classList.remove('drag-over'));
-    cardsEl.addEventListener('drop', e => {
+    cardsEl.addEventListener('drop', async e => {
       e.preventDefault();
       cardsEl.classList.remove('drag-over');
       const id = e.dataTransfer.getData('text/plain');
-      if (id && pipeline[id]) {
-        moveToStage(id, stage.id);
-        renderBoard();
+      if (!id || !pipeline[id]) return;
+
+      const targetColumnId = stage.id;
+      const insertIdx = computeInsertIndex(e);
+      const sameColumn = (pipeline[id]._columnId || stageToColumnId(pipeline[id].stage)) === targetColumnId;
+
+      if (!sameColumn) {
+        // Cross-column: change column first
+        moveToColumn(id, targetColumnId);
       }
+
+      // Build the new order for the target column, insert at idx
+      const colEntries = Object.entries(pipeline)
+        .filter(([, v]) => (v._columnId || stageToColumnId(v.stage)) === targetColumnId)
+        .sort((a, b) => {
+          const oa = userDealOrder[a[0]];
+          const ob = userDealOrder[b[0]];
+          if (oa != null && ob != null) return oa - ob;
+          if (oa != null) return -1;
+          if (ob != null) return 1;
+          return (a[1].addedAt || 0) - (b[1].addedAt || 0);
+        })
+        .map(([k]) => k);
+
+      // Remove the dragged id from colEntries (if present) and insert at insertIdx
+      const without = colEntries.filter(k => k !== id);
+      const finalIdx = Math.min(insertIdx, without.length);
+      without.splice(finalIdx, 0, id);
+
+      // Assign sequential column_order values
+      const orderUpdates = without.map((dealId, idx) => ({ deal_id: dealId, column_order: idx }));
+      // Update in-memory userDealOrder immediately so re-render reflects drop
+      orderUpdates.forEach(u => { userDealOrder[u.deal_id] = u.column_order; });
+
+      // Persist per-user ordering
+      try {
+        await fetch('/api/deal-order', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ board_id: currentBoardId, order: orderUpdates }),
+        });
+      } catch (err) {
+        console.warn('[deal-order] save failed', err.message);
+      }
+
+      renderBoard();
     });
 
     board.appendChild(col);
@@ -1696,7 +2112,9 @@ initPipeline();
 // Call window.refreshPipelinePins() after any pipeline change to sync the map.
 
 window.getPipelineData = () => pipeline;
-window.getPipelineStages = () => STAGES;
+// V75.6: return current board's columns (with show_on_map flags etc).
+// Falls back to static STAGES if boards haven't loaded.
+window.getPipelineStages = () => resolveCurrentStages();
 window.refreshPipelinePins = function () {
   if (typeof window._renderPipelinePins === 'function') window._renderPipelinePins();
 };
