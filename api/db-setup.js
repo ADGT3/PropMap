@@ -205,10 +205,8 @@ export default async function handler(req, res) {
         assignee_id     INTEGER     NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
         creator_id      INTEGER     REFERENCES contacts(id) ON DELETE SET NULL,
         deal_id         TEXT        REFERENCES deals(id) ON DELETE SET NULL,
-        effort_value    NUMERIC,
-        effort_unit     TEXT        CHECK (effort_unit IS NULL OR effort_unit IN ('d','m','y')),
-        duration_value  NUMERIC,
-        duration_unit   TEXT        CHECK (duration_unit IS NULL OR duration_unit IN ('d','m','y')),
+        effort_days     INTEGER,
+        duration_days   INTEGER,
         due_date        DATE,
         reminder_date   DATE,
         status          TEXT        NOT NULL DEFAULT 'todo'

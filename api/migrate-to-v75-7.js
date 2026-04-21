@@ -111,10 +111,8 @@ export default async function handler(req, res) {
         assignee_id     INTEGER     NOT NULL REFERENCES contacts(id) ON DELETE RESTRICT,
         creator_id      INTEGER     REFERENCES contacts(id) ON DELETE SET NULL,
         deal_id         TEXT        REFERENCES deals(id) ON DELETE SET NULL,
-        effort_value    NUMERIC,
-        effort_unit     TEXT        CHECK (effort_unit IS NULL OR effort_unit IN ('d','m','y')),
-        duration_value  NUMERIC,
-        duration_unit   TEXT        CHECK (duration_unit IS NULL OR duration_unit IN ('d','m','y')),
+        effort_days     INTEGER,
+        duration_days   INTEGER,
         due_date        DATE,
         reminder_date   DATE,
         status          TEXT        NOT NULL DEFAULT 'todo'
@@ -125,6 +123,22 @@ export default async function handler(req, res) {
         created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
       )`);
+
+    // V76.2.1: if the actions table already exists from an earlier run with the
+    // effort_value/unit + duration_value/unit schema, migrate to effort_days /
+    // duration_days. Safe to re-run.
+    await run('ALTER actions: add effort_days', () => sql`
+      ALTER TABLE actions ADD COLUMN IF NOT EXISTS effort_days INTEGER`);
+    await run('ALTER actions: add duration_days', () => sql`
+      ALTER TABLE actions ADD COLUMN IF NOT EXISTS duration_days INTEGER`);
+    await run('ALTER actions: drop effort_value', () => sql`
+      ALTER TABLE actions DROP COLUMN IF EXISTS effort_value`);
+    await run('ALTER actions: drop effort_unit', () => sql`
+      ALTER TABLE actions DROP COLUMN IF EXISTS effort_unit`);
+    await run('ALTER actions: drop duration_value', () => sql`
+      ALTER TABLE actions DROP COLUMN IF EXISTS duration_value`);
+    await run('ALTER actions: drop duration_unit', () => sql`
+      ALTER TABLE actions DROP COLUMN IF EXISTS duration_unit`);
 
     await run('INDEX actions_assignee_idx', () => sql`
       CREATE INDEX IF NOT EXISTS actions_assignee_idx ON actions (assignee_id)`);

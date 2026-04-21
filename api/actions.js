@@ -273,7 +273,7 @@ async function handlePost(req, res, session) {
   const body = req.body || {};
   const {
     description, assignee_id, deal_id,
-    effort_value, effort_unit, duration_value, duration_unit,
+    effort_days, duration_days,
     due_date, reminder_date, status,
   } = body;
 
@@ -305,10 +305,14 @@ async function handlePost(req, res, session) {
       FROM actions WHERE column_id = ${col?.id || null}`;
   const nextOrder = maxRow[0]?.next ?? 0;
 
+  // Coerce effort/duration to integer days (or NULL).
+  const effortDays   = (effort_days   != null && effort_days   !== '') ? Math.round(Number(effort_days))   : null;
+  const durationDays = (duration_days != null && duration_days !== '') ? Math.round(Number(duration_days)) : null;
+
   const rows = await sql`
     INSERT INTO actions (
       description, assignee_id, creator_id, deal_id,
-      effort_value, effort_unit, duration_value, duration_unit,
+      effort_days, duration_days,
       due_date, reminder_date, status,
       board_id, column_id, column_order
     ) VALUES (
@@ -316,10 +320,8 @@ async function handlePost(req, res, session) {
       ${assignee},
       ${creatorId},
       ${deal_id ? String(deal_id) : null},
-      ${effort_value != null && effort_value !== '' ? Number(effort_value) : null},
-      ${effort_unit || null},
-      ${duration_value != null && duration_value !== '' ? Number(duration_value) : null},
-      ${duration_unit || null},
+      ${effortDays},
+      ${durationDays},
       ${due_date || null},
       ${reminder_date || null},
       ${finalStatus},
@@ -385,10 +387,8 @@ async function handlePatch(req, res, session) {
     description:    body.description    !== undefined ? String(body.description).trim() : row.description,
     assignee_id:    newAssignee         !== undefined ? newAssignee                     : row.assignee_id,
     deal_id:        body.deal_id        !== undefined ? (body.deal_id ? String(body.deal_id) : null) : row.deal_id,
-    effort_value:   body.effort_value   !== undefined ? (body.effort_value   === '' || body.effort_value   == null ? null : Number(body.effort_value))   : row.effort_value,
-    effort_unit:    body.effort_unit    !== undefined ? (body.effort_unit    || null) : row.effort_unit,
-    duration_value: body.duration_value !== undefined ? (body.duration_value === '' || body.duration_value == null ? null : Number(body.duration_value)) : row.duration_value,
-    duration_unit:  body.duration_unit  !== undefined ? (body.duration_unit  || null) : row.duration_unit,
+    effort_days:    body.effort_days    !== undefined ? (body.effort_days   === '' || body.effort_days   == null ? null : Math.round(Number(body.effort_days)))   : row.effort_days,
+    duration_days:  body.duration_days  !== undefined ? (body.duration_days === '' || body.duration_days == null ? null : Math.round(Number(body.duration_days))) : row.duration_days,
     due_date:       body.due_date       !== undefined ? (body.due_date       || null) : row.due_date,
     reminder_date:  body.reminder_date  !== undefined ? (body.reminder_date  || null) : row.reminder_date,
     status:         newStatus           !== undefined ? newStatus            : row.status,
@@ -403,10 +403,8 @@ async function handlePatch(req, res, session) {
       description    = ${merged.description},
       assignee_id    = ${merged.assignee_id},
       deal_id        = ${merged.deal_id},
-      effort_value   = ${merged.effort_value},
-      effort_unit    = ${merged.effort_unit},
-      duration_value = ${merged.duration_value},
-      duration_unit  = ${merged.duration_unit},
+      effort_days    = ${merged.effort_days},
+      duration_days  = ${merged.duration_days},
       due_date       = ${merged.due_date},
       reminder_date  = ${merged.reminder_date},
       status         = ${merged.status},
