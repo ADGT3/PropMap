@@ -696,7 +696,7 @@ async function openEditColumnsModal() {
               <th>Name</th>
               <th title="Color dot">Color</th>
               <th title="Show on map">Map</th>
-              <th title="Terminal column (closes deal)">Terminal</th>
+              <th title="Kanban terminal column (closes deal)">Kanban</th>
               <th></th>
             </tr>
           </thead>

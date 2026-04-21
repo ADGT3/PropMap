@@ -915,40 +915,48 @@ header {
   color: var(--muted);
 }
 
-/* V75.6 — Board toolbar above the Kanban board */
-.kanban-toolbar {
+/* V75.6 — Board selector controls inside .kanban-header (Header 2).
+   Follows the CRM tab-bar pattern (same height, same chrome, controls
+   sit alongside the module title, close button pushed to the far right). */
+.kanban-header-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  gap: 8px;
+  margin-left: 16px;
+  flex: 1;
   font-size: 13px;
 }
-.kanban-toolbar:empty { display: none; }
+.kanban-header-controls:empty { display: none; }
 .kb-toolbar-label {
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
 }
 .kb-board-select {
-  padding: 4px 8px;
+  padding: 6px 10px;
   font-size: 13px;
-  min-width: 180px;
-}
-.kb-toolbar-btn {
-  background: transparent;
+  min-width: 200px;
   border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
   color: var(--text);
-  padding: 4px 10px;
-  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+}
+/* Match .crm-tab styling for parity */
+.kb-toolbar-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 4px;
-  font-family: inherit;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  transition: background 0.1s;
 }
 .kb-toolbar-btn:hover {
   background: var(--surface2);
-  border-color: var(--text-secondary);
+  color: var(--text);
 }
 
 /* V75.6 — Edit columns modal */
