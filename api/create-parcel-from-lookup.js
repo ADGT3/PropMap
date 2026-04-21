@@ -160,9 +160,13 @@ async function execute(req, res) {
     const dealId = parcel_id;   // convention: deal.id matches parcel.id for parcel-deals
     const dealDataObj = { addedAt: Date.now(), ...deal_data };
     const dealDataJson = JSON.stringify(dealDataObj);
+    // V75.6: derive board_id/column_id from workflow+stage for system boards
+    const boardIdFinal  = `sys_${workflow}`;
+    const columnIdFinal = `${boardIdFinal}_${stage}`;
     const dealRow = (await sql`
-      INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data)
-      VALUES (${dealId}, NULL, ${parcel_id}, ${workflow}, ${stage}, 'active', ${dealDataJson}::jsonb)
+      INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id)
+      VALUES (${dealId}, NULL, ${parcel_id}, ${workflow}, ${stage}, 'active', ${dealDataJson}::jsonb,
+              ${boardIdFinal}, ${columnIdFinal})
       RETURNING id, stage, status`)[0];
     deal = dealRow;
   }

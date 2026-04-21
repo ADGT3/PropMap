@@ -32,7 +32,7 @@ export default async function handler(req, res) {
     switch (req.method) {
 
       case 'GET': {
-        const { id, workflow, status, property_id, parcel_id } = req.query;
+        const { id, workflow, status, property_id, parcel_id, board_id } = req.query;
 
         // V75.4: deals can be on a property or a parcel.
         // We join both and let the frontend pick which to use based on whether
@@ -94,6 +94,19 @@ export default async function handler(req, res) {
             LEFT JOIN parcels    pa ON pa.id = d.parcel_id
             WHERE d.property_id = ${property_id}
             ORDER BY d.opened_at DESC`;
+          return res.status(200).json(await fetchAndExpand(rows));
+        }
+
+        if (board_id) {
+          const rows = await sql`
+            SELECT d.*,
+              row_to_json(p.*)  AS property,
+              row_to_json(pa.*) AS parcel
+            FROM deals d
+            LEFT JOIN properties p  ON p.id  = d.property_id
+            LEFT JOIN parcels    pa ON pa.id = d.parcel_id
+            WHERE d.board_id = ${board_id}
+            ORDER BY d.updated_at DESC`;
           return res.status(200).json(await fetchAndExpand(rows));
         }
 
@@ -165,6 +178,8 @@ export default async function handler(req, res) {
             parcel_id    = null,
             workflow     = 'acquisition',
             stage        = 'shortlisted',
+            board_id,                  // optional — derived from workflow if absent
+            column_id,                 // optional — derived from board_id+stage if absent
             data         = {},
             seed_financials_from, // optional deal_id to seed from
           } = body;
@@ -180,12 +195,19 @@ export default async function handler(req, res) {
             if (!pRows.length) return res.status(404).json({ error: 'Parcel not found' });
           }
 
+          // V75.6: auto-derive board_id + column_id from workflow+stage for
+          // legacy callers. The system boards are seeded as sys_{workflow}
+          // with columns sys_{workflow}_{stage}.
+          const boardIdFinal  = board_id  || `sys_${workflow}`;
+          const columnIdFinal = column_id || `${boardIdFinal}_${stage}`;
+
           const id = newDealId();
           const dataJson = JSON.stringify({ addedAt: Date.now(), ...data });
 
           const dealRows = await sql`
-            INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data)
-            VALUES (${id}, ${property_id}, ${parcel_id}, ${workflow}, ${stage}, 'active', ${dataJson}::jsonb)
+            INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id)
+            VALUES (${id}, ${property_id}, ${parcel_id}, ${workflow}, ${stage}, 'active', ${dataJson}::jsonb,
+                    ${boardIdFinal}, ${columnIdFinal})
             RETURNING *`;
 
           // Seed financials — find most recent prior deal's financial record if not specified
@@ -231,14 +253,20 @@ export default async function handler(req, res) {
           workflow = 'acquisition',
           stage    = 'shortlisted',
           status   = 'active',
+          board_id,
+          column_id,
           data     = {},
         } = body;
         if (!property_id && !parcel_id) return res.status(400).json({ error: 'property_id or parcel_id required' });
         if ( property_id &&  parcel_id) return res.status(400).json({ error: 'specify exactly one of property_id or parcel_id' });
         const dataJson = JSON.stringify({ addedAt: Date.now(), ...data });
+        // V75.6: derive board_id/column_id from workflow+stage if not supplied
+        const boardIdFinal2  = board_id  || `sys_${workflow}`;
+        const columnIdFinal2 = column_id || `${boardIdFinal2}_${stage}`;
         const rows = await sql`
-          INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data)
-          VALUES (${id}, ${property_id}, ${parcel_id}, ${workflow}, ${stage}, ${status}, ${dataJson}::jsonb)
+          INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id)
+          VALUES (${id}, ${property_id}, ${parcel_id}, ${workflow}, ${stage}, ${status}, ${dataJson}::jsonb,
+                  ${boardIdFinal2}, ${columnIdFinal2})
           ON CONFLICT (id) DO NOTHING
           RETURNING *`;
         if (!rows.length) {
@@ -250,14 +278,16 @@ export default async function handler(req, res) {
 
       case 'PUT': {
         const body = req.body || {};
-        const { id, stage, status, data } = body;
+        const { id, stage, status, data, board_id, column_id } = body;
         if (!id) return res.status(400).json({ error: 'id required' });
         const dataJson = data !== undefined ? JSON.stringify(data) : null;
         const rows = await sql`
           UPDATE deals SET
-            stage      = COALESCE(${stage  ?? null}, stage),
-            status     = COALESCE(${status ?? null}, status),
+            stage      = COALESCE(${stage    ?? null}, stage),
+            status     = COALESCE(${status   ?? null}, status),
             data       = COALESCE(${dataJson}::jsonb, data),
+            board_id   = COALESCE(${board_id ?? null}, board_id),
+            column_id  = COALESCE(${column_id?? null}, column_id),
             updated_at = now()
           WHERE id = ${id}
           RETURNING *`;
