@@ -1,4 +1,4 @@
-# Sydney Property Map — V76.1
+# Sydney Property Map — V76.2
 
 A browser-based interactive property map overlaying live Domain.com.au listings with planning, environmental and infrastructure data across Sydney's growth corridors. Deployed on Vercel with a Neon Postgres database for persistent pipeline and CRM storage.
 
@@ -18,7 +18,7 @@ sydney-property-map/
 │   │   ├── set-password.js  — Set/change contact password (admin or self) (V74)
 │   │   └── update-access.js — Toggle can_login / is_admin / access_modules (admin only) (V74)
 │   ├── properties.js        — Properties CRUD (V75) — permanent land identity; `state_prop_id` column added (V75.4c)
-│   ├── deals.js             — Deals CRUD (V75) — workflow-scoped Kanban cards; auto-cleans orphaned Parcels on DELETE (V75.4d.1). V75.6: accepts `board_id` filter in GET; accepts `board_id` + `column_id` in POST and PUT (auto-derives from legacy `workflow` + `stage` when absent, so older callers keep working)
+│   ├── deals.js             — Deals CRUD (V75) — workflow-scoped Kanban cards; auto-cleans orphaned Parcels on DELETE (V75.4d.1). V75.6: accepts `board_id` filter in GET; accepts `board_id` + `column_id` in POST and PUT (auto-derives from legacy `workflow` + `stage` when absent, so older callers keep working). V76.2: `fetchAndExpand()` adds `has_due_action` boolean to each deal row via a single batched actions query
 │   ├── roles.js             — Role catalogue CRUD (V75)
 │   ├── contacts.js          — CRM Contacts CRUD, backed by entity_contacts (V75). Note endpoints return 410 Gone and redirect to /api/notes (V75.3)
 │   ├── notes.js             — Unified polymorphic notes CRUD (V75.3) — replaces deals.data.notes[] and contact_notes table
@@ -32,7 +32,9 @@ sydney-property-map/
 │   ├── create-parcel-from-lookup.js  — V75.4d: creates a Parcel + N Properties + Deal from client-pre-resolved NSW data (admin-only). V75.6: sets `board_id` + `column_id` on the new deal
 │   ├── backfill-parcel-rings.js      — V75.4d.4: one-time backfill of lot polygon rings on child properties created before ring-aware lookup (admin-only)
 │   ├── migrate-to-v75-6.js — V75.6 migration: creates `boards`, `board_columns`, `deal_user_order` tables; seeds 3 system boards (Acquisition / Buyer Enquiry / Agency Sales) with 6 columns each; backfills every deal's `board_id` + `column_id` from its legacy `workflow` + `stage` (admin-only)
-│   ├── boards.js           — V75.6: Boards + columns CRUD. System boards (admin-only); user boards (owner-only). DELETE refuses if the board still has deals. GET returns each board with its `columns[]` nested
+│   ├── migrate-to-v75-7.js — V76.2 migration: adds `boards.board_type` column and creates `actions` table (admin-only)
+│   ├── boards.js           — V75.6: Boards + columns CRUD. System boards (admin-only); user boards (owner-only). DELETE refuses if the board still has deals. GET returns each board with its `columns[]` nested. V76.2: accepts `board_type` on POST; guards now check actions refs alongside deals
+│   ├── actions.js          — V76.2: Actions CRUD. Server-side Due promotion runs on every GET (promotes overdue todo/wip rows to status='due' in a single UPDATE). Auto-bootstraps a per-user "My Actions" board with 5 default columns on first access
 │   ├── deal-order.js       — V75.6: per-user card-ordering within a board column. GET returns `{dealId → column_order}` for the current user; PUT accepts an array of `{deal_id, column_order}` rows and upserts them
 │   ├── db-setup.js          — DB schema setup (legacy tables + auth columns)
 │   ├── domain-search.js     — Domain API proxy (keeps key server-side)
@@ -64,7 +66,7 @@ sydney-property-map/
 ├── dd-risks.js              — DD risk assessment (queries NSW layers at lat/lng)
 ├── nsw-lookup-client.js     — **Browser-side** NSW Spatial Portal helper (window.NSWLookup). Queries are done in the browser, not Vercel, because Vercel→NSW proved unreliable (timeouts on larger lots). Used at parcel create time for authoritative address + Lot/DP + propid + lot polygon rings (V75.4c/d)
 ├── map.js                   — Map logic, overlays, search, listings, Domain init
-├── kanban.js                — Pipeline Kanban board with DD automation and CRM
+├── kanban.js                — Pipeline Kanban board with DD automation and CRM. V76.2: renders both deal and action boards (dispatches on `board_type`); `renderActionsBoard()`, `openActionModal()`, `refreshDealActions()`; ⏰ Action badge on deal cards; Actions section in deal modal
 ├── package.json             — Dependencies (@neondatabase/serverless, jose, bcryptjs), type:module
 ├── vercel.json              — Vercel routing config
 ├── DEPLOY.md                — Deployment guide
@@ -461,7 +463,20 @@ Grouped into: Zoning, Environmental, Transport, Services, Western Parkland City 
 - **Vendor Terms**: price, settlement, deposit structure
 - **Terms Offered**: offer price, settlement, deposit — logged as history
 - **Due Diligence**: per-item risk level and notes
+- **Actions** (V76.2): tasks linked to this deal — description, assignee, effort, duration, due date, reminder. One-click edit/create; rows badge their current status (ToDo / WIP / Due / Done / Void) and flag overdue with a red left-border
 - **Notes**: timestamped entries in reverse-chronological order; Ctrl/Cmd+Enter to submit; individual note deletion
+
+### Actions (V76.2)
+
+First-class task entity tracked through a fixed workflow (ToDo → WIP → Due → Done | Void). Each action has a description, an assignee (any CRM contact, defaulting to the current user), optional effort/duration estimates (days/months/years), due date, and reminder date. Actions can be linked to a Deal or stand alone.
+
+- **My Actions Kanban wall**: each user gets a personal Kanban board named *My Actions* under the *My Boards* group in the Pipeline board selector. Columns (ToDo / WIP / Due / Done / Void) are user-editable like any other board — rename, recolour, reorder, add extras. Only the assignee sees the board; it's scoped to `owner_id`.
+- **Drag-and-drop** between columns works the same as the Deal Kanban. Moving a card updates `column_id` and derives `status` from the column's `stage_slug`.
+- **Server-side Due promotion**: on every read of `/api/actions?assignee=me`, any action with `status IN ('todo','wip')` whose `due_date ≤ today` is flipped to `status='due'` and placed in the Due column. No cron — happens lazily, so latency stays low and state converges on first access.
+- **Deal-card badge**: if any action linked to a deal is currently due or overdue, the deal's Kanban card shows a red *⏰ Action* indicator. Computed server-side in `api/deals.js` via `fetchAndExpand()`, so it doesn't require an extra client roundtrip.
+- **Actions section in deal modal**: every deal modal has an Actions panel listing linked actions with one-click edit and *+ Add Action* (pre-fills `deal_id`).
+- **Standalone actions**: creating an action from the My Actions board directly (via *+ New Action*) creates it without a `deal_id`. The deal field in the modal is optional.
+- **Author stamping**: `creator_id` is stamped server-side from the JWT session; can't be spoofed by the client. For the env-var fallback admin (no `contacts` row), `creator_id` is left NULL.
 
 ### Finance Module (`finance/finance.js`)
 
@@ -548,6 +563,7 @@ cor_lat =  3.86074737 − 0.00992951 × cur_lon + 1.06930344 × cur_lat
 
 | Version | Notes |
 |---|---|
+| V76.2 | **Actions — assignable tasks with their own Kanban wall.** New first-class entity: tasks with description, assignee (any CRM contact, defaulting to current user), effort (days/months/years), duration (days/months/years), due date, reminder date, and a fixed workflow (ToDo → WIP → Due → Done \| Void). **Schema**: new `actions` table (id, description, assignee_id FK contacts, creator_id FK contacts nullable, deal_id FK deals nullable, effort_value/unit, duration_value/unit, due_date, reminder_date, status, board_id, column_id, column_order, timestamps); new `boards.board_type` column (`'deal'` \| `'action'`, default `'deal'`, backfilled automatically for existing boards). **New API**: `api/actions.js` (GET assignee=me \| deal_id \| id; POST creates with server-stamped creator_id; PATCH with auto-derive status from column; DELETE). Bootstraps a "My Actions" board for each user on first access — seeds the 5 default columns with matching `stage_slug`s. **Server-side Due promotion**: on every GET for an assignee, rows where `status IN ('todo','wip') AND due_date ≤ CURRENT_DATE` are flipped to `status='due'` and moved to the Due column in a single UPDATE. No cron job; state converges lazily on read. **`api/deals.js`** extended: `fetchAndExpand()` adds a `has_due_action` boolean to each deal row via a single batched query — powers the ⏰ Action badge on deal Kanban cards. **`api/boards.js`**: accepts `board_type` on POST; column-delete and board-delete guards now check both `deals` and `actions` refs (409 if either). **Frontend — `kanban.js`**: `renderBoard()` dispatches to new `renderActionsBoard()` when the active board's `board_type='action'`; full action card render with assignee/due/effort metadata, overdue styling (red left border), per-column drag-and-drop using the same insertion-index pattern as deals; new `openActionModal()` for create/edit (with Status dropdown only shown on edit), `refreshDealActions()` for in-place refresh inside open deal modals. New Actions section in the deal modal between DD and Notes. **Deploy sequence**: push files → `POST /api/migrate-to-v75-7` → hard reload → verify (a) My Actions appears in the board selector under My Boards, (b) creating an action with a past due date auto-lands in the Due column on next read, (c) deals with due actions show ⏰ on their card. Rollback: `DROP TABLE actions; ALTER TABLE boards DROP COLUMN board_type;` — all changes are additive, no existing deal data is touched. |
 | V76.1 | **Promotion to production of the V75.5 + V75.6 feature stack.** Formal release tag combining: (a) the Properties CRM tab (V75.5) with its full property modal, per-modal Delete buttons, measurement-tool rework, and `_syncAfterEntityDelete` helper for map-pin refresh after CRM deletes; (b) Boards + Columns (V75.6) — Kanban workflows are now user-editable with per-user card ordering; (c) UI consistency polish (V75.6.1–V75.6.4) — Header 2 toolbar convention, stable `<select>` element across re-renders, fast-switch parallel deal fetches. **Deploy sequence for prod**: push all files → `GET /api/migrate-to-v75-6` dry-run → `POST /api/migrate-to-v75-6` execute → hard reload → verify board selector renders + system boards populated with 6 columns each + existing deals backfilled with `board_id` + `column_id`. Rollback: restore Neon DB branch snapshot (boards/board_columns/deal_user_order tables + deals.board_id/column_id columns are all additive; old `workflow`/`stage` columns kept for safety). |
 | V75.6.4 | **Stable board-selector toolbar.** Fix for intermittent "pick a new board, nothing happens; pick again, it works" bug. Root cause: `_renderBoardSelectorBar()` was being called from `renderBoard()` which replaced the `<select>` element via `innerHTML = ...` mid-handler; the in-flight change event completed on a detached node. Fix: toolbar is now built once on first render; subsequent renders patch only `select.value`, `deleteBtn.disabled`, and (via a cheap diff) the `<option>` list if the boards array has actually changed. The `<select>` element persists — its change listener stays bound and board switches fire cleanly on first click. |
 | V75.6.3 | **Board-switch speedup.** Switching boards was serially awaiting 3 fetches (`loadBoards` → `loadUserDealOrder` → `dbLoad`). Now: the switch handler renders the new board's empty columns instantly (so the user sees the switch immediately), then parallelises `dbLoad()` + `loadUserDealOrder()` via `Promise.all`. `loadBoards()` is skipped on switch — the boards list is already in memory from initial load and `openEditColumnsModal` already refreshes it locally after a save. Halves the wait on board switch. |

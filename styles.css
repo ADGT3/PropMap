@@ -1943,6 +1943,12 @@ header {
 .kb-ind-dd.dd-possible  { border-color: #e67e22; color: #e67e22; background: rgba(230,126,34,0.1); }
 .kb-ind-dd.dd-high      { border-color: #e74c3c; color: #e74c3c; background: rgba(231,76,60,0.1); }
 .kb-ind-note   { border-color: #27ae60; color: #27ae60; background: rgba(39,174,96,0.07);  }
+.kb-ind-action-due {
+  border-color: #dc2626;
+  color: #dc2626;
+  background: rgba(220,38,38,0.08);
+  font-weight: 600;
+}
 
 /* ─── Card detail modal ───────────────────────────────────────────────────── */
 .kb-modal-overlay {
@@ -2772,4 +2778,320 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   display: flex !important;
   align-items: center;
   gap: 6px;
+}
+
+/* ─── V75.7: Actions module ──────────────────────────────────────────────────
+   Styling for the "My Actions" Kanban wall + the Actions section inside the
+   deal modal. Reuses existing kb-col / kb-card scaffolding where possible;
+   action-specific classes below only tweak what differs.
+*/
+
+/* --- Actions toolbar (above cols on the Actions wall) ---------------------- */
+.kb-actions-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px 0 12px;
+  gap: 8px;
+}
+.kb-toolbar-btn-primary {
+  background: var(--accent, #c4841a);
+  color: #fff;
+  border-color: var(--accent, #c4841a);
+}
+.kb-toolbar-btn-primary:hover { filter: brightness(0.95); }
+
+.kb-actions-cols {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 12px;
+  align-items: flex-start;
+  flex: 1;
+}
+
+.kb-actions-loading,
+.kb-actions-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted, #64748b);
+}
+.kb-actions-empty-sub { font-size: 13px; margin-top: 8px; }
+
+/* --- Action card (My Actions board) --------------------------------------- */
+.kb-action-card {
+  /* Inherits all base .kb-card layout. Overrides below only. */
+  padding: 10px 12px;
+}
+.kb-action-card .kb-action-desc {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text, #1e293b);
+  line-height: 1.4;
+  margin-bottom: 8px;
+  /* 3-line clamp */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.kb-action-card .kb-action-meta,
+.kb-action-card .kb-action-meta-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted, #64748b);
+  margin-top: 4px;
+}
+.kb-action-card .kb-action-meta-sub {
+  padding-top: 4px;
+  border-top: 1px dashed var(--border, #e2e8f0);
+}
+.kb-action-card .kb-action-due.overdue {
+  color: #dc2626;
+  font-weight: 600;
+}
+.kb-action-card .kb-action-effort {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted, #64748b);
+  font-style: italic;
+}
+.kb-action-card-overdue {
+  border-left: 3px solid #dc2626;
+}
+
+/* --- Action modal --------------------------------------------------------- */
+.kb-action-modal {
+  max-width: 560px;
+  width: 92%;
+}
+.kb-action-modal .kb-modal-body {
+  padding: 16px 20px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.kb-action-field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 14px;
+}
+.kb-action-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #64748b);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.kb-action-field textarea,
+.kb-action-field input[type="text"],
+.kb-action-field input[type="number"],
+.kb-action-field input[type="date"],
+.kb-action-field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+  box-sizing: border-box;
+}
+.kb-action-field textarea { resize: vertical; min-height: 60px; }
+.kb-action-field textarea:focus,
+.kb-action-field input:focus,
+.kb-action-field select:focus {
+  outline: none;
+  border-color: var(--accent, #c4841a);
+  box-shadow: 0 0 0 2px rgba(196,132,26,0.15);
+}
+.kb-action-row {
+  display: flex;
+  gap: 12px;
+}
+.kb-action-row .kb-action-field { flex: 1; }
+.kb-action-deal-link {
+  padding: 8px 10px;
+  background: var(--surface2, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--muted, #64748b);
+}
+
+/* V76.2.1: deal picker in action modal — tag + search */
+.kb-action-deal-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(196,132,26,0.08);
+  border: 1px solid var(--accent, #c4841a);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--accent, #c4841a);
+}
+.kb-action-deal-label { flex: 1; font-weight: 500; }
+.kb-action-deal-clear {
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--accent, #c4841a);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.kb-action-deal-clear:hover { color: #8b6214; }
+
+.kb-action-deal-results {
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.kb-action-deal-result {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-top: none;
+  cursor: pointer;
+  font-size: 13px;
+  background: #fff;
+}
+.kb-action-deal-result:first-child { border-top: 1px solid var(--border, #e2e8f0); }
+.kb-action-deal-result:hover { background: var(--surface2, #f8fafc); }
+.kb-action-deal-result strong { color: var(--text, #1e293b); font-weight: 500; }
+.kb-action-deal-result-id {
+  font-size: 11px;
+  color: var(--muted, #64748b);
+  font-family: monospace;
+}
+.kb-action-deal-none { color: var(--muted, #64748b); font-style: italic; cursor: default; }
+.kb-action-deal-none:hover { background: #fff; }
+
+.kb-modal-footer {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border, #e2e8f0);
+  background: var(--surface2, #f8fafc);
+  border-radius: 0 0 8px 8px;
+  align-items: center;
+}
+.kb-modal-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.kb-modal-btn:hover { background: var(--surface2, #f8fafc); }
+.kb-modal-btn-primary {
+  background: var(--accent, #c4841a);
+  color: #fff;
+  border-color: var(--accent, #c4841a);
+}
+.kb-modal-btn-primary:hover { filter: brightness(0.95); background: var(--accent, #c4841a); }
+.kb-modal-btn-danger {
+  color: #dc2626;
+  border-color: #fecaca;
+}
+.kb-modal-btn-danger:hover { background: #fef2f2; }
+
+/* --- Actions section inside deal modal ------------------------------------ */
+.kb-deal-actions-section {
+  background: var(--surface2, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  padding: 8px;
+  margin-top: 4px;
+}
+.kb-deal-actions-loading,
+.kb-deal-action-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--muted, #64748b);
+  font-size: 13px;
+}
+.kb-deal-actions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.kb-deal-action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.kb-deal-action-row:hover { background: var(--surface2, #f8fafc); }
+.kb-deal-action-row.overdue { border-left: 3px solid #dc2626; }
+.kb-deal-action-main { flex: 1; min-width: 0; }
+.kb-deal-action-desc {
+  font-size: 13px;
+  color: var(--text, #1e293b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kb-deal-action-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted, #64748b);
+  margin-top: 3px;
+}
+.kb-deal-action-due.overdue { color: #dc2626; font-weight: 600; }
+.kb-deal-action-status {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  border: 1px solid transparent;
+}
+.kb-deal-action-status-todo { border-color: #64748b; color: #64748b; background: rgba(100,116,139,0.08); }
+.kb-deal-action-status-wip  { border-color: #2563eb; color: #2563eb; background: rgba(37,99,235,0.08); }
+.kb-deal-action-status-due  { border-color: #dc2626; color: #dc2626; background: rgba(220,38,38,0.1); }
+.kb-deal-action-status-done { border-color: #16a34a; color: #16a34a; background: rgba(22,163,74,0.08); }
+.kb-deal-action-status-void { border-color: #94a3b8; color: #94a3b8; background: rgba(148,163,184,0.08); }
+
+.kb-deal-action-edit {
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--muted, #64748b);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.kb-deal-action-edit:hover { background: var(--surface2, #f8fafc); color: var(--accent, #c4841a); }
+
+.kb-deal-action-add {
+  width: 100%;
+  padding: 8px;
+  background: #fff;
+  border: 1px dashed var(--border, #e2e8f0);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--muted, #64748b);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.kb-deal-action-add:hover {
+  border-color: var(--accent, #c4841a);
+  color: var(--accent, #c4841a);
+  background: rgba(196,132,26,0.04);
 }

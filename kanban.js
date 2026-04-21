@@ -203,6 +203,8 @@ function dealRowToInternal(row) {
     // preserved above for backward compat during the transition.
     _boardId:      row.board_id    || null,
     _columnId:     row.column_id   || null,
+    // V75.7: due-action flag, set server-side in api/deals.js fetchAndExpand
+    _hasDueAction: !!row.has_due_action,
   };
 }
 
@@ -400,13 +402,46 @@ async function initPipeline() {
   // V75.6: load boards + per-user ordering first, then the deal list.
   // Also prime the admin flag cache so the toolbar's Delete Board button
   // renders correctly on first paint (system boards only deletable by admin).
-  if (window._pipelineIsAdmin === undefined) {
+  // V75.7: also prime the session-user id so the actions module can default
+  // assignee to the current user.
+  if (window._pipelineIsAdmin === undefined || window._sessionUserId === undefined) {
     try {
       const me = await fetch('/api/auth/me').then(r => r.ok ? r.json() : null);
-      window._pipelineIsAdmin = !!(me?.is_admin || me?.isAdmin);
-    } catch (_) { window._pipelineIsAdmin = false; }
+      const user = me?.user || me || {};
+      window._pipelineIsAdmin = !!(user.isAdmin || user.is_admin);
+      // session.sub is the contact id (numeric string) or 'fallback'
+      const uid = user.id;
+      if (typeof uid === 'number') window._sessionUserId = uid;
+      else if (typeof uid === 'string' && /^\d+$/.test(uid)) window._sessionUserId = parseInt(uid, 10);
+      else window._sessionUserId = null;
+      window._sessionUserName = user.name || user.email || null;
+    } catch (_) {
+      window._pipelineIsAdmin = false;
+      window._sessionUserId = null;
+      window._sessionUserName = null;
+    }
   }
+
   await loadBoards();
+
+  // V75.7: ensure My Actions board exists for this user. Hits /api/actions
+  // with assignee=me which auto-creates the board + 5 default columns on
+  // first call. Then reload boards so the selector includes it.
+  if (window._sessionUserId) {
+    try {
+      const actResp = await fetch('/api/actions?assignee=me');
+      if (actResp.ok) {
+        const payload = await actResp.json();
+        if (payload?.board && !boards.find(b => b.id === payload.board.id)) {
+          // Newly-bootstrapped board — append to local list so the selector shows it
+          boards.push(payload.board);
+        }
+      }
+    } catch (err) {
+      console.warn('[actions] bootstrap failed:', err.message);
+    }
+  }
+
   await loadUserDealOrder();
 
   // Then try to sync from DB in background
@@ -605,6 +640,14 @@ function _renderBoardSelectorBar() {
     else                   canDeleteCurrent = true;
   }
 
+  // V76.2: strip the "+ New Action" button when the current board isn't an
+  // action board. renderActionsBoard() re-adds it when it runs.
+  const isActionBoard = active?.board_type === 'action';
+  if (!isActionBoard) {
+    const existingNewAction = bar.querySelector('#kbNewActionBtn');
+    if (existingNewAction) existingNewAction.remove();
+  }
+
   // FAST-PATH: toolbar already built — patch state instead of rebuilding DOM
   const existing = bar.querySelector('#kanbanBoardSelect');
   if (existing) {
@@ -666,6 +709,16 @@ function _renderBoardSelectorBar() {
 
   sel.addEventListener('change', async (e) => {
     currentBoardId = e.target.value;
+    const target = boards.find(b => b.id === currentBoardId);
+
+    // V75.7: action boards load from /api/actions, not /api/deals. renderBoard()
+    // itself dispatches to renderActionsBoard, which calls the actions endpoint.
+    if (target?.board_type === 'action') {
+      pipeline = {};
+      renderBoard();
+      return;
+    }
+
     // V75.6.3: fast-switch — don't refetch /api/boards. Parallelise deal fetches.
     // Render immediately so the user sees the switch; fill in cards on arrival.
     pipeline = {};
@@ -1295,6 +1348,13 @@ function renderBoard() {
   // V75.6: render the board-selector UI bar above the columns
   _renderBoardSelectorBar();
 
+  // V75.7: if the active board is an action board, delegate to the actions
+  // renderer. Keeps the deal-board render path below untouched.
+  const activeBoard = boards.find(b => b.id === currentBoardId);
+  if (activeBoard?.board_type === 'action') {
+    return renderActionsBoard(activeBoard);
+  }
+
   // V75.6: dynamic stages from currently-selected board
   const stages = resolveCurrentStages();
 
@@ -1371,6 +1431,7 @@ function renderBoard() {
           ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
           ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
           ${(Array.isArray(item.note) ? item.note.length : item.note) ? `<span class="kb-ind kb-ind-note" title="Has notes">Note</span>` : ''}
+          ${item._hasDueAction ? `<span class="kb-ind kb-ind-action-due" title="Action due or overdue">⏰ Action</span>` : ''}
         </div>
       `;
 
@@ -1498,6 +1559,578 @@ function renderBoard() {
     board.appendChild(col);
   });
 }
+
+// ─── V75.7: Actions module ────────────────────────────────────────────────────
+//
+// Actions are tasks assigned to Contacts, optionally linked to a Deal.
+// They live on their own kanban wall ("My Actions") with fixed default
+// columns (ToDo / WIP / Due / Done / Void). The server auto-promotes
+// todo/wip rows whose due_date is today-or-past to 'due' on every GET.
+//
+// The render path here mirrors renderBoard() but operates on the `actions`
+// array fetched from /api/actions?assignee=me, not the `pipeline` dict.
+
+const ACTIONS_API = '/api/actions';
+let _actionsCache = [];           // Most-recent action rows (for current user)
+let _actionsContactCache = null;  // [{id, name, email}] — lazy-loaded for picker
+
+async function fetchMyActions() {
+  try {
+    const res = await fetch(`${ACTIONS_API}?assignee=me`);
+    if (!res.ok) return { board: null, actions: [] };
+    return await res.json();
+  } catch (err) {
+    console.warn('[actions] fetch failed:', err.message);
+    return { board: null, actions: [] };
+  }
+}
+
+async function fetchActionsForDeal(dealId) {
+  try {
+    const res = await fetch(`${ACTIONS_API}?deal_id=${encodeURIComponent(dealId)}`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (_) { return []; }
+}
+
+async function fetchContactsForAssignee() {
+  if (_actionsContactCache) return _actionsContactCache;
+  try {
+    const res = await fetch('/api/contacts');
+    if (!res.ok) return [];
+    const rows = await res.json();
+    _actionsContactCache = rows.map(c => ({
+      id:    c.id,
+      name:  `${c.first_name || ''} ${c.last_name || ''}`.trim(),
+      email: c.email || '',
+    }));
+    return _actionsContactCache;
+  } catch (_) { return []; }
+}
+
+// V76.2.1: effort/duration are stored as integer days. Format like
+// `formatSettlement()` does for settlement ("90 days"). Accepts the stored
+// integer directly.
+function _formatDaysShort(days) {
+  if (days == null || days === '') return '—';
+  const n = Number(days);
+  if (Number.isNaN(n) || n <= 0) return '—';
+  return `${n} day${n === 1 ? '' : 's'}`;
+}
+
+function _formatDateShort(iso) {
+  if (!iso) return '';
+  // iso can be 'YYYY-MM-DD' or full ISO timestamp — slice first 10 chars
+  const s = String(iso).slice(0, 10);
+  const [y, m, d] = s.split('-');
+  if (!y || !m || !d) return s;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${parseInt(d, 10)} ${months[parseInt(m, 10) - 1]} ${y}`;
+}
+
+function _isOverdue(action) {
+  if (!action.due_date) return false;
+  if (!['todo','wip','due'].includes(action.status)) return false;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const due = new Date(action.due_date);
+  return due.getTime() <= today.getTime();
+}
+
+/**
+ * Render the Actions kanban — called by renderBoard() when the active
+ * board is an action board. Fetches data async; renders skeleton first,
+ * then replaces with real cards.
+ */
+async function renderActionsBoard(board) {
+  const boardEl = document.getElementById('kanbanBoard');
+  boardEl.innerHTML = '<div class="kb-actions-loading">Loading actions…</div>';
+
+  const { board: srvBoard, actions } = await fetchMyActions();
+  // Prefer server's authoritative board (includes any column renames) over
+  // the stale one in our local `boards[]` cache.
+  const activeBoard = srvBoard || board;
+  if (!activeBoard) {
+    boardEl.innerHTML = `
+      <div class="kb-actions-empty">
+        <p>My Actions board is unavailable.</p>
+        <p class="kb-actions-empty-sub">Ensure your user account is linked to a contact record.</p>
+      </div>`;
+    return;
+  }
+
+  _actionsCache = actions;
+  boardEl.innerHTML = '';
+
+  // V76.2: "+ New Action" lives in Header 2 (`.kanban-header-controls`)
+  // alongside the board selector, per the Header-2 toolbar convention.
+  // Inject it into the existing toolbar if not already present.
+  const headerToolbar = document.getElementById('kanbanBoardToolbar');
+  if (headerToolbar && !headerToolbar.querySelector('#kbNewActionBtn')) {
+    const btn = document.createElement('button');
+    btn.id = 'kbNewActionBtn';
+    btn.className = 'kb-toolbar-btn kb-toolbar-btn-primary';
+    btn.textContent = '+ New Action';
+    btn.title = 'Create a new action';
+    btn.addEventListener('click', () => {
+      openActionModal(null, { assignee_id: window._sessionUserId || null });
+    });
+    headerToolbar.appendChild(btn);
+  }
+
+  const cols = (activeBoard.columns || []).slice().sort((a, b) => a.sort_order - b.sort_order);
+
+  const colsWrap = document.createElement('div');
+  colsWrap.className = 'kb-actions-cols';
+  boardEl.appendChild(colsWrap);
+
+  cols.forEach(col => {
+    const colActions = actions
+      .filter(a => a.column_id === col.id || (a.column_id == null && a.status === col.stage_slug))
+      .sort((a, b) => (a.column_order ?? 0) - (b.column_order ?? 0));
+
+    const colEl = document.createElement('div');
+    colEl.className = 'kb-col kb-col-action';
+    colEl.dataset.columnId = col.id;
+    colEl.dataset.stageSlug = col.stage_slug || '';
+    colEl.innerHTML = `
+      <div class="kb-col-header">
+        <span class="kb-stage-dot" style="background:${col.color || '#94a3b8'}"></span>
+        <span class="kb-stage-label">${col.name}</span>
+        <span class="kb-count">${colActions.length}</span>
+      </div>
+      <div class="kb-cards" data-column-id="${col.id}"></div>
+    `;
+
+    const cardsEl = colEl.querySelector('.kb-cards');
+
+    colActions.forEach(a => {
+      const card = document.createElement('div');
+      card.className = 'kb-card kb-action-card';
+      if (_isOverdue(a)) card.classList.add('kb-action-card-overdue');
+      card.draggable = true;
+      card.dataset.id = a.id;
+
+      const assignee = a.assignee?.name || 'Unassigned';
+      const dealLabel = a.deal?.label ? `🔗 ${a.deal.label}` : '';
+      const dueLabel  = a.due_date ? `📅 ${_formatDateShort(a.due_date)}` : '';
+      const remLabel  = a.reminder_date ? `⏰ ${_formatDateShort(a.reminder_date)}` : '';
+
+      card.innerHTML = `
+        <div class="kb-action-desc">${_escapeHtml(a.description)}</div>
+        <div class="kb-action-meta">
+          <span class="kb-action-assignee">👤 ${_escapeHtml(assignee)}</span>
+          ${dueLabel ? `<span class="kb-action-due ${_isOverdue(a) ? 'overdue' : ''}">${dueLabel}</span>` : ''}
+        </div>
+        ${(remLabel || dealLabel) ? `
+          <div class="kb-action-meta-sub">
+            ${remLabel ? `<span>${remLabel}</span>` : ''}
+            ${dealLabel ? `<span title="${_escapeHtml(a.deal?.label || '')}">${_escapeHtml(dealLabel)}</span>` : ''}
+          </div>
+        ` : ''}
+        ${(a.effort_days || a.duration_days) ? `
+          <div class="kb-action-effort">
+            ${a.effort_days ? `Effort: ${_formatDaysShort(a.effort_days)}` : ''}
+            ${a.effort_days && a.duration_days ? ' · ' : ''}
+            ${a.duration_days ? `Duration: ${_formatDaysShort(a.duration_days)}` : ''}
+          </div>
+        ` : ''}
+      `;
+
+      card.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('text/plain', String(a.id));
+        e.dataTransfer.effectAllowed = 'move';
+        card.classList.add('dragging');
+      });
+      card.addEventListener('dragend', () => card.classList.remove('dragging'));
+      card.addEventListener('click', e => {
+        if (e.target.closest('button')) return;
+        openActionModal(a.id, null);
+      });
+
+      cardsEl.appendChild(card);
+    });
+
+    // DnD drop handler — same insertion-index pattern as deal kanban
+    function computeInsertIndex(e) {
+      const cards = [...cardsEl.querySelectorAll('.kb-card:not(.dragging)')];
+      for (let i = 0; i < cards.length; i++) {
+        const rect = cards[i].getBoundingClientRect();
+        if (e.clientY < rect.top + rect.height / 2) return i;
+      }
+      return cards.length;
+    }
+    cardsEl.addEventListener('dragover', e => {
+      e.preventDefault();
+      cardsEl.classList.add('drag-over');
+    });
+    cardsEl.addEventListener('dragleave', () => cardsEl.classList.remove('drag-over'));
+    cardsEl.addEventListener('drop', async e => {
+      e.preventDefault();
+      cardsEl.classList.remove('drag-over');
+      const actionId = e.dataTransfer.getData('text/plain');
+      if (!actionId) return;
+      const actionIdNum = parseInt(actionId, 10);
+      if (Number.isNaN(actionIdNum)) return;
+
+      const insertIdx = computeInsertIndex(e);
+      const targetColId = col.id;
+
+      // PATCH action to new column + order
+      try {
+        await fetch(`${ACTIONS_API}?id=${actionIdNum}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            column_id:    targetColId,
+            column_order: insertIdx,
+          }),
+        });
+        // Re-render — fetches fresh data + re-runs server-side due promotion
+        renderBoard();
+      } catch (err) {
+        console.warn('[actions] move failed:', err.message);
+      }
+    });
+
+    colsWrap.appendChild(colEl);
+  });
+}
+
+function _escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * Open the action modal.
+ *   openActionModal(null, { assignee_id, deal_id, ... })  → create new
+ *   openActionModal(id, null)                              → edit existing
+ */
+async function openActionModal(id, defaults) {
+  // Fetch existing action if editing
+  let action = null;
+  if (id) {
+    try {
+      const res = await fetch(`${ACTIONS_API}?id=${id}`);
+      if (res.ok) action = await res.json();
+    } catch (_) {}
+    if (!action) {
+      showKanbanToast('Action not found');
+      return;
+    }
+  }
+
+  const isEdit = !!action;
+  const contacts = await fetchContactsForAssignee();
+  const defaultAssignee = isEdit ? action.assignee_id : (defaults?.assignee_id || window._sessionUserId || null);
+
+  // Build modal
+  const wrap = document.createElement('div');
+  wrap.className = 'kb-modal-overlay kb-action-modal-overlay';
+  wrap.innerHTML = `
+    <div class="kb-modal kb-action-modal" role="dialog" aria-modal="true">
+      <div class="kb-modal-header">
+        <h2>${isEdit ? 'Edit Action' : 'New Action'}</h2>
+        <button class="kb-modal-close" title="Close">✕</button>
+      </div>
+      <div class="kb-modal-body">
+        <div class="kb-action-field">
+          <label>Description</label>
+          <textarea id="kbActionDesc" rows="3" placeholder="What needs to be done?">${_escapeHtml(action?.description || '')}</textarea>
+        </div>
+        <div class="kb-action-field">
+          <label>Assignee</label>
+          <select id="kbActionAssignee">
+            <option value="">— Select —</option>
+            ${contacts.map(c => `
+              <option value="${c.id}" ${c.id === defaultAssignee ? 'selected' : ''}>
+                ${_escapeHtml(c.name)}${c.email ? ` (${_escapeHtml(c.email)})` : ''}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+        <div class="kb-action-row">
+          <div class="kb-action-field">
+            <label>Effort</label>
+            <input type="text" id="kbActionEffort" placeholder="e.g. 2d, 3m, 1y" value="${action?.effort_days ? formatSettlement(String(action.effort_days)) : ''}">
+          </div>
+          <div class="kb-action-field">
+            <label>Duration</label>
+            <input type="text" id="kbActionDuration" placeholder="e.g. 5d, 2m, 1y" value="${action?.duration_days ? formatSettlement(String(action.duration_days)) : ''}">
+          </div>
+        </div>
+        <div class="kb-action-row">
+          <div class="kb-action-field">
+            <label>Due date</label>
+            <input type="date" id="kbActionDue" value="${action?.due_date ? String(action.due_date).slice(0,10) : ''}">
+          </div>
+          <div class="kb-action-field">
+            <label>Reminder date</label>
+            <input type="date" id="kbActionReminder" value="${action?.reminder_date ? String(action.reminder_date).slice(0,10) : ''}">
+          </div>
+        </div>
+        ${isEdit ? `
+          <div class="kb-action-field">
+            <label>Status</label>
+            <select id="kbActionStatus">
+              <option value="todo" ${action.status === 'todo' ? 'selected' : ''}>ToDo</option>
+              <option value="wip"  ${action.status === 'wip'  ? 'selected' : ''}>WIP</option>
+              <option value="due"  ${action.status === 'due'  ? 'selected' : ''}>Due</option>
+              <option value="done" ${action.status === 'done' ? 'selected' : ''}>Done</option>
+              <option value="void" ${action.status === 'void' ? 'selected' : ''}>Void</option>
+            </select>
+          </div>
+        ` : ''}
+        ${(isEdit && action.deal) ? `
+          <div class="kb-action-field">
+            <label>Linked deal</label>
+            <div class="kb-action-deal-tag" id="kbActionDealTag">
+              <span class="kb-action-deal-label">${_escapeHtml(action.deal.label || action.deal_id)}</span>
+              <button class="kb-action-deal-clear" title="Unlink">✕</button>
+            </div>
+            <input class="kb-input kb-action-deal-search" type="text" id="kbActionDealSearch" placeholder="Search deal by address or id…" style="display:none">
+            <div class="kb-action-deal-results" id="kbActionDealResults"></div>
+          </div>
+        ` : (defaults?.deal_id ? `
+          <div class="kb-action-field">
+            <label>Linked deal</label>
+            <div class="kb-action-deal-tag" id="kbActionDealTag">
+              <span class="kb-action-deal-label">(This deal)</span>
+              <button class="kb-action-deal-clear" title="Unlink">✕</button>
+            </div>
+            <input class="kb-input kb-action-deal-search" type="text" id="kbActionDealSearch" placeholder="Search deal by address or id…" style="display:none">
+            <div class="kb-action-deal-results" id="kbActionDealResults"></div>
+          </div>
+        ` : `
+          <div class="kb-action-field">
+            <label>Linked deal (optional)</label>
+            <div class="kb-action-deal-tag" id="kbActionDealTag" style="display:none"></div>
+            <input class="kb-input kb-action-deal-search" type="text" id="kbActionDealSearch" placeholder="Search deal by address or id…">
+            <div class="kb-action-deal-results" id="kbActionDealResults"></div>
+          </div>
+        `)}
+      </div>
+      <div class="kb-modal-footer">
+        ${isEdit ? `<button class="kb-modal-btn kb-modal-btn-danger" id="kbActionDelete">Delete</button>` : ''}
+        <div style="flex:1"></div>
+        <button class="kb-modal-btn" id="kbActionCancel">Cancel</button>
+        <button class="kb-modal-btn kb-modal-btn-primary" id="kbActionSave">${isEdit ? 'Save' : 'Create'}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+
+  const close = () => wrap.remove();
+  wrap.querySelector('.kb-modal-close').addEventListener('click', close);
+  wrap.querySelector('#kbActionCancel').addEventListener('click', close);
+  wrap.addEventListener('click', e => { if (e.target === wrap) close(); });
+
+  // V76.2.1: deal picker — search + tag + clear. Tracks the selected deal
+  // in this closure; initial value comes from the action being edited,
+  // or from defaults.deal_id when creating from within a deal modal.
+  let _selectedDealId    = isEdit ? (action?.deal_id || null) : (defaults?.deal_id || null);
+  let _selectedDealLabel = isEdit ? (action?.deal?.label || action?.deal_id || null)
+                                  : (defaults?.deal_id ? '(This deal)' : null);
+
+  const dealTag     = wrap.querySelector('#kbActionDealTag');
+  const dealSearch  = wrap.querySelector('#kbActionDealSearch');
+  const dealResults = wrap.querySelector('#kbActionDealResults');
+
+  function showDealTag(id, label) {
+    _selectedDealId    = id;
+    _selectedDealLabel = label;
+    dealTag.innerHTML = `
+      <span class="kb-action-deal-label">${_escapeHtml(label)}</span>
+      <button class="kb-action-deal-clear" title="Unlink">✕</button>
+    `;
+    dealTag.style.display = 'flex';
+    dealSearch.style.display = 'none';
+    dealSearch.value = '';
+    dealResults.innerHTML = '';
+    dealTag.querySelector('.kb-action-deal-clear').addEventListener('click', clearDealTag);
+  }
+
+  function clearDealTag() {
+    _selectedDealId    = null;
+    _selectedDealLabel = null;
+    dealTag.innerHTML = '';
+    dealTag.style.display = 'none';
+    dealSearch.style.display = '';
+    dealSearch.value = '';
+    dealResults.innerHTML = '';
+  }
+
+  // Wire the initial clear-button if a deal is pre-filled
+  const initialClear = dealTag.querySelector('.kb-action-deal-clear');
+  if (initialClear) initialClear.addEventListener('click', clearDealTag);
+
+  let _dealSearchTimer;
+  if (dealSearch) {
+    dealSearch.addEventListener('input', () => {
+      clearTimeout(_dealSearchTimer);
+      const q = dealSearch.value.trim();
+      if (q.length < 2) { dealResults.innerHTML = ''; return; }
+      _dealSearchTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/deals?search=${encodeURIComponent(q)}`);
+          if (!res.ok) { dealResults.innerHTML = ''; return; }
+          const rows = await res.json();
+          dealResults.innerHTML = '';
+          rows.slice(0, 8).forEach(d => {
+            const addr  = d.property?.address || d.parcel?.name || '';
+            const sub   = d.property?.suburb || '';
+            const label = addr ? `${addr}${sub ? ', ' + sub : ''}` : d.id;
+            const item = document.createElement('div');
+            item.className = 'kb-action-deal-result';
+            item.innerHTML = `<strong>${_escapeHtml(label)}</strong><span class="kb-action-deal-result-id">${_escapeHtml(d.id)}</span>`;
+            item.addEventListener('click', () => showDealTag(d.id, label));
+            dealResults.appendChild(item);
+          });
+          if (!rows.length) {
+            dealResults.innerHTML = '<div class="kb-action-deal-result kb-action-deal-none">No matches</div>';
+          }
+        } catch (err) {
+          console.warn('[actions] deal search failed:', err.message);
+        }
+      }, 300);
+    });
+  }
+
+  wrap.querySelector('#kbActionSave').addEventListener('click', async () => {
+    const desc = wrap.querySelector('#kbActionDesc').value.trim();
+    const assigneeSel = wrap.querySelector('#kbActionAssignee').value;
+    if (!desc) { alert('Description is required.'); return; }
+    if (!assigneeSel) { alert('Please select an assignee.'); return; }
+
+    const payload = {
+      description:    desc,
+      assignee_id:    parseInt(assigneeSel, 10),
+      effort_days:    parseSettlementDays(wrap.querySelector('#kbActionEffort').value) || null,
+      duration_days:  parseSettlementDays(wrap.querySelector('#kbActionDuration').value) || null,
+      due_date:       wrap.querySelector('#kbActionDue').value || null,
+      reminder_date:  wrap.querySelector('#kbActionReminder').value || null,
+      deal_id:        _selectedDealId || null,
+    };
+    if (isEdit) {
+      payload.status = wrap.querySelector('#kbActionStatus').value;
+    }
+
+    try {
+      const url = isEdit ? `${ACTIONS_API}?id=${action.id}` : ACTIONS_API;
+      const method = isEdit ? 'PATCH' : 'POST';
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || `Save failed (${res.status})`);
+        return;
+      }
+      close();
+      // Refresh context — either the actions board or the deal modal's actions list
+      const activeBoard = boards.find(b => b.id === currentBoardId);
+      if (activeBoard?.board_type === 'action') {
+        renderBoard();
+      } else if (defaults?.deal_id || action?.deal_id) {
+        // Deal modal is open — refresh its actions section
+        const dealId = defaults?.deal_id || action?.deal_id;
+        if (typeof refreshDealActions === 'function') refreshDealActions(dealId);
+      }
+      showKanbanToast(isEdit ? 'Action updated' : 'Action created');
+    } catch (err) {
+      alert('Network error: ' + err.message);
+    }
+  });
+
+  if (isEdit) {
+    wrap.querySelector('#kbActionDelete').addEventListener('click', async () => {
+      if (!confirm('Delete this action?')) return;
+      try {
+        const res = await fetch(`${ACTIONS_API}?id=${action.id}`, { method: 'DELETE' });
+        if (!res.ok) { alert('Delete failed'); return; }
+        close();
+        const activeBoard = boards.find(b => b.id === currentBoardId);
+        if (activeBoard?.board_type === 'action') {
+          renderBoard();
+        } else if (action.deal_id && typeof refreshDealActions === 'function') {
+          refreshDealActions(action.deal_id);
+        }
+        showKanbanToast('Action deleted');
+      } catch (err) {
+        alert('Network error: ' + err.message);
+      }
+    });
+  }
+
+  // Focus the description on open
+  setTimeout(() => wrap.querySelector('#kbActionDesc')?.focus(), 50);
+
+  // V76.2.1: normalise effort/duration on blur — "2m" → "60 days", "1y" → "365 days"
+  // Matches the behaviour of the Settlement input on the deal modal.
+  ['#kbActionEffort', '#kbActionDuration'].forEach(sel => {
+    const el = wrap.querySelector(sel);
+    if (!el) return;
+    el.addEventListener('blur', () => {
+      const v = el.value.trim();
+      if (!v) return;
+      el.value = formatSettlement(v);
+    });
+  });
+}
+
+/**
+ * Refresh the Actions section inside an open deal modal. Called after
+ * create/update/delete of an action linked to that deal.
+ */
+async function refreshDealActions(dealId) {
+  const section = document.querySelector(`.kb-modal [data-deal-actions="${dealId}"]`);
+  if (!section) return; // modal not open for this deal
+  const actions = await fetchActionsForDeal(dealId);
+  _renderDealActionsSection(section, dealId, actions);
+}
+
+function _renderDealActionsSection(container, dealId, actions) {
+  const list = actions.length
+    ? actions.map(a => `
+        <div class="kb-deal-action-row ${_isOverdue(a) ? 'overdue' : ''}" data-action-id="${a.id}">
+          <div class="kb-deal-action-main">
+            <div class="kb-deal-action-desc">${_escapeHtml(a.description)}</div>
+            <div class="kb-deal-action-meta">
+              <span class="kb-deal-action-status kb-deal-action-status-${a.status}">${a.status.toUpperCase()}</span>
+              <span>👤 ${_escapeHtml(a.assignee?.name || 'Unassigned')}</span>
+              ${a.due_date ? `<span class="kb-deal-action-due ${_isOverdue(a) ? 'overdue' : ''}">📅 ${_formatDateShort(a.due_date)}</span>` : ''}
+            </div>
+          </div>
+          <button class="kb-deal-action-edit" title="Edit action">✎</button>
+        </div>
+      `).join('')
+    : '<div class="kb-deal-action-empty">No actions yet.</div>';
+
+  container.innerHTML = `
+    <div class="kb-deal-actions-list">${list}</div>
+    <button class="kb-modal-btn kb-deal-action-add" id="kbDealAddActionBtn_${dealId}">+ Add Action</button>
+  `;
+
+  // Wire handlers
+  container.querySelectorAll('.kb-deal-action-row').forEach(row => {
+    const aid = parseInt(row.dataset.actionId, 10);
+    row.querySelector('.kb-deal-action-edit').addEventListener('click', e => {
+      e.stopPropagation();
+      openActionModal(aid, null);
+    });
+    row.addEventListener('click', () => openActionModal(aid, null));
+  });
+  container.querySelector(`#kbDealAddActionBtn_${dealId}`).addEventListener('click', () => {
+    openActionModal(null, { deal_id: dealId, assignee_id: window._sessionUserId || null });
+  });
+}
+
+// Expose for router + finance module integration
+window.openActionModal   = openActionModal;
+window.refreshDealActions = refreshDealActions;
 
 // ─── Card detail modal ────────────────────────────────────────────────────────
 
@@ -1759,6 +2392,11 @@ ${rows.join('')}`;
           }).join('')}
         </div>
 
+        <div class="kb-section-label" style="margin-top:16px">Actions</div>
+        <div class="kb-deal-actions-section" data-deal-actions="${id}">
+          <div class="kb-deal-actions-loading">Loading…</div>
+        </div>
+
         <div class="kb-section-label" style="margin-top:16px">Notes</div>
         <div class="kb-notes-section">
           <div class="kb-note-contact-row">
@@ -1788,6 +2426,14 @@ ${rows.join('')}`;
       if (placeholder) placeholder.replaceWith(crmEl);
     });
   }
+
+  // V75.7: load Actions for this deal into the Actions section
+  (async () => {
+    const container = modal.querySelector(`[data-deal-actions="${id}"]`);
+    if (!container) return;
+    const actions = await fetchActionsForDeal(id);
+    _renderDealActionsSection(container, id, actions);
+  })();
 
   // Close
   overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
