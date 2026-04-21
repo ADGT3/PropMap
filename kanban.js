@@ -860,7 +860,14 @@ function renderBoard() {
       // Address — show on map
       card.querySelector('.kb-card-address-link').addEventListener('click', e => {
         e.stopPropagation();
-        toggleKanban(false);
+        // V75.5.6: route through Router so body[data-route] updates to 'mapping'
+        // and the Leaflet controls reappear (they're hidden by CSS when on any
+        // non-mapping route). Fallback to direct toggle if router unavailable.
+        if (window.Router?.navigate) {
+          window.Router.navigate('/');
+        } else {
+          toggleKanban(false);
+        }
         const parcels = (p._parcels && p._parcels.length > 0 && p._parcels[0].lat)
           ? p._parcels
           : (p.lat && p.lng ? [{ lat: p.lat, lng: p.lng, label: `${p.address}, ${p.suburb}` }] : null);
@@ -1619,7 +1626,11 @@ function showKanbanToast(msg) {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 document.getElementById('kanbanToggleBtn').addEventListener('click', () => toggleKanban());
-document.getElementById('kanbanClose').addEventListener('click', () => toggleKanban(false));
+document.getElementById('kanbanClose').addEventListener('click', () => {
+  // V75.5.6: route through Router so body[data-route] updates to 'mapping'
+  if (window.Router?.navigate) window.Router.navigate('/');
+  else toggleKanban(false);
+});
 
 // ─── CRM View ─────────────────────────────────────────────────────────────────
 
@@ -1645,7 +1656,11 @@ const crmNavBtn = document.getElementById('crmNavBtn');
 if (crmNavBtn) crmNavBtn.addEventListener('click', () => toggleCRM());
 
 const crmClose = document.getElementById('crmClose');
-if (crmClose) crmClose.addEventListener('click', () => toggleCRM(false));
+if (crmClose) crmClose.addEventListener('click', () => {
+  // V75.5.6: route through Router so body[data-route] updates to 'mapping'
+  if (window.Router?.navigate) window.Router.navigate('/');
+  else toggleCRM(false);
+});
 
 // Patch renderListings to always refresh add buttons after render
 const _origRenderListings = renderListings;
