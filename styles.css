@@ -2920,6 +2920,57 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   color: var(--muted, #64748b);
 }
 
+/* V76.2.1: deal picker in action modal — tag + search */
+.kb-action-deal-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(196,132,26,0.08);
+  border: 1px solid var(--accent, #c4841a);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--accent, #c4841a);
+}
+.kb-action-deal-label { flex: 1; font-weight: 500; }
+.kb-action-deal-clear {
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--accent, #c4841a);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.kb-action-deal-clear:hover { color: #8b6214; }
+
+.kb-action-deal-results {
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.kb-action-deal-result {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-top: none;
+  cursor: pointer;
+  font-size: 13px;
+  background: #fff;
+}
+.kb-action-deal-result:first-child { border-top: 1px solid var(--border, #e2e8f0); }
+.kb-action-deal-result:hover { background: var(--surface2, #f8fafc); }
+.kb-action-deal-result strong { color: var(--text, #1e293b); font-weight: 500; }
+.kb-action-deal-result-id {
+  font-size: 11px;
+  color: var(--muted, #64748b);
+  font-family: monospace;
+}
+.kb-action-deal-none { color: var(--muted, #64748b); font-style: italic; cursor: default; }
+.kb-action-deal-none:hover { background: #fff; }
+
 .kb-modal-footer {
   display: flex;
   gap: 8px;

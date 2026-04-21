@@ -1885,14 +1885,31 @@ async function openActionModal(id, defaults) {
         ${(isEdit && action.deal) ? `
           <div class="kb-action-field">
             <label>Linked deal</label>
-            <div class="kb-action-deal-link">${_escapeHtml(action.deal.label || action.deal_id)}</div>
+            <div class="kb-action-deal-tag" id="kbActionDealTag">
+              <span class="kb-action-deal-label">${_escapeHtml(action.deal.label || action.deal_id)}</span>
+              <button class="kb-action-deal-clear" title="Unlink">✕</button>
+            </div>
+            <input class="kb-input kb-action-deal-search" type="text" id="kbActionDealSearch" placeholder="Search deal by address or id…" style="display:none">
+            <div class="kb-action-deal-results" id="kbActionDealResults"></div>
           </div>
         ` : (defaults?.deal_id ? `
           <div class="kb-action-field">
             <label>Linked deal</label>
-            <div class="kb-action-deal-link">(This deal)</div>
+            <div class="kb-action-deal-tag" id="kbActionDealTag">
+              <span class="kb-action-deal-label">(This deal)</span>
+              <button class="kb-action-deal-clear" title="Unlink">✕</button>
+            </div>
+            <input class="kb-input kb-action-deal-search" type="text" id="kbActionDealSearch" placeholder="Search deal by address or id…" style="display:none">
+            <div class="kb-action-deal-results" id="kbActionDealResults"></div>
           </div>
-        ` : '')}
+        ` : `
+          <div class="kb-action-field">
+            <label>Linked deal (optional)</label>
+            <div class="kb-action-deal-tag" id="kbActionDealTag" style="display:none"></div>
+            <input class="kb-input kb-action-deal-search" type="text" id="kbActionDealSearch" placeholder="Search deal by address or id…">
+            <div class="kb-action-deal-results" id="kbActionDealResults"></div>
+          </div>
+        `)}
       </div>
       <div class="kb-modal-footer">
         ${isEdit ? `<button class="kb-modal-btn kb-modal-btn-danger" id="kbActionDelete">Delete</button>` : ''}
@@ -1909,6 +1926,77 @@ async function openActionModal(id, defaults) {
   wrap.querySelector('#kbActionCancel').addEventListener('click', close);
   wrap.addEventListener('click', e => { if (e.target === wrap) close(); });
 
+  // V76.2.1: deal picker — search + tag + clear. Tracks the selected deal
+  // in this closure; initial value comes from the action being edited,
+  // or from defaults.deal_id when creating from within a deal modal.
+  let _selectedDealId    = isEdit ? (action?.deal_id || null) : (defaults?.deal_id || null);
+  let _selectedDealLabel = isEdit ? (action?.deal?.label || action?.deal_id || null)
+                                  : (defaults?.deal_id ? '(This deal)' : null);
+
+  const dealTag     = wrap.querySelector('#kbActionDealTag');
+  const dealSearch  = wrap.querySelector('#kbActionDealSearch');
+  const dealResults = wrap.querySelector('#kbActionDealResults');
+
+  function showDealTag(id, label) {
+    _selectedDealId    = id;
+    _selectedDealLabel = label;
+    dealTag.innerHTML = `
+      <span class="kb-action-deal-label">${_escapeHtml(label)}</span>
+      <button class="kb-action-deal-clear" title="Unlink">✕</button>
+    `;
+    dealTag.style.display = 'flex';
+    dealSearch.style.display = 'none';
+    dealSearch.value = '';
+    dealResults.innerHTML = '';
+    dealTag.querySelector('.kb-action-deal-clear').addEventListener('click', clearDealTag);
+  }
+
+  function clearDealTag() {
+    _selectedDealId    = null;
+    _selectedDealLabel = null;
+    dealTag.innerHTML = '';
+    dealTag.style.display = 'none';
+    dealSearch.style.display = '';
+    dealSearch.value = '';
+    dealResults.innerHTML = '';
+  }
+
+  // Wire the initial clear-button if a deal is pre-filled
+  const initialClear = dealTag.querySelector('.kb-action-deal-clear');
+  if (initialClear) initialClear.addEventListener('click', clearDealTag);
+
+  let _dealSearchTimer;
+  if (dealSearch) {
+    dealSearch.addEventListener('input', () => {
+      clearTimeout(_dealSearchTimer);
+      const q = dealSearch.value.trim();
+      if (q.length < 2) { dealResults.innerHTML = ''; return; }
+      _dealSearchTimer = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/deals?search=${encodeURIComponent(q)}`);
+          if (!res.ok) { dealResults.innerHTML = ''; return; }
+          const rows = await res.json();
+          dealResults.innerHTML = '';
+          rows.slice(0, 8).forEach(d => {
+            const addr  = d.property?.address || d.parcel?.name || '';
+            const sub   = d.property?.suburb || '';
+            const label = addr ? `${addr}${sub ? ', ' + sub : ''}` : d.id;
+            const item = document.createElement('div');
+            item.className = 'kb-action-deal-result';
+            item.innerHTML = `<strong>${_escapeHtml(label)}</strong><span class="kb-action-deal-result-id">${_escapeHtml(d.id)}</span>`;
+            item.addEventListener('click', () => showDealTag(d.id, label));
+            dealResults.appendChild(item);
+          });
+          if (!rows.length) {
+            dealResults.innerHTML = '<div class="kb-action-deal-result kb-action-deal-none">No matches</div>';
+          }
+        } catch (err) {
+          console.warn('[actions] deal search failed:', err.message);
+        }
+      }, 300);
+    });
+  }
+
   wrap.querySelector('#kbActionSave').addEventListener('click', async () => {
     const desc = wrap.querySelector('#kbActionDesc').value.trim();
     const assigneeSel = wrap.querySelector('#kbActionAssignee').value;
@@ -1922,11 +2010,10 @@ async function openActionModal(id, defaults) {
       duration_days:  parseSettlementDays(wrap.querySelector('#kbActionDuration').value) || null,
       due_date:       wrap.querySelector('#kbActionDue').value || null,
       reminder_date:  wrap.querySelector('#kbActionReminder').value || null,
+      deal_id:        _selectedDealId || null,
     };
     if (isEdit) {
       payload.status = wrap.querySelector('#kbActionStatus').value;
-    } else if (defaults?.deal_id) {
-      payload.deal_id = defaults.deal_id;
     }
 
     try {
