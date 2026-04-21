@@ -397,7 +397,15 @@ async function initPipeline() {
   pipeline = cacheLoad();
   updateAddButtons();
 
-  // V75.6: load boards + per-user ordering first, then the deal list
+  // V75.6: load boards + per-user ordering first, then the deal list.
+  // Also prime the admin flag cache so the toolbar's Delete Board button
+  // renders correctly on first paint (system boards only deletable by admin).
+  if (window._pipelineIsAdmin === undefined) {
+    try {
+      const me = await fetch('/api/auth/me').then(r => r.ok ? r.json() : null);
+      window._pipelineIsAdmin = !!(me?.is_admin || me?.isAdmin);
+    } catch (_) { window._pipelineIsAdmin = false; }
+  }
   await loadBoards();
   await loadUserDealOrder();
 
@@ -572,8 +580,8 @@ function moveToColumn(id, target) {
   savePipeline(id);
 }
 
-// V75.6: render the board selector bar above the columns. Placed into
-// #kanbanBoardToolbar (inserted into the kanban header by bootstrap).
+// V75.6.2: render the board selector bar inside Header 2.
+// Controls: board selector (auto-width) · + Board · Edit Columns · Delete Board
 function _renderBoardSelectorBar() {
   const bar = document.getElementById('kanbanBoardToolbar');
   if (!bar) return;
@@ -584,6 +592,22 @@ function _renderBoardSelectorBar() {
 
   const sysBoards  = boards.filter(b =>  b.is_system);
   const userBoards = boards.filter(b => !b.is_system);
+  const active     = boards.find(b => b.id === currentBoardId);
+  const adminProbe = !!window._pipelineIsAdmin;
+
+  // Determine whether the Delete button should be enabled for the current board.
+  // Server will also enforce — this is just UI hint.
+  //  - System boards: only admins may delete, and only if no deals
+  //  - User boards:   only owner or admin, and only if no deals
+  // We don't know the owner here reliably (it's numeric id); rely on the
+  // boards list having `owner_id` — matches session contactId (string-int).
+  // The server will reject on permission, so we optimistically enable for
+  // system/admins and for any non-system board if you're the session user.
+  let canDeleteCurrent = false;
+  if (active) {
+    if (active.is_system) canDeleteCurrent = adminProbe;
+    else                   canDeleteCurrent = true; // server decides
+  }
 
   const options = [];
   if (sysBoards.length) {
@@ -598,15 +622,17 @@ function _renderBoardSelectorBar() {
   }
 
   bar.innerHTML = `
-    <label class="kb-toolbar-label">Board:</label>
-    <select class="kb-input kb-board-select" id="kanbanBoardSelect">${options.join('')}</select>
-    <button class="kb-toolbar-btn" id="kanbanNewBoardBtn" title="Create a new board">+ New Board</button>
-    <button class="kb-toolbar-btn" id="kanbanEditColumnsBtn" title="Edit this board's columns">⚙ Edit Columns</button>
-    <span class="kb-toolbar-spacer" style="flex:1"></span>
+    <select class="kb-board-select" id="kanbanBoardSelect" title="Switch board">${options.join('')}</select>
+    <button class="kb-toolbar-btn" id="kanbanNewBoardBtn" title="Create a new board">+ Board</button>
+    <button class="kb-toolbar-btn" id="kanbanEditColumnsBtn" title="Edit this board's columns">Edit Columns</button>
+    <button class="kb-toolbar-btn kb-toolbar-btn-danger" id="kanbanDeleteBoardBtn" ${canDeleteCurrent ? '' : 'disabled'} title="${canDeleteCurrent ? 'Delete this board' : 'You cannot delete this board'}">Delete Board</button>
   `;
 
   bar.querySelector('#kanbanBoardSelect').addEventListener('change', async (e) => {
     currentBoardId = e.target.value;
+    // V75.6.2: refetch boards so the active board's columns are guaranteed
+    // up to date (e.g. if another tab edited them, or after column saves).
+    await loadBoards();
     await loadUserDealOrder();
     const dict = await dbLoad();
     if (dict) {
@@ -620,36 +646,31 @@ function _renderBoardSelectorBar() {
 
   bar.querySelector('#kanbanNewBoardBtn').addEventListener('click', () => openNewBoardModal());
   bar.querySelector('#kanbanEditColumnsBtn').addEventListener('click', () => openEditColumnsModal());
+  bar.querySelector('#kanbanDeleteBoardBtn').addEventListener('click', () => openDeleteBoardConfirm());
 }
 
-// V75.6: create new board modal — prompts for name + lets user pick
-// is_system flag (admin only). Default columns seeded server-side.
-async function openNewBoardModal() {
-  const name = prompt('New board name:');
-  if (!name || !name.trim()) return;
-
-  // Is admin? Check session via /api/auth/me (cheap cached endpoint)
-  let isAdmin = false;
-  try {
-    const me = await fetch('/api/auth/me').then(r => r.ok ? r.json() : null);
-    isAdmin = !!(me?.is_admin || me?.isAdmin);
-  } catch (_) {}
-  const is_system = isAdmin ? confirm('Make this a System Board (visible to all users)? Cancel = personal board.') : false;
+// V75.6.2: confirm deletion of the current board. Server will reject if
+// the board still has deals or the user lacks permission.
+async function openDeleteBoardConfirm() {
+  const b = boards.find(x => x.id === currentBoardId);
+  if (!b) return;
+  if (!confirm(`Delete board "${b.name}"?\n\nThis cannot be undone. The board will be removed along with its columns. Deals must be moved elsewhere first.`)) return;
 
   try {
-    const r = await fetch('/api/boards', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name.trim(), is_system }),
-    });
+    const r = await fetch(`/api/boards?id=${encodeURIComponent(b.id)}`, { method: 'DELETE' });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
-      alert(`Failed: ${err.error || r.status}`);
+      if (r.status === 409 && err.deal_count) {
+        alert(`Cannot delete "${b.name}" — it still has ${err.deal_count} deal${err.deal_count === 1 ? '' : 's'}. Move them to another board first.`);
+      } else {
+        alert(`Failed: ${err.error || r.status}`);
+      }
       return;
     }
-    const newBoard = await r.json();
+    // Switch to Acquisition (or first available)
     await loadBoards();
-    currentBoardId = newBoard.id;
+    const firstSys = boards.find(x => x.is_system) || boards[0];
+    currentBoardId = firstSys ? firstSys.id : null;
     await loadUserDealOrder();
     const dict = await dbLoad();
     if (dict) {
@@ -657,9 +678,126 @@ async function openNewBoardModal() {
       Object.assign(pipeline, dict);
     }
     renderBoard();
+    if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
   } catch (err) {
     alert(`Network error: ${err.message}`);
   }
+}
+
+// V75.6.2: create new board modal — proper modal with name input and
+// (for admins) a scope chooser (My Board vs System Board). New boards
+// start with NO columns; user adds columns via "Edit Columns".
+async function openNewBoardModal() {
+  // Probe for admin status. Cached on `window` after first call.
+  let adminProbe = window._pipelineIsAdmin;
+  if (adminProbe === undefined) {
+    try {
+      const me = await fetch('/api/auth/me').then(r => r.ok ? r.json() : null);
+      adminProbe = !!(me?.is_admin || me?.isAdmin);
+    } catch (_) { adminProbe = false; }
+    window._pipelineIsAdmin = adminProbe;
+  }
+
+  // Build modal
+  const overlay = document.createElement('div');
+  overlay.className = 'kb-editcols-overlay';
+  overlay.innerHTML = `
+    <div class="kb-editcols-modal" style="width:420px">
+      <div class="kb-editcols-header">
+        <div class="kb-editcols-title">New Board</div>
+        <button class="kb-editcols-close" type="button">✕</button>
+      </div>
+      <div class="kb-editcols-body">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div>
+            <label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:6px">Board Name</label>
+            <input class="kb-input kb-new-board-name" type="text" placeholder="e.g. Off-market Leads" autofocus
+              style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:'DM Sans',sans-serif">
+          </div>
+          ${adminProbe ? `
+            <div>
+              <label style="display:block;font-size:12px;color:var(--text-secondary);margin-bottom:6px">Board Scope</label>
+              <div style="display:flex;gap:8px">
+                <label class="kb-scope-opt" style="flex:1;padding:10px 12px;border:2px solid var(--accent);border-radius:6px;cursor:pointer;background:rgba(30,167,101,0.06)">
+                  <input type="radio" name="newBoardScope" value="user" checked style="margin-right:8px">
+                  <span style="font-size:13px;font-weight:600">My Board</span>
+                  <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">Visible only to you</div>
+                </label>
+                <label class="kb-scope-opt" style="flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:6px;cursor:pointer">
+                  <input type="radio" name="newBoardScope" value="system" style="margin-right:8px">
+                  <span style="font-size:13px;font-weight:600">System Board</span>
+                  <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">Visible to all users</div>
+                </label>
+              </div>
+            </div>
+          ` : ''}
+          <div style="font-size:11px;color:var(--text-secondary);line-height:1.4">
+            New boards start empty. Use <strong>⚙ Edit Columns</strong> after creation to add columns.
+          </div>
+        </div>
+      </div>
+      <div class="kb-editcols-footer">
+        <button class="kb-editcols-cancel" type="button">Cancel</button>
+        <button class="kb-editcols-save kb-new-board-submit" type="button">Create Board</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // Hook up radio visual styling
+  if (adminProbe) {
+    overlay.querySelectorAll('input[name="newBoardScope"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        overlay.querySelectorAll('.kb-scope-opt').forEach(opt => {
+          const isChecked = opt.querySelector('input').checked;
+          opt.style.border  = isChecked ? '2px solid var(--accent)' : '1px solid var(--border)';
+          opt.style.background = isChecked ? 'rgba(30,167,101,0.06)' : '';
+        });
+      });
+    });
+  }
+
+  const nameInput = overlay.querySelector('.kb-new-board-name');
+  setTimeout(() => nameInput.focus(), 50);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('.kb-editcols-close').addEventListener('click', close);
+  overlay.querySelector('.kb-editcols-cancel').addEventListener('click', close);
+
+  const submit = async () => {
+    const name = nameInput.value.trim();
+    if (!name) { nameInput.focus(); return; }
+    const scopeRadio = overlay.querySelector('input[name="newBoardScope"]:checked');
+    const is_system  = adminProbe && scopeRadio && scopeRadio.value === 'system';
+    try {
+      const r = await fetch('/api/boards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, is_system }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        alert(`Failed: ${err.error || r.status}`);
+        return;
+      }
+      const newBoard = await r.json();
+      close();
+      await loadBoards();
+      currentBoardId = newBoard.id;
+      await loadUserDealOrder();
+      const dict = await dbLoad();
+      if (dict) {
+        Object.keys(pipeline).forEach(k => delete pipeline[k]);
+        Object.assign(pipeline, dict);
+      }
+      renderBoard();
+      if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+    } catch (err) {
+      alert(`Network error: ${err.message}`);
+    }
+  };
+
+  overlay.querySelector('.kb-new-board-submit').addEventListener('click', submit);
+  nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
 }
 
 // V75.6: edit-columns modal for the current board. Lets user add/remove

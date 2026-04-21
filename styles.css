@@ -915,34 +915,38 @@ header {
   color: var(--muted);
 }
 
-/* V75.6 — Board selector controls inside .kanban-header (Header 2).
-   Follows the CRM tab-bar pattern (same height, same chrome, controls
-   sit alongside the module title, close button pushed to the far right). */
+/* V75.6.2 — Board selector controls inside .kanban-header (Header 2).
+   Matches the CRM tab-bar pattern exactly (same padding, same border chrome,
+   same font treatment). Close button remains pushed to the far right. */
 .kanban-header-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   margin-left: 16px;
   flex: 1;
   font-size: 13px;
 }
 .kanban-header-controls:empty { display: none; }
-.kb-toolbar-label {
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
-}
+
+/* Board selector — content-sensitive width, CRM-tab chrome */
 .kb-board-select {
-  padding: 6px 10px;
-  font-size: 13px;
-  min-width: 200px;
+  padding: 6px 28px 6px 14px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
   font-family: 'DM Sans', sans-serif;
+  transition: background 0.1s;
+  /* Native select control appearance left intact for optgroup support */
+  appearance: auto;
+  width: auto;
+  max-width: 280px;
 }
-/* Match .crm-tab styling for parity */
+.kb-board-select:hover { background: var(--surface2); }
+
+/* Toolbar buttons — match .crm-tab chrome */
 .kb-toolbar-btn {
   padding: 6px 14px;
   border: 1px solid var(--border);
@@ -953,10 +957,25 @@ header {
   font-size: 13px;
   font-family: 'DM Sans', sans-serif;
   transition: background 0.1s;
+  white-space: nowrap;
 }
-.kb-toolbar-btn:hover {
+.kb-toolbar-btn:hover:not(:disabled) {
   background: var(--surface2);
   color: var(--text);
+}
+.kb-toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Destructive variant for Delete Board — red outline, red on hover */
+.kb-toolbar-btn-danger {
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+.kb-toolbar-btn-danger:hover:not(:disabled) {
+  border-color: #c0392b;
+  color: #c0392b;
+  background: #fdecea;
 }
 
 /* V75.6 — Edit columns modal */
