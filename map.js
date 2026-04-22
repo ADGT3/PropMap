@@ -41,7 +41,7 @@ let _activeFilters = {
   showSnoozed:            false,    // V75.1 — show properties marked Not Suitable
 
   // V76.3 — CoreLogic-only fields
-  corelogicPropertyType:  null,  // e.g. 'Office'
+  corelogicPropertyTypes: [],   // e.g. ['Office','Retail'] — multi-select
   minFloor:               null,  // floorAreaFrom
   maxFloor:               null,  // floorAreaTo
   minYield:               null,  // advertisedYieldFrom
@@ -2497,6 +2497,7 @@ function restoreFilters() {
     setSingleChip('filterStrata',           f.strataUnitFlag || 'Both');
 
     setChips('filterPropertyTypes', f.propertyTypes || []);
+    setChips('filterCoreLogicType', f.corelogicPropertyTypes || []);
     setChips('filterFeatures',      f.features || []);
     setChips('filterAttributes',    f.listingAttributes || []);
     if (f.establishedType) setChips('filterEstablished', [f.establishedType]);
@@ -2523,7 +2524,6 @@ function restoreFilters() {
     setSelect('filterMaxRentAnnum',     f.maxRentAnnum);
     setSelect('filterMinRentSqm',       f.minRentSqm);
     setSelect('filterMaxRentSqm',       f.maxRentSqm);
-    setSelect('filterCoreLogicType',    f.corelogicPropertyType);
 
     const pw = document.getElementById('filterExcludePriceWithheld');
     const dt = document.getElementById('filterExcludeDepositTaken');
@@ -2579,6 +2579,7 @@ function updateFilterVisibility() {
     });
   }
   initChipGroup('filterPropertyTypes');
+  initChipGroup('filterCoreLogicType');
   initChipGroup('filterFeatures');
   initChipGroup('filterAttributes');
   initChipGroup('filterEstablished');
@@ -2634,7 +2635,7 @@ function updateFilterVisibility() {
       features: [], listingAttributes: [], establishedType: null,
       excludePriceWithheld: false, excludeDepositTaken: true, newDevOnly: false,
       showSnoozed: false,
-      corelogicPropertyType: null,
+      corelogicPropertyTypes: [],
       minFloor: null, maxFloor: null,
       minYield: null, maxYield: null,
       minRentAnnum: null, maxRentAnnum: null,
@@ -2710,7 +2711,7 @@ function updateFilterVisibility() {
       showSnoozed:          document.getElementById('filterShowSnoozed')?.checked || false,
 
       // CoreLogic
-      corelogicPropertyType: selVal('filterCoreLogicType'),
+      corelogicPropertyTypes: getChips('filterCoreLogicType'),
       minFloor:              numVal('filterMinFloor'),
       maxFloor:              numVal('filterMaxFloor'),
       minYield:              numVal('filterMinYield'),
@@ -3218,17 +3219,17 @@ async function runDomainSearch() {
 async function runCoreLogicSearch() {
   try {
     const isRent   = _activeFilters.listingType === 'Rent';
-    const polygon  = buildCoreLogicPolygon();
     const query    = {
       listingStatus: 'Current',
-      limit:         100,
+      limit:         50,              // sandbox default; higher limits have triggered 502s
       sortBy:        'relevance',
     };
 
     // propertyType key differs per endpoint: sale uses "propertyType", lease uses "spaceType"
-    if (_activeFilters.corelogicPropertyType) {
-      if (isRent) query.spaceType    = _activeFilters.corelogicPropertyType;
-      else        query.propertyType = _activeFilters.corelogicPropertyType;
+    // CoreLogic accepts repeated keys — send as an array, the proxy repeats them on the querystring.
+    if (_activeFilters.corelogicPropertyTypes?.length) {
+      if (isRent) query.spaceType    = _activeFilters.corelogicPropertyTypes;
+      else        query.propertyType = _activeFilters.corelogicPropertyTypes;
     }
 
     // Land / site area → CoreLogic siteArea
@@ -3262,8 +3263,21 @@ async function runCoreLogicSearch() {
       if (_activeFilters.maxRentSqm   != null) query.askingRentPerSqmTo     = _activeFilters.maxRentSqm;
     }
 
+    // V76.3 — geometry: by default send viewport as polygon. But for very
+    // large viewports, the CoreLogic sandbox has returned 502s on polygon
+    // searches. Fall back to the centre point + radius (max 50km) for those.
+    const geom = buildCoreLogicGeometry();
+    let polygon = null;
+    if (geom.useRadius) {
+      query.latitude     = geom.lat;
+      query.longitude    = geom.lng;
+      query.radiusMetres = geom.radiusMetres;
+    } else {
+      polygon = geom.polygon;
+    }
+
     console.log('[map] CoreLogic search — listingType:', isRent ? 'lease' : 'sale',
-                'query:', query, 'polygon points:', polygon[0]?.length);
+                'query:', query, 'geom:', geom.useRadius ? `radius ${geom.radiusMetres}m` : `polygon ${polygon[0]?.length}pts`);
 
     const res = await fetch('/api/corelogic-search', {
       method: 'POST',
@@ -3277,7 +3291,8 @@ async function runCoreLogicSearch() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(`CoreLogic API error (${res.status}): ${err.error || 'unknown'}`);
+      const snippet = err.body ? ` — upstream said: ${String(err.body).slice(0, 200)}` : '';
+      throw new Error(`CoreLogic API error (${res.status}): ${err.error || 'unknown'}${snippet}`);
     }
 
     const data = await res.json();
@@ -3338,28 +3353,52 @@ function mapCoreLogicListing(r, isLease) {
   };
 }
 
-// V76.3 — build a viewport polygon ring for CoreLogic's polygon body param.
-// Uses the current map bounds (or selected parcel, if any). Ring must be
-// closed (first point == last point). CoreLogic expects [[ [lng,lat], ... ]].
-function buildCoreLogicPolygon() {
-  let n, s, e, w;
+// V76.3 — choose CoreLogic geometry based on viewport size. For small/medium
+// viewports, send a rectangle polygon ring. For very wide viewports, send a
+// centre point + radius capped at 50km — polygon queries at city scale have
+// returned 502s from the sandbox. Ring is [[ [lng,lat], ... ]] closed.
+function buildCoreLogicGeometry() {
+  let n, s, e, w, cLat, cLng;
   if (_selectedParcels.length > 0) {
     const p = _selectedParcels[0];
     const delta = 0.05;
     n = p.lat + delta; s = p.lat - delta;
     w = p.lng - delta; e = p.lng + delta;
+    cLat = p.lat; cLng = p.lng;
   } else if (clickMarkerData) {
     const delta = 0.05;
     n = clickMarkerData.lat + delta; s = clickMarkerData.lat - delta;
     w = clickMarkerData.lng - delta; e = clickMarkerData.lng + delta;
+    cLat = clickMarkerData.lat; cLng = clickMarkerData.lng;
   } else {
     const b = map.getBounds();
     n = b.getNorth(); s = b.getSouth();
     w = b.getWest();  e = b.getEast();
+    const c = map.getCenter();
+    cLat = c.lat; cLng = c.lng;
   }
-  return [[
-    [w, n], [e, n], [e, s], [w, s], [w, n],
-  ]];
+
+  // Approximate diagonal in metres. 1° lat ≈ 111 km; 1° lng ≈ 111 km × cos(lat).
+  const latKmDeg = 111;
+  const lngKmDeg = 111 * Math.cos(cLat * Math.PI / 180);
+  const diagKm   = Math.hypot((n - s) * latKmDeg, (e - w) * lngKmDeg);
+
+  // If the viewport diagonal is > ~30km, switch to radius mode (50km cap).
+  if (diagKm > 30) {
+    return {
+      useRadius:    true,
+      lat:          cLat,
+      lng:          cLng,
+      radiusMetres: Math.min(50000, Math.round(diagKm * 1000 / 2)),
+    };
+  }
+
+  return {
+    useRadius: false,
+    polygon:   [[
+      [w, n], [e, n], [e, s], [w, s], [w, n],
+    ]],
+  };
 }
 
 function showListingError(msg, provider) {
