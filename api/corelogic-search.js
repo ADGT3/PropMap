@@ -135,7 +135,7 @@ export default async function handler(req, res) {
   }
   if (!body || typeof body !== 'object') body = {};
 
-  const { listingType, query, polygon } = body;
+  const { listingType, listingId, query, polygon } = body;
 
   if (!listingType || !ENDPOINTS[listingType]) {
     return res.status(400).json({ error: "listingType must be 'sale' or 'lease'" });
@@ -150,12 +150,14 @@ export default async function handler(req, res) {
   }
 
   const qs = buildQueryString(query || {});
-  const url = `${baseUrl}${ENDPOINTS[listingType]}${qs ? '?' + qs : ''}`;
+  // V76.3.1: if listingId provided, hit the detail endpoint instead of the list endpoint.
+  const pathSuffix = listingId ? `/${encodeURIComponent(listingId)}` : '';
+  const url = `${baseUrl}${ENDPOINTS[listingType]}${pathSuffix}${qs ? '?' + qs : ''}`;
 
   // If polygon was provided, it goes in the request body per CoreLogic spec.
   // Otherwise it's a plain GET with no body.
   const hasPolygon = Array.isArray(polygon) && polygon.length > 0;
-  const method = hasPolygon ? 'POST' : 'GET';
+  const method = (hasPolygon && !listingId) ? 'POST' : 'GET';
   const fetchOpts = {
     method,
     headers: {
