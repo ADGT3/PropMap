@@ -30,8 +30,9 @@
  */
 
 // ── Config ────────────────────────────────────────────────────────────────
-const DEFAULT_BASE_URL  = 'https://api-sbox.corelogic.asia/commercial-api/au/v1';
-const DEFAULT_TOKEN_URL = 'https://api-sbox.corelogic.asia/access/as/token.oauth2';
+const DEFAULT_BASE_URL      = 'https://api-sbox.corelogic.asia/commercial-api/au/v1';
+const DEFAULT_PROPERTY_BASE = 'https://api-sbox.corelogic.asia/property-details/au';
+const DEFAULT_TOKEN_URL     = 'https://api-sbox.corelogic.asia/access/as/token.oauth2';
 
 const ENDPOINTS = {
   sale:  '/forSaleListings',
@@ -126,8 +127,6 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const baseUrl = process.env.CORELOGIC_BASE_URL || DEFAULT_BASE_URL;
-
   // Parse body
   let body = req.body;
   if (typeof body === 'string') {
@@ -135,10 +134,37 @@ export default async function handler(req, res) {
   }
   if (!body || typeof body !== 'object') body = {};
 
-  const { listingType, listingId, query, polygon } = body;
+  const { listingType, listingId, query, polygon, path } = body;
 
-  if (!listingType || !ENDPOINTS[listingType]) {
-    return res.status(400).json({ error: "listingType must be 'sale' or 'lease'" });
+  // V76.3.2: if a raw `path` is supplied, use it directly against either the
+  // commercial-api base or a different CoreLogic base that the path implies.
+  // Used for Address Matcher, Property Details, etc. Otherwise fall back to
+  // the listingType → /forSaleListings | /forLeaseListings mapping.
+  let url;
+  let method;
+  let sendPolygon = false;
+  const baseUrl        = process.env.CORELOGIC_BASE_URL         || DEFAULT_BASE_URL;
+  const propertyBase   = process.env.CORELOGIC_PROPERTY_BASE    || DEFAULT_PROPERTY_BASE;
+
+  if (path) {
+    const qs = buildQueryString(query || {});
+    // property-details/** and search/** live on the host root, not under /commercial-api/au/v1
+    const hostRoot = baseUrl.replace(/\/commercial-api\/au\/v1$/, '');
+    const base = (path.startsWith('/property-details') || path.startsWith('/search/'))
+      ? hostRoot
+      : baseUrl;
+    url    = `${base}${path}${qs ? '?' + qs : ''}`;
+    method = 'GET';
+  } else {
+    if (!listingType || !ENDPOINTS[listingType]) {
+      return res.status(400).json({ error: "listingType must be 'sale' or 'lease' (or supply `path`)" });
+    }
+    const qs = buildQueryString(query || {});
+    const pathSuffix = listingId ? `/${encodeURIComponent(listingId)}` : '';
+    url    = `${baseUrl}${ENDPOINTS[listingType]}${pathSuffix}${qs ? '?' + qs : ''}`;
+    const hasPolygon = Array.isArray(polygon) && polygon.length > 0;
+    method = (hasPolygon && !listingId) ? 'POST' : 'GET';
+    sendPolygon = hasPolygon && !listingId;
   }
 
   let token;
@@ -149,15 +175,6 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Failed to obtain CoreLogic access token', detail: err.message });
   }
 
-  const qs = buildQueryString(query || {});
-  // V76.3.1: if listingId provided, hit the detail endpoint instead of the list endpoint.
-  const pathSuffix = listingId ? `/${encodeURIComponent(listingId)}` : '';
-  const url = `${baseUrl}${ENDPOINTS[listingType]}${pathSuffix}${qs ? '?' + qs : ''}`;
-
-  // If polygon was provided, it goes in the request body per CoreLogic spec.
-  // Otherwise it's a plain GET with no body.
-  const hasPolygon = Array.isArray(polygon) && polygon.length > 0;
-  const method = (hasPolygon && !listingId) ? 'POST' : 'GET';
   const fetchOpts = {
     method,
     headers: {
@@ -165,7 +182,7 @@ export default async function handler(req, res) {
       'Accept':        'application/json',
     },
   };
-  if (hasPolygon) {
+  if (sendPolygon) {
     fetchOpts.headers['Content-Type'] = 'application/json';
     fetchOpts.body = JSON.stringify(polygon);
   }
