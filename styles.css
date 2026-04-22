@@ -3095,3 +3095,82 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   color: var(--accent, #c4841a);
   background: rgba(196,132,26,0.04);
 }
+
+/* ─── V76.3: Filter + CoreLogic listing styles ─────────────────────────── */
+
+/* Full-width select for CoreLogic property type */
+.filter-select-full {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+}
+.filter-select-full:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* CoreLogic listing card variant */
+.listing-card-corelogic .listing-price-tbd {
+  color: var(--muted);
+  font-weight: 500;
+  font-style: italic;
+  font-size: 13px;
+}
+.cl-tag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+.cl-tag-source {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+.cl-tag-cityscope {
+  background: #e0f2fe;
+  color: #0369a1;
+  border-color: #7dd3fc;
+}
+.cl-tag-pim {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+.cl-tag-strata {
+  background: #ede9fe;
+  color: #6d28d9;
+  border: 1px solid #c4b5fd;
+}
+.cl-tag-nocoords {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+  cursor: help;
+}
+.cl-agencies {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.cl-agency {
+  line-height: 1.35;
+}
+.cl-agency + .cl-agency {
+  margin-top: 2px;
+}
+.cl-listing-date {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  font-style: italic;
+}
