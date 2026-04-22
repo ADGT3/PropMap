@@ -235,7 +235,17 @@
         </div>
         <div class="filter-panel-body">
 
-          <div class="filter-group">
+          <!-- V76.3: Property Category is the master toggle. Residential -> Domain,
+               Commercial -> CoreLogic. Other filter groups show/hide based on this. -->
+          <div class="filter-group" data-mode="both">
+            <label class="filter-label">Property Type</label>
+            <div class="filter-chips" id="filterPropertyCategory">
+              <button class="filter-chip active" data-value="residential">Residential</button>
+              <button class="filter-chip" data-value="commercial">Commercial</button>
+            </div>
+          </div>
+
+          <div class="filter-group" data-mode="both">
             <label class="filter-label">Listing Type</label>
             <div class="filter-chips" id="filterListingType">
               <button class="filter-chip active" data-value="Sale">Sale</button>
@@ -243,8 +253,9 @@
             </div>
           </div>
 
-          <div class="filter-group">
-            <label class="filter-label">Property Type</label>
+          <!-- Residential property type chips (Domain values) -->
+          <div class="filter-group" data-mode="residential">
+            <label class="filter-label">Dwelling Type</label>
             <div class="filter-chips" id="filterPropertyTypes">
               <button class="filter-chip" data-value="House">House</button>
               <button class="filter-chip" data-value="Apartment">Apartment</button>
@@ -257,65 +268,204 @@
             </div>
           </div>
 
-          <div class="filter-group">
-            <label class="filter-label">Price</label>
+          <!-- Commercial propertyType dropdown (21 CoreLogic values) -->
+          <div class="filter-group" data-mode="commercial">
+            <label class="filter-label">Space / Property Type</label>
+            <select id="filterCoreLogicType" class="filter-select-full">
+              <option value="">Any</option>
+              <option value="Industrial">Industrial</option>
+              <option value="Office">Office</option>
+              <option value="Retail">Retail</option>
+              <option value="Warehouse &amp; Logistics">Warehouse &amp; Logistics</option>
+              <option value="Accommodation">Accommodation</option>
+              <option value="Tourism &amp; Leisure">Tourism &amp; Leisure</option>
+              <option value="Community">Community</option>
+              <option value="Education">Education</option>
+              <option value="Medical &amp; Care Facilities">Medical &amp; Care Facilities</option>
+              <option value="Childcare Centre">Childcare Centre</option>
+              <option value="Government Services">Government Services</option>
+              <option value="Place of Assembly">Place of Assembly</option>
+              <option value="Park/ Reserve/ Road">Park / Reserve / Road</option>
+              <option value="Storage Unit">Storage Unit</option>
+              <option value="Car Park">Car Park</option>
+              <option value="Utility">Utility</option>
+              <option value="Land">Land</option>
+              <option value="Industrial Land">Industrial Land</option>
+              <option value="Commercial Land">Commercial Land</option>
+              <option value="Residential Land">Residential Land</option>
+              <option value="Residential">Residential</option>
+            </select>
+          </div>
+
+          <!-- Sale price (residential + commercial) -->
+          <div class="filter-group" data-mode="both" data-listing-type="Sale">
+            <label class="filter-label">Price (Sale)</label>
             <div class="filter-row">
               <div class="filter-field">
                 <span>Min</span>
-                <select id="filterMinPrice">
+                <select id="filterMinPriceSale">
                   <option value="">Any</option>
-                  <option value="100000">$100k</option>
-                  <option value="200000">$200k</option>
-                  <option value="300000">$300k</option>
-                  <option value="400000">$400k</option>
+                  <option value="250000">$250k</option>
                   <option value="500000">$500k</option>
-                  <option value="600000">$600k</option>
-                  <option value="700000">$700k</option>
                   <option value="750000">$750k</option>
-                  <option value="800000">$800k</option>
-                  <option value="900000">$900k</option>
                   <option value="1000000">$1m</option>
-                  <option value="1250000">$1.25m</option>
                   <option value="1500000">$1.5m</option>
-                  <option value="1750000">$1.75m</option>
                   <option value="2000000">$2m</option>
-                  <option value="2500000">$2.5m</option>
-                  <option value="3000000">$3m</option>
-                  <option value="4000000">$4m</option>
-                  <option value="5000000">$5m</option>
-                </select>
-              </div>
-              <div class="filter-field">
-                <span>Max</span>
-                <select id="filterMaxPrice">
-                  <option value="">Any</option>
-                  <option value="200000">$200k</option>
-                  <option value="300000">$300k</option>
-                  <option value="400000">$400k</option>
-                  <option value="500000">$500k</option>
-                  <option value="600000">$600k</option>
-                  <option value="700000">$700k</option>
-                  <option value="750000">$750k</option>
-                  <option value="800000">$800k</option>
-                  <option value="900000">$900k</option>
-                  <option value="1000000">$1m</option>
-                  <option value="1250000">$1.25m</option>
-                  <option value="1500000">$1.5m</option>
-                  <option value="1750000">$1.75m</option>
-                  <option value="2000000">$2m</option>
-                  <option value="2500000">$2.5m</option>
                   <option value="3000000">$3m</option>
                   <option value="4000000">$4m</option>
                   <option value="5000000">$5m</option>
                   <option value="7500000">$7.5m</option>
                   <option value="10000000">$10m</option>
+                  <option value="15000000">$15m</option>
+                  <option value="20000000">$20m</option>
+                  <option value="30000000">$30m</option>
+                  <option value="50000000">$50m</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxPriceSale">
+                  <option value="">Any</option>
+                  <option value="500000">$500k</option>
+                  <option value="750000">$750k</option>
+                  <option value="1000000">$1m</option>
+                  <option value="1500000">$1.5m</option>
+                  <option value="2000000">$2m</option>
+                  <option value="3000000">$3m</option>
+                  <option value="4000000">$4m</option>
+                  <option value="5000000">$5m</option>
+                  <option value="7500000">$7.5m</option>
+                  <option value="10000000">$10m</option>
+                  <option value="15000000">$15m</option>
+                  <option value="20000000">$20m</option>
+                  <option value="30000000">$30m</option>
+                  <option value="50000000">$50m</option>
+                  <option value="100000000">$100m</option>
+                  <option value="999999999">Over $50m</option>
                 </select>
               </div>
             </div>
           </div>
 
-          <div class="filter-group">
-            <label class="filter-label">Land Area</label>
+          <!-- Residential rent (per week) -->
+          <div class="filter-group" data-mode="residential" data-listing-type="Rent">
+            <label class="filter-label">Rent (per week)</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinRentWeek">
+                  <option value="">Any</option>
+                  <option value="200">$200</option>
+                  <option value="300">$300</option>
+                  <option value="400">$400</option>
+                  <option value="500">$500</option>
+                  <option value="600">$600</option>
+                  <option value="700">$700</option>
+                  <option value="800">$800</option>
+                  <option value="1000">$1,000</option>
+                  <option value="1250">$1,250</option>
+                  <option value="1500">$1,500</option>
+                  <option value="2000">$2,000</option>
+                  <option value="3000">$3,000</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxRentWeek">
+                  <option value="">Any</option>
+                  <option value="300">$300</option>
+                  <option value="400">$400</option>
+                  <option value="500">$500</option>
+                  <option value="600">$600</option>
+                  <option value="700">$700</option>
+                  <option value="800">$800</option>
+                  <option value="1000">$1,000</option>
+                  <option value="1250">$1,250</option>
+                  <option value="1500">$1,500</option>
+                  <option value="2000">$2,000</option>
+                  <option value="3000">$3,000</option>
+                  <option value="5000">$5,000</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Commercial rent per annum -->
+          <div class="filter-group" data-mode="commercial" data-listing-type="Rent">
+            <label class="filter-label">Rent (per annum)</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinRentAnnum">
+                  <option value="">Any</option>
+                  <option value="10000">$10k</option>
+                  <option value="25000">$25k</option>
+                  <option value="50000">$50k</option>
+                  <option value="75000">$75k</option>
+                  <option value="100000">$100k</option>
+                  <option value="150000">$150k</option>
+                  <option value="200000">$200k</option>
+                  <option value="300000">$300k</option>
+                  <option value="500000">$500k</option>
+                  <option value="750000">$750k</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxRentAnnum">
+                  <option value="">Any</option>
+                  <option value="25000">$25k</option>
+                  <option value="50000">$50k</option>
+                  <option value="75000">$75k</option>
+                  <option value="100000">$100k</option>
+                  <option value="150000">$150k</option>
+                  <option value="200000">$200k</option>
+                  <option value="300000">$300k</option>
+                  <option value="500000">$500k</option>
+                  <option value="750000">$750k</option>
+                  <option value="1000000">$1m</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Commercial rent per sqm (separate filter, displayed alongside per-annum) -->
+          <div class="filter-group" data-mode="commercial" data-listing-type="Rent">
+            <label class="filter-label">Rent (per sqm p.a.)</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinRentSqm">
+                  <option value="">Any</option>
+                  <option value="100">$100</option>
+                  <option value="200">$200</option>
+                  <option value="300">$300</option>
+                  <option value="400">$400</option>
+                  <option value="500">$500</option>
+                  <option value="750">$750</option>
+                  <option value="1000">$1,000</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxRentSqm">
+                  <option value="">Any</option>
+                  <option value="200">$200</option>
+                  <option value="300">$300</option>
+                  <option value="400">$400</option>
+                  <option value="500">$500</option>
+                  <option value="750">$750</option>
+                  <option value="1000">$1,000</option>
+                  <option value="1500">$1,500</option>
+                  <option value="2000">$2,000</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Land / Site Area — shared (Domain minLand/maxLand, CoreLogic siteArea) -->
+          <div class="filter-group" data-mode="both">
+            <label class="filter-label">Land / Site Area</label>
             <div class="filter-row">
               <div class="filter-field">
                 <span>Min</span>
@@ -326,22 +476,19 @@
                   <option value="200">200m²</option>
                   <option value="250">250m²</option>
                   <option value="300">300m²</option>
-                  <option value="350">350m²</option>
                   <option value="400">400m²</option>
-                  <option value="450">450m²</option>
                   <option value="500">500m²</option>
                   <option value="600">600m²</option>
-                  <option value="700">700m²</option>
                   <option value="800">800m²</option>
                   <option value="1000">1,000m²</option>
                   <option value="1500">1,500m²</option>
                   <option value="2000">2,000m²</option>
                   <option value="3000">3,000m²</option>
-                  <option value="4000">4,000m²</option>
                   <option value="5000">5,000m²</option>
-                  <option value="10000">10,000m²</option>
-                  <option value="20000">20,000m²</option>
-                  <option value="50000">50,000m²</option>
+                  <option value="10000">1 ha</option>
+                  <option value="20000">2 ha</option>
+                  <option value="50000">5 ha</option>
+                  <option value="100000">10 ha</option>
                 </select>
               </div>
               <div class="filter-field">
@@ -350,30 +497,101 @@
                   <option value="">Any</option>
                   <option value="150">150m²</option>
                   <option value="200">200m²</option>
-                  <option value="250">250m²</option>
                   <option value="300">300m²</option>
-                  <option value="350">350m²</option>
-                  <option value="400">400m²</option>
-                  <option value="450">450m²</option>
                   <option value="500">500m²</option>
-                  <option value="600">600m²</option>
-                  <option value="700">700m²</option>
                   <option value="800">800m²</option>
                   <option value="1000">1,000m²</option>
-                  <option value="1500">1,500m²</option>
                   <option value="2000">2,000m²</option>
-                  <option value="3000">3,000m²</option>
-                  <option value="4000">4,000m²</option>
+                  <option value="5000">5,000m²</option>
+                  <option value="10000">1 ha</option>
+                  <option value="20000">2 ha</option>
+                  <option value="50000">5 ha</option>
+                  <option value="100000">10 ha</option>
+                  <option value="500000">50 ha</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Commercial-only: Floor Area -->
+          <div class="filter-group" data-mode="commercial">
+            <label class="filter-label">Floor Area</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinFloor">
+                  <option value="">Any</option>
+                  <option value="50">50m²</option>
+                  <option value="100">100m²</option>
+                  <option value="200">200m²</option>
+                  <option value="500">500m²</option>
+                  <option value="1000">1,000m²</option>
+                  <option value="2000">2,000m²</option>
+                  <option value="5000">5,000m²</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxFloor">
+                  <option value="">Any</option>
+                  <option value="100">100m²</option>
+                  <option value="200">200m²</option>
+                  <option value="500">500m²</option>
+                  <option value="1000">1,000m²</option>
+                  <option value="2000">2,000m²</option>
                   <option value="5000">5,000m²</option>
                   <option value="10000">10,000m²</option>
-                  <option value="20000">20,000m²</option>
                   <option value="50000">50,000m²</option>
                 </select>
               </div>
             </div>
           </div>
 
-          <div class="filter-group">
+          <!-- Commercial-only: Advertised Yield (sale only) -->
+          <div class="filter-group" data-mode="commercial" data-listing-type="Sale">
+            <label class="filter-label">Advertised Yield (%)</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinYield">
+                  <option value="">Any</option>
+                  <option value="3">3%</option>
+                  <option value="4">4%</option>
+                  <option value="5">5%</option>
+                  <option value="6">6%</option>
+                  <option value="7">7%</option>
+                  <option value="8">8%</option>
+                  <option value="10">10%</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxYield">
+                  <option value="">Any</option>
+                  <option value="4">4%</option>
+                  <option value="5">5%</option>
+                  <option value="6">6%</option>
+                  <option value="7">7%</option>
+                  <option value="8">8%</option>
+                  <option value="10">10%</option>
+                  <option value="15">15%</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Commercial-only: Strata flag -->
+          <div class="filter-group" data-mode="commercial">
+            <label class="filter-label">Strata Unit</label>
+            <div class="filter-chips" id="filterStrata">
+              <button class="filter-chip active" data-value="Both">Any</button>
+              <button class="filter-chip" data-value="Yes">Strata only</button>
+              <button class="filter-chip" data-value="No">Non-strata</button>
+            </div>
+          </div>
+
+          <!-- Residential-only: Bedrooms -->
+          <div class="filter-group" data-mode="residential">
             <label class="filter-label">Bedrooms</label>
             <div class="filter-row">
               <div class="filter-field">
@@ -401,7 +619,8 @@
             </div>
           </div>
 
-          <div class="filter-group">
+          <!-- Residential-only: Bathrooms -->
+          <div class="filter-group" data-mode="residential">
             <label class="filter-label">Bathrooms</label>
             <div class="filter-row">
               <div class="filter-field">
@@ -416,7 +635,8 @@
             </div>
           </div>
 
-          <div class="filter-group">
+          <!-- Residential-only: Car Spaces -->
+          <div class="filter-group" data-mode="residential">
             <label class="filter-label">Car Spaces</label>
             <div class="filter-row">
               <div class="filter-field">
@@ -430,7 +650,8 @@
             </div>
           </div>
 
-          <div class="filter-group">
+          <!-- Residential-only: Property Features -->
+          <div class="filter-group" data-mode="residential">
             <label class="filter-label">Property Features</label>
             <div class="filter-chips" id="filterFeatures">
               <button class="filter-chip" data-value="AirConditioning">Air Con</button>
@@ -442,7 +663,8 @@
             </div>
           </div>
 
-          <div class="filter-group">
+          <!-- Residential-only: Listing Attributes -->
+          <div class="filter-group" data-mode="residential">
             <label class="filter-label">Listing Attributes</label>
             <div class="filter-chips" id="filterAttributes">
               <button class="filter-chip" data-value="HasPhotos">Has Photos</button>
@@ -451,7 +673,8 @@
             </div>
           </div>
 
-          <div class="filter-group">
+          <!-- Residential-only: Property Status -->
+          <div class="filter-group" data-mode="residential">
             <label class="filter-label">Property Status</label>
             <div class="filter-chips" id="filterEstablished">
               <button class="filter-chip" data-value="New">New</button>
@@ -459,7 +682,8 @@
             </div>
           </div>
 
-          <div class="filter-group" style="padding-top:4px">
+          <!-- Residential-only: Checkbox flags -->
+          <div class="filter-group" data-mode="residential" style="padding-top:4px">
             <label class="filter-checkbox-row">
               <input type="checkbox" id="filterExcludePriceWithheld">
               <span>Exclude price withheld</span>

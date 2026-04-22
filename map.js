@@ -13,16 +13,25 @@ let listings = [];
 
 // ─── State ────────────────────────────────────────────────────────────────────
 let _activeFilters = {
-  propertyTypes:          [],   // e.g. ['House', 'Land']
+  // V76.3 — propertyCategory drives which API is used and which fields apply
+  propertyCategory:       'residential',  // 'residential' (Domain) | 'commercial' (CoreLogic)
+
+  propertyTypes:          [],   // Domain: e.g. ['House', 'Land']
   listingType:            'Sale',
   minBeds:                null,
   maxBeds:                null,
   minBaths:               null,
   minCars:                null,
+
+  // Domain sale price / rent per week (V76.3 — separate ranges)
   minPrice:               null,
   maxPrice:               null,
-  minLand:                null,
-  maxLand:                null,
+  minRentWeek:            null,
+  maxRentWeek:            null,
+
+  minLand:                null,  // Shared: Domain minLandArea | CoreLogic siteAreaFrom
+  maxLand:                null,  // Shared: Domain maxLandArea | CoreLogic siteAreaTo
+
   features:               [],   // e.g. ['AirConditioning', 'SwimmingPool']
   listingAttributes:      [],   // e.g. ['HasPhotos']
   establishedType:        null, // 'New' | 'Established'
@@ -30,6 +39,18 @@ let _activeFilters = {
   excludeDepositTaken:    true,
   newDevOnly:             false,
   showSnoozed:            false,    // V75.1 — show properties marked Not Suitable
+
+  // V76.3 — CoreLogic-only fields
+  corelogicPropertyType:  null,  // e.g. 'Office'
+  minFloor:               null,  // floorAreaFrom
+  maxFloor:               null,  // floorAreaTo
+  minYield:               null,  // advertisedYieldFrom
+  maxYield:               null,  // advertisedYieldTo
+  minRentAnnum:           null,  // askingRentPerAnnumFrom
+  maxRentAnnum:           null,  // askingRentPerAnnumTo
+  minRentSqm:             null,  // askingRentPerSqmFrom
+  maxRentSqm:             null,  // askingRentPerSqmTo
+  strataUnitFlag:         'Both', // 'Both' | 'Yes' | 'No'
 };
 let activeZone   = 'all';
 let showListings = true;
@@ -1861,11 +1882,15 @@ function renderListings() {
   markers = {};
 
   const bounds = map.getBounds();
+  // V76.3: CoreLogic listings may lack coordinates; keep those in the sidebar
+  // but don't require them to be in the viewport.
   const filtered = listings.filter(l => {
+    if (l._noCoords) return true;
     const inView   = bounds.contains(L.latLng(l.lat, l.lng));
-    const typeMatch = _activeFilters.propertyTypes.length === 0
+    // propertyTypes is Domain-only — skip this check for CoreLogic listings
+    const typeMatch = (l._source === 'corelogic')
+      || _activeFilters.propertyTypes.length === 0
       || _activeFilters.propertyTypes.some(t => l.type === t.toLowerCase());
-    // V75.1 — hide not-suitable unless toggle is on
     const suitabilityOk = _activeFilters.showSnoozed || !isNotSuitable(l);
     return inView && typeMatch && suitabilityOk;
   });
@@ -1873,8 +1898,13 @@ function renderListings() {
   document.getElementById('listingCount').textContent = filtered.length;
 
   filtered.forEach(l => {
-    const card = makeListingCard(l);
+    const card = (l._source === 'corelogic')
+      ? makeCoreLogicListingCard(l)
+      : makeListingCard(l);
     list.appendChild(card);
+
+    // Skip marker for no-coord CoreLogic listings
+    if (l._noCoords || l.lat == null || l.lng == null) return;
 
     const marker = L.marker([l.lat, l.lng], {
       icon: makeIcon(MARKER_COLOR)
@@ -1899,6 +1929,52 @@ function renderListings() {
   }
 
   renderMultiSelectBar();
+}
+
+// V76.3 — CoreLogic listing card. Different shape from Domain: no thumbnail,
+// no price (sandbox doesn't return it), show agency/source badges/unit number.
+function makeCoreLogicListingCard(l) {
+  const card = document.createElement('div');
+  card.className = 'listing-card listing-card-corelogic';
+  card.dataset.id = l.id;
+
+  const unitPart = l._unitNumber ? ` Unit ${_escapeHtmlSafe(l._unitNumber)}` : '';
+  const strataPart = l._strata ? '<span class="cl-tag cl-tag-strata">Strata</span>' : '';
+  const noCoordsPart = l._noCoords ? '<span class="cl-tag cl-tag-nocoords" title="No coordinates in source data">📍?</span>' : '';
+  const sourceBadge = l._dataSource
+    ? `<span class="cl-tag cl-tag-source cl-tag-${l._dataSource.toLowerCase()}">${l._dataSource}</span>` : '';
+  const typeBadge = l.type ? `<span class="listing-type">${_escapeHtmlSafe(l.type)}</span>` : '';
+
+  const agentLines = (l._agencies || []).slice(0, 3)
+    .map(a => `<div class="cl-agency">${_escapeHtmlSafe(a)}</div>`).join('');
+
+  const dateStr = l._listingDate ? new Date(l._listingDate).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+
+  card.innerHTML = `
+    <div class="listing-top">
+      <div class="listing-price listing-price-tbd">Enquire</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        ${typeBadge}
+        ${strataPart}
+        ${sourceBadge}
+        ${noCoordsPart}
+      </div>
+    </div>
+    <div class="listing-address">${_escapeHtmlSafe(l.address)}${unitPart}</div>
+    <div class="listing-suburb">${_escapeHtmlSafe(l.suburb)} NSW</div>
+    ${agentLines ? `<div class="cl-agencies">${agentLines}</div>` : ''}
+    ${dateStr ? `<div class="cl-listing-date">Listed ${dateStr}</div>` : ''}
+  `;
+  card.addEventListener('click', () => selectListing(l.id));
+  return card;
+}
+
+// Local HTML escape — avoids dependency on external util if one isn't in scope
+function _escapeHtmlSafe(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ─── Electricity easement buffers ────────────────────────────────────────────
@@ -2401,28 +2477,80 @@ function restoreFilters() {
     const f = JSON.parse(saved);
     Object.assign(_activeFilters, f);
     function setChips(containerId, values) {
-      document.getElementById(containerId).querySelectorAll('.filter-chip').forEach(chip => {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      el.querySelectorAll('.filter-chip').forEach(chip => {
         chip.classList.toggle('active', values.includes(chip.dataset.value));
       });
     }
-    document.getElementById('filterListingType').querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-    const ltChip = document.querySelector(`#filterListingType [data-value="${f.listingType || 'Sale'}"]`);
-    if (ltChip) ltChip.classList.add('active');
+    function setSingleChip(containerId, value) {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      el.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      const chip = el.querySelector(`[data-value="${value}"]`);
+      if (chip) chip.classList.add('active');
+    }
+
+    // V76.3 — category + listing type
+    setSingleChip('filterPropertyCategory', f.propertyCategory || 'residential');
+    setSingleChip('filterListingType',      f.listingType || 'Sale');
+    setSingleChip('filterStrata',           f.strataUnitFlag || 'Both');
+
     setChips('filterPropertyTypes', f.propertyTypes || []);
     setChips('filterFeatures',      f.features || []);
     setChips('filterAttributes',    f.listingAttributes || []);
     if (f.establishedType) setChips('filterEstablished', [f.establishedType]);
-    const setSelect = (id, val) => { if (val != null) document.getElementById(id).value = String(val); };
-    setSelect('filterMinBeds',  f.minBeds);  setSelect('filterMaxBeds',  f.maxBeds);
-    setSelect('filterMinBaths', f.minBaths); setSelect('filterMinCars',  f.minCars);
-    setSelect('filterMinPrice', f.minPrice); setSelect('filterMaxPrice', f.maxPrice);
-    setSelect('filterMinLand',  f.minLand);  setSelect('filterMaxLand',  f.maxLand);
-    document.getElementById('filterExcludePriceWithheld').checked = !!f.excludePriceWithheld;
-    document.getElementById('filterExcludeDepositTaken').checked  = !!f.excludeDepositTaken;
-    document.getElementById('filterNewDevOnly').checked           = !!f.newDevOnly;
+
+    const setSelect = (id, val) => {
+      const el = document.getElementById(id);
+      if (el && val != null) el.value = String(val);
+    };
+    setSelect('filterMinBeds',          f.minBeds);
+    setSelect('filterMaxBeds',          f.maxBeds);
+    setSelect('filterMinBaths',         f.minBaths);
+    setSelect('filterMinCars',          f.minCars);
+    setSelect('filterMinPriceSale',     f.minPrice);
+    setSelect('filterMaxPriceSale',     f.maxPrice);
+    setSelect('filterMinRentWeek',      f.minRentWeek);
+    setSelect('filterMaxRentWeek',      f.maxRentWeek);
+    setSelect('filterMinLand',          f.minLand);
+    setSelect('filterMaxLand',          f.maxLand);
+    setSelect('filterMinFloor',         f.minFloor);
+    setSelect('filterMaxFloor',         f.maxFloor);
+    setSelect('filterMinYield',         f.minYield);
+    setSelect('filterMaxYield',         f.maxYield);
+    setSelect('filterMinRentAnnum',     f.minRentAnnum);
+    setSelect('filterMaxRentAnnum',     f.maxRentAnnum);
+    setSelect('filterMinRentSqm',       f.minRentSqm);
+    setSelect('filterMaxRentSqm',       f.maxRentSqm);
+    setSelect('filterCoreLogicType',    f.corelogicPropertyType);
+
+    const pw = document.getElementById('filterExcludePriceWithheld');
+    const dt = document.getElementById('filterExcludeDepositTaken');
+    const nd = document.getElementById('filterNewDevOnly');
+    if (pw) pw.checked = !!f.excludePriceWithheld;
+    if (dt) dt.checked = !!f.excludeDepositTaken;
+    if (nd) nd.checked = !!f.newDevOnly;
     const ssEl = document.getElementById('filterShowSnoozed');
     if (ssEl) ssEl.checked = !!f.showSnoozed;
   } catch (e) { /* ignore */ }
+}
+
+// V76.3 — show/hide filter groups based on the current category + listing type.
+// Each group has data-mode ("residential", "commercial", "both") and optionally
+// data-listing-type ("Sale" or "Rent"). A group is visible only if BOTH match.
+function updateFilterVisibility() {
+  const panel = document.getElementById('filterPanel');
+  if (!panel) return;
+  const cat  = _activeFilters.propertyCategory || 'residential';
+  const lt   = _activeFilters.listingType || 'Sale';
+  panel.querySelectorAll('.filter-group[data-mode]').forEach(g => {
+    const modeAttr = g.dataset.mode;
+    const ltAttr   = g.dataset.listingType;
+    const modeOk   = (modeAttr === 'both') || (modeAttr === cat);
+    const ltOk     = !ltAttr || (ltAttr === lt);
+    g.style.display = (modeOk && ltOk) ? '' : 'none';
+  });
 }
 
 (function initFilterPanel() {
@@ -2434,6 +2562,7 @@ function restoreFilters() {
   const activeCount = document.getElementById('filterActiveCount');
 
   restoreFilters();
+  updateFilterVisibility();
 
   // Toggle panel open/close
   toggleBtn.addEventListener('click', () => {
@@ -2442,86 +2571,161 @@ function restoreFilters() {
   closeBtn.addEventListener('click', () => panel.classList.remove('open'));
 
   // Multi-select chip groups
-  function initChipGroup(containerId, key) {
-    document.getElementById(containerId).querySelectorAll('.filter-chip').forEach(chip => {
+  function initChipGroup(containerId) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.querySelectorAll('.filter-chip').forEach(chip => {
       chip.addEventListener('click', () => chip.classList.toggle('active'));
     });
   }
-  initChipGroup('filterPropertyTypes', 'propertyTypes');
-  initChipGroup('filterFeatures',      'features');
-  initChipGroup('filterAttributes',    'listingAttributes');
-  initChipGroup('filterEstablished',   'establishedType');
+  initChipGroup('filterPropertyTypes');
+  initChipGroup('filterFeatures');
+  initChipGroup('filterAttributes');
+  initChipGroup('filterEstablished');
 
-  // Single-select listing type
-  document.getElementById('filterListingType').querySelectorAll('.filter-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.getElementById('filterListingType').querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
+  // Single-select chip groups (one at a time)
+  function initSingleSelect(containerId, onChange) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        el.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        if (onChange) onChange(chip.dataset.value);
+      });
     });
+  }
+
+  // Listing Type — drives price-range visibility live
+  initSingleSelect('filterListingType', (v) => {
+    _activeFilters.listingType = v;
+    updateFilterVisibility();
   });
+
+  // Property Category — drives full residential/commercial split
+  initSingleSelect('filterPropertyCategory', (v) => {
+    _activeFilters.propertyCategory = v;
+    updateFilterVisibility();
+  });
+
+  // Strata flag (commercial-only)
+  initSingleSelect('filterStrata');
 
   // Clear all
   clearBtn.addEventListener('click', () => {
     panel.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-    document.querySelector('#filterListingType [data-value="Sale"]').classList.add('active');
+    const resDefault = document.querySelector('#filterPropertyCategory [data-value="residential"]');
+    const saleDefault = document.querySelector('#filterListingType [data-value="Sale"]');
+    const strataDefault = document.querySelector('#filterStrata [data-value="Both"]');
+    if (resDefault)    resDefault.classList.add('active');
+    if (saleDefault)   saleDefault.classList.add('active');
+    if (strataDefault) strataDefault.classList.add('active');
+
     panel.querySelectorAll('select').forEach(s => s.value = '');
     panel.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = false);
+
     _activeFilters = {
+      propertyCategory: 'residential',
       propertyTypes: [], listingType: 'Sale',
       minBeds: null, maxBeds: null, minBaths: null, minCars: null,
-      minPrice: null, maxPrice: null, minLand: null, maxLand: null,
+      minPrice: null, maxPrice: null,
+      minRentWeek: null, maxRentWeek: null,
+      minLand: null, maxLand: null,
       features: [], listingAttributes: [], establishedType: null,
       excludePriceWithheld: false, excludeDepositTaken: true, newDevOnly: false,
       showSnoozed: false,
+      corelogicPropertyType: null,
+      minFloor: null, maxFloor: null,
+      minYield: null, maxYield: null,
+      minRentAnnum: null, maxRentAnnum: null,
+      minRentSqm: null, maxRentSqm: null,
+      strataUnitFlag: 'Both',
     };
     saveFilters();
+    updateFilterVisibility();
     updateActiveCount();
   });
 
-  // Count active filters for badge
+  // Count active filters for badge — only counts visible groups
   function updateActiveCount() {
     let count = 0;
-    panel.querySelectorAll('#filterPropertyTypes .filter-chip.active, #filterFeatures .filter-chip.active, #filterAttributes .filter-chip.active, #filterEstablished .filter-chip.active').forEach(() => count++);
-    panel.querySelectorAll('select').forEach(s => { if (s.value) count++; });
-    panel.querySelectorAll('input[type="checkbox"]').forEach(c => { if (c.checked) count++; });
+    panel.querySelectorAll('.filter-group').forEach(g => {
+      if (g.style.display === 'none') return;
+      g.querySelectorAll('.filter-chip.active').forEach(c => {
+        // Don't count the default-active category/listing-type/strata chips
+        const parent = c.closest('.filter-chips');
+        if (parent && ['filterPropertyCategory','filterListingType','filterStrata'].includes(parent.id)) return;
+        count++;
+      });
+      g.querySelectorAll('select').forEach(s => { if (s.value) count++; });
+      g.querySelectorAll('input[type="checkbox"]').forEach(c => { if (c.checked) count++; });
+    });
     activeCount.textContent = count > 0 ? count : '';
     activeCount.style.display = count > 0 ? 'inline' : 'none';
   }
-  updateActiveCount(); // sync badge with any restored state
+  updateActiveCount();
 
   // Apply filters → read state, store in _activeFilters, trigger search
   applyBtn.addEventListener('click', () => {
-    const getChips = id => [...document.getElementById(id).querySelectorAll('.filter-chip.active')].map(c => c.dataset.value);
-    const selVal   = id => document.getElementById(id).value || null;
+    const getChips = id => {
+      const el = document.getElementById(id);
+      if (!el) return [];
+      return [...el.querySelectorAll('.filter-chip.active')].map(c => c.dataset.value);
+    };
+    const selVal   = id => { const el = document.getElementById(id); return el && el.value ? el.value : null; };
     const numVal   = id => { const v = selVal(id); return v ? Number(v) : null; };
 
-    const established = getChips('filterEstablished');
+    const established   = getChips('filterEstablished');
+    const categoryChip  = document.querySelector('#filterPropertyCategory .filter-chip.active');
     const listingTypeChip = document.querySelector('#filterListingType .filter-chip.active');
+    const strataChip    = document.querySelector('#filterStrata .filter-chip.active');
 
     _activeFilters = {
-      propertyTypes:        getChips('filterPropertyTypes'),
+      propertyCategory:     categoryChip ? categoryChip.dataset.value : 'residential',
       listingType:          listingTypeChip ? listingTypeChip.dataset.value : 'Sale',
+
+      // Residential
+      propertyTypes:        getChips('filterPropertyTypes'),
       minBeds:              numVal('filterMinBeds'),
       maxBeds:              numVal('filterMaxBeds'),
       minBaths:             numVal('filterMinBaths'),
       minCars:              numVal('filterMinCars'),
-      minPrice:             numVal('filterMinPrice'),
-      maxPrice:             numVal('filterMaxPrice'),
+
+      // Sale price / rent per week
+      minPrice:             numVal('filterMinPriceSale'),
+      maxPrice:             numVal('filterMaxPriceSale'),
+      minRentWeek:          numVal('filterMinRentWeek'),
+      maxRentWeek:          numVal('filterMaxRentWeek'),
+
+      // Shared
       minLand:              numVal('filterMinLand'),
       maxLand:              numVal('filterMaxLand'),
+
       features:             getChips('filterFeatures'),
       listingAttributes:    getChips('filterAttributes'),
       establishedType:      established.length === 1 ? established[0] : null,
-      excludePriceWithheld: document.getElementById('filterExcludePriceWithheld').checked,
-      excludeDepositTaken:  document.getElementById('filterExcludeDepositTaken').checked,
-      newDevOnly:           document.getElementById('filterNewDevOnly').checked,
+      excludePriceWithheld: document.getElementById('filterExcludePriceWithheld')?.checked || false,
+      excludeDepositTaken:  document.getElementById('filterExcludeDepositTaken')?.checked || false,
+      newDevOnly:           document.getElementById('filterNewDevOnly')?.checked || false,
       showSnoozed:          document.getElementById('filterShowSnoozed')?.checked || false,
+
+      // CoreLogic
+      corelogicPropertyType: selVal('filterCoreLogicType'),
+      minFloor:              numVal('filterMinFloor'),
+      maxFloor:              numVal('filterMaxFloor'),
+      minYield:              numVal('filterMinYield'),
+      maxYield:              numVal('filterMaxYield'),
+      minRentAnnum:          numVal('filterMinRentAnnum'),
+      maxRentAnnum:          numVal('filterMaxRentAnnum'),
+      minRentSqm:            numVal('filterMinRentSqm'),
+      maxRentSqm:            numVal('filterMaxRentSqm'),
+      strataUnitFlag:        strataChip ? strataChip.dataset.value : 'Both',
     };
 
     updateActiveCount();
     saveFilters();
     panel.classList.remove('open');
-    runDomainSearch();
+    runListingSearch();
     if (typeof refreshPipelinePins === 'function') refreshPipelinePins();
   });
 })();
@@ -2946,20 +3150,39 @@ async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
     return null;
   }
 }
-// ─── Domain search with debounce ─────────────────────────────────────────────
+// ─── Listing search (Domain + CoreLogic dispatch, V76.3) ──────────────────────
+// runListingSearch() is the canonical entry point. It dispatches to either
+// runDomainSearch() or runCoreLogicSearch() based on _activeFilters.propertyCategory.
+// debouncedDomainSearch() is kept as an alias for pre-V76.3 callers.
+
 let _domainSearchTimer = null;
 
 function debouncedDomainSearch() {
   if (_suppressNextDomainSearch) { _suppressNextDomainSearch = false; return; }
   clearTimeout(_domainSearchTimer);
-  _domainSearchTimer = setTimeout(runDomainSearch, 1500);
+  // V76.3 — 300ms debounce on moveend/zoomend. Leaflet only fires these on
+  // mouse release (not during drag), so we just need a small buffer to absorb
+  // rapid zoom clicks.
+  _domainSearchTimer = setTimeout(runListingSearch, 300);
+}
+
+function runListingSearch() {
+  if (_activeFilters.propertyCategory === 'commercial') {
+    return runCoreLogicSearch();
+  }
+  return runDomainSearch();
 }
 
 async function runDomainSearch() {
   if (!window.DomainAPI || !DomainAPI.search) { renderListings(); return; }
   try {
     const geoWindow = buildDomainGeoWindow();
-    console.log('[map] Domain search — geoWindow:', JSON.stringify(geoWindow));
+    const isRent = _activeFilters.listingType === 'Rent';
+    // V76.3 — use rent-per-week range when Rent, sale range when Sale
+    const priceMin = isRent ? _activeFilters.minRentWeek : _activeFilters.minPrice;
+    const priceMax = isRent ? _activeFilters.maxRentWeek : _activeFilters.maxPrice;
+    console.log('[map] Domain search — geoWindow:', JSON.stringify(geoWindow),
+                'listingType:', _activeFilters.listingType, 'priceRange:', priceMin, '-', priceMax);
     const domainListings = await DomainAPI.search({
       geoWindow,
       propertyTypes:        _activeFilters.propertyTypes,
@@ -2968,8 +3191,8 @@ async function runDomainSearch() {
       maxBeds:              _activeFilters.maxBeds,
       minBaths:             _activeFilters.minBaths,
       minCars:              _activeFilters.minCars,
-      minPrice:             _activeFilters.minPrice,
-      maxPrice:             _activeFilters.maxPrice,
+      minPrice:             priceMin,
+      maxPrice:             priceMax,
       minLand:              _activeFilters.minLand,
       maxLand:              _activeFilters.maxLand,
       propertyFeatures:     _activeFilters.features,
@@ -2985,12 +3208,161 @@ async function runDomainSearch() {
     renderListings();
   } catch (err) {
     console.error('[map] Domain API fetch failed:', err);
-    showDomainError(err.message);
+    showListingError(err.message, 'Domain');
   }
 }
 
-function showDomainError(msg) {
-  // Clear markers
+// V76.3 — CoreLogic commercial search. Calls our /api/corelogic-search proxy
+// with the current viewport as a polygon ring plus any configured filters.
+// Maps response rows into the same `listing` shape used by renderListings().
+async function runCoreLogicSearch() {
+  try {
+    const isRent   = _activeFilters.listingType === 'Rent';
+    const polygon  = buildCoreLogicPolygon();
+    const query    = {
+      listingStatus: 'Current',
+      limit:         100,
+      sortBy:        'relevance',
+    };
+
+    // propertyType key differs per endpoint: sale uses "propertyType", lease uses "spaceType"
+    if (_activeFilters.corelogicPropertyType) {
+      if (isRent) query.spaceType    = _activeFilters.corelogicPropertyType;
+      else        query.propertyType = _activeFilters.corelogicPropertyType;
+    }
+
+    // Land / site area → CoreLogic siteArea
+    if (_activeFilters.minLand != null) query.siteAreaFrom = _activeFilters.minLand;
+    if (_activeFilters.maxLand != null) query.siteAreaTo   = _activeFilters.maxLand;
+
+    // Floor area
+    if (_activeFilters.minFloor != null) query.floorAreaFrom = _activeFilters.minFloor;
+    if (_activeFilters.maxFloor != null) query.floorAreaTo   = _activeFilters.maxFloor;
+
+    // Strata
+    if (_activeFilters.strataUnitFlag && _activeFilters.strataUnitFlag !== 'Both') {
+      query.strataUnitFlag = _activeFilters.strataUnitFlag;
+    }
+
+    // Sale-only fields
+    if (!isRent) {
+      if (_activeFilters.minPrice != null) query.askingPriceFrom = _activeFilters.minPrice;
+      if (_activeFilters.maxPrice != null && _activeFilters.maxPrice < 999999999) {
+        query.askingPriceTo = _activeFilters.maxPrice;
+      }
+      if (_activeFilters.minYield != null) query.advertisedYieldFrom = _activeFilters.minYield;
+      if (_activeFilters.maxYield != null) query.advertisedYieldTo   = _activeFilters.maxYield;
+    }
+
+    // Lease-only fields
+    if (isRent) {
+      if (_activeFilters.minRentAnnum != null) query.askingRentPerAnnumFrom = _activeFilters.minRentAnnum;
+      if (_activeFilters.maxRentAnnum != null) query.askingRentPerAnnumTo   = _activeFilters.maxRentAnnum;
+      if (_activeFilters.minRentSqm   != null) query.askingRentPerSqmFrom   = _activeFilters.minRentSqm;
+      if (_activeFilters.maxRentSqm   != null) query.askingRentPerSqmTo     = _activeFilters.maxRentSqm;
+    }
+
+    console.log('[map] CoreLogic search — listingType:', isRent ? 'lease' : 'sale',
+                'query:', query, 'polygon points:', polygon[0]?.length);
+
+    const res = await fetch('/api/corelogic-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        listingType: isRent ? 'lease' : 'sale',
+        query,
+        polygon,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`CoreLogic API error (${res.status}): ${err.error || 'unknown'}`);
+    }
+
+    const data = await res.json();
+    const rows = Array.isArray(data.results) ? data.results : [];
+    console.log('[map] CoreLogic API returned', rows.length, 'of', data.count, 'total');
+
+    listings.length = 0;
+    rows.forEach(r => {
+      const mapped = mapCoreLogicListing(r, isRent);
+      listings.push(mapped);
+    });
+    renderListings();
+  } catch (err) {
+    console.error('[map] CoreLogic API fetch failed:', err);
+    showListingError(err.message, 'CoreLogic');
+  }
+}
+
+// V76.3 — map a CoreLogic listing row to the common PropMap listing shape so
+// renderListings() and the map marker code can handle both sources uniformly.
+// CoreLogic listings that lack coordinates (latitude/longitude == null) are
+// still included in the array but marked with _noCoords so renderListings()
+// will show them in the sidebar but skip placing a marker.
+function mapCoreLogicListing(r, isLease) {
+  const addr   = r.streetAddress || '';
+  // Strip trailing "SUBURB STATE postcode" — everything after the last 3 uppercase tokens
+  // Quick heuristic: split on " NSW " or similar — fall back to full string
+  const suburbMatch = addr.match(/([A-Z][A-Z\s]+)\s+(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\s+\d{4}$/);
+  const suburb = suburbMatch ? suburbMatch[1].trim() : '';
+  const street = suburbMatch ? addr.slice(0, addr.length - suburbMatch[0].length).trim() : addr;
+
+  const agents = Array.isArray(r.leasingAgency) ? r.leasingAgency.map(a => a.leasingAgency).filter(Boolean) : [];
+  const hasCoords = r.latitude != null && r.longitude != null;
+
+  return {
+    id:               'CL-' + r.listingId,
+    _source:          'corelogic',
+    _listingType:     isLease ? 'Rent' : 'Sale',
+    _confidence:      r.confidence || null,
+    _dataSource:      r.source || null,      // "CITYSCOPE" | "PIM"
+    _cityscopeRef:    r.properties?.[0]?.cityscopeReference || null,
+    _unitNumber:      r.unitNumber || null,
+    _strata:          r.strataUnitFlag === 'Yes',
+    _listingDate:     r.listingDate || null,
+    _listingStatus:   r.listingStatus || null,
+    _agencies:        agents,
+    _noCoords:        !hasCoords,
+
+    address:          street || addr,
+    suburb,
+    lat:              r.latitude,
+    lng:              r.longitude,
+    type:             (r.spaceType || r.propertyType || 'Commercial').toLowerCase(),
+    price:            null,   // CoreLogic doesn't return price in the list endpoint
+    bedrooms:         null,
+    bathrooms:        null,
+    carspaces:        null,
+  };
+}
+
+// V76.3 — build a viewport polygon ring for CoreLogic's polygon body param.
+// Uses the current map bounds (or selected parcel, if any). Ring must be
+// closed (first point == last point). CoreLogic expects [[ [lng,lat], ... ]].
+function buildCoreLogicPolygon() {
+  let n, s, e, w;
+  if (_selectedParcels.length > 0) {
+    const p = _selectedParcels[0];
+    const delta = 0.05;
+    n = p.lat + delta; s = p.lat - delta;
+    w = p.lng - delta; e = p.lng + delta;
+  } else if (clickMarkerData) {
+    const delta = 0.05;
+    n = clickMarkerData.lat + delta; s = clickMarkerData.lat - delta;
+    w = clickMarkerData.lng - delta; e = clickMarkerData.lng + delta;
+  } else {
+    const b = map.getBounds();
+    n = b.getNorth(); s = b.getSouth();
+    w = b.getWest();  e = b.getEast();
+  }
+  return [[
+    [w, n], [e, n], [e, s], [w, s], [w, n],
+  ]];
+}
+
+function showListingError(msg, provider) {
   Object.values(markers).forEach(m => map.removeLayer(m));
   markers = {};
 
@@ -2999,19 +3371,22 @@ function showDomainError(msg) {
   list.innerHTML = `
     <div class="domain-error">
       <div class="domain-error-icon">⚠</div>
-      <div class="domain-error-title">${isRateLimit ? 'Too many requests' : 'Domain connection error'}</div>
+      <div class="domain-error-title">${isRateLimit ? 'Too many requests' : (provider || 'Listings') + ' connection error'}</div>
       <div class="domain-error-msg">${isRateLimit
-        ? 'Domain API rate limit reached. Results will refresh automatically.'
-        : 'Could not connect to Domain API. Please check your connection and try again.'
+        ? 'API rate limit reached. Results will refresh automatically.'
+        : `Could not connect to ${provider || 'the listings'} API. Please check your connection and try again.`
       }</div>
-      <button class="domain-error-retry" onclick="runDomainSearch()">Retry</button>
+      <button class="domain-error-retry" onclick="runListingSearch()">Retry</button>
     </div>
   `;
   document.getElementById('listingCount').textContent = '0';
 }
 
-// Initial load
-runDomainSearch();
+// Kept for backward compat with any remaining callers
+function showDomainError(msg) { showListingError(msg, 'Domain'); }
+
+// Initial load — dispatches based on restored propertyCategory
+runListingSearch();
 
 // ─── Address search (Nominatim geocoder) ─────────────────────────────────────
 
