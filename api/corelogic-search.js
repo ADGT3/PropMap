@@ -168,9 +168,37 @@ export default async function handler(req, res) {
     fetchOpts.body = JSON.stringify(polygon);
   }
 
+  // Build and call — with a single retry if upstream returns 401/502/503/504,
+  // which are typically transient token/upstream issues. The retry uses a
+  // freshly-minted token.
+  async function doFetch() {
+    return fetch(url, {
+      ...fetchOpts,
+      headers: { ...fetchOpts.headers, 'Authorization': `Bearer ${token}` },
+    });
+  }
+
   try {
-    const upstream = await fetch(url, fetchOpts);
-    const rawText  = await upstream.text();
+    let upstream = await doFetch();
+    let rawText  = await upstream.text();
+
+    if (!upstream.ok && [401, 502, 503, 504].includes(upstream.status)) {
+      console.warn('[corelogic] upstream', upstream.status, '— invalidating token and retrying once');
+      _cachedToken  = null;
+      _cachedExpiry = 0;
+      try {
+        token = await getAccessToken();
+      } catch (tokErr) {
+        console.error('[corelogic] retry token fetch failed:', tokErr.message);
+        return res.status(502).json({
+          error: 'CoreLogic returned ' + upstream.status + ' and token refresh failed',
+          detail: tokErr.message,
+          upstreamBody: rawText.slice(0, 400),
+        });
+      }
+      upstream = await doFetch();
+      rawText  = await upstream.text();
+    }
 
     // Try to parse JSON but preserve raw text for debugging on failure
     let data;
