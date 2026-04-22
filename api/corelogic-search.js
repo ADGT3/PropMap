@@ -98,13 +98,23 @@ async function getAccessToken() {
  * Build the querystring for the CoreLogic endpoint. Only includes keys with
  * non-empty values — CoreLogic treats empty strings as filter values and
  * returns zero results if you accidentally include them.
+ *
+ * Array values are appended as repeated keys (e.g. propertyType=Office&propertyType=Retail)
+ * which is how CoreLogic's swagger documents multi-value filters.
  */
 function buildQueryString(queryObj) {
   if (!queryObj || typeof queryObj !== 'object') return '';
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(queryObj)) {
     if (v === null || v === undefined || v === '') continue;
-    params.append(k, String(v));
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        if (item === null || item === undefined || item === '') continue;
+        params.append(k, String(item));
+      }
+    } else {
+      params.append(k, String(v));
+    }
   }
   return params.toString();
 }
@@ -166,11 +176,18 @@ export default async function handler(req, res) {
     let data;
     try { data = JSON.parse(rawText); }
     catch (_) {
-      console.error('[corelogic] non-JSON upstream response:', upstream.status, rawText.slice(0, 400));
+      console.error('[corelogic] non-JSON upstream response', {
+        status: upstream.status,
+        bodyLen: rawText.length,
+        bodyHead: rawText.slice(0, 400),
+        url,
+        method,
+      });
       return res.status(upstream.status || 502).json({
         error: 'CoreLogic returned non-JSON',
         status: upstream.status,
         body: rawText.slice(0, 400),
+        url: url.replace(/([?&])(client_id|access_token)=[^&]+/g, '$1$2=***'),
       });
     }
 
