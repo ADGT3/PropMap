@@ -129,6 +129,14 @@ async function loadNotSuitable() {
   }
 }
 
+// V76.5.7 — convenience alias used by the listings panel link/unlink handlers
+// to rebuild _propertyByDomainId after a link change so the linked badge and
+// address-swap take effect immediately.
+async function refreshListingsCacheAfterLinkChange() {
+  await loadNotSuitable();
+}
+window.refreshListingsCacheAfterLinkChange = refreshListingsCacheAfterLinkChange;
+
 // Snooze options shown in the dropdown — value is sent as ISO string or 'permanent'
 const SNOOZE_OPTIONS = [
   { label: '30 days',  ms: 30  * 86400000 },
@@ -1867,17 +1875,45 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     : '';
 
   // V75.1 — Not Suitable inline control
+  // V76.5.7 — Link/Unlink to property inline control (mirrors CRM Property
+  // modal's Attach Domain affordance from the other direction). When the
+  // listing is already linked, shows Unlink. When not, shows Link → opens
+  // an inline search popover, user picks a property, link is recorded.
   const ns = isNotSuitable(l);
+  const linkBtn = linkedProperty
+    ? `<button class="listing-link-toggle listing-link-toggle--unlink" type="button"
+               data-listing-id="${l.id}"
+               data-property-id="${linkedProperty.id}"
+               title="Unlink from ${linkedProperty.address || linkedProperty.id}">Unlink</button>`
+    : `<button class="listing-link-toggle" type="button"
+               data-listing-id="${l.id}"
+               title="Link this listing to an existing property in the CRM">Link to property</button>`;
+  const linkPopover = `
+    <div class="listing-link-popover" style="display:none">
+      <input type="text" class="listing-link-search kb-input" placeholder="Search address, suburb, lot/DP…">
+      <div class="listing-link-results"></div>
+      <div class="listing-link-actions">
+        <button type="button" class="listing-link-cancel">Cancel</button>
+      </div>
+    </div>`;
   const nsBlock = ns
     ? `<div class="listing-not-suitable-banner">
          🚫 Not Suitable
          <button class="listing-ns-clear" type="button" title="Mark as suitable again">✓ Reinstate</button>
+       </div>
+       <div class="listing-actions-row">
+         ${linkBtn}
+         ${linkPopover}
        </div>`
-    : `<div class="listing-ns-wrap">
-         <button class="listing-ns-toggle" type="button">Not Suitable ▾</button>
-         <div class="listing-ns-menu" style="display:none">
-           ${SNOOZE_OPTIONS.map((o, i) => `<button type="button" data-idx="${i}">${o.label}</button>`).join('')}
+    : `<div class="listing-actions-row">
+         <div class="listing-ns-wrap">
+           <button class="listing-ns-toggle" type="button">Not Suitable ▾</button>
+           <div class="listing-ns-menu" style="display:none">
+             ${SNOOZE_OPTIONS.map((o, i) => `<button type="button" data-idx="${i}">${o.label}</button>`).join('')}
+           </div>
          </div>
+         ${linkBtn}
+         ${linkPopover}
        </div>`;
 
   card.innerHTML = `
@@ -1922,6 +1958,118 @@ function makeListingCard(l, { pinToTop = false } = {}) {
       });
     });
   }
+
+  // V76.5.7 — Link/Unlink handlers
+  const linkToggle = card.querySelector('.listing-link-toggle');
+  const linkPop    = card.querySelector('.listing-link-popover');
+  linkToggle?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (linkedProperty) {
+      // Unlink path: confirm, then POST unlink_listing.
+      const ok = confirm(`Unlink this Domain listing from "${linkedProperty.address || linkedProperty.id}"?`);
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/properties', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'unlink_listing', property_id: linkedProperty.id }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          alert('Unlink failed: ' + (err.error || r.status));
+          return;
+        }
+        await refreshListingsCacheAfterLinkChange();
+        renderListings();
+      } catch (err) {
+        alert('Unlink failed: ' + err.message);
+      }
+      return;
+    }
+    // Link path: open the search popover.
+    document.querySelectorAll('.listing-link-popover').forEach(p => { if (p !== linkPop) p.style.display = 'none'; });
+    document.querySelectorAll('.listing-ns-menu').forEach(m => { m.style.display = 'none'; });
+    linkPop.style.display = 'block';
+    linkPop.querySelector('.listing-link-search')?.focus();
+  });
+
+  // Search-as-you-type within the popover
+  const searchInput   = card.querySelector('.listing-link-search');
+  const resultsHost   = card.querySelector('.listing-link-results');
+  const cancelBtn     = card.querySelector('.listing-link-cancel');
+  let _linkSearchTimer = null;
+  searchInput?.addEventListener('click', (e) => e.stopPropagation());
+  searchInput?.addEventListener('input', () => {
+    clearTimeout(_linkSearchTimer);
+    const q = (searchInput.value || '').trim();
+    if (q.length < 2) { resultsHost.innerHTML = ''; return; }
+    _linkSearchTimer = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/properties?search=${encodeURIComponent(q)}`);
+        if (!r.ok) { resultsHost.innerHTML = '<div class="listing-link-empty">Search failed</div>'; return; }
+        const rows = await r.json();
+        if (!Array.isArray(rows) || !rows.length) {
+          resultsHost.innerHTML = '<div class="listing-link-empty">No matches</div>';
+          return;
+        }
+        resultsHost.innerHTML = rows.map(p => {
+          const lot = p.lot_dps ? ` · ${p.lot_dps}` : '';
+          const hasLink = p.domain_listing_id ? ' · already linked' : '';
+          return `<button type="button" class="listing-link-result"
+                           data-property-id="${p.id}"
+                           data-already-linked="${p.domain_listing_id ? 'true' : 'false'}">
+                    <div class="listing-link-result-addr">${p.address || '(no address)'}</div>
+                    <div class="listing-link-result-meta">${p.suburb || ''}${lot}${hasLink}</div>
+                  </button>`;
+        }).join('');
+        // Wire each result button
+        resultsHost.querySelectorAll('.listing-link-result').forEach(btn => {
+          btn.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            const propertyId = btn.dataset.propertyId;
+            const alreadyLinked = btn.dataset.alreadyLinked === 'true';
+            if (alreadyLinked) {
+              const ok = confirm(
+                'This property is already linked to a different Domain listing. ' +
+                'Linking this listing will replace the existing link. Continue?'
+              );
+              if (!ok) return;
+            }
+            try {
+              const r2 = await fetch('/api/properties', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action:            'link_listing',
+                  property_id:       propertyId,
+                  domain_listing_id: String(l.id),
+                  listing_url:       l.listingUrl || `https://www.domain.com.au/${l.id}`,
+                }),
+              });
+              if (!r2.ok) {
+                const err = await r2.json().catch(() => ({}));
+                alert('Link failed: ' + (err.error || r2.status));
+                return;
+              }
+              linkPop.style.display = 'none';
+              await refreshListingsCacheAfterLinkChange();
+              renderListings();
+            } catch (err) {
+              alert('Link failed: ' + err.message);
+            }
+          });
+        });
+      } catch (err) {
+        resultsHost.innerHTML = '<div class="listing-link-empty">Search error</div>';
+      }
+    }, 200);
+  });
+  cancelBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    linkPop.style.display = 'none';
+    if (searchInput) searchInput.value = '';
+    if (resultsHost) resultsHost.innerHTML = '';
+  });
 
   return card;
 }
