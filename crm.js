@@ -153,6 +153,122 @@ function formatNoteDate(ts) {
   return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// ─── V76.4.5: Vendor Terms & Offers history aggregation ──────────────────────
+// Pure helper. Takes a list of deal records (as returned by /api/deals) and
+// flattens their data.terms and data.offers into a single newest-first list
+// for read-only display in the CRM Property and Parcel modals.
+//
+// Output entry shape:
+//   {
+//     kind:        'terms' | 'offer',
+//     dealId:      string,
+//     dealWorkflow: string,           // 'acquisition' | 'agency_sales' | ...
+//     date:        ISO string,
+//     price:       string|number,
+//     settlement:  string|number|null,
+//     deposits:    Array<{ amount, due, note }>,
+//     label:       string             // e.g. "Vendor Terms" / "Offer 2"
+//   }
+//
+// Legacy data shape note: today data.terms is a singleton OBJECT. The future
+// (planned but not yet built) refactor will make it an ARRAY like data.offers.
+// This aggregator transparently handles both shapes so it'll keep working
+// after that refactor without changes here.
+function aggregateDealHistory(deals) {
+  const out = [];
+  for (const d of deals || []) {
+    if (!d || !d.data) continue;
+    const wf = d.workflow || '';
+    const updatedAt = d.updated_at || d.opened_at || d.created_at || null;
+
+    // ── Terms — singleton (legacy) or array (future)
+    const t = d.data.terms;
+    if (t) {
+      const termsList = Array.isArray(t) ? t : [t];
+      termsList.forEach((entry, i) => {
+        if (!entry) return;
+        if (!entry.price && !entry.settlement && !(entry.deposits && entry.deposits.some(x => x && x.amount))) return;
+        out.push({
+          kind:         'terms',
+          dealId:       d.id,
+          dealWorkflow: wf,
+          date:         entry.date || updatedAt,
+          price:        entry.price || '',
+          settlement:   entry.settlement || null,
+          deposits:     Array.isArray(entry.deposits) ? entry.deposits : [],
+          label:        termsList.length > 1 ? `Vendor Terms ${termsList.length - i}` : 'Vendor Terms',
+        });
+      });
+    }
+
+    // ── Offers — already an array
+    const offers = Array.isArray(d.data.offers) ? d.data.offers : [];
+    offers.forEach((o, i) => {
+      if (!o || !o.price) return;
+      out.push({
+        kind:         'offer',
+        dealId:       d.id,
+        dealWorkflow: wf,
+        date:         o.date || updatedAt,
+        price:        o.price,
+        settlement:   o.settlement || null,
+        deposits:     Array.isArray(o.deposits) ? o.deposits : [],
+        label:        `Offer ${offers.length - i}`,
+      });
+    });
+  }
+  // Newest first; entries without dates sink to the bottom
+  out.sort((a, b) => {
+    const ta = a.date ? new Date(a.date).getTime() : 0;
+    const tb = b.date ? new Date(b.date).getTime() : 0;
+    return tb - ta;
+  });
+  return out;
+}
+
+// V76.4.5: render the read-only history list as HTML for the CRM modals.
+// Reuses kanban styles (.kb-fin-pick-*) so the visual matches the deal modal's
+// finance picker. Source deal id is rendered as a link the caller can wire up.
+function buildVendorHistoryHtml(history, opts = {}) {
+  if (!history.length) {
+    return '<div class="crm-empty">No vendor terms or offers recorded yet</div>';
+  }
+  const wfLabels = { acquisition: 'Acquisition', buyer_enquiry: 'Enquiry', agency_sales: 'Listing' };
+  const fmtPrice = window.formatInputPrice || (s => '$' + s);
+  const fmtSet   = window.formatSettlement || (s => String(s));
+  const fmtDate  = window.formatOfferDate || (iso => new Date(iso).toLocaleDateString('en-AU'));
+  const fmtDep   = (deposits, price) => {
+    const fmtAmt   = window.formatDepositAmount      || ((a) => String(a));
+    const parsePx  = window.parseDepositAmountKanban || (() => 0);
+    const px = parsePx(price, null) || 0;
+    return (deposits || [])
+      .filter(x => x && x.amount)
+      .map(x => fmtAmt(x.amount, px) + (x.due ? ' · ' + fmtSet(String(x.due)) : '') + (x.note ? ' · ' + x.note : ''))
+      .join('<br>');
+  };
+
+  return `<div class="crm-vendor-history-list">${history.map(h => {
+    const depSummary = fmtDep(h.deposits, h.price);
+    const wfBadge = h.dealWorkflow ? `<span class="kb-fin-pick-meta">${wfLabels[h.dealWorkflow] || h.dealWorkflow}</span>` : '';
+    return `
+      <div class="kb-fin-pick-row crm-vendor-history-row" data-deal-id="${h.dealId}">
+        <div class="kb-fin-pick-main">
+          <div class="kb-fin-pick-top">
+            <span class="kb-fin-pick-label">${h.label}</span>
+            ${h.date ? `<span class="kb-fin-pick-date">${fmtDate(h.date)}</span>` : ''}
+          </div>
+          <div class="kb-fin-pick-detail">
+            <span class="kb-fin-pick-price">${h.price ? fmtPrice(String(h.price)) : '—'}</span>
+            ${h.settlement ? `<span class="kb-fin-pick-meta">${fmtSet(String(h.settlement))} settlement</span>` : ''}
+            ${wfBadge}
+            <span class="kb-fin-pick-meta">Deal <a href="#" class="crm-vendor-history-deal-link" data-deal-id="${h.dealId}">${h.dealId}</a></span>
+          </div>
+          ${depSummary ? `<div class="kb-fin-pick-deps">${depSummary}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('')}</div>`;
+}
+
 // ─── Organisation typeahead ───────────────────────────────────────────────────
 
 function buildOrgTypeahead(container, onSelect) {
@@ -175,6 +291,8 @@ function buildOrgTypeahead(container, onSelect) {
     const q = input.value.trim();
     if (q.length < 1) { results.innerHTML = ''; return; }
     debounce = setTimeout(async () => {
+      // V76.4: clean API contract — org_search=q alone returns orgs matching q.
+      // No coupling rule, no flag-pairing required.
       const orgs = await apiGet({ org_search: q }).catch(() => []);
       results.innerHTML = '';
       // "Create new" option
@@ -1498,8 +1616,9 @@ function renderCRMView(container) {
     async function fetchOrgs(q = '') {
       const tbody = pane.querySelector('#crmOrgTableBody');
       tbody.innerHTML = `<tr><td colspan="3" class="crm-loading">Loading…</td></tr>`;
-      const params = { all_orgs: '1' };
-      if (q) params.org_search = q;
+      // V76.4: each parameter expresses one intent. `org_search=q` returns
+      // orgs matching q; `all_orgs=1` returns the unfiltered list. No mixing.
+      const params = q ? { org_search: q } : { all_orgs: '1' };
       const orgs = await apiGet(params).catch(() => []);
       if (!orgs.length) { tbody.innerHTML = `<tr><td colspan="3" class="crm-empty">No organisations found</td></tr>`; return; }
       tbody.innerHTML = '';
@@ -1542,14 +1661,11 @@ function renderCRMView(container) {
     async function render() {
       modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
 
-      const [orgContacts, allContacts] = isEdit ? await Promise.all([
-        apiGet({ org_contacts: prefill.id }).catch(() => []),
-        apiGet({ all: '1', limit: 200 }).then(d => d.contacts || d).catch(() => []),
-      ]) : [[], []];
-
-      // Contacts not already in this org
-      const orgContactIds = new Set(orgContacts.map(c => c.id));
-      const available = Array.isArray(allContacts) ? allContacts.filter(c => !orgContactIds.has(c.id)) : [];
+      // V76.4: dropped the 200-row preload of all contacts — the new search
+      // input loads matches on demand via /api/contacts?search=q.
+      const orgContacts = isEdit
+        ? await apiGet({ org_contacts: prefill.id }).catch(() => [])
+        : [];
 
       const orgName    = prefill?.name    || '';
       const orgPhone   = prefill?.phone   || '';
@@ -1620,13 +1736,12 @@ function renderCRMView(container) {
               Contacts (${orgContacts.length})
               <button class="crm-org-add-contact-btn kb-add-offer-btn">+ Add Contact</button>
             </div>
+            <!-- V76.4: replaced static <select> dropdown with search-or-create
+                 flow, matching the deal-modal contact form pattern. -->
             <div class="crm-org-add-contact-form" style="display:none;margin-bottom:8px">
-              <div style="display:flex;gap:6px;align-items:center">
-                <select class="kb-input crm-org-contact-select" style="flex:1;font-size:12px">
-                  <option value="">Select contact…</option>
-                  ${available.map(c => `<option value="${c.id}">${displayName(c)}${c.org_name ? ' · ' + c.org_name : ''}</option>`).join('')}
-                </select>
-                <button class="crm-org-contact-link-save kb-add-offer-btn">Add</button>
+              <input class="kb-input crm-org-contact-search" type="text" placeholder="Search existing contacts by name or email…" style="width:100%">
+              <div class="crm-search-results crm-org-contact-search-results"></div>
+              <div style="display:flex;gap:6px;margin-top:6px;justify-content:flex-end">
                 <button class="crm-org-contact-link-cancel crm-cancel-btn">Cancel</button>
               </div>
             </div>
@@ -1684,17 +1799,54 @@ function renderCRMView(container) {
 
       if (!isEdit) return;
 
-      // Add contact to org
+      // V76.4: search-or-link contact in org modal (replaces dropdown).
+      // Mirrors the deal-modal contact search pattern: type → debounced
+      // /api/contacts?search=q → click result → POST set_org → re-render.
       const addContactBtn  = modal.querySelector('.crm-org-add-contact-btn');
       const addContactForm = modal.querySelector('.crm-org-add-contact-form');
-      addContactBtn?.addEventListener('click', () => { addContactForm.style.display = ''; addContactBtn.style.display = 'none'; });
-      modal.querySelector('.crm-org-contact-link-cancel')?.addEventListener('click', () => { addContactForm.style.display = 'none'; addContactBtn.style.display = ''; });
-      modal.querySelector('.crm-org-contact-link-save')?.addEventListener('click', async () => {
-        const contactId = modal.querySelector('.crm-org-contact-select').value;
-        if (!contactId) return;
-        await apiPost({ action: 'set_org', contact_id: parseInt(contactId), organisation_id: prefill.id });
-        render();
+      addContactBtn?.addEventListener('click', () => {
+        addContactForm.style.display = '';
+        addContactBtn.style.display = 'none';
+        modal.querySelector('.crm-org-contact-search')?.focus();
       });
+      modal.querySelector('.crm-org-contact-link-cancel')?.addEventListener('click', () => {
+        addContactForm.style.display = 'none';
+        addContactBtn.style.display = '';
+        const searchInput  = modal.querySelector('.crm-org-contact-search');
+        const resultsEl    = modal.querySelector('.crm-org-contact-search-results');
+        if (searchInput) searchInput.value = '';
+        if (resultsEl)   resultsEl.innerHTML = '';
+      });
+
+      const contactSearchInput = modal.querySelector('.crm-org-contact-search');
+      if (contactSearchInput) {
+        let searchTimer;
+        contactSearchInput.addEventListener('input', () => {
+          clearTimeout(searchTimer);
+          const q = contactSearchInput.value.trim();
+          const resultsEl = modal.querySelector('.crm-org-contact-search-results');
+          if (!resultsEl) return;
+          if (q.length < 2) { resultsEl.innerHTML = ''; return; }
+          searchTimer = setTimeout(async () => {
+            const results = await apiGet({ search: q }).catch(() => []);
+            // Filter out anyone already in this org
+            const orgContactIds = new Set(orgContacts.map(c => c.id));
+            const filtered = (Array.isArray(results) ? results : []).filter(c => !orgContactIds.has(c.id));
+            if (!filtered.length) { resultsEl.innerHTML = '<div class="crm-empty">No matches</div>'; return; }
+            resultsEl.innerHTML = '';
+            filtered.forEach(ct => {
+              const item = document.createElement('div');
+              item.className = 'crm-search-item';
+              item.innerHTML = `<strong>${displayName(ct)}</strong>${ct.org_name ? ` · ${ct.org_name}` : ''}${ct.mobile || ct.email ? ` · ${ct.mobile || ct.email}` : ''}`;
+              item.addEventListener('click', async () => {
+                await apiPost({ action: 'set_org', contact_id: ct.id, organisation_id: prefill.id });
+                render();
+              });
+              resultsEl.appendChild(item);
+            });
+          }, 300);
+        });
+      }
 
       // Remove contact from org
       modal.querySelectorAll('.crm-org-contact-remove').forEach(btn => {
@@ -1865,6 +2017,11 @@ function renderCRMView(container) {
       // Active deal detection for the smart-button section header
       const activeDeal = parcelDeals.find(d => d.status === 'active') || null;
       const closedCount = parcelDeals.filter(d => d.status !== 'active').length;
+      // V76.4.5: read-only vendor terms & offers history aggregated from
+      // every deal attached to this parcel.
+      const vendorHistory = (typeof aggregateDealHistory === 'function')
+        ? aggregateDealHistory(parcelDeals)
+        : [];
 
       // Not-suitable state
       const nsRaw = parcel.not_suitable_until;
@@ -1968,6 +2125,17 @@ function renderCRMView(container) {
                   <span class="crm-deal-badge crm-deal-badge-stage">${d.stage}</span>
                   <span class="crm-deal-badge crm-deal-badge-stage">${d.status}</span>
                 </div>`).join('') : '<div class="crm-empty">No deals on this parcel</div>'}
+            </div>
+          </div>
+
+          <!-- V76.4.5: read-only vendor terms & offers history aggregated from
+               all deals attached to this parcel. -->
+          <div class="crm-modal-section crm-section-collapsible" data-section="vendor-history" ${vendorHistory.length ? '' : 'data-collapsed="1"'}>
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">${vendorHistory.length ? '▾' : '▸'}</span> Vendor Terms &amp; Offers <span class="crm-section-count">(${vendorHistory.length})</span></span>
+            </div>
+            <div class="crm-section-body" ${vendorHistory.length ? '' : 'style="display:none"'}>
+              ${buildVendorHistoryHtml(vendorHistory)}
             </div>
           </div>
 
@@ -2109,6 +2277,14 @@ function renderCRMView(container) {
         if (window.Router) Router.navigate(`/pipeline/deal/${e.currentTarget.dataset.dealId}`);
       });
       modal.querySelectorAll('.crm-deal-open').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (window.Router) Router.navigate(`/pipeline/deal/${a.dataset.dealId}`);
+        });
+      });
+
+      // V76.4.5: vendor terms & offers history — deal-id links open the deal modal
+      modal.querySelectorAll('.crm-vendor-history-deal-link').forEach(a => {
         a.addEventListener('click', (e) => {
           e.preventDefault();
           if (window.Router) Router.navigate(`/pipeline/deal/${a.dataset.dealId}`);
@@ -2334,6 +2510,16 @@ function renderCRMView(container) {
 
       const parcel = property.parcel_id ? allParcels.find(x => x.id === property.parcel_id) : null;
       const propertyDeals = allDeals.filter(d => d.property_id === propertyId);
+      // V76.4.5: for the read-only Vendor Terms & Offers history we ALSO want
+      // to see deals on the parcel this property belongs to — that's where
+      // parcel-level negotiations record their terms/offers, and they're
+      // genuinely the history of this property too.
+      const historyDeals = property.parcel_id
+        ? allDeals.filter(d => d.property_id === propertyId || d.parcel_id === property.parcel_id)
+        : propertyDeals;
+      const vendorHistory = (typeof aggregateDealHistory === 'function')
+        ? aggregateDealHistory(historyDeals)
+        : [];
       const activeDeal  = propertyDeals.find(d => d.status === 'active') || null;
       const closedCount = propertyDeals.filter(d => d.status !== 'active').length;
 
@@ -2452,6 +2638,17 @@ function renderCRMView(container) {
                   <span class="crm-deal-badge crm-deal-badge-stage">${d.stage}</span>
                   <span class="crm-deal-badge crm-deal-badge-stage">${d.status}</span>
                 </div>`).join('') : (inParcel ? '' : '<div class="crm-empty">No deals on this property</div>')}
+            </div>
+          </div>
+
+          <!-- V76.4.5: read-only vendor terms & offers history aggregated from
+               all deals attached to this property (and the parent parcel, if any). -->
+          <div class="crm-modal-section crm-section-collapsible" data-section="vendor-history" ${vendorHistory.length ? '' : 'data-collapsed="1"'}>
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">${vendorHistory.length ? '▾' : '▸'}</span> Vendor Terms &amp; Offers <span class="crm-section-count">(${vendorHistory.length})</span></span>
+            </div>
+            <div class="crm-section-body" ${vendorHistory.length ? '' : 'style="display:none"'}>
+              ${buildVendorHistoryHtml(vendorHistory)}
             </div>
           </div>
 
@@ -2619,6 +2816,18 @@ function renderCRMView(container) {
         }
       });
       modal.querySelectorAll('.crm-deal-open').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          const dealId = a.dataset.dealId;
+          if (dealId && typeof window.openPipelineItem === 'function') {
+            onDone();
+            window.openPipelineItem(dealId);
+          }
+        });
+      });
+
+      // V76.4.5: vendor terms & offers history — deal-id links open the deal modal
+      modal.querySelectorAll('.crm-vendor-history-deal-link').forEach(a => {
         a.addEventListener('click', (e) => {
           e.preventDefault();
           const dealId = a.dataset.dealId;

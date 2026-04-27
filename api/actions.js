@@ -9,6 +9,18 @@
  *        Auto-promotes todo/wip rows whose due_date ≤ today to status='due'.
  *        Returns: { board: {..., columns:[...]}, actions: [...] }
  *
+ *   GET  /api/actions?count=due
+ *        V76.4: lightweight count for the Pipeline header bell badge.
+ *        V76.4.2: counts both "due" and "reminder due" rows for the current
+ *        user. Specifically: rows where status NOT IN ('done','void') AND
+ *        any of:
+ *          - status = 'due', OR
+ *          - due_date <= CURRENT_DATE, OR
+ *          - reminder_date <= CURRENT_DATE
+ *        Reminders do NOT auto-promote to the Due column (only due_date
+ *        does — see promoteDueActions); they just count toward the badge.
+ *        Returns: { count: N }
+ *
  *   GET  /api/actions?deal_id=X
  *        Lists actions linked to a deal (regardless of assignee).
  *        Returns: [...actions]
@@ -222,7 +234,28 @@ export default async function handler(req, res) {
 
 // ── GET ─────────────────────────────────────────────────────────────────────
 async function handleGet(req, res, session) {
-  const { assignee, deal_id, id } = req.query;
+  const { assignee, deal_id, id, count } = req.query;
+
+  // V76.4: lightweight due-count for the Pipeline header badge.
+  // V76.4.2: now also includes actions whose `reminder_date <= CURRENT_DATE`,
+  // regardless of column. A reminder doesn't move the action to the Due column
+  // (that's still due_date-driven via promoteDueActions); it just flags
+  // "needs attention today" for the badge.
+  if (count === 'due') {
+    const userId = resolveSessionUserId(session);
+    if (!userId) return res.status(200).json({ count: 0 });
+    const rows = await sql`
+      SELECT COUNT(*)::int AS n
+      FROM actions
+      WHERE assignee_id = ${userId}
+        AND status NOT IN ('done', 'void')
+        AND (
+          status = 'due'
+          OR (due_date      IS NOT NULL AND due_date      <= CURRENT_DATE)
+          OR (reminder_date IS NOT NULL AND reminder_date <= CURRENT_DATE)
+        )`;
+    return res.status(200).json({ count: rows[0]?.n || 0 });
+  }
 
   // Single action
   if (id) {

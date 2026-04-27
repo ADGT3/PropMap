@@ -35,7 +35,8 @@
  *
  * ── Organisations ──────────────────────────────────────────────────────────
  * GET    /api/contacts?orgs=1                         -> list
- * GET    /api/contacts?all_orgs=1[&org_search=X]      -> list with contact_count
+ * GET    /api/contacts?all_orgs=1                  -> all orgs, with contact_count
+ * GET    /api/contacts?org_search=X                 -> orgs matching X (with contact_count)
  * GET    /api/contacts?org_contacts=ORGID             -> contacts in an org
  * POST   /api/contacts { action:'create_org', ... }   -> create org
  * POST   /api/contacts { action:'set_org', contact_id, organisation_id }
@@ -78,8 +79,14 @@ export default async function handler(req, res) {
           entity_type, entity_id, last_role,
         } = req.query;
 
-        // ── All orgs with contact count
-        if (all_orgs) {
+        // ── Org list / org search
+        // V76.4: `org_search=q` alone is sufficient — it always returns
+        // organisations matching `q`. `all_orgs=1` alone returns the full
+        // unfiltered list. No coupling rule: each parameter does what its
+        // name implies. The previous contract required `all_orgs=1` to be
+        // set even for searches, which was non-obvious and caused callers
+        // to fall through to the default contact list when they forgot.
+        if (org_search || all_orgs) {
           const q = org_search ? `%${org_search}%` : null;
           const rows = q
             ? await sql`

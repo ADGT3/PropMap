@@ -204,7 +204,12 @@ function dealRowToInternal(row) {
     _boardId:      row.board_id    || null,
     _columnId:     row.column_id   || null,
     // V75.7: due-action flag, set server-side in api/deals.js fetchAndExpand
-    _hasDueAction: !!row.has_due_action,
+    // V76.4.2: due_action_count is the actual number; _hasDueAction kept for compat.
+    // V76.4.3: _hasOverdueAction drives the red left-border attention bar
+    // (narrower rule: due_date today-or-earlier, status not done/void).
+    _hasDueAction:      !!row.has_due_action,
+    _dueActionCount:    Number(row.due_action_count || 0),
+    _hasOverdueAction:  !!row.has_overdue_action,
   };
 }
 
@@ -467,8 +472,59 @@ function toggleKanban(show) {
   document.getElementById('kanbanView').classList.toggle('visible', kanbanVisible);
   const btn = document.getElementById('kanbanToggleBtn');
   btn.classList.toggle('active', kanbanVisible);
-  if (kanbanVisible) renderBoard();
+  if (kanbanVisible) {
+    renderBoard();
+    // V76.4: refresh the due-actions bell badge whenever Pipeline is opened.
+    // No polling — the count refreshes only on view open (and after action
+    // mutations, which is what the user asked for).
+    refreshDueBadge();
+  }
 }
+
+// ─── V76.4: Due-actions bell badge ───────────────────────────────────────────
+// Hits the lightweight count endpoint and toggles the badge in Header 2.
+// Visible on all Pipeline boards (not just My Actions). Click jumps to the
+// user's My Actions board.
+
+async function refreshDueBadge() {
+  const badge = document.getElementById('kanbanDueBadge');
+  const countEl = document.getElementById('kanbanDueBadgeCount');
+  if (!badge || !countEl) return;
+  try {
+    const r = await fetch('/api/actions?count=due');
+    if (!r.ok) { badge.hidden = true; return; }
+    const { count } = await r.json();
+    if (!count || count <= 0) {
+      badge.hidden = true;
+    } else {
+      countEl.textContent = String(count);
+      badge.hidden = false;
+    }
+  } catch (_) {
+    badge.hidden = true;
+  }
+}
+window.refreshDueBadge = refreshDueBadge;
+
+// Bind click once on first script load — switches the active board to the
+// user's My Actions board (without filter), reusing the board-select flow.
+(function bindDueBadgeClick() {
+  document.addEventListener('DOMContentLoaded', () => {
+    const badge = document.getElementById('kanbanDueBadge');
+    if (!badge) return;
+    badge.addEventListener('click', () => {
+      const myActions = (boards || []).find(b => b.board_type === 'action');
+      if (!myActions) return;
+      if (currentBoardId === myActions.id) return; // already there
+      currentBoardId = myActions.id;
+      // Sync the visible board selector so it reflects the switch
+      const sel = document.getElementById('kanbanBoardSelect');
+      if (sel) sel.value = currentBoardId;
+      pipeline = {};
+      renderBoard();
+    });
+  });
+})();
 
 // ─── Add property to pipeline ────────────────────────────────────────────────
 
@@ -1398,6 +1454,11 @@ function renderBoard() {
       if (!p) return; // skip malformed entries
       const card = document.createElement('div');
       card.className = 'kb-card';
+      // V76.4.3: red attention bar when the deal has at least one OVERDUE
+      // action — same rule as the action card's _isOverdue (status active,
+      // due_date today-or-earlier). Reminder-due alone doesn't trigger
+      // the bar; it only contributes to the bell count.
+      if (item._hasOverdueAction) card.classList.add('kb-card-attention');
       card.draggable = true;
       card.dataset.id = id;
 
@@ -1431,7 +1492,7 @@ function renderBoard() {
           ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
           ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
           ${(Array.isArray(item.note) ? item.note.length : item.note) ? `<span class="kb-ind kb-ind-note" title="Has notes">Note</span>` : ''}
-          ${item._hasDueAction ? `<span class="kb-ind kb-ind-action-due" title="Action due or overdue">⏰ Action</span>` : ''}
+          ${item._dueActionCount > 0 ? `<span class="kb-ind kb-ind-action-due" title="${item._dueActionCount} action${item._dueActionCount === 1 ? '' : 's'} due or reminder due">🔔 ${item._dueActionCount}</span>` : ''}
         </div>
       `;
 
@@ -1706,7 +1767,9 @@ async function renderActionsBoard(board) {
     colActions.forEach(a => {
       const card = document.createElement('div');
       card.className = 'kb-card kb-action-card';
-      if (_isOverdue(a)) card.classList.add('kb-action-card-overdue');
+      // V76.4.3: generic attention indicator (was kb-action-card-overdue).
+      // Same class is also applied to deal cards when they have due actions.
+      if (_isOverdue(a)) card.classList.add('kb-card-attention');
       card.draggable = true;
       card.dataset.id = a.id;
 
@@ -1787,6 +1850,9 @@ async function renderActionsBoard(board) {
         });
         // Re-render — fetches fresh data + re-runs server-side due promotion
         renderBoard();
+        // V76.4: drag may move an action into/out of Due (or change a date-driven
+        // status), so refresh the badge.
+        refreshDueBadge();
       } catch (err) {
         console.warn('[actions] move failed:', err.message);
       }
@@ -1835,6 +1901,42 @@ async function openActionModal(id, defaults) {
         <button class="kb-modal-close" title="Close">✕</button>
       </div>
       <div class="kb-modal-body">
+        ${isEdit ? (() => {
+          // V76.4: Status as the first field in the body, consistent with the
+          // deal modal. Columns sourced from the user's My Actions board so
+          // any renames are reflected. Server still derives status from the
+          // column's stage_slug on save.
+          const actBoard = (boards || []).find(b => b.board_type === 'action');
+          const cols = (actBoard?.columns || []).slice().sort((a,b) => a.sort_order - b.sort_order);
+          if (!cols.length) {
+            // Fallback: hardcoded slugs if board/columns aren't loaded yet
+            return `
+              <div class="kb-action-field">
+                <label>Status</label>
+                <select id="kbActionStatus">
+                  <option value="todo" ${action.status === 'todo' ? 'selected' : ''}>ToDo</option>
+                  <option value="wip"  ${action.status === 'wip'  ? 'selected' : ''}>WIP</option>
+                  <option value="due"  ${action.status === 'due'  ? 'selected' : ''}>Due</option>
+                  <option value="done" ${action.status === 'done' ? 'selected' : ''}>Done</option>
+                  <option value="void" ${action.status === 'void' ? 'selected' : ''}>Void</option>
+                </select>
+              </div>
+            `;
+          }
+          // Pick the column whose stage_slug matches the action's status (or
+          // fall back to current column_id if set on the action).
+          const currentColId = action.column_id ||
+            cols.find(c => c.stage_slug === action.status)?.id ||
+            cols[0]?.id;
+          return `
+            <div class="kb-action-field">
+              <label>Status</label>
+              <select id="kbActionStatus">
+                ${cols.map(c => `<option value="${c.stage_slug}" data-col-id="${c.id}" ${c.id === currentColId ? 'selected' : ''}>${_escapeHtml(c.name)}</option>`).join('')}
+              </select>
+            </div>
+          `;
+        })() : ''}
         <div class="kb-action-field">
           <label>Description</label>
           <textarea id="kbActionDesc" rows="3" placeholder="What needs to be done?">${_escapeHtml(action?.description || '')}</textarea>
@@ -1870,23 +1972,11 @@ async function openActionModal(id, defaults) {
             <input type="date" id="kbActionReminder" value="${action?.reminder_date ? String(action.reminder_date).slice(0,10) : ''}">
           </div>
         </div>
-        ${isEdit ? `
-          <div class="kb-action-field">
-            <label>Status</label>
-            <select id="kbActionStatus">
-              <option value="todo" ${action.status === 'todo' ? 'selected' : ''}>ToDo</option>
-              <option value="wip"  ${action.status === 'wip'  ? 'selected' : ''}>WIP</option>
-              <option value="due"  ${action.status === 'due'  ? 'selected' : ''}>Due</option>
-              <option value="done" ${action.status === 'done' ? 'selected' : ''}>Done</option>
-              <option value="void" ${action.status === 'void' ? 'selected' : ''}>Void</option>
-            </select>
-          </div>
-        ` : ''}
         ${(isEdit && action.deal) ? `
           <div class="kb-action-field">
             <label>Linked deal</label>
             <div class="kb-action-deal-tag" id="kbActionDealTag">
-              <span class="kb-action-deal-label">${_escapeHtml(action.deal.label || action.deal_id)}</span>
+              <a class="kb-action-deal-label kb-action-deal-link" href="#" id="kbActionDealOpen" title="Open deal">${_escapeHtml(action.deal.label || action.deal_id)}</a>
               <button class="kb-action-deal-clear" title="Unlink">✕</button>
             </div>
             <input class="kb-input kb-action-deal-search" type="text" id="kbActionDealSearch" placeholder="Search deal by address or id…" style="display:none">
@@ -1925,6 +2015,22 @@ async function openActionModal(id, defaults) {
   wrap.querySelector('.kb-modal-close').addEventListener('click', close);
   wrap.querySelector('#kbActionCancel').addEventListener('click', close);
   wrap.addEventListener('click', e => { if (e.target === wrap) close(); });
+
+  // V76.4: clicking the linked-deal label opens that deal's modal.
+  // Closes the action modal first so the user isn't left with both stacked.
+  // Only present in edit mode when action.deal resolved server-side.
+  const dealOpenLink = wrap.querySelector('#kbActionDealOpen');
+  if (dealOpenLink) {
+    dealOpenLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      const dealId = action?.deal_id;
+      if (!dealId) return;
+      close();
+      if (typeof window.openPipelineItem === 'function') {
+        window.openPipelineItem(dealId);
+      }
+    });
+  }
 
   // V76.2.1: deal picker — search + tag + clear. Tracks the selected deal
   // in this closure; initial value comes from the action being edited,
@@ -2040,6 +2146,8 @@ async function openActionModal(id, defaults) {
         if (typeof refreshDealActions === 'function') refreshDealActions(dealId);
       }
       showKanbanToast(isEdit ? 'Action updated' : 'Action created');
+      // V76.4: action create/update may change the due-count
+      refreshDueBadge();
     } catch (err) {
       alert('Network error: ' + err.message);
     }
@@ -2059,6 +2167,8 @@ async function openActionModal(id, defaults) {
           refreshDealActions(action.deal_id);
         }
         showKanbanToast('Action deleted');
+        // V76.4: action delete may decrease the due-count
+        refreshDueBadge();
       } catch (err) {
         alert('Network error: ' + err.message);
       }
@@ -2351,6 +2461,25 @@ ${rows.join('')}`;
       </div>
       <div class="kb-modal-body">
 
+        <!-- V76.4: Status select — first field in every Modal body, matches the
+             pattern adopted across deal and action modals. Auto-saves on change
+             (deal modal convention: every field auto-persists on change/blur). -->
+        ${(() => {
+          const dealBoardId = item._boardId || currentBoardId;
+          const dealBoard   = boards.find(b => b.id === dealBoardId);
+          const cols        = (dealBoard?.columns || []).slice().sort((a,b) => a.sort_order - b.sort_order);
+          if (!cols.length) return '';
+          const currentColId = item._columnId || stageToColumnId(item.stage);
+          return `
+            <div class="kb-field-wrap" style="margin-bottom:12px">
+              <label class="kb-field-label">Status</label>
+              <select class="kb-input kb-modal-status-select" id="kbModalStatus-${id}">
+                ${cols.map(c => `<option value="${c.id}" ${c.id === currentColId ? 'selected' : ''}>${_escapeHtml(c.name)}</option>`).join('')}
+              </select>
+            </div>
+          `;
+        })()}
+
         <div class="crm-section-placeholder"></div>
 
         <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
@@ -2445,6 +2574,15 @@ ${rows.join('')}`;
     if (!confirm('Confirm delete')) return;
     overlay.remove();
     await removeFromPipeline(id);
+  });
+
+  // V76.4: Status select — auto-save on change (deal-modal convention).
+  // moveToColumn updates entry.stage + entry._columnId and persists via
+  // savePipeline (cache + DB write). Re-render so the card moves columns.
+  overlay.querySelector(`#kbModalStatus-${id}`)?.addEventListener('change', (e) => {
+    const newColId = e.target.value;
+    moveToColumn(id, newColId);
+    renderBoard();
   });
   // Finance picker — delegate clicks on all .kb-fin-pick-btn rows
   function parsePickerPrice(s) {
@@ -2944,14 +3082,89 @@ window.refreshPipelinePins = function () {
 };
 
 // Expose for cross-module navigation (CRM deep-links into a pipeline item)
-window.openPipelineItem = function (pipelineId) {
-  if (!pipeline[pipelineId]) {
+// V76.4.2: handle cross-board navigation. The local `pipeline` dict is scoped
+//   to currentBoardId only — clicking a deal link from My Actions used to fail
+//   with "no longer exists" if the deal lives on a different board.
+// V76.4.4: fast-path the slow case. Previously we fetched the deal, then
+//   fetched the entire target board's deals + per-user ordering, then
+//   re-rendered the board twice before opening the modal — three sequential
+//   round-trips and heavy DOM work for a single-modal request. Now we open
+//   the modal as soon as the single-deal fetch returns (one round-trip), and
+//   reload the rest of the board in the background. The modal already had
+//   everything it needed from that single fetch.
+window.openPipelineItem = async function (pipelineId) {
+  // Fast path A: deal is already loaded in the current board's cache
+  if (pipeline[pipelineId]) {
+    if (crmVisible) toggleCRM(false);
+    if (!kanbanVisible) toggleKanban(true);
+    setTimeout(() => openCardModal(pipelineId), 50);
+    return;
+  }
+
+  // Slow path: one fetch, then open immediately. The full-board reload runs
+  // in the background and the user doesn't wait for it.
+  let dealRow = null;
+  try {
+    const r = await fetch(`/api/deals?id=${encodeURIComponent(pipelineId)}`);
+    if (r.ok) dealRow = await r.json();
+  } catch (_) { /* fall through */ }
+
+  if (!dealRow || !dealRow.id) {
     alert('That pipeline item no longer exists.');
     return;
   }
-  // Close CRM view if open, then open Kanban and the card modal
+
+  // Reveal Kanban, but DON'T re-render before we have the deal in the dict.
+  // Ensure visibility without triggering a wholesale renderBoard for the
+  // (about-to-be-changed) currentBoardId, which would briefly show an empty
+  // target board.
   if (crmVisible) toggleCRM(false);
-  if (!kanbanVisible) toggleKanban(true);
-  // Wait a tick for Kanban to render before opening the modal
-  setTimeout(() => openCardModal(pipelineId), 50);
+  if (!kanbanVisible) {
+    kanbanVisible = true;
+    window.kanbanVisible = true;
+    document.getElementById('kanbanView').classList.toggle('visible', true);
+    document.getElementById('kanbanToggleBtn')?.classList.add('active');
+    refreshDueBadge();
+  }
+
+  const targetBoardId = dealRow.board_id || currentBoardId;
+  const switching = targetBoardId !== currentBoardId;
+
+  // Drop the single deal into the dict immediately, even before we know if
+  // we're on its board, so openCardModal() finds it.
+  pipeline[pipelineId] = dealRowToInternal(dealRow);
+
+  if (switching) {
+    currentBoardId = targetBoardId;
+    const sel = document.getElementById('kanbanBoardSelect');
+    if (sel) sel.value = currentBoardId;
+  }
+
+  // Open the modal NOW — it's fully renderable from the single deal we have.
+  openCardModal(pipelineId);
+
+  // Background: reload the rest of the target board so when the user closes
+  // the modal they see the full board populated. We don't await this; the
+  // user is already looking at the modal.
+  (async () => {
+    try {
+      const [dict, _order] = await Promise.all([dbLoad(), loadUserDealOrder()]);
+      if (dict) {
+        // Preserve the deal we already inserted (it has the freshest data
+        // we needed for the modal); merge the rest of the board over it.
+        const merged = { ...dict, [pipelineId]: pipeline[pipelineId] || dict[pipelineId] };
+        Object.keys(pipeline).forEach(k => delete pipeline[k]);
+        Object.assign(pipeline, merged);
+      }
+      cacheSave(pipeline);
+      // Re-render only if Kanban is still visible AND no modal is open
+      // (avoid yanking the page out from under the user).
+      if (kanbanVisible && !document.getElementById('kb-modal')) {
+        renderBoard();
+      }
+      if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+    } catch (err) {
+      console.warn('[openPipelineItem] background reload failed:', err.message);
+    }
+  })();
 };
