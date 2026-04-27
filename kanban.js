@@ -73,7 +73,12 @@ function columnIdToStage(columnId, boardId) {
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'propertyPipeline';
+// V76.5: cache key bumped to invalidate localStorage on first load post-migration.
+// Old cached entries are keyed by listing.id (which used to also be the deal id);
+// after migration, deal ids are `deal_*` and the old cached keys would never
+// resolve. Forcing a fresh load avoids that mismatch. The old key
+// 'propertyPipeline' is left orphaned in localStorage — harmless, ~few KB.
+const STORAGE_KEY = 'propertyPipeline_v76_5';
 
 // V75.0b — frontend talks to /api/deals and /api/properties directly.
 // No /api/pipeline shim used.
@@ -85,6 +90,24 @@ const PROPERTIES_API = '/api/properties';
 //   { [id]: { stage, note, addedAt, property, terms, offers, notes, dd } }
 let pipeline = {};
 let dbAvailable = false;
+
+// V76.5: lookup helper — returns the [dealId, entry] tuple for the pipeline
+// entry whose property has the given domain_listing_id, or null if none.
+// This is the canonical "is this Domain listing already in the pipeline?"
+// check, replacing the old `pipeline[listing.id]` lookup that relied on
+// deal.id == listing.id collision.
+function findPipelineByDomainId(domainId) {
+  if (domainId == null) return null;
+  const needle = String(domainId);
+  const entries = Object.entries(pipeline);
+  for (const [dealId, entry] of entries) {
+    if (entry?.property?.domain_id != null && String(entry.property.domain_id) === needle) {
+      return [dealId, entry];
+    }
+  }
+  return null;
+}
+window.findPipelineByDomainId = findPipelineByDomainId;
 
 // ── localStorage helpers (cache / offline fallback) ──────────────────────────
 function cacheLoad() {
@@ -216,8 +239,12 @@ function dealRowToInternal(row) {
 function internalToPropertyPayload(id, entry) {
   const p = entry.property || {};
   const firstParcel = Array.isArray(p._parcels) && p._parcels[0] ? p._parcels[0] : null;
+  // V76.5: property's own id, sourced from entry.property.id (the actual
+  // `properties.id` column value). The legacy `id` parameter is the deal id
+  // — a leftover from the V75 era when deal.id == property.id. We keep the
+  // parameter for call-site compatibility but don't use it for the payload id.
   return {
-    id,
+    id:                p.id || id,
     address:           p.address || '',
     suburb:            p.suburb  || '',
     lat:               p.lat     ?? firstParcel?.lat ?? null,
@@ -268,10 +295,13 @@ function internalToDealPayload(id, entry) {
     },
   };
   // V75.4: parcel deals vs property deals — exactly one of these must be set.
+  // V76.5: property_id sourced from entry.property.id (no longer assumed to
+  // equal the deal id). Falls back to the deal id only for legacy in-memory
+  // entries that haven't been hydrated from a server fetch yet.
   if (entry._isParcel && entry._parcelId) {
     payload.parcel_id = entry._parcelId;
   } else {
-    payload.property_id = id;
+    payload.property_id = entry.property?.id || id;
   }
   return payload;
 }
@@ -366,7 +396,7 @@ async function dbSave(id, entry) {
   }
 }
 
-async function dbDelete(id, wasParcel = false) {
+async function dbDelete(id, wasParcel = false, propertyId = null) {
   if (!dbAvailable) return;
   try {
     // V75.4d: route to the right endpoint based on whether this was a parcel-deal
@@ -375,11 +405,14 @@ async function dbDelete(id, wasParcel = false) {
     //
     // For parcel-deals: DELETE /api/deals — the deals.js DELETE handler also
     // cleans up the orphaned parcel + its children if no other deals reference it.
-    // For property-deals: DELETE /api/properties cascades to the deal via FK.
+    // V76.5: For property-deals: deal.id no longer equals property.id, so callers
+    // must pass propertyId explicitly. Falls back to id for legacy compatibility
+    // during the migration transition (where they may still be equal).
     if (wasParcel) {
       await fetch(`${DEALS_API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
     } else {
-      await fetch(`${PROPERTIES_API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const targetId = propertyId || id;
+      await fetch(`${PROPERTIES_API}?id=${encodeURIComponent(targetId)}`, { method: 'DELETE' });
     }
   } catch (_) {}
 }
@@ -528,41 +561,92 @@ window.refreshDueBadge = refreshDueBadge;
 
 // ─── Add property to pipeline ────────────────────────────────────────────────
 
-function addToPipeline(listing) {
-  const id = String(listing.id);
-  if (pipeline[id]) {
-    highlightCard(id);
-    return;
+// V76.5 — id generation. Properties and deals each get their own keyspace,
+// distinct from each other and from Domain listing ids. Reflects the new
+// architectural rule: deal id, property id, and listing id are all unique
+// and must never overlap. Migration to-v76-5 renumbers legacy data that
+// violated this; addToPipeline below never creates a violation in new data.
+function newPropertyId() {
+  return 'prop_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
+function newDealId() {
+  return 'deal_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
+
+// V76.5 — addToPipeline rewritten:
+//   - If the listing's domain id is already linked to an existing property
+//     (because the user manually linked them via the CRM Property modal),
+//     reuse that property and just create a new deal pointing at it.
+//   - Otherwise generate a fresh `prop_*` id for the property and a fresh
+//     `deal_*` id for the deal. Property gets `domain_listing_id = listing.id`
+//     so future "in pipeline?" lookups via domain id resolve correctly.
+//   - For non-Domain inputs (map clicks without a listing), the caller passes
+//     a synthetic listing without a Domain id; we skip the domain lookup and
+//     skip stamping domain_id on the new property.
+async function addToPipeline(listing) {
+  // Distinguish a real Domain listing from a synthetic map-click record.
+  // Real Domain listing ids are purely numeric strings; synthetic ids generated
+  // elsewhere look like "property-1234567890" or other non-numeric formats.
+  const rawId = listing?.id != null ? String(listing.id) : '';
+  const isDomainId = /^\d{6,}$/.test(rawId);
+  const domainId = isDomainId ? rawId : null;
+
+  // Already in pipeline? Highlight the existing card. Look up via domain_id
+  // (the new canonical relationship) rather than trusting that the listing's
+  // id is also a deal id, which it is no longer.
+  if (domainId) {
+    const existing = findPipelineByDomainId(domainId);
+    if (existing) {
+      highlightCard(existing[0]);
+      return;
+    }
   }
+
+  // Server-side check: maybe a property already exists with this Domain
+  // listing id (e.g. user linked it before adding to pipeline). If so, reuse
+  // it; if not, we'll create a new property below.
+  let existingProperty = null;
+  if (domainId) {
+    try {
+      const r = await fetch(`/api/properties?by_domain_listing=${encodeURIComponent(domainId)}`);
+      if (r.ok) existingProperty = await r.json();
+    } catch (_) { /* fall through to create */ }
+  }
+
+  const propertyId = existingProperty?.id || newPropertyId();
+  const dealId     = newDealId();
 
   // Build _parcels array — multi-parcel entries already have it, single entries get one from lat/lng
   const parcels = listing._parcels && listing._parcels.length > 0
     ? listing._parcels
     : [{ lat: listing.lat, lng: listing.lng, label: `${listing.address}, ${listing.suburb}` }];
 
-  pipeline[id] = {
+  pipeline[dealId] = {
     stage:   'shortlisted',
     note:    '',
     addedAt: Date.now(),
     property: {
-      id:          listing.id,
-      address:     listing.address,
-      suburb:      listing.suburb,
+      id:          propertyId,
+      address:     existingProperty?.address || listing.address,
+      suburb:      existingProperty?.suburb  || listing.suburb,
       price:       listing.price,
       type:        listing.type,
       beds:        listing.beds,
       baths:       listing.baths,
       cars:        listing.cars,
       _parcels:    parcels,
-      _lotDPs:        listing._lotDPs         || null,
-      _areaSqm:       listing._areaSqm        || null,
+      _lotDPs:        existingProperty?.lot_dps     || listing._lotDPs        || null,
+      _areaSqm:       existingProperty?.area_sqm    || listing._areaSqm       || null,
       _propertyCount: listing._propertyCount  || 1,
       _agent:         listing.agent           || null,
       _listingUrl:    listing.listingUrl       || null,
+      // domain_id is the link to Domain. Only set it for real Domain listings;
+      // synthetic ids (e.g. "property-1234567890" from map clicks) leave it null.
+      domain_id:      domainId,
     },
     dd: {}
   };
-  const savedPromise = savePipeline(id);
+  const savedPromise = savePipeline(dealId);
   updateAddButtons();
   if (kanbanVisible) renderBoard();
   showKanbanToast(`${listing.address} added to pipeline`);
@@ -577,17 +661,17 @@ function addToPipeline(listing) {
   }).catch(() => {});
 
   // Async — fetch Lot/DP from cadastre if not already present
-  if (!pipeline[id].property._lotDPs && window.fetchLotDP) {
-    const _lat = lat ?? parcels[0]?.lat ?? null;
-    const _lng = lng ?? parcels[0]?.lng ?? null;
-    if (_lat && _lng) {
-      fetchLotDP(_lat, _lng).then(cadastre => {
-        if (!pipeline[id] || !cadastre?.lotid) return;
-        pipeline[id].property._lotDPs = cadastre.lotid;
-        if (!pipeline[id].property._areaSqm && cadastre.areaSqm) pipeline[id].property._areaSqm = cadastre.areaSqm;
-        savePipeline(id);
+  const lat = listing.lat ?? parcels[0]?.lat ?? null;
+  const lng = listing.lng ?? parcels[0]?.lng ?? null;
+  if (!pipeline[dealId].property._lotDPs && window.fetchLotDP) {
+    if (lat && lng) {
+      fetchLotDP(lat, lng).then(cadastre => {
+        if (!pipeline[dealId] || !cadastre?.lotid) return;
+        pipeline[dealId].property._lotDPs = cadastre.lotid;
+        if (!pipeline[dealId].property._areaSqm && cadastre.areaSqm) pipeline[dealId].property._areaSqm = cadastre.areaSqm;
+        savePipeline(dealId);
         const modal = document.getElementById('kb-modal');
-        if (modal?.dataset?.propertyId === String(id)) {
+        if (modal?.dataset?.propertyId === String(dealId)) {
           const lotEl = modal.querySelector('.kb-modal-lotdp');
           if (lotEl) lotEl.textContent = cadastre.lotid;
         }
@@ -597,20 +681,18 @@ function addToPipeline(listing) {
   }
 
   // Async — query overlay layers and pre-populate DD risks
-  const lat = listing.lat ?? parcels[0]?.lat ?? null;
-  const lng = listing.lng ?? parcels[0]?.lng ?? null;
   if (lat && lng && window.queryDDRisks) {
     console.log('[DD] Querying risks for', listing.address, lat, lng);
     queryDDRisks(lat, lng).then(dd => {
       console.log('[DD] Results:', dd);
-      if (!pipeline[id]) return;
+      if (!pipeline[dealId]) return;
       Object.entries(dd).forEach(([key, val]) => {
-        if (!pipeline[id].dd[key]?.status) pipeline[id].dd[key] = val;
+        if (!pipeline[dealId].dd[key]?.status) pipeline[dealId].dd[key] = val;
       });
-      savePipeline(id);
+      savePipeline(dealId);
       if (kanbanVisible) renderBoard();
       // If this card's modal is open, refresh its DD section
-      refreshModalDd(id);
+      refreshModalDd(dealId);
     }).catch(err => console.warn('[DD] Risk query failed:', err));
   } else {
     console.warn('[DD] Skipping risk query — lat:', lat, 'lng:', lng, 'queryDDRisks:', !!window.queryDDRisks);
@@ -621,13 +703,15 @@ async function removeFromPipeline(id) {
   const sid = String(id);
   // V75.4d: capture whether this was a parcel-deal BEFORE deleting from dict
   // so dbDelete can route to the right endpoint (deals vs properties).
-  const wasParcel = !!pipeline[sid]?._isParcel;
+  // V76.5: also capture the property id so dbDelete can target the right row.
+  const wasParcel  = !!pipeline[sid]?._isParcel;
+  const propertyId = pipeline[sid]?.property?.id || null;
   delete pipeline[sid];
   cacheSave(pipeline);
   // V75.4d.5: AWAIT dbDelete so the cache-invalidate below happens AFTER the
   // server commit. Without the await, the subsequent re-fetch from
   // invalidateParcelsCache races the DELETE and still sees the stale parcel.
-  await dbDelete(sid, wasParcel);
+  await dbDelete(sid, wasParcel, propertyId);
   updateAddButtons();
   renderBoard();
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
@@ -1388,7 +1472,9 @@ function updateAddButtons() {
       });
     }
 
-    const inPipeline = !!pipeline[id];
+    // V76.5: card.dataset.id is the listing's Domain id. Look up by domain_id
+    // instead of pipeline[id], because deal ids no longer match listing ids.
+    const inPipeline = !!findPipelineByDomainId(id);
     btn.textContent = inPipeline ? '✓' : '+';
     btn.classList.toggle('in-pipeline', inPipeline);
     btn.title = inPipeline ? 'In pipeline' : 'Add to pipeline';

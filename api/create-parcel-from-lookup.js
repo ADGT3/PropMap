@@ -157,7 +157,10 @@ async function execute(req, res) {
   // 3. Optionally create the Deal on the parcel
   let deal = null;
   if (create_deal) {
-    const dealId = parcel_id;   // convention: deal.id matches parcel.id for parcel-deals
+    // V76.5: deal id is now independent of parcel id. Generates `deal_*`,
+    // matching the format used by api/deals.js newDealId() and the addToPipeline
+    // path. Old convention (deal.id == parcel.id) caused id-keyspace collisions.
+    const dealId = 'deal_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const dealDataObj = { addedAt: Date.now(), ...deal_data };
     const dealDataJson = JSON.stringify(dealDataObj);
     // V75.6: derive board_id/column_id from workflow+stage for system boards

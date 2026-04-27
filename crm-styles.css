@@ -516,6 +516,27 @@
 .crm-contact-tr:hover { background: var(--surface2); }
 .crm-td-name { font-weight: 500; }
 .crm-td-actions { text-align: right; white-space: nowrap; }
+
+/* Properties table — fixed column widths so Address column doesn't reflow
+   when row contents change (e.g. toggling Show Not Suitable). Address takes
+   the remaining width; other columns are constrained to comfortably fit
+   their content (suburb names, lot/DP, Domain badge, deal stage badge). */
+.crm-contact-table--properties { table-layout: fixed; }
+.crm-contact-table--properties th:nth-child(2),
+.crm-contact-table--properties td:nth-child(2) { width: 140px; }
+.crm-contact-table--properties th:nth-child(3),
+.crm-contact-table--properties td:nth-child(3) { width: 120px; }
+.crm-contact-table--properties th:nth-child(4),
+.crm-contact-table--properties td:nth-child(4) { width: 100px; }
+.crm-contact-table--properties th:nth-child(5),
+.crm-contact-table--properties td:nth-child(5) { width: 110px; }
+.crm-contact-table--properties th:nth-child(6),
+.crm-contact-table--properties td:nth-child(6) { width: 50px; }
+.crm-contact-table--properties td:nth-child(1) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .crm-view-edit-btn, .crm-view-delete-btn {
   background: none;
   border: none;

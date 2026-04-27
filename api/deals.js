@@ -20,8 +20,9 @@ import { getDatabaseUrl } from '../lib/db.js';
 const sql = neon(getDatabaseUrl());
 
 function newDealId() {
-  // Compact URL-safe id; collision-resistant enough for our scale
-  return 'deal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  // V76.5: format unified with prop_* to keep id keyspaces visually distinct.
+  // Existing `deal-*` ids in prod will be renumbered to `deal_*` by migration.
+  return 'deal_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 }
 
 export default async function handler(req, res) {
@@ -106,8 +107,8 @@ export default async function handler(req, res) {
         if (id) {
           const dealRows = await sql`
             SELECT d.*,
-              row_to_json(p.*)  AS property,
-              row_to_json(pa.*) AS parcel
+              CASE WHEN p.id IS NULL THEN NULL ELSE (to_jsonb(p) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', p.not_suitable_until::text)) END AS property,
+              CASE WHEN pa.id IS NULL THEN NULL ELSE (to_jsonb(pa) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', pa.not_suitable_until::text)) END AS parcel
             FROM deals d
             LEFT JOIN properties p  ON p.id  = d.property_id
             LEFT JOIN parcels    pa ON pa.id = d.parcel_id
@@ -123,8 +124,8 @@ export default async function handler(req, res) {
           const q = `%${String(search).trim()}%`;
           const rows = await sql`
             SELECT d.*,
-              row_to_json(p.*)  AS property,
-              row_to_json(pa.*) AS parcel
+              CASE WHEN p.id IS NULL THEN NULL ELSE (to_jsonb(p) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', p.not_suitable_until::text)) END AS property,
+              CASE WHEN pa.id IS NULL THEN NULL ELSE (to_jsonb(pa) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', pa.not_suitable_until::text)) END AS parcel
             FROM deals d
             LEFT JOIN properties p  ON p.id  = d.property_id
             LEFT JOIN parcels    pa ON pa.id = d.parcel_id
@@ -141,8 +142,8 @@ export default async function handler(req, res) {
         if (parcel_id) {
           const rows = await sql`
             SELECT d.*,
-              row_to_json(p.*)  AS property,
-              row_to_json(pa.*) AS parcel
+              CASE WHEN p.id IS NULL THEN NULL ELSE (to_jsonb(p) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', p.not_suitable_until::text)) END AS property,
+              CASE WHEN pa.id IS NULL THEN NULL ELSE (to_jsonb(pa) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', pa.not_suitable_until::text)) END AS parcel
             FROM deals d
             LEFT JOIN properties p  ON p.id  = d.property_id
             LEFT JOIN parcels    pa ON pa.id = d.parcel_id
@@ -153,8 +154,8 @@ export default async function handler(req, res) {
         if (property_id) {
           const rows = await sql`
             SELECT d.*,
-              row_to_json(p.*)  AS property,
-              row_to_json(pa.*) AS parcel
+              CASE WHEN p.id IS NULL THEN NULL ELSE (to_jsonb(p) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', p.not_suitable_until::text)) END AS property,
+              CASE WHEN pa.id IS NULL THEN NULL ELSE (to_jsonb(pa) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', pa.not_suitable_until::text)) END AS parcel
             FROM deals d
             LEFT JOIN properties p  ON p.id  = d.property_id
             LEFT JOIN parcels    pa ON pa.id = d.parcel_id
@@ -166,8 +167,8 @@ export default async function handler(req, res) {
         if (board_id) {
           const rows = await sql`
             SELECT d.*,
-              row_to_json(p.*)  AS property,
-              row_to_json(pa.*) AS parcel
+              CASE WHEN p.id IS NULL THEN NULL ELSE (to_jsonb(p) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', p.not_suitable_until::text)) END AS property,
+              CASE WHEN pa.id IS NULL THEN NULL ELSE (to_jsonb(pa) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', pa.not_suitable_until::text)) END AS parcel
             FROM deals d
             LEFT JOIN properties p  ON p.id  = d.property_id
             LEFT JOIN parcels    pa ON pa.id = d.parcel_id
@@ -179,8 +180,8 @@ export default async function handler(req, res) {
         if (workflow && status) {
           const rows = await sql`
             SELECT d.*,
-              row_to_json(p.*)  AS property,
-              row_to_json(pa.*) AS parcel
+              CASE WHEN p.id IS NULL THEN NULL ELSE (to_jsonb(p) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', p.not_suitable_until::text)) END AS property,
+              CASE WHEN pa.id IS NULL THEN NULL ELSE (to_jsonb(pa) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', pa.not_suitable_until::text)) END AS parcel
             FROM deals d
             LEFT JOIN properties p  ON p.id  = d.property_id
             LEFT JOIN parcels    pa ON pa.id = d.parcel_id
@@ -191,8 +192,8 @@ export default async function handler(req, res) {
         if (workflow) {
           const rows = await sql`
             SELECT d.*,
-              row_to_json(p.*)  AS property,
-              row_to_json(pa.*) AS parcel
+              CASE WHEN p.id IS NULL THEN NULL ELSE (to_jsonb(p) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', p.not_suitable_until::text)) END AS property,
+              CASE WHEN pa.id IS NULL THEN NULL ELSE (to_jsonb(pa) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', pa.not_suitable_until::text)) END AS parcel
             FROM deals d
             LEFT JOIN properties p  ON p.id  = d.property_id
             LEFT JOIN parcels    pa ON pa.id = d.parcel_id
@@ -204,8 +205,8 @@ export default async function handler(req, res) {
         // Unfiltered full list
         const rows = await sql`
           SELECT d.*,
-            row_to_json(p.*)  AS property,
-            row_to_json(pa.*) AS parcel
+            CASE WHEN p.id IS NULL THEN NULL ELSE (to_jsonb(p) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', p.not_suitable_until::text)) END AS property,
+            CASE WHEN pa.id IS NULL THEN NULL ELSE (to_jsonb(pa) - 'not_suitable_until' || jsonb_build_object('not_suitable_until', pa.not_suitable_until::text)) END AS parcel
           FROM deals d
           LEFT JOIN properties p  ON p.id  = d.property_id
           LEFT JOIN parcels    pa ON pa.id = d.parcel_id

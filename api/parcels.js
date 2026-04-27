@@ -42,20 +42,35 @@ export default async function handler(req, res) {
       case 'GET': {
         const { id, expand } = req.query;
 
+        // V76.5.6: cast not_suitable_until to text — without this, the Neon
+        // driver coerces 'infinity'::timestamptz to JS null, silently dropping
+        // permanent not-suitable flags from the wire.
         if (id) {
-          const rows = await sql`SELECT * FROM parcels WHERE id = ${id}`;
+          const rows = await sql`
+            SELECT id, name,
+                   not_suitable_until::text AS not_suitable_until,
+                   not_suitable_reason, created_at, updated_at
+              FROM parcels WHERE id = ${id}`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           const parcel = rows[0];
           if (expand === 'properties') {
             parcel.properties = await sql`
-              SELECT * FROM properties WHERE parcel_id = ${id} ORDER BY address`;
+              SELECT id, address, suburb, lat, lng, lot_dps, area_sqm,
+                     parcels, property_count, domain_listing_id, listing_url,
+                     agent,
+                     not_suitable_until::text AS not_suitable_until,
+                     not_suitable_reason,
+                     parcel_id, state_prop_id, created_at, updated_at
+                FROM properties WHERE parcel_id = ${id} ORDER BY address`;
           }
           return res.status(200).json(parcel);
         }
 
         // List all. Include a property_count for convenience.
         const rows = await sql`
-          SELECT pa.*,
+          SELECT pa.id, pa.name,
+                 pa.not_suitable_until::text AS not_suitable_until,
+                 pa.not_suitable_reason, pa.created_at, pa.updated_at,
             (SELECT COUNT(*)::int FROM properties pr WHERE pr.parcel_id = pa.id) AS property_count
           FROM parcels pa ORDER BY pa.updated_at DESC`;
         return res.status(200).json(rows);
@@ -74,7 +89,7 @@ export default async function handler(req, res) {
                    not_suitable_reason = ${reason},
                    updated_at          = now()
              WHERE id = ${id}
-             RETURNING id, not_suitable_until, not_suitable_reason`;
+             RETURNING id, not_suitable_until::text AS not_suitable_until, not_suitable_reason`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           return res.status(200).json(rows[0]);
         }

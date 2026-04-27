@@ -2369,11 +2369,11 @@ function renderCRMView(container) {
         <input class="kb-input crm-view-search" placeholder="Search properties…" value="${propertySearch}" style="flex:1">
         <label class="crm-prop-screened-toggle" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);white-space:nowrap;cursor:pointer">
           <input type="checkbox" class="crm-prop-screened-cb" ${showScreenedOut ? 'checked' : ''}>
-          Show Not Suitable
+          Show screened-out
         </label>
       </div>
       <div class="crm-contact-table-wrap">
-        <table class="crm-contact-table crm-contact-table--properties">
+        <table class="crm-contact-table">
           <thead><tr>
             <th>Address</th>
             <th>Suburb</th>
@@ -2652,16 +2652,13 @@ function renderCRMView(container) {
 
           <div class="crm-modal-section crm-section-collapsible" data-section="not-suitable" ${nsActive ? '' : 'data-collapsed="1"'}>
             <div class="crm-modal-section-title crm-section-header">
-              <span class="crm-section-header-left"><span class="crm-section-chev">${nsActive ? '▾' : '▸'}</span> Not Suitable Status</span>
-              ${nsActive ? `<button class="crm-prop-clear-ns-btn kb-add-offer-btn">Clear flag</button>` : ''}
+              <span class="crm-section-header-left"><span class="crm-section-chev">${nsActive ? '▾' : '▸'}</span> Not Suitable ${nsActive ? `<span class="listing-ns-badge" style="margin-left:6px">${nsLabel}</span>` : ''}</span>
             </div>
             <div class="crm-section-body" ${nsActive ? '' : 'style="display:none"'}>
               ${nsActive ? `
-                <div class="crm-detail-grid">
-                  <div class="crm-detail-label">Status</div>
-                  <div>Flagged as not suitable · ${nsLabel}</div>
-                  ${property.not_suitable_reason ? `<div class="crm-detail-label">Reason</div><div>${property.not_suitable_reason}</div>` : ''}
-                </div>
+                <div style="margin-bottom:8px">Flagged as not suitable · <strong>${nsLabel}</strong></div>
+                ${property.not_suitable_reason ? `<div class="crm-detail-label" style="margin-bottom:4px">Reason</div><div style="margin-bottom:8px">${property.not_suitable_reason}</div>` : ''}
+                <button class="crm-prop-clear-ns-btn kb-add-offer-btn">Clear flag</button>
               ` : `
                 <div style="color:var(--text-secondary);font-size:12px;margin-bottom:8px">Not flagged.</div>
                 <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">

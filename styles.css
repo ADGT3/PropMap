@@ -2547,6 +2547,116 @@ header {
   opacity: 1;
 }
 
+/* ─── V76.5.7 — Listing Link/Unlink controls ──────────────────────────── */
+
+/* Two-button row layout: NS toggle + Link button side-by-side. The wrap
+   already provides relative positioning for the NS menu popout above. */
+.listing-actions-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  position: relative;
+}
+.listing-actions-row .listing-ns-wrap {
+  flex: 1;
+  margin-top: 0;     /* row provides the gap */
+}
+.listing-link-toggle {
+  flex: 1;
+  padding: 5px 8px;
+  background: transparent;
+  color: var(--muted, #888);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.listing-link-toggle:hover {
+  background: #f8f4ec;
+  color: #1a1a1a;
+  border-color: var(--accent, #c4841a);
+}
+.listing-link-toggle--unlink {
+  color: #a23838;
+  border-color: #d4b0b0;
+}
+.listing-link-toggle--unlink:hover {
+  background: #fdf3f3;
+  color: #1a1a1a;
+  border-color: #a23838;
+}
+
+/* Search popover — drops below the actions row, full width of card */
+.listing-link-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: #fff;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  padding: 8px;
+}
+.listing-link-search {
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.listing-link-results {
+  max-height: 240px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+.listing-link-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  background: #fff;
+  border: none;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  font-family: inherit;
+}
+.listing-link-result:last-child { border-bottom: none; }
+.listing-link-result:hover { background: #f8f4ec; }
+.listing-link-result-addr {
+  font-size: 12px;
+  font-weight: 500;
+  color: #1a1a1a;
+}
+.listing-link-result-meta {
+  font-size: 10px;
+  color: var(--muted, #888);
+  margin-top: 2px;
+}
+.listing-link-empty {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--muted, #888);
+  text-align: center;
+}
+.listing-link-actions {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+.listing-link-cancel {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--muted, #888);
+}
+.listing-link-cancel:hover { color: #1a1a1a; border-color: #1a1a1a; }
+
 /* V75.1 popup snooze menu — hover state on duration options.
    !important is needed because the buttons carry inline styles (background/
    color) baked into the popup HTML string, which beat normal CSS. */
