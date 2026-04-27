@@ -89,6 +89,16 @@ async function constraintExists(table, name) {
 }
 
 // ── Status report ───────────────────────────────────────────────────────────
+//
+// Bug fixes (V76.5.1):
+//   - `LIKE 'prop_%'` treats `_` as a single-char wildcard, so it matched
+//     'property-...' too (false-counted as already_v76_5). Use a regex that
+//     anchors on the literal underscore: `^prop_`.
+//   - Same for `LIKE 'deal_%'` matching legacy `'deal-...'` ids.
+//   - The deals-legacy heuristic was missing `property-*` — a real id format
+//     in prod data. Property-style strings became deal ids when the original
+//     addToPipeline path used listing.id (which for multi-parcel adds was a
+//     synthetic 'property-<ts>') as the deal.id. We now match it.
 
 async function statusReport() {
   const propLegacy = await sql`
@@ -96,9 +106,13 @@ async function statusReport() {
      WHERE id ~ '^[0-9]{6,}$' OR id LIKE 'property-%'`;
   const dealLegacy = await sql`
     SELECT COUNT(*)::int AS n FROM deals
-     WHERE id ~ '^[0-9]{6,}$' OR id LIKE 'parcel-%' OR id LIKE 'parcel_%' OR id LIKE 'deal-%'`;
-  const propNew = await sql`SELECT COUNT(*)::int AS n FROM properties WHERE id LIKE 'prop_%'`;
-  const dealNew = await sql`SELECT COUNT(*)::int AS n FROM deals WHERE id LIKE 'deal_%'`;
+     WHERE id ~ '^[0-9]{6,}$'
+        OR id LIKE 'parcel-%'
+        OR id LIKE 'parcel_%'
+        OR id LIKE 'deal-%'
+        OR id LIKE 'property-%'`;
+  const propNew = await sql`SELECT COUNT(*)::int AS n FROM properties WHERE id ~ '^prop_'`;
+  const dealNew = await sql`SELECT COUNT(*)::int AS n FROM deals      WHERE id ~ '^deal_'`;
   const propTotal = await sql`SELECT COUNT(*)::int AS n FROM properties`;
   const dealTotal = await sql`SELECT COUNT(*)::int AS n FROM deals`;
   return {
@@ -244,10 +258,18 @@ async function runMigration() {
   // 4. Renumber deals
   let dealsRenumbered = 0;
   await step('renumber deals + cascade', async () => {
+    // V76.5.1: include `property-*` — see status-report comment for context.
+    // These are deals whose id was set to a synthetic 'property-<ts>' string
+    // by the original multi-parcel addToPipeline path, where listing.id was
+    // generated locally and copied into deal.id.
     const candidates = await sql`
       SELECT id FROM deals
        WHERE legacy_id IS NULL
-         AND (id ~ '^[0-9]{6,}$' OR id LIKE 'parcel-%' OR id LIKE 'parcel_%' OR id LIKE 'deal-%')`;
+         AND (id ~ '^[0-9]{6,}$'
+              OR id LIKE 'parcel-%'
+              OR id LIKE 'parcel_%'
+              OR id LIKE 'deal-%'
+              OR id LIKE 'property-%')`;
     for (const row of candidates) {
       const oldId = row.id;
       const newId = newDealId();
@@ -331,7 +353,11 @@ async function runMigration() {
      WHERE id ~ '^[0-9]{6,}$' OR id LIKE 'property-%'`;
   const verifyDeals = await sql`
     SELECT COUNT(*)::int AS n FROM deals
-     WHERE id ~ '^[0-9]{6,}$' OR id LIKE 'parcel-%' OR id LIKE 'parcel_%' OR id LIKE 'deal-%'`;
+     WHERE id ~ '^[0-9]{6,}$'
+        OR id LIKE 'parcel-%'
+        OR id LIKE 'parcel_%'
+        OR id LIKE 'deal-%'
+        OR id LIKE 'property-%'`;
   const orphanDeals = await sql`
     SELECT COUNT(*)::int AS n FROM deals d
      WHERE d.parcel_id IS NULL AND d.property_id IS NULL`;
