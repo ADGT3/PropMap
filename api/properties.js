@@ -149,17 +149,28 @@ export default async function handler(req, res) {
         }
 
         // Not-suitable setters
+        // V76.5.5: data model fix.
+        //   - `not_suitable_set_at` records when the flag was applied. NULL
+        //     means never screened. Once stamped it survives Reinstate +
+        //     re-flagging so the history is preserved.
+        //   - `not_suitable_until` is the expiry timestamp. The previous code
+        //     nulled this on Reinstate, throwing away the fact that screening
+        //     ever happened. Now Reinstate sets it to now() instead — the
+        //     row is "no longer actively screened" but its history is intact.
+        //   - `not_suitable_reason` is preserved across Reinstate as well
+        //     (was previously wiped). Lets users see why they screened it.
         if (body.action === 'set_not_suitable') {
           const { id, until, reason = null } = body;
           if (!id || !until) return res.status(400).json({ error: 'id and until required' });
           const untilVal = until === 'permanent' ? 'infinity' : until;
           const rows = await sql`
             UPDATE properties
-               SET not_suitable_until  = ${untilVal}::timestamptz,
+               SET not_suitable_set_at = COALESCE(not_suitable_set_at, now()),
+                   not_suitable_until  = ${untilVal}::timestamptz,
                    not_suitable_reason = ${reason},
                    updated_at          = now()
              WHERE id = ${id}
-             RETURNING id, not_suitable_until, not_suitable_reason`;
+             RETURNING id, not_suitable_set_at, not_suitable_until, not_suitable_reason`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           return res.status(200).json(rows[0]);
         }
@@ -167,9 +178,11 @@ export default async function handler(req, res) {
           const { id } = body;
           if (!id) return res.status(400).json({ error: 'id required' });
           const rows = await sql`
-            UPDATE properties SET not_suitable_until=NULL, not_suitable_reason=NULL, updated_at=now()
-            WHERE id=${id}
-            RETURNING id`;
+            UPDATE properties
+               SET not_suitable_until = now(),
+                   updated_at         = now()
+             WHERE id = ${id}
+             RETURNING id`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           return res.status(200).json({ ok: true });
         }
