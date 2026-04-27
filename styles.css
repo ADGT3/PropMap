@@ -915,6 +915,31 @@ header {
   color: var(--muted);
 }
 
+/* V76.4 — Due-actions bell badge in Header 2 right side. Visible across all
+   Pipeline boards. Clicking jumps to My Actions. Hidden when count is 0. */
+.kb-due-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.kb-due-badge:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+.kb-due-badge[hidden] { display: none; }
+.kb-due-badge-icon { font-size: 14px; line-height: 1; }
+.kb-due-badge-count { line-height: 1; }
+
 /* V75.6.2 — Board selector controls inside .kanban-header (Header 2).
    Matches the CRM tab-bar pattern exactly (same padding, same border chrome,
    same font treatment). Close button remains pushed to the far right. */
@@ -2933,6 +2958,14 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   color: var(--accent, #c4841a);
 }
 .kb-action-deal-label { flex: 1; font-weight: 500; }
+/* V76.4 — clickable deal label opens the deal modal */
+.kb-action-deal-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.kb-action-deal-link:hover { color: #8b6214; }
 .kb-action-deal-clear {
   background: none;
   border: none;

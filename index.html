@@ -848,6 +848,13 @@
            alongside the title, matching the CRM tab-bar pattern. -->
       <div class="kanban-header-controls" id="kanbanBoardToolbar"></div>
       <div class="kanban-header-right">
+        <!-- V76.4: due-actions bell badge. Hidden by default; kanban.js
+             populates count from GET /api/actions?count=due whenever the
+             Pipeline view becomes visible. Click jumps to My Actions board. -->
+        <button class="kb-due-badge" id="kanbanDueBadge" hidden title="Open My Actions">
+          <span class="kb-due-badge-icon">🔔</span>
+          <span class="kb-due-badge-count" id="kanbanDueBadgeCount">0</span>
+        </button>
         <span class="kanban-count" id="kanbanTotalCount"></span>
         <button class="panel-close" id="kanbanClose" title="Close pipeline">✕</button>
       </div>

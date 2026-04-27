@@ -175,6 +175,8 @@ function buildOrgTypeahead(container, onSelect) {
     const q = input.value.trim();
     if (q.length < 1) { results.innerHTML = ''; return; }
     debounce = setTimeout(async () => {
+      // V76.4: clean API contract — org_search=q alone returns orgs matching q.
+      // No coupling rule, no flag-pairing required.
       const orgs = await apiGet({ org_search: q }).catch(() => []);
       results.innerHTML = '';
       // "Create new" option
@@ -1498,8 +1500,9 @@ function renderCRMView(container) {
     async function fetchOrgs(q = '') {
       const tbody = pane.querySelector('#crmOrgTableBody');
       tbody.innerHTML = `<tr><td colspan="3" class="crm-loading">Loading…</td></tr>`;
-      const params = { all_orgs: '1' };
-      if (q) params.org_search = q;
+      // V76.4: each parameter expresses one intent. `org_search=q` returns
+      // orgs matching q; `all_orgs=1` returns the unfiltered list. No mixing.
+      const params = q ? { org_search: q } : { all_orgs: '1' };
       const orgs = await apiGet(params).catch(() => []);
       if (!orgs.length) { tbody.innerHTML = `<tr><td colspan="3" class="crm-empty">No organisations found</td></tr>`; return; }
       tbody.innerHTML = '';
@@ -1542,14 +1545,11 @@ function renderCRMView(container) {
     async function render() {
       modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
 
-      const [orgContacts, allContacts] = isEdit ? await Promise.all([
-        apiGet({ org_contacts: prefill.id }).catch(() => []),
-        apiGet({ all: '1', limit: 200 }).then(d => d.contacts || d).catch(() => []),
-      ]) : [[], []];
-
-      // Contacts not already in this org
-      const orgContactIds = new Set(orgContacts.map(c => c.id));
-      const available = Array.isArray(allContacts) ? allContacts.filter(c => !orgContactIds.has(c.id)) : [];
+      // V76.4: dropped the 200-row preload of all contacts — the new search
+      // input loads matches on demand via /api/contacts?search=q.
+      const orgContacts = isEdit
+        ? await apiGet({ org_contacts: prefill.id }).catch(() => [])
+        : [];
 
       const orgName    = prefill?.name    || '';
       const orgPhone   = prefill?.phone   || '';
@@ -1620,13 +1620,12 @@ function renderCRMView(container) {
               Contacts (${orgContacts.length})
               <button class="crm-org-add-contact-btn kb-add-offer-btn">+ Add Contact</button>
             </div>
+            <!-- V76.4: replaced static <select> dropdown with search-or-create
+                 flow, matching the deal-modal contact form pattern. -->
             <div class="crm-org-add-contact-form" style="display:none;margin-bottom:8px">
-              <div style="display:flex;gap:6px;align-items:center">
-                <select class="kb-input crm-org-contact-select" style="flex:1;font-size:12px">
-                  <option value="">Select contact…</option>
-                  ${available.map(c => `<option value="${c.id}">${displayName(c)}${c.org_name ? ' · ' + c.org_name : ''}</option>`).join('')}
-                </select>
-                <button class="crm-org-contact-link-save kb-add-offer-btn">Add</button>
+              <input class="kb-input crm-org-contact-search" type="text" placeholder="Search existing contacts by name or email…" style="width:100%">
+              <div class="crm-search-results crm-org-contact-search-results"></div>
+              <div style="display:flex;gap:6px;margin-top:6px;justify-content:flex-end">
                 <button class="crm-org-contact-link-cancel crm-cancel-btn">Cancel</button>
               </div>
             </div>
@@ -1684,17 +1683,54 @@ function renderCRMView(container) {
 
       if (!isEdit) return;
 
-      // Add contact to org
+      // V76.4: search-or-link contact in org modal (replaces dropdown).
+      // Mirrors the deal-modal contact search pattern: type → debounced
+      // /api/contacts?search=q → click result → POST set_org → re-render.
       const addContactBtn  = modal.querySelector('.crm-org-add-contact-btn');
       const addContactForm = modal.querySelector('.crm-org-add-contact-form');
-      addContactBtn?.addEventListener('click', () => { addContactForm.style.display = ''; addContactBtn.style.display = 'none'; });
-      modal.querySelector('.crm-org-contact-link-cancel')?.addEventListener('click', () => { addContactForm.style.display = 'none'; addContactBtn.style.display = ''; });
-      modal.querySelector('.crm-org-contact-link-save')?.addEventListener('click', async () => {
-        const contactId = modal.querySelector('.crm-org-contact-select').value;
-        if (!contactId) return;
-        await apiPost({ action: 'set_org', contact_id: parseInt(contactId), organisation_id: prefill.id });
-        render();
+      addContactBtn?.addEventListener('click', () => {
+        addContactForm.style.display = '';
+        addContactBtn.style.display = 'none';
+        modal.querySelector('.crm-org-contact-search')?.focus();
       });
+      modal.querySelector('.crm-org-contact-link-cancel')?.addEventListener('click', () => {
+        addContactForm.style.display = 'none';
+        addContactBtn.style.display = '';
+        const searchInput  = modal.querySelector('.crm-org-contact-search');
+        const resultsEl    = modal.querySelector('.crm-org-contact-search-results');
+        if (searchInput) searchInput.value = '';
+        if (resultsEl)   resultsEl.innerHTML = '';
+      });
+
+      const contactSearchInput = modal.querySelector('.crm-org-contact-search');
+      if (contactSearchInput) {
+        let searchTimer;
+        contactSearchInput.addEventListener('input', () => {
+          clearTimeout(searchTimer);
+          const q = contactSearchInput.value.trim();
+          const resultsEl = modal.querySelector('.crm-org-contact-search-results');
+          if (!resultsEl) return;
+          if (q.length < 2) { resultsEl.innerHTML = ''; return; }
+          searchTimer = setTimeout(async () => {
+            const results = await apiGet({ search: q }).catch(() => []);
+            // Filter out anyone already in this org
+            const orgContactIds = new Set(orgContacts.map(c => c.id));
+            const filtered = (Array.isArray(results) ? results : []).filter(c => !orgContactIds.has(c.id));
+            if (!filtered.length) { resultsEl.innerHTML = '<div class="crm-empty">No matches</div>'; return; }
+            resultsEl.innerHTML = '';
+            filtered.forEach(ct => {
+              const item = document.createElement('div');
+              item.className = 'crm-search-item';
+              item.innerHTML = `<strong>${displayName(ct)}</strong>${ct.org_name ? ` · ${ct.org_name}` : ''}${ct.mobile || ct.email ? ` · ${ct.mobile || ct.email}` : ''}`;
+              item.addEventListener('click', async () => {
+                await apiPost({ action: 'set_org', contact_id: ct.id, organisation_id: prefill.id });
+                render();
+              });
+              resultsEl.appendChild(item);
+            });
+          }, 300);
+        });
+      }
 
       // Remove contact from org
       modal.querySelectorAll('.crm-org-contact-remove').forEach(btn => {
