@@ -50,24 +50,26 @@ async function columnExists(table, column) {
 
 async function statusReport() {
   const hasColumn = await columnExists('properties', 'not_suitable_set_at');
-  // Count categories the script would touch.
-  let withFlagNoSetAt = 0;
+  // Count categories the script would touch — return full detail (id, address,
+  // raw value) so the caller can spot data-divergence between this server
+  // query and the API list endpoint.
+  let withFlagNoSetAt = [];
   if (hasColumn) {
-    const r = await sql`
-      SELECT COUNT(*)::int AS n FROM properties
+    withFlagNoSetAt = await sql`
+      SELECT id, address, not_suitable_until::text AS until_text
+        FROM properties
        WHERE not_suitable_until IS NOT NULL
          AND not_suitable_set_at IS NULL`;
-    withFlagNoSetAt = r[0].n;
   } else {
-    const r = await sql`
-      SELECT COUNT(*)::int AS n FROM properties
+    withFlagNoSetAt = await sql`
+      SELECT id, address, not_suitable_until::text AS until_text
+        FROM properties
        WHERE not_suitable_until IS NOT NULL`;
-    withFlagNoSetAt = r[0].n;
   }
   // Residue: has domain_listing_id, no deal, not in a parcel, no current flag.
-  // Same heuristic the user sanity-checked.
   const residue = await sql`
-    SELECT COUNT(*)::int AS n FROM properties p
+    SELECT p.id, p.address, p.domain_listing_id, p.not_suitable_until::text AS until_text
+      FROM properties p
      WHERE p.domain_listing_id IS NOT NULL
        AND p.parcel_id IS NULL
        AND (p.not_suitable_until IS NULL OR p.not_suitable_until <= now())
@@ -76,8 +78,10 @@ async function statusReport() {
        )`;
   return {
     set_at_column_present: hasColumn,
-    rows_needing_set_at_stamp: withFlagNoSetAt,
-    residue_rows_to_recover: residue[0].n,
+    rows_needing_set_at_stamp: withFlagNoSetAt.length,
+    rows_needing_set_at_stamp_detail: withFlagNoSetAt,
+    residue_rows_to_recover: residue.length,
+    residue_rows_detail: residue,
   };
 }
 
