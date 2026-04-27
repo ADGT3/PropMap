@@ -2882,6 +2882,22 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   color: var(--muted, #64748b);
   font-style: italic;
 }
+/* V76.4.5 — Vendor Terms & Offers history (read-only) in CRM property/parcel
+   modals. Reuses .kb-fin-pick-row styles so the visual matches the deal
+   modal's finance picker; just adds a wrapper with rounded corners + border. */
+.crm-vendor-history-list {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.crm-vendor-history-deal-link {
+  color: var(--accent, #c4841a);
+  text-decoration: none;
+  font-weight: 600;
+}
+.crm-vendor-history-deal-link:hover { text-decoration: underline; }
+
 /* V76.4.3 — Card "needs attention" indicator. 3px red left border applied
    to any kanban card (action or deal) that has an item due or reminder due
    and not yet resolved. Used everywhere the bell badge is also relevant,
