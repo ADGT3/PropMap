@@ -20,8 +20,9 @@ import { getDatabaseUrl } from '../lib/db.js';
 const sql = neon(getDatabaseUrl());
 
 function newDealId() {
-  // Compact URL-safe id; collision-resistant enough for our scale
-  return 'deal-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+  // V76.5: format unified with prop_* to keep id keyspaces visually distinct.
+  // Existing `deal-*` ids in prod will be renumbered to `deal_*` by migration.
+  return 'deal_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 }
 
 export default async function handler(req, res) {
