@@ -2344,6 +2344,10 @@ function renderCRMView(container) {
 
   // ── Properties pane (V75.5) ────────────────────────────────────────────────
   let propertySearch = '';
+  // V76.5.4 — Properties filter: hide rows currently flagged not-suitable.
+  // Default OFF (hidden) so the main list stays focused on active workspace.
+  // Toggle ON exposes properties whose not_suitable_until is in the future.
+  let showScreenedOut = false;
   let _propertiesCache = null;
 
   // Expose cache-bust hook for external code that mutates properties.
@@ -2361,8 +2365,12 @@ function renderCRMView(container) {
   async function loadPropertiesPane() {
     const pane = container.querySelector('#crm-pane-properties');
     pane.innerHTML = `
-      <div class="crm-pane-toolbar">
-        <input class="kb-input crm-view-search" placeholder="Search properties…" value="${propertySearch}">
+      <div class="crm-pane-toolbar" style="display:flex;align-items:center;gap:12px">
+        <input class="kb-input crm-view-search" placeholder="Search properties…" value="${propertySearch}" style="flex:1">
+        <label class="crm-prop-screened-toggle" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);white-space:nowrap;cursor:pointer">
+          <input type="checkbox" class="crm-prop-screened-cb" ${showScreenedOut ? 'checked' : ''}>
+          Show screened-out
+        </label>
       </div>
       <div class="crm-contact-table-wrap">
         <table class="crm-contact-table">
@@ -2380,6 +2388,10 @@ function renderCRMView(container) {
 
     pane.querySelector('.crm-view-search').addEventListener('input', e => {
       propertySearch = e.target.value;
+      renderPropertyRows();
+    });
+    pane.querySelector('.crm-prop-screened-cb').addEventListener('change', e => {
+      showScreenedOut = e.target.checked;
       renderPropertyRows();
     });
 
@@ -2427,13 +2439,30 @@ function renderCRMView(container) {
         });
       }
 
+      // V76.5.4 — Hide properties with an ACTIVE not-suitable flag unless the
+      // user has toggled "Show screened-out". A flag is active when
+      // not_suitable_until is in the future (or 'infinity' for permanent).
+      // Cleared/expired flags do not hide the row — those rows stay visible
+      // because they're no longer being actively avoided.
+      const now = Date.now();
+      const isCurrentlyScreened = (p) => {
+        const v = p.not_suitable_until;
+        if (!v) return false;
+        if (typeof v === 'string' && /infinity/i.test(v)) return true;
+        const t = Date.parse(v);
+        return !Number.isNaN(t) && t > now;
+      };
+
       const q = propertySearch.trim().toLowerCase();
+      const baseRows = showScreenedOut
+        ? _propertiesCache
+        : _propertiesCache.filter(p => !isCurrentlyScreened(p));
       const rows = q
-        ? _propertiesCache.filter(p => {
+        ? baseRows.filter(p => {
             const blob = [p.address, p.suburb, p.lot_dps, p.state_prop_id].filter(Boolean).join(' ').toLowerCase();
             return blob.includes(q);
           })
-        : _propertiesCache;
+        : baseRows;
 
       if (!rows.length) {
         tbody.innerHTML = `<tr><td colspan="6" class="crm-empty">${q ? 'No properties match' : 'No properties yet'}</td></tr>`;
