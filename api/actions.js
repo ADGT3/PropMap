@@ -10,12 +10,15 @@
  *        Returns: { board: {..., columns:[...]}, actions: [...] }
  *
  *   GET  /api/actions?count=due
- *        V76.4: lightweight count of the current user's "due" actions —
- *        rows where status='due' OR (status IN ('todo','wip') AND
- *        due_date <= CURRENT_DATE). Used by the Pipeline header bell badge.
- *        Counts both already-promoted rows and rows that would be promoted
- *        on the next /api/actions?assignee=me load, so the badge stays
- *        accurate even before My Actions is opened in the session.
+ *        V76.4: lightweight count for the Pipeline header bell badge.
+ *        V76.4.2: counts both "due" and "reminder due" rows for the current
+ *        user. Specifically: rows where status NOT IN ('done','void') AND
+ *        any of:
+ *          - status = 'due', OR
+ *          - due_date <= CURRENT_DATE, OR
+ *          - reminder_date <= CURRENT_DATE
+ *        Reminders do NOT auto-promote to the Due column (only due_date
+ *        does — see promoteDueActions); they just count toward the badge.
  *        Returns: { count: N }
  *
  *   GET  /api/actions?deal_id=X
@@ -234,10 +237,10 @@ async function handleGet(req, res, session) {
   const { assignee, deal_id, id, count } = req.query;
 
   // V76.4: lightweight due-count for the Pipeline header badge.
-  // Counts rows already in 'due' status PLUS rows still in 'todo'/'wip' whose
-  // due_date is today-or-earlier (i.e. would be promoted on the next /assignee=me
-  // load). This ensures the badge is accurate without the user having to open
-  // My Actions first to trigger promotion.
+  // V76.4.2: now also includes actions whose `reminder_date <= CURRENT_DATE`,
+  // regardless of column. A reminder doesn't move the action to the Due column
+  // (that's still due_date-driven via promoteDueActions); it just flags
+  // "needs attention today" for the badge.
   if (count === 'due') {
     const userId = resolveSessionUserId(session);
     if (!userId) return res.status(200).json({ count: 0 });
@@ -245,13 +248,11 @@ async function handleGet(req, res, session) {
       SELECT COUNT(*)::int AS n
       FROM actions
       WHERE assignee_id = ${userId}
+        AND status NOT IN ('done', 'void')
         AND (
           status = 'due'
-          OR (
-            status IN ('todo', 'wip')
-            AND due_date IS NOT NULL
-            AND due_date <= CURRENT_DATE
-          )
+          OR (due_date      IS NOT NULL AND due_date      <= CURRENT_DATE)
+          OR (reminder_date IS NOT NULL AND reminder_date <= CURRENT_DATE)
         )`;
     return res.status(200).json({ count: rows[0]?.n || 0 });
   }

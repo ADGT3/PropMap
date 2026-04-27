@@ -51,21 +51,29 @@ export default async function handler(req, res) {
               (parcelPropsByParcel[p.parcel_id] ||= []).push(p);
             });
           }
-          // V75.7: has_due_action flag — which deals have at least one action
+          // V75.7: due-action flag — which deals have at least one action
           // currently in status='due' (or overdue todo/wip). Single query,
           // reused across all returned deals.
+          // V76.4.2: now returns a per-deal COUNT (not just a boolean) and
+          // also includes reminder_date today-or-earlier, matching the
+          // header badge logic. Backward compat: `has_due_action` is still
+          // emitted (true when count > 0) so legacy consumers keep working.
           const dealIds = rows.map(r => r.id);
-          const dueSet = new Set();
+          const dueCounts = new Map();  // deal_id → count
           if (dealIds.length) {
             try {
               const dueRows = await sql`
-                SELECT DISTINCT deal_id FROM actions
+                SELECT deal_id, COUNT(*)::int AS n
+                  FROM actions
                  WHERE deal_id = ANY(${dealIds})
+                   AND status NOT IN ('done','void')
                    AND (
                      status = 'due'
-                     OR (status IN ('todo','wip') AND due_date IS NOT NULL AND due_date <= CURRENT_DATE)
-                   )`;
-              dueRows.forEach(r => { if (r.deal_id) dueSet.add(r.deal_id); });
+                     OR (due_date      IS NOT NULL AND due_date      <= CURRENT_DATE)
+                     OR (reminder_date IS NOT NULL AND reminder_date <= CURRENT_DATE)
+                   )
+                 GROUP BY deal_id`;
+              dueRows.forEach(r => { if (r.deal_id) dueCounts.set(r.deal_id, r.n); });
             } catch (err) {
               // Actions table may not exist on an older DB — fail soft so
               // the deals list still loads.
@@ -74,8 +82,9 @@ export default async function handler(req, res) {
           }
           return rows.map(r => ({
             ...r,
-            parcel_properties: r.parcel_id ? (parcelPropsByParcel[r.parcel_id] || []) : null,
-            has_due_action:    dueSet.has(r.id),
+            parcel_properties:  r.parcel_id ? (parcelPropsByParcel[r.parcel_id] || []) : null,
+            due_action_count:   dueCounts.get(r.id) || 0,
+            has_due_action:     dueCounts.has(r.id),
           }));
         }
 
