@@ -205,8 +205,11 @@ function dealRowToInternal(row) {
     _columnId:     row.column_id   || null,
     // V75.7: due-action flag, set server-side in api/deals.js fetchAndExpand
     // V76.4.2: due_action_count is the actual number; _hasDueAction kept for compat.
-    _hasDueAction:    !!row.has_due_action,
-    _dueActionCount:  Number(row.due_action_count || 0),
+    // V76.4.3: _hasOverdueAction drives the red left-border attention bar
+    // (narrower rule: due_date today-or-earlier, status not done/void).
+    _hasDueAction:      !!row.has_due_action,
+    _dueActionCount:    Number(row.due_action_count || 0),
+    _hasOverdueAction:  !!row.has_overdue_action,
   };
 }
 
@@ -1451,6 +1454,11 @@ function renderBoard() {
       if (!p) return; // skip malformed entries
       const card = document.createElement('div');
       card.className = 'kb-card';
+      // V76.4.3: red attention bar when the deal has at least one OVERDUE
+      // action — same rule as the action card's _isOverdue (status active,
+      // due_date today-or-earlier). Reminder-due alone doesn't trigger
+      // the bar; it only contributes to the bell count.
+      if (item._hasOverdueAction) card.classList.add('kb-card-attention');
       card.draggable = true;
       card.dataset.id = id;
 
@@ -1759,7 +1767,9 @@ async function renderActionsBoard(board) {
     colActions.forEach(a => {
       const card = document.createElement('div');
       card.className = 'kb-card kb-action-card';
-      if (_isOverdue(a)) card.classList.add('kb-action-card-overdue');
+      // V76.4.3: generic attention indicator (was kb-action-card-overdue).
+      // Same class is also applied to deal cards when they have due actions.
+      if (_isOverdue(a)) card.classList.add('kb-card-attention');
       card.draggable = true;
       card.dataset.id = a.id;
 

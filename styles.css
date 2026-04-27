@@ -2882,7 +2882,12 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   color: var(--muted, #64748b);
   font-style: italic;
 }
-.kb-action-card-overdue {
+/* V76.4.3 — Card "needs attention" indicator. 3px red left border applied
+   to any kanban card (action or deal) that has an item due or reminder due
+   and not yet resolved. Used everywhere the bell badge is also relevant,
+   so the visual language is consistent: red = needs attention today. */
+.kb-card-attention,
+.kb-action-card-overdue /* legacy alias, retained for back-compat */ {
   border-left: 3px solid #dc2626;
 }
 
