@@ -204,7 +204,9 @@ function dealRowToInternal(row) {
     _boardId:      row.board_id    || null,
     _columnId:     row.column_id   || null,
     // V75.7: due-action flag, set server-side in api/deals.js fetchAndExpand
-    _hasDueAction: !!row.has_due_action,
+    // V76.4.2: due_action_count is the actual number; _hasDueAction kept for compat.
+    _hasDueAction:    !!row.has_due_action,
+    _dueActionCount:  Number(row.due_action_count || 0),
   };
 }
 
@@ -1482,7 +1484,7 @@ function renderBoard() {
           ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
           ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
           ${(Array.isArray(item.note) ? item.note.length : item.note) ? `<span class="kb-ind kb-ind-note" title="Has notes">Note</span>` : ''}
-          ${item._hasDueAction ? `<span class="kb-ind kb-ind-action-due" title="Action due or overdue">⏰ Action</span>` : ''}
+          ${item._dueActionCount > 0 ? `<span class="kb-ind kb-ind-action-due" title="${item._dueActionCount} action${item._dueActionCount === 1 ? '' : 's'} due or reminder due">🔔 ${item._dueActionCount}</span>` : ''}
         </div>
       `;
 
@@ -3070,14 +3072,59 @@ window.refreshPipelinePins = function () {
 };
 
 // Expose for cross-module navigation (CRM deep-links into a pipeline item)
-window.openPipelineItem = function (pipelineId) {
-  if (!pipeline[pipelineId]) {
+// V76.4.2: handle cross-board navigation. The local `pipeline` dict is scoped
+// to currentBoardId only — clicking a deal link from My Actions (or any other
+// board) used to fail with "no longer exists" if the deal lives on a different
+// board. Now: if the deal isn't in the local cache, fetch it via /api/deals?id=
+// to discover its board_id, switch to that board, then open the modal.
+window.openPipelineItem = async function (pipelineId) {
+  // Fast path: deal is already loaded for the current board
+  if (pipeline[pipelineId]) {
+    if (crmVisible) toggleCRM(false);
+    if (!kanbanVisible) toggleKanban(true);
+    setTimeout(() => openCardModal(pipelineId), 50);
+    return;
+  }
+
+  // Slow path: look up the deal to find its board, then switch boards.
+  let dealRow = null;
+  try {
+    const r = await fetch(`/api/deals?id=${encodeURIComponent(pipelineId)}`);
+    if (r.ok) dealRow = await r.json();
+  } catch (_) { /* fall through */ }
+
+  if (!dealRow || !dealRow.id) {
     alert('That pipeline item no longer exists.');
     return;
   }
-  // Close CRM view if open, then open Kanban and the card modal
+
+  const targetBoardId = dealRow.board_id || currentBoardId;
+
+  // Open Kanban view first
   if (crmVisible) toggleCRM(false);
   if (!kanbanVisible) toggleKanban(true);
-  // Wait a tick for Kanban to render before opening the modal
-  setTimeout(() => openCardModal(pipelineId), 50);
+
+  // Switch board if needed — same handler as the board-select change event
+  if (targetBoardId !== currentBoardId) {
+    currentBoardId = targetBoardId;
+    const sel = document.getElementById('kanbanBoardSelect');
+    if (sel) sel.value = currentBoardId;
+    pipeline = {};
+    renderBoard();
+    // Reload deals + ordering for the new board, then re-render and open modal
+    const [dict, _order] = await Promise.all([dbLoad(), loadUserDealOrder()]);
+    if (dict) {
+      Object.keys(pipeline).forEach(k => delete pipeline[k]);
+      Object.assign(pipeline, dict);
+    }
+    cacheSave(pipeline);
+    renderBoard();
+    if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+  }
+
+  // Modal — wait a tick so the board re-render settles
+  setTimeout(() => {
+    if (pipeline[pipelineId]) openCardModal(pipelineId);
+    else alert('That pipeline item no longer exists.');
+  }, 60);
 };
