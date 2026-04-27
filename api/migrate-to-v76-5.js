@@ -159,10 +159,25 @@ async function runMigration() {
     return { skipped: 'already exists' };
   });
 
-  // 2. Drop the FK so we can renumber both ends without ordering hell
+  // 2. Drop the FK so we can renumber both ends without ordering hell.
   await step('drop FK deals_property_id_fkey', async () => {
     if (await constraintExists('deals', 'deals_property_id_fkey')) {
       await sql`ALTER TABLE deals DROP CONSTRAINT deals_property_id_fkey`;
+      return { dropped: true };
+    }
+    return { skipped: 'not present' };
+  });
+  // V76.5.3: also drop the XOR check (deals must have exactly one of
+  // property_id / parcel_id non-null). The renumber algorithm below updates
+  // children in two statements per property; while the column-update loop is
+  // running we can briefly have a deal pointing at a stale parent id that
+  // we're about to update. Without an FK constraint that's invisible — but
+  // an earlier algorithm version nulled property_id mid-loop, which DOES
+  // violate the XOR check. The current algorithm doesn't null anything, but
+  // we drop the check anyway for safety; we put it back at the end.
+  await step('drop CHECK deals_target_xor', async () => {
+    if (await constraintExists('deals', 'deals_target_xor')) {
+      await sql`ALTER TABLE deals DROP CONSTRAINT deals_target_xor`;
       return { dropped: true };
     }
     return { skipped: 'not present' };
@@ -187,15 +202,11 @@ async function runMigration() {
   });
 
   // 3. Renumber properties first (deals reference them via property_id).
-  //    Per-property algorithm:
-  //      a. Capture the list of deal ids whose property_id == oldId.
-  //      b. Null those deals' property_id (FK is dropped above; column is
-  //         no-longer-NOT-NULL since V75.4 so this is allowed).
-  //      c. Update properties.id from oldId → newId; stamp legacy_id; ensure
-  //         domain_listing_id is set if the old id was a Domain id.
-  //      d. Update those captured deals back to property_id = newId.
-  //      e. Update polymorphic refs in entity_contacts/notes/contact_notes.
-  //    No reliance on legacy_id paper trail for deal relink — direct id capture.
+  //    V76.5.3 algorithm — simpler than V76.5.2 (which nulled-then-restored
+  //    deals.property_id and tripped the deals_target_xor CHECK constraint).
+  //    Now: with FK dropped, just update the parent in place, then bulk-update
+  //    the children to point at the new id. No nulling, no transient state
+  //    that could trip checks.
   let propsRenumbered = 0;
   await step('renumber properties + cascade', async () => {
     const candidates = await sql`
@@ -206,16 +217,7 @@ async function runMigration() {
       const oldId = row.id;
       const newId = newPropId();
 
-      // (a) Capture children before modifying anything
-      const childDeals = await sql`SELECT id FROM deals WHERE property_id = ${oldId}`;
-      const childDealIds = childDeals.map(r => r.id);
-
-      // (b) Detach children to free the parent for renumber
-      if (childDealIds.length) {
-        await sql`UPDATE deals SET property_id = NULL WHERE property_id = ${oldId}`;
-      }
-
-      // (c) Renumber the parent. domain_listing_id COALESCE: only stamp the
+      // (a) Renumber the parent. domain_listing_id COALESCE: only stamp the
       //     old id if the old id is purely numeric (i.e. it WAS a Domain id).
       //     For 'property-...' synthetic ids we leave domain_listing_id alone.
       const isNumericId = /^[0-9]+$/.test(oldId);
@@ -227,12 +229,12 @@ async function runMigration() {
                domain_listing_id = COALESCE(domain_listing_id, ${stampDomainId})
          WHERE id = ${oldId}`;
 
-      // (d) Reattach children to the new parent id
-      for (const cdId of childDealIds) {
-        await sql`UPDATE deals SET property_id = ${newId} WHERE id = ${cdId}`;
-      }
+      // (b) Update children — single bulk UPDATE per child table. All deals
+      //     that pointed at oldId now point at newId. The XOR check is fine
+      //     because we never null property_id.
+      await sql`UPDATE deals SET property_id = ${newId} WHERE property_id = ${oldId}`;
 
-      // (e) Polymorphic references — update everything keyed by old property id
+      // (c) Polymorphic references — update everything keyed by old property id
       await sql`
         UPDATE entity_contacts
            SET entity_id = ${newId}
@@ -345,6 +347,17 @@ async function runMigration() {
       return { created: true };
     }
     return { skipped: 'already present or table missing' };
+  });
+  // V76.5.3: recreate the XOR check we dropped at the top.
+  await step('recreate CHECK deals_target_xor', async () => {
+    if (!(await constraintExists('deals', 'deals_target_xor'))) {
+      await sql`
+        ALTER TABLE deals
+          ADD CONSTRAINT deals_target_xor
+          CHECK ((property_id IS NULL) <> (parcel_id IS NULL))`;
+      return { created: true };
+    }
+    return { skipped: 'already present' };
   });
 
   // 6. Verify integrity — counts of any remaining legacy ids should be 0.
