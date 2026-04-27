@@ -153,6 +153,122 @@ function formatNoteDate(ts) {
   return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// ─── V76.4.5: Vendor Terms & Offers history aggregation ──────────────────────
+// Pure helper. Takes a list of deal records (as returned by /api/deals) and
+// flattens their data.terms and data.offers into a single newest-first list
+// for read-only display in the CRM Property and Parcel modals.
+//
+// Output entry shape:
+//   {
+//     kind:        'terms' | 'offer',
+//     dealId:      string,
+//     dealWorkflow: string,           // 'acquisition' | 'agency_sales' | ...
+//     date:        ISO string,
+//     price:       string|number,
+//     settlement:  string|number|null,
+//     deposits:    Array<{ amount, due, note }>,
+//     label:       string             // e.g. "Vendor Terms" / "Offer 2"
+//   }
+//
+// Legacy data shape note: today data.terms is a singleton OBJECT. The future
+// (planned but not yet built) refactor will make it an ARRAY like data.offers.
+// This aggregator transparently handles both shapes so it'll keep working
+// after that refactor without changes here.
+function aggregateDealHistory(deals) {
+  const out = [];
+  for (const d of deals || []) {
+    if (!d || !d.data) continue;
+    const wf = d.workflow || '';
+    const updatedAt = d.updated_at || d.opened_at || d.created_at || null;
+
+    // ── Terms — singleton (legacy) or array (future)
+    const t = d.data.terms;
+    if (t) {
+      const termsList = Array.isArray(t) ? t : [t];
+      termsList.forEach((entry, i) => {
+        if (!entry) return;
+        if (!entry.price && !entry.settlement && !(entry.deposits && entry.deposits.some(x => x && x.amount))) return;
+        out.push({
+          kind:         'terms',
+          dealId:       d.id,
+          dealWorkflow: wf,
+          date:         entry.date || updatedAt,
+          price:        entry.price || '',
+          settlement:   entry.settlement || null,
+          deposits:     Array.isArray(entry.deposits) ? entry.deposits : [],
+          label:        termsList.length > 1 ? `Vendor Terms ${termsList.length - i}` : 'Vendor Terms',
+        });
+      });
+    }
+
+    // ── Offers — already an array
+    const offers = Array.isArray(d.data.offers) ? d.data.offers : [];
+    offers.forEach((o, i) => {
+      if (!o || !o.price) return;
+      out.push({
+        kind:         'offer',
+        dealId:       d.id,
+        dealWorkflow: wf,
+        date:         o.date || updatedAt,
+        price:        o.price,
+        settlement:   o.settlement || null,
+        deposits:     Array.isArray(o.deposits) ? o.deposits : [],
+        label:        `Offer ${offers.length - i}`,
+      });
+    });
+  }
+  // Newest first; entries without dates sink to the bottom
+  out.sort((a, b) => {
+    const ta = a.date ? new Date(a.date).getTime() : 0;
+    const tb = b.date ? new Date(b.date).getTime() : 0;
+    return tb - ta;
+  });
+  return out;
+}
+
+// V76.4.5: render the read-only history list as HTML for the CRM modals.
+// Reuses kanban styles (.kb-fin-pick-*) so the visual matches the deal modal's
+// finance picker. Source deal id is rendered as a link the caller can wire up.
+function buildVendorHistoryHtml(history, opts = {}) {
+  if (!history.length) {
+    return '<div class="crm-empty">No vendor terms or offers recorded yet</div>';
+  }
+  const wfLabels = { acquisition: 'Acquisition', buyer_enquiry: 'Enquiry', agency_sales: 'Listing' };
+  const fmtPrice = window.formatInputPrice || (s => '$' + s);
+  const fmtSet   = window.formatSettlement || (s => String(s));
+  const fmtDate  = window.formatOfferDate || (iso => new Date(iso).toLocaleDateString('en-AU'));
+  const fmtDep   = (deposits, price) => {
+    const fmtAmt   = window.formatDepositAmount      || ((a) => String(a));
+    const parsePx  = window.parseDepositAmountKanban || (() => 0);
+    const px = parsePx(price, null) || 0;
+    return (deposits || [])
+      .filter(x => x && x.amount)
+      .map(x => fmtAmt(x.amount, px) + (x.due ? ' · ' + fmtSet(String(x.due)) : '') + (x.note ? ' · ' + x.note : ''))
+      .join('<br>');
+  };
+
+  return `<div class="crm-vendor-history-list">${history.map(h => {
+    const depSummary = fmtDep(h.deposits, h.price);
+    const wfBadge = h.dealWorkflow ? `<span class="kb-fin-pick-meta">${wfLabels[h.dealWorkflow] || h.dealWorkflow}</span>` : '';
+    return `
+      <div class="kb-fin-pick-row crm-vendor-history-row" data-deal-id="${h.dealId}">
+        <div class="kb-fin-pick-main">
+          <div class="kb-fin-pick-top">
+            <span class="kb-fin-pick-label">${h.label}</span>
+            ${h.date ? `<span class="kb-fin-pick-date">${fmtDate(h.date)}</span>` : ''}
+          </div>
+          <div class="kb-fin-pick-detail">
+            <span class="kb-fin-pick-price">${h.price ? fmtPrice(String(h.price)) : '—'}</span>
+            ${h.settlement ? `<span class="kb-fin-pick-meta">${fmtSet(String(h.settlement))} settlement</span>` : ''}
+            ${wfBadge}
+            <span class="kb-fin-pick-meta">Deal <a href="#" class="crm-vendor-history-deal-link" data-deal-id="${h.dealId}">${h.dealId}</a></span>
+          </div>
+          ${depSummary ? `<div class="kb-fin-pick-deps">${depSummary}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('')}</div>`;
+}
+
 // ─── Organisation typeahead ───────────────────────────────────────────────────
 
 function buildOrgTypeahead(container, onSelect) {
@@ -1901,6 +2017,11 @@ function renderCRMView(container) {
       // Active deal detection for the smart-button section header
       const activeDeal = parcelDeals.find(d => d.status === 'active') || null;
       const closedCount = parcelDeals.filter(d => d.status !== 'active').length;
+      // V76.4.5: read-only vendor terms & offers history aggregated from
+      // every deal attached to this parcel.
+      const vendorHistory = (typeof aggregateDealHistory === 'function')
+        ? aggregateDealHistory(parcelDeals)
+        : [];
 
       // Not-suitable state
       const nsRaw = parcel.not_suitable_until;
@@ -2004,6 +2125,17 @@ function renderCRMView(container) {
                   <span class="crm-deal-badge crm-deal-badge-stage">${d.stage}</span>
                   <span class="crm-deal-badge crm-deal-badge-stage">${d.status}</span>
                 </div>`).join('') : '<div class="crm-empty">No deals on this parcel</div>'}
+            </div>
+          </div>
+
+          <!-- V76.4.5: read-only vendor terms & offers history aggregated from
+               all deals attached to this parcel. -->
+          <div class="crm-modal-section crm-section-collapsible" data-section="vendor-history" ${vendorHistory.length ? '' : 'data-collapsed="1"'}>
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">${vendorHistory.length ? '▾' : '▸'}</span> Vendor Terms &amp; Offers <span class="crm-section-count">(${vendorHistory.length})</span></span>
+            </div>
+            <div class="crm-section-body" ${vendorHistory.length ? '' : 'style="display:none"'}>
+              ${buildVendorHistoryHtml(vendorHistory)}
             </div>
           </div>
 
@@ -2145,6 +2277,14 @@ function renderCRMView(container) {
         if (window.Router) Router.navigate(`/pipeline/deal/${e.currentTarget.dataset.dealId}`);
       });
       modal.querySelectorAll('.crm-deal-open').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (window.Router) Router.navigate(`/pipeline/deal/${a.dataset.dealId}`);
+        });
+      });
+
+      // V76.4.5: vendor terms & offers history — deal-id links open the deal modal
+      modal.querySelectorAll('.crm-vendor-history-deal-link').forEach(a => {
         a.addEventListener('click', (e) => {
           e.preventDefault();
           if (window.Router) Router.navigate(`/pipeline/deal/${a.dataset.dealId}`);
@@ -2370,6 +2510,16 @@ function renderCRMView(container) {
 
       const parcel = property.parcel_id ? allParcels.find(x => x.id === property.parcel_id) : null;
       const propertyDeals = allDeals.filter(d => d.property_id === propertyId);
+      // V76.4.5: for the read-only Vendor Terms & Offers history we ALSO want
+      // to see deals on the parcel this property belongs to — that's where
+      // parcel-level negotiations record their terms/offers, and they're
+      // genuinely the history of this property too.
+      const historyDeals = property.parcel_id
+        ? allDeals.filter(d => d.property_id === propertyId || d.parcel_id === property.parcel_id)
+        : propertyDeals;
+      const vendorHistory = (typeof aggregateDealHistory === 'function')
+        ? aggregateDealHistory(historyDeals)
+        : [];
       const activeDeal  = propertyDeals.find(d => d.status === 'active') || null;
       const closedCount = propertyDeals.filter(d => d.status !== 'active').length;
 
@@ -2488,6 +2638,17 @@ function renderCRMView(container) {
                   <span class="crm-deal-badge crm-deal-badge-stage">${d.stage}</span>
                   <span class="crm-deal-badge crm-deal-badge-stage">${d.status}</span>
                 </div>`).join('') : (inParcel ? '' : '<div class="crm-empty">No deals on this property</div>')}
+            </div>
+          </div>
+
+          <!-- V76.4.5: read-only vendor terms & offers history aggregated from
+               all deals attached to this property (and the parent parcel, if any). -->
+          <div class="crm-modal-section crm-section-collapsible" data-section="vendor-history" ${vendorHistory.length ? '' : 'data-collapsed="1"'}>
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">${vendorHistory.length ? '▾' : '▸'}</span> Vendor Terms &amp; Offers <span class="crm-section-count">(${vendorHistory.length})</span></span>
+            </div>
+            <div class="crm-section-body" ${vendorHistory.length ? '' : 'style="display:none"'}>
+              ${buildVendorHistoryHtml(vendorHistory)}
             </div>
           </div>
 
@@ -2655,6 +2816,18 @@ function renderCRMView(container) {
         }
       });
       modal.querySelectorAll('.crm-deal-open').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          const dealId = a.dataset.dealId;
+          if (dealId && typeof window.openPipelineItem === 'function') {
+            onDone();
+            window.openPipelineItem(dealId);
+          }
+        });
+      });
+
+      // V76.4.5: vendor terms & offers history — deal-id links open the deal modal
+      modal.querySelectorAll('.crm-vendor-history-deal-link').forEach(a => {
         a.addEventListener('click', (e) => {
           e.preventDefault();
           const dealId = a.dataset.dealId;
