@@ -3083,12 +3083,17 @@ window.refreshPipelinePins = function () {
 
 // Expose for cross-module navigation (CRM deep-links into a pipeline item)
 // V76.4.2: handle cross-board navigation. The local `pipeline` dict is scoped
-// to currentBoardId only — clicking a deal link from My Actions (or any other
-// board) used to fail with "no longer exists" if the deal lives on a different
-// board. Now: if the deal isn't in the local cache, fetch it via /api/deals?id=
-// to discover its board_id, switch to that board, then open the modal.
+//   to currentBoardId only — clicking a deal link from My Actions used to fail
+//   with "no longer exists" if the deal lives on a different board.
+// V76.4.4: fast-path the slow case. Previously we fetched the deal, then
+//   fetched the entire target board's deals + per-user ordering, then
+//   re-rendered the board twice before opening the modal — three sequential
+//   round-trips and heavy DOM work for a single-modal request. Now we open
+//   the modal as soon as the single-deal fetch returns (one round-trip), and
+//   reload the rest of the board in the background. The modal already had
+//   everything it needed from that single fetch.
 window.openPipelineItem = async function (pipelineId) {
-  // Fast path: deal is already loaded for the current board
+  // Fast path A: deal is already loaded in the current board's cache
   if (pipeline[pipelineId]) {
     if (crmVisible) toggleCRM(false);
     if (!kanbanVisible) toggleKanban(true);
@@ -3096,7 +3101,8 @@ window.openPipelineItem = async function (pipelineId) {
     return;
   }
 
-  // Slow path: look up the deal to find its board, then switch boards.
+  // Slow path: one fetch, then open immediately. The full-board reload runs
+  // in the background and the user doesn't wait for it.
   let dealRow = null;
   try {
     const r = await fetch(`/api/deals?id=${encodeURIComponent(pipelineId)}`);
@@ -3108,33 +3114,57 @@ window.openPipelineItem = async function (pipelineId) {
     return;
   }
 
-  const targetBoardId = dealRow.board_id || currentBoardId;
-
-  // Open Kanban view first
+  // Reveal Kanban, but DON'T re-render before we have the deal in the dict.
+  // Ensure visibility without triggering a wholesale renderBoard for the
+  // (about-to-be-changed) currentBoardId, which would briefly show an empty
+  // target board.
   if (crmVisible) toggleCRM(false);
-  if (!kanbanVisible) toggleKanban(true);
+  if (!kanbanVisible) {
+    kanbanVisible = true;
+    window.kanbanVisible = true;
+    document.getElementById('kanbanView').classList.toggle('visible', true);
+    document.getElementById('kanbanToggleBtn')?.classList.add('active');
+    refreshDueBadge();
+  }
 
-  // Switch board if needed — same handler as the board-select change event
-  if (targetBoardId !== currentBoardId) {
+  const targetBoardId = dealRow.board_id || currentBoardId;
+  const switching = targetBoardId !== currentBoardId;
+
+  // Drop the single deal into the dict immediately, even before we know if
+  // we're on its board, so openCardModal() finds it.
+  pipeline[pipelineId] = dealRowToInternal(dealRow);
+
+  if (switching) {
     currentBoardId = targetBoardId;
     const sel = document.getElementById('kanbanBoardSelect');
     if (sel) sel.value = currentBoardId;
-    pipeline = {};
-    renderBoard();
-    // Reload deals + ordering for the new board, then re-render and open modal
-    const [dict, _order] = await Promise.all([dbLoad(), loadUserDealOrder()]);
-    if (dict) {
-      Object.keys(pipeline).forEach(k => delete pipeline[k]);
-      Object.assign(pipeline, dict);
-    }
-    cacheSave(pipeline);
-    renderBoard();
-    if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
   }
 
-  // Modal — wait a tick so the board re-render settles
-  setTimeout(() => {
-    if (pipeline[pipelineId]) openCardModal(pipelineId);
-    else alert('That pipeline item no longer exists.');
-  }, 60);
+  // Open the modal NOW — it's fully renderable from the single deal we have.
+  openCardModal(pipelineId);
+
+  // Background: reload the rest of the target board so when the user closes
+  // the modal they see the full board populated. We don't await this; the
+  // user is already looking at the modal.
+  (async () => {
+    try {
+      const [dict, _order] = await Promise.all([dbLoad(), loadUserDealOrder()]);
+      if (dict) {
+        // Preserve the deal we already inserted (it has the freshest data
+        // we needed for the modal); merge the rest of the board over it.
+        const merged = { ...dict, [pipelineId]: pipeline[pipelineId] || dict[pipelineId] };
+        Object.keys(pipeline).forEach(k => delete pipeline[k]);
+        Object.assign(pipeline, merged);
+      }
+      cacheSave(pipeline);
+      // Re-render only if Kanban is still visible AND no modal is open
+      // (avoid yanking the page out from under the user).
+      if (kanbanVisible && !document.getElementById('kb-modal')) {
+        renderBoard();
+      }
+      if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+    } catch (err) {
+      console.warn('[openPipelineItem] background reload failed:', err.message);
+    }
+  })();
 };
