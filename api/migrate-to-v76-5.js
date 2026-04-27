@@ -424,7 +424,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    if (!await requireAdmin(req, res, session)) return;
+    if (!requireAdmin(session, res)) return;
     const { confirm } = req.body || {};
     if (confirm !== true) {
       return res.status(400).json({
