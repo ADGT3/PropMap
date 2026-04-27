@@ -54,12 +54,16 @@ export default async function handler(req, res) {
           // V75.7: due-action flag — which deals have at least one action
           // currently in status='due' (or overdue todo/wip). Single query,
           // reused across all returned deals.
-          // V76.4.2: now returns a per-deal COUNT (not just a boolean) and
-          // also includes reminder_date today-or-earlier, matching the
-          // header badge logic. Backward compat: `has_due_action` is still
-          // emitted (true when count > 0) so legacy consumers keep working.
+          // V76.4.2: due_action_count is the broad "needs attention today"
+          // count — drives the bell badge (header + per-card pill). Includes
+          // due_date AND reminder_date today-or-earlier.
+          // V76.4.3: has_overdue_action is the narrower "overdue" flag —
+          // drives the red left-border attention bar on cards. Same rule as
+          // the action card's _isOverdue() (status active, due_date today-or-
+          // earlier). Reminders DO NOT trigger the bar.
           const dealIds = rows.map(r => r.id);
-          const dueCounts = new Map();  // deal_id → count
+          const dueCounts = new Map();    // deal_id → broad count (badge)
+          const overdueSet = new Set();   // deal_id → has narrow overdue (bar)
           if (dealIds.length) {
             try {
               const dueRows = await sql`
@@ -74,6 +78,16 @@ export default async function handler(req, res) {
                    )
                  GROUP BY deal_id`;
               dueRows.forEach(r => { if (r.deal_id) dueCounts.set(r.deal_id, r.n); });
+
+              // Narrow "overdue" — same rule as _isOverdue() in kanban.js
+              const overdueRows = await sql`
+                SELECT DISTINCT deal_id
+                  FROM actions
+                 WHERE deal_id = ANY(${dealIds})
+                   AND status IN ('todo','wip','due')
+                   AND due_date IS NOT NULL
+                   AND due_date <= CURRENT_DATE`;
+              overdueRows.forEach(r => { if (r.deal_id) overdueSet.add(r.deal_id); });
             } catch (err) {
               // Actions table may not exist on an older DB — fail soft so
               // the deals list still loads.
@@ -85,6 +99,7 @@ export default async function handler(req, res) {
             parcel_properties:  r.parcel_id ? (parcelPropsByParcel[r.parcel_id] || []) : null,
             due_action_count:   dueCounts.get(r.id) || 0,
             has_due_action:     dueCounts.has(r.id),
+            has_overdue_action: overdueSet.has(r.id),
           }));
         }
 
