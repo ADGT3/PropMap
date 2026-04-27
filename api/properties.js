@@ -52,9 +52,20 @@ export default async function handler(req, res) {
         // V76.5: lookup by Domain listing id (returns at most one row, since we
         // enforce one-property-per-listing via unique-ish use, though no DB
         // uniqueness constraint to allow brief overlap during link migration).
+        // V76.5.6: not_suitable_until cast to text. Without the cast, the Neon
+        // driver coerces 'infinity'::timestamptz to JS null when serialising,
+        // silently dropping permanent not-suitable flags from the wire.
+        // Casting to ::text preserves the literal 'infinity' string, which the
+        // client checks for explicitly (map.js isNotSuitable, crm.js NS detect).
         if (by_domain_listing) {
           const rows = await sql`
-            SELECT * FROM properties WHERE domain_listing_id = ${String(by_domain_listing)}
+            SELECT id, address, suburb, lat, lng, lot_dps, area_sqm,
+                   parcels, property_count, domain_listing_id, listing_url,
+                   agent,
+                   not_suitable_until::text AS not_suitable_until,
+                   not_suitable_reason,
+                   parcel_id, state_prop_id, created_at, updated_at
+              FROM properties WHERE domain_listing_id = ${String(by_domain_listing)}
             ORDER BY updated_at DESC LIMIT 1`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           return res.status(200).json(rows[0]);
@@ -76,8 +87,16 @@ export default async function handler(req, res) {
         }
 
         // Single property
+        // V76.5.6: cast not_suitable_until to text — see by_domain_listing note above.
         if (id) {
-          const rows = await sql`SELECT * FROM properties WHERE id = ${id}`;
+          const rows = await sql`
+            SELECT id, address, suburb, lat, lng, lot_dps, area_sqm,
+                   parcels, property_count, domain_listing_id, listing_url,
+                   agent,
+                   not_suitable_until::text AS not_suitable_until,
+                   not_suitable_reason,
+                   parcel_id, state_prop_id, created_at, updated_at
+              FROM properties WHERE id = ${id}`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           return res.status(200).json(rows[0]);
         }
@@ -86,10 +105,13 @@ export default async function handler(req, res) {
         // V75.3: dd column dropped; DD now lives per-deal in deals.data.dd
         // V75.4: parcel_id added for parcel membership
         // V75.4c: state_prop_id (nullable) for NSW propid cross-reference
+        // V76.5.6: cast not_suitable_until to text (see by_domain_listing note).
         const rows = await sql`
           SELECT id, address, suburb, lat, lng, lot_dps, area_sqm,
                  parcels, property_count, domain_listing_id, listing_url,
-                 agent, not_suitable_until, not_suitable_reason,
+                 agent,
+                 not_suitable_until::text AS not_suitable_until,
+                 not_suitable_reason,
                  parcel_id, state_prop_id, updated_at
           FROM properties ORDER BY updated_at DESC`;
         return res.status(200).json(rows);
@@ -170,7 +192,7 @@ export default async function handler(req, res) {
                    not_suitable_reason = ${reason},
                    updated_at          = now()
              WHERE id = ${id}
-             RETURNING id, not_suitable_set_at, not_suitable_until, not_suitable_reason`;
+             RETURNING id, not_suitable_set_at, not_suitable_until::text AS not_suitable_until, not_suitable_reason`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           return res.status(200).json(rows[0]);
         }
