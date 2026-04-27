@@ -2653,6 +2653,7 @@ function renderCRMView(container) {
           <div class="crm-modal-section crm-section-collapsible" data-section="not-suitable" ${nsActive ? '' : 'data-collapsed="1"'}>
             <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">${nsActive ? '▾' : '▸'}</span> Not Suitable Status</span>
+              ${nsActive ? `<button class="crm-prop-clear-ns-btn kb-add-offer-btn">Clear flag</button>` : ''}
             </div>
             <div class="crm-section-body" ${nsActive ? '' : 'style="display:none"'}>
               ${nsActive ? `
@@ -2660,9 +2661,6 @@ function renderCRMView(container) {
                   <div class="crm-detail-label">Status</div>
                   <div>Flagged as not suitable · ${nsLabel}</div>
                   ${property.not_suitable_reason ? `<div class="crm-detail-label">Reason</div><div>${property.not_suitable_reason}</div>` : ''}
-                </div>
-                <div style="margin-top:8px">
-                  <button class="crm-prop-clear-ns-btn kb-add-offer-btn">Clear flag</button>
                 </div>
               ` : `
                 <div style="color:var(--text-secondary);font-size:12px;margin-bottom:8px">Not flagged.</div>
