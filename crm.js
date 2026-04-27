@@ -2369,7 +2369,7 @@ function renderCRMView(container) {
         <input class="kb-input crm-view-search" placeholder="Search properties…" value="${propertySearch}" style="flex:1">
         <label class="crm-prop-screened-toggle" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary);white-space:nowrap;cursor:pointer">
           <input type="checkbox" class="crm-prop-screened-cb" ${showScreenedOut ? 'checked' : ''}>
-          Show screened-out
+          Show Not Suitable
         </label>
       </div>
       <div class="crm-contact-table-wrap">
