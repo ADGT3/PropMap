@@ -87,7 +87,14 @@ function isNotSuitable(listingOrLatLng) {
   return false;
 }
 
+// V76.5: cache of properties keyed by their Domain listing id, for the
+// listing card display swap. Populated by loadNotSuitable().
+const _propertyByDomainId = new Map();
+
 // Fetch all properties currently flagged not-suitable; populate _notSuitable lookup.
+// V76.5: also populate _propertyByDomainId, a cache used by the listing card
+// renderer to swap a listing's address for the linked property's address when
+// a link exists.
 async function loadNotSuitable() {
   try {
     const res = await fetch('/api/properties');
@@ -95,8 +102,20 @@ async function loadNotSuitable() {
     const props = await res.json();
     _notSuitable.byListingId.clear();
     _notSuitable.byLatLng.clear();
+    _propertyByDomainId.clear();
     const now = Date.now();
     props.forEach(p => {
+      // Cache the property link for any property carrying a domain_listing_id.
+      // Used by buildListingCard to display the property's address instead of
+      // Domain's when a link exists.
+      if (p.domain_listing_id) {
+        _propertyByDomainId.set(String(p.domain_listing_id), {
+          id:      p.id,
+          address: p.address,
+          suburb:  p.suburb,
+          lot_dps: p.lot_dps,
+        });
+      }
       if (!p.not_suitable_until) return;
       const isPerm = p.not_suitable_until === 'infinity' || p.not_suitable_until === 'Infinity';
       const stillActive = isPerm || Date.parse(p.not_suitable_until) > now;
@@ -132,39 +151,51 @@ async function markNotSuitable(listing, optionIndex) {
   if (!opt) return null;
   const until = snoozeUntil(opt);
 
-  // Stable property ID — prefer existing pipeline id (reuse if already in pipeline),
-  // else Domain listing id, else generate
-  const pipelineData = window.getPipelineData ? window.getPipelineData() : null;
+  // V76.5: stable property ID resolution.
+  //   1. If a property already exists in the DB linked to this Domain listing
+  //      via domain_listing_id, reuse it (the canonical lookup).
+  //   2. If lat/lng-only marker (no Domain id), generate a notsuitable-* id.
+  //   3. Otherwise let the server auto-generate a fresh prop_* id at create.
   let propertyId = null;
+  let listingDomainId = listing?.id != null ? String(listing.id) : null;
 
-  if (listing?.id != null) {
-    // If a pipeline entry already exists for this Domain listing id, reuse its id
-    if (pipelineData && pipelineData[String(listing.id)]) {
-      propertyId = String(listing.id);
-    } else {
-      propertyId = String(listing.id);
-    }
+  if (listingDomainId) {
+    try {
+      const r = await fetch(`/api/properties?by_domain_listing=${encodeURIComponent(listingDomainId)}`);
+      if (r.ok) {
+        const existing = await r.json();
+        if (existing?.id) propertyId = existing.id;
+      }
+    } catch (_) { /* fall through */ }
+    // propertyId left null → server will generate prop_* on POST
   } else if (listing?.lat != null && listing?.lng != null) {
     propertyId = `notsuitable-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   } else {
     return null;
   }
 
-  // Create property if needed (POST is idempotent — ON CONFLICT DO NOTHING)
+  // Create property if needed (POST is idempotent — ON CONFLICT DO NOTHING).
+  // V76.5: if propertyId is null we omit `id` and the server returns a fresh
+  // prop_* in the response — we capture it for the cascade below.
   try {
-    await fetch('/api/properties', {
+    const createRes = await fetch('/api/properties', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        id:      propertyId,
+        ...(propertyId ? { id: propertyId } : {}),
         address: listing.address || '',
         suburb:  listing.suburb  || '',
         lat:     listing.lat,
         lng:     listing.lng,
-        domain_listing_id: listing.id != null ? String(listing.id) : null,
+        domain_listing_id: listingDomainId,
         listing_url:       listing.listingUrl || null,
       }),
     });
+    if (createRes.ok) {
+      const created = await createRes.json();
+      if (!propertyId && created?.id) propertyId = created.id;
+    }
+    if (!propertyId) return null;
     // Set not-suitable
     const setRes = await fetch('/api/properties', {
       method:  'POST',
@@ -174,7 +205,7 @@ async function markNotSuitable(listing, optionIndex) {
     if (!setRes.ok) throw new Error('set_not_suitable failed');
     // Update local lookup
     const entry = { property_id: propertyId, until: (until === 'permanent' ? 'infinity' : until), reason: null };
-    if (listing.id != null) _notSuitable.byListingId.set(String(listing.id), entry);
+    if (listingDomainId) _notSuitable.byListingId.set(listingDomainId, entry);
     if (listing.lat != null && listing.lng != null) _notSuitable.byLatLng.set(_llKey(listing.lat, listing.lng), entry);
     return entry;
   } catch (err) {
@@ -209,7 +240,13 @@ window.markNotSuitable    = markNotSuitable;
 window.clearNotSuitable   = clearNotSuitable;
 window.isNotSuitable      = isNotSuitable;
 window.SNOOZE_OPTIONS     = SNOOZE_OPTIONS;
-window.refreshListings    = () => { if (typeof renderListings === 'function') renderListings(); };
+// V76.5: refreshListings now also re-loads the properties cache so that
+// link/unlink mutations from the CRM modal are reflected immediately
+// (the listing card's display swap depends on _propertyByDomainId).
+window.refreshListings    = async () => {
+  if (typeof loadNotSuitable === 'function') await loadNotSuitable();
+  if (typeof renderListings  === 'function') renderListings();
+};
 
 // Live overlay registry: id → { def, layer }
 const overlayRegistry = {};
@@ -624,10 +661,13 @@ function findPipelineMatchForClick(listing) {
   const entries = Object.entries(pipelineData);
   if (!entries.length) { console.log('[match] entries empty'); return null; }
 
-  // 1. Listing-id match (Domain pins)
+  // 1. Listing-id match (Domain pins) — V76.5: match by domain_id stored on
+  //    the property, not by listing.id-equals-pipeline-key (which no longer holds).
   if (listing?.id != null) {
-    const hit = entries.find(([id]) => id === String(listing.id));
-    if (hit) { console.log('[match] hit on listing.id:', hit[0]); return hit[0]; }
+    const needle = String(listing.id);
+    const hit = entries.find(([, item]) =>
+      item?.property?.domain_id != null && String(item.property.domain_id) === needle);
+    if (hit) { console.log('[match] hit on domain_id:', hit[0]); return hit[0]; }
   }
 
   // Build a candidate click context: lot/DP set + lat/lng
@@ -1814,6 +1854,18 @@ function makeListingCard(l, { pinToTop = false } = {}) {
   card.className = 'listing-card';
   card.dataset.id = l.id;
 
+  // V76.5: if this Domain listing is linked to a property in our system,
+  // display the property's address (the source of truth) instead of Domain's
+  // (which may be wrong — that's the whole reason linking exists). The Domain
+  // badge / URL / photos / agent / price all stay sourced from Domain.
+  const linkedProperty = _propertyByDomainId.get(String(l.id)) || null;
+  const displayAddress = linkedProperty?.address || l.address;
+  const displaySuburb  = linkedProperty?.suburb  || l.suburb;
+  const linkedBadge = linkedProperty
+    ? `<span class="listing-linked-badge" title="Linked to property ${linkedProperty.id}"
+         style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--accent,#c4841a);color:#fff;font-weight:600;margin-left:6px">Linked</span>`
+    : '';
+
   // V75.1 — Not Suitable inline control
   const ns = isNotSuitable(l);
   const nsBlock = ns
@@ -1836,10 +1888,11 @@ function makeListingCard(l, { pinToTop = false } = {}) {
       <div style="display:flex;align-items:center;gap:6px">
         <div class="listing-type">${l.type}</div>
         ${domBadge}
+        ${linkedBadge}
       </div>
     </div>
-    <div class="listing-address">${l.address}</div>
-    <div class="listing-suburb">${l.suburb} NSW</div>
+    <div class="listing-address">${displayAddress}</div>
+    <div class="listing-suburb">${displaySuburb} NSW</div>
     ${nsBlock}
   `;
   card.addEventListener('click', () => selectListing(l.id));
@@ -2198,11 +2251,16 @@ async function addCurrentSelectionToPipeline() {
   const lotDPs    = parcels.map(p => p.lotDP).filter(Boolean).join(', ');
   const listing   = parcels[0]?.listing || null;
 
-  const id = listing ? String(listing.id) : ('property-' + Date.now());
+  // V76.5: addToPipeline now generates fresh prop_*/deal_* ids itself.
+  // For listings with a real Domain id, pass it through — addToPipeline will
+  // detect it (purely numeric) and use it as the domain link. For map clicks
+  // without a listing, pass id=null so it knows this is non-Domain.
+  const incomingDomainId = listing ? String(listing.id) : null;
 
-  // Push into the pipeline first (synchronous, user sees card immediately)
-  addToPipeline({
-    id,
+  // Push into the pipeline first (synchronous ish — await so we have the new
+  // property id available before we try to PATCH it with NSW data below).
+  await addToPipeline({
+    id:           incomingDomainId,
     address:      listing?.address || streetPart,
     suburb:       listing?.suburb  || suburbPart,
     price:        listing?.price   || 'Unknown',
@@ -2220,8 +2278,38 @@ async function addCurrentSelectionToPipeline() {
     _parcels:     parcels.map(p => ({ lat: p.lat, lng: p.lng, label: p.label })),
   });
 
+  // V76.5: resolve the actual property id that addToPipeline created so the
+  // NSW backfill below can target the right row. Look up via the pipeline
+  // dict using the domain id (for Domain listings) or fall back to scanning
+  // recent entries (for blank-click pipeline adds, where there's no domain id).
+  let newPropertyId = null;
+  if (incomingDomainId && typeof window.findPipelineByDomainId === 'function') {
+    const hit = window.findPipelineByDomainId(incomingDomainId);
+    if (hit) newPropertyId = hit[1]?.property?.id || null;
+  }
+  if (!newPropertyId) {
+    // Non-Domain path: pick the most recently added pipeline entry whose
+    // property has matching coords. Fragile but only used for blank clicks.
+    const pipelineData = window.getPipelineData ? window.getPipelineData() : null;
+    if (pipelineData) {
+      const entries = Object.entries(pipelineData);
+      entries.sort((a, b) => (b[1]?.addedAt || 0) - (a[1]?.addedAt || 0));
+      for (const [, entry] of entries) {
+        const p = entry.property;
+        if (!p) continue;
+        const firstParcel = Array.isArray(p._parcels) ? p._parcels[0] : null;
+        const pLat = firstParcel?.lat ?? p.lat;
+        const pLng = firstParcel?.lng ?? p.lng;
+        if (pLat && pLng && Math.abs(pLat - avgLat) < 1e-6 && Math.abs(pLng - avgLng) < 1e-6) {
+          newPropertyId = p.id;
+          break;
+        }
+      }
+    }
+  }
+
   // Async NSW lookup to backfill lot_dps + state_prop_id (only NSW coords)
-  if (window.NSWLookup && _isNswLatLng(avgLat, avgLng)) {
+  if (newPropertyId && window.NSWLookup && _isNswLatLng(avgLat, avgLng)) {
     try {
       const lookup = await window.NSWLookup.lookupByLatLng(avgLat, avgLng);
       if (lookup?.lotidstring || lookup?.propid) {
@@ -2229,7 +2317,7 @@ async function addCurrentSelectionToPipeline() {
         // For listings (Domain) we don't overwrite address/suburb — Domain wins.
         // For blank-click properties, we can populate address/suburb from NSW.
         const patchBody = {
-          id,
+          id:            newPropertyId,
           lot_dps:       lookup.lotidstring || undefined,
           state_prop_id: lookup.propid || undefined,
         };

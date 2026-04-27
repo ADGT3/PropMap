@@ -2539,13 +2539,39 @@ function renderCRMView(container) {
                           : inParcel  ? `Cannot delete — property is part of parcel "${parcel.name}". Remove from parcel first.`
                           : 'Delete this property';
 
-      // Domain badge (same markup as listing-panel)
-      const listingUrl = property.listing_url || '';
-      const domBadge = listingUrl
+      // V76.5: Domain badge + attach/unlink affordance.
+      // When linked: show badge linking out + tiny "Unlink" button.
+      // When unlinked: show "Attach Domain listing" button which opens an
+      // inline popover where the user pastes a Domain listing URL or id.
+      // The link operation is auth-confirmed if it would steal the listing
+      // from another property (server warns; client confirm() before POST).
+      const listingUrl    = property.listing_url || '';
+      const domainListing = property.domain_listing_id || null;
+      const domBadgeLink = listingUrl
         ? `<a href="${listingUrl}" target="_blank" rel="noopener" class="domain-badge" style="display:inline-flex">
              <img src="https://ui-avatars.com/api/?name=D&size=12&background=1ea765&color=fff&bold=true&rounded=true" style="width:12px;height:12px;border-radius:50%;vertical-align:middle"> Domain
            </a>`
-        : '<span style="color:var(--text-secondary);font-size:12px">—</span>';
+        : '';
+      const domCell = domainListing
+        ? `<div class="crm-prop-domain-cell" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+             ${domBadgeLink || `<code style="font-size:11px">${domainListing}</code>`}
+             <button class="crm-prop-unlink-domain-btn" title="Unlink this Domain listing from this property"
+               style="font-size:10px;padding:2px 6px">Unlink</button>
+           </div>`
+        : `<div class="crm-prop-domain-cell" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+             <span style="color:var(--text-secondary);font-size:12px">Not linked</span>
+             <button class="crm-prop-attach-domain-btn kb-add-offer-btn" style="font-size:11px;padding:2px 8px">Attach Domain listing</button>
+             <div class="crm-prop-attach-domain-popover" style="display:none;flex-basis:100%;margin-top:6px;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--surface)">
+               <div style="font-size:11px;color:var(--text-secondary);margin-bottom:6px">
+                 Paste the Domain listing URL or its numeric id. The listing will be linked to this property; if the listing was previously linked to another property, that link will be moved to here (you'll be asked to confirm).
+               </div>
+               <div style="display:flex;gap:6px;align-items:center">
+                 <input class="kb-input crm-prop-attach-domain-input" type="text" placeholder="https://www.domain.com.au/2023456789  or  2023456789" style="flex:1;font-size:12px">
+                 <button class="crm-prop-attach-domain-confirm kb-add-offer-btn" style="font-size:11px;padding:4px 10px">Link</button>
+                 <button class="crm-prop-attach-domain-cancel crm-cancel-btn" style="font-size:11px;padding:4px 10px">Cancel</button>
+               </div>
+             </div>
+           </div>`;
 
       modal.innerHTML = `
         <div class="crm-modal-header">
@@ -2583,7 +2609,7 @@ function renderCRMView(container) {
                 <div class="crm-detail-label">State Prop ID</div>
                 <div><code style="font-size:11px">${property.state_prop_id || '—'}</code></div>
                 <div class="crm-detail-label">Domain</div>
-                <div>${domBadge}</div>
+                <div>${domCell}</div>
                 <div class="crm-detail-label">Parcel</div>
                 <div>${parcel ? `<a href="#" class="crm-prop-open-parcel" data-parcel-id="${parcel.id}">${parcel.name || parcel.id}</a>` : '<span style="color:var(--text-secondary);font-size:12px">Not in a parcel</span>'}</div>
                 <div class="crm-detail-label">Property ID</div>
@@ -2865,6 +2891,102 @@ function renderCRMView(container) {
           onDone();
           window.CRM.navigateTo('parcels', pid);
         }
+      });
+
+      // V76.5: Attach Domain listing — open the inline popover.
+      modal.querySelector('.crm-prop-attach-domain-btn')?.addEventListener('click', () => {
+        const popover = modal.querySelector('.crm-prop-attach-domain-popover');
+        if (popover) {
+          popover.style.display = 'block';
+          popover.querySelector('.crm-prop-attach-domain-input')?.focus();
+        }
+      });
+      modal.querySelector('.crm-prop-attach-domain-cancel')?.addEventListener('click', () => {
+        const popover = modal.querySelector('.crm-prop-attach-domain-popover');
+        if (popover) popover.style.display = 'none';
+      });
+      // V76.5: Confirm-link — extracts the Domain id from the input (URL or
+      // bare number), checks for prior link conflict, asks the user to
+      // confirm if there is one, then POSTs the link action.
+      modal.querySelector('.crm-prop-attach-domain-confirm')?.addEventListener('click', async () => {
+        const input = modal.querySelector('.crm-prop-attach-domain-input');
+        if (!input) return;
+        const raw = (input.value || '').trim();
+        if (!raw) { input.focus(); return; }
+        // Accept either a Domain URL (extract trailing numeric path segment)
+        // or a bare numeric id. Anything else is rejected with a hint.
+        let domainId = null;
+        const numMatch = raw.match(/(\d{6,})/);
+        if (numMatch) domainId = numMatch[1];
+        if (!domainId) {
+          alert('Could not parse a Domain listing id from that input. Paste the Domain URL or the numeric id.');
+          return;
+        }
+        // Build a derived listing URL from the id if no explicit URL was pasted
+        const listingUrl = /^https?:\/\//.test(raw) ? raw : `https://www.domain.com.au/${domainId}`;
+
+        // Conflict check — is this listing already linked to another property?
+        let conflictWith = null;
+        try {
+          const r = await fetch(`/api/properties?by_domain_listing=${encodeURIComponent(domainId)}`);
+          if (r.ok) {
+            const other = await r.json();
+            if (other && other.id && other.id !== property.id) {
+              conflictWith = other;
+            }
+          }
+        } catch (_) { /* fall through; server will accept the link either way */ }
+
+        if (conflictWith) {
+          const ok = confirm(
+            `This Domain listing is currently linked to:\n\n` +
+            `  ${conflictWith.address || conflictWith.id}` +
+            (conflictWith.suburb ? `, ${conflictWith.suburb}` : '') +
+            `\n\nLink it to this property instead? The other property will be unlinked.`
+          );
+          if (!ok) return;
+        }
+
+        // POST the link action
+        const r = await fetch('/api/properties', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action:            'link_listing',
+            property_id:       property.id,
+            domain_listing_id: domainId,
+            listing_url:       listingUrl,
+          }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          alert(`Failed to link listing: ${err.error || r.status}`);
+          return;
+        }
+        // Refresh CRM cache + redraw the property modal so it picks up the
+        // new domain_listing_id / listing_url, the listings panel and any
+        // map pins (refreshed automatically via cache invalidation listeners).
+        if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+        if (typeof window.refreshListings === 'function') window.refreshListings();
+        renderPropertyModal(modal, property.id, onDone);
+      });
+
+      // V76.5: Unlink Domain listing — confirms then POSTs unlink.
+      modal.querySelector('.crm-prop-unlink-domain-btn')?.addEventListener('click', async () => {
+        if (!confirm('Unlink this Domain listing from this property? The listing will reappear as unlinked on the map.')) return;
+        const r = await fetch('/api/properties', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'unlink_listing', property_id: property.id }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          alert(`Failed to unlink: ${err.error || r.status}`);
+          return;
+        }
+        if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+        if (typeof window.refreshListings === 'function') window.refreshListings();
+        renderPropertyModal(modal, property.id, onDone);
       });
 
       // Contact link — use existing openContactDrawer if available
