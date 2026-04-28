@@ -484,7 +484,8 @@ async function reverseGeocode(lat, lng) {
       const a = json.address;
       return {
         label: [a.ShortLabel, a.Neighborhood || a.District || ''].filter(Boolean).join(', '),
-        lga:   a.City || ''
+        lga:   a.City || '',
+        state: a.Region || '',
       };
     }
   } catch (_) { clearTimeout(tid); }
@@ -577,13 +578,15 @@ function isPriceWithheld(price) {
 
 // HTML for the price cell on a listings-panel card. If the price is withheld,
 // render a "Reveal Price" button; otherwise render the formatted price text.
-// Derived (estimated) prices are marked with the "(est.)" suffix from
-// formatPrice — no separate visual style is applied.
 function priceCellHtml(listing) {
   if (isPriceWithheld(listing.price)) {
     return `<button class="listing-reveal-price-btn" data-listing-id="${listing.id}" title="Probe Domain to estimate price range">Reveal Price</button>`;
   }
-  return formatPrice(listing.price);
+  const text = formatPrice(listing.price);
+  if (listing.price && listing.price.derived) {
+    return `<span class="listing-price-derived">${text}</span>`;
+  }
+  return text;
 }
 
 
@@ -943,14 +946,16 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   const activeMarker = addToSelection ? newMarker : clickMarker;
 
   // Stage 1 — if we have a known listing use its address directly; otherwise reverse geocode
-  let label, lga;
+  let label, lga, state;
   if (listing) {
     label = `${listing.address}, ${listing.suburb}`;
     lga   = '';
+    state = listing.state || '';
   } else {
     const geo = await reverseGeocode(lat, lng);
     label = geo ? geo.label : `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
     lga   = geo ? geo.lga   : '';
+    state = geo ? geo.state : '';
   }
 
   // Reference to whichever marker we just placed
@@ -1192,7 +1197,7 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
         dashArray: null, interactive: false
       }).addTo(map);
     }
-    clickMarkerData = { lat, lng, label, lga, lotDP, areaSqm, zoneCode, listing, parcelLayer };
+    clickMarkerData = { lat, lng, label, lga, state, lotDP, areaSqm, zoneCode, listing, parcelLayer };
     renderMultiSelectBar();
   }
 
@@ -1234,14 +1239,14 @@ map.on('click', function (e) {
       }).addTo(map);
     } else if (marker) {
       // Repaint existing green pin as blue-#1
-      if (!d) d = { lat: marker.getLatLng().lat, lng: marker.getLatLng().lng, label: '', lga: '', lotDP: null, areaSqm: null, zoneCode: null, listing: null, parcelLayer: null };
+      if (!d) d = { lat: marker.getLatLng().lat, lng: marker.getLatLng().lng, label: '', lga: '', state: '', lotDP: null, areaSqm: null, zoneCode: null, listing: null, parcelLayer: null };
       const pinHtml1 = `<div class="search-pin" style="background:#1a4a8a;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">1</span></div>`;
       marker.setIcon(L.divIcon({ className: '', html: pinHtml1, iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -30] }));
     }
 
     if (d && marker) {
       if (d.parcelLayer) { parcelLayer = null; }
-      _selectedParcels.push({ lat: d.lat, lng: d.lng, label: d.label, lga: d.lga, lotDP: d.lotDP, areaSqm: d.areaSqm, zoneCode: d.zoneCode, listing: d.listing, marker, parcelLayer: d.parcelLayer });
+      _selectedParcels.push({ lat: d.lat, lng: d.lng, label: d.label, lga: d.lga, state: d.state, lotDP: d.lotDP, areaSqm: d.areaSqm, zoneCode: d.zoneCode, listing: d.listing, marker, parcelLayer: d.parcelLayer });
       clickMarker = null;
       clickMarkerData = null;
     }
@@ -1967,12 +1972,13 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     <div class="listing-top">
       <div class="listing-price">${priceCellHtml(l)}</div>
       <div style="display:flex;align-items:center;gap:6px">
+        <div class="listing-type">${l.type}</div>
         ${domBadge}
         ${linkedBadge}
       </div>
     </div>
     <div class="listing-address">${displayAddress}</div>
-    <div class="listing-suburb">${displaySuburb} NSW</div>
+    <div class="listing-suburb">${displaySuburb}${l.state ? ' ' + l.state : ''}</div>
     ${nsBlock}
   `;
   card.addEventListener('click', (e) => {
@@ -2192,7 +2198,7 @@ function makeCoreLogicListingCard(l) {
   const noCoordsPart = l._noCoords ? '<span class="cl-tag cl-tag-nocoords" title="No coordinates in source data">📍?</span>' : '';
   const sourceBadge = l._dataSource
     ? `<span class="cl-tag cl-tag-source cl-tag-${l._dataSource.toLowerCase()}">${l._dataSource}</span>` : '';
-  // typeBadge removed — was crowding the price/badge row, derivable from address area context
+  const typeBadge = l.type ? `<span class="listing-type">${_escapeHtmlSafe(l.type)}</span>` : '';
 
   const agentLines = (l._agencies || []).slice(0, 3)
     .map(a => `<div class="cl-agency">${_escapeHtmlSafe(a)}</div>`).join('');
@@ -2203,13 +2209,14 @@ function makeCoreLogicListingCard(l) {
     <div class="listing-top">
       <div class="listing-price listing-price-tbd">Enquire</div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        ${typeBadge}
         ${strataPart}
         ${sourceBadge}
         ${noCoordsPart}
       </div>
     </div>
     <div class="listing-address">${_escapeHtmlSafe(l.address)}${unitPart}</div>
-    <div class="listing-suburb">${_escapeHtmlSafe(l.suburb)} NSW</div>
+    <div class="listing-suburb">${_escapeHtmlSafe(l.suburb)}${l.state ? ' ' + _escapeHtmlSafe(l.state) : ''}</div>
     ${agentLines ? `<div class="cl-agencies">${agentLines}</div>` : ''}
     ${dateStr ? `<div class="cl-listing-date">Listed ${dateStr}</div>` : ''}
   `;
@@ -3683,6 +3690,7 @@ function mapCoreLogicListing(r, isLease) {
   // Quick heuristic: split on " NSW " or similar — fall back to full string
   const suburbMatch = addr.match(/([A-Z][A-Z\s]+)\s+(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\s+\d{4}$/);
   const suburb = suburbMatch ? suburbMatch[1].trim() : '';
+  const state  = suburbMatch ? suburbMatch[2] : '';
   const street = suburbMatch ? addr.slice(0, addr.length - suburbMatch[0].length).trim() : addr;
 
   const agents = Array.isArray(r.leasingAgency) ? r.leasingAgency.map(a => a.leasingAgency).filter(Boolean) : [];
@@ -3704,6 +3712,7 @@ function mapCoreLogicListing(r, isLease) {
 
     address:          street || addr,
     suburb,
+    state,
     lat:              r.latitude,
     lng:              r.longitude,
     type:             (r.spaceType || r.propertyType || 'Commercial').toLowerCase(),
@@ -3823,6 +3832,7 @@ runListingSearch();
         display_name: [attr.StAddr, suburb].filter(Boolean).join(', '),
         _sub:         [state, attr.Postal].filter(Boolean).join(' '),
         _lga:         lga,
+        _state:       state,
         _postcode:    attr.Postal || ''
       };
     }));
