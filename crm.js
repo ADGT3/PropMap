@@ -2218,6 +2218,7 @@ function renderCRMView(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: parcel.id, name: nameInput.value.trim() }),
         });
+        window.CRM?.notifyParcelChanged?.(parcel.id);
         renderParcelModal(modal, parcelId, onDone);
       });
 
@@ -2248,6 +2249,7 @@ function renderCRMView(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'set_not_suitable', id: parcel.id, until, reason }),
         });
+        window.CRM?.notifyParcelChanged?.(parcel.id);
         renderParcelModal(modal, parcelId, onDone);
       });
       modal.querySelector('.crm-parcel-clear-ns-btn')?.addEventListener('click', async () => {
@@ -2256,6 +2258,7 @@ function renderCRMView(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'clear_not_suitable', id: parcel.id }),
         });
+        window.CRM?.notifyParcelChanged?.(parcel.id);
         renderParcelModal(modal, parcelId, onDone);
       });
 
@@ -2268,6 +2271,7 @@ function renderCRMView(container) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'remove_property', id: parcel.id, property_id: btn.dataset.propertyId }),
           });
+          window.CRM?.notifyParcelChanged?.(parcel.id);
           renderParcelModal(modal, parcelId, onDone);
         });
       });
@@ -2359,6 +2363,24 @@ function renderCRMView(container) {
       if (pane && pane.classList.contains('active')) {
         renderPropertyRows();
       }
+    };
+
+    // V76.7 — broadcast property/parcel mutations so other modules (kanban
+    // pipeline cards, map pins) can refresh their stale in-memory copies
+    // without requiring a hard page refresh. Match the existing CustomEvent
+    // pattern used by router.js.
+    window.CRM.notifyPropertyChanged = (propertyId) => {
+      if (!propertyId) return;
+      _propertiesCache = null; // also bust local cache
+      window.dispatchEvent(new CustomEvent('propertyChanged', {
+        detail: { propertyId: String(propertyId) },
+      }));
+    };
+    window.CRM.notifyParcelChanged = (parcelId) => {
+      if (!parcelId) return;
+      window.dispatchEvent(new CustomEvent('parcelChanged', {
+        detail: { parcelId: String(parcelId) },
+      }));
     };
   }
 
@@ -2835,6 +2857,8 @@ function renderCRMView(container) {
             lot_dps: lotInput.value.trim()  || null,
           }),
         });
+        // V76.7 — broadcast to pipeline / map so they refresh stale copies
+        window.CRM?.notifyPropertyChanged?.(property.id);
         // Re-render modal to refresh
         renderPropertyModal(modal, propertyId, onDone);
       });
@@ -2867,6 +2891,7 @@ function renderCRMView(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'set_not_suitable', id: property.id, until, reason }),
         });
+        window.CRM?.notifyPropertyChanged?.(property.id);
         renderPropertyModal(modal, propertyId, onDone);
       });
       modal.querySelector('.crm-prop-clear-ns-btn')?.addEventListener('click', async () => {
@@ -2875,6 +2900,7 @@ function renderCRMView(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'clear_not_suitable', id: property.id }),
         });
+        window.CRM?.notifyPropertyChanged?.(property.id);
         renderPropertyModal(modal, propertyId, onDone);
       });
 
@@ -3013,6 +3039,7 @@ function renderCRMView(container) {
         // map pins (refreshed automatically via cache invalidation listeners).
         if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
         if (typeof window.refreshListings === 'function') window.refreshListings();
+        window.CRM?.notifyPropertyChanged?.(property.id);
         renderPropertyModal(modal, property.id, onDone);
       });
 
@@ -3031,6 +3058,7 @@ function renderCRMView(container) {
         }
         if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
         if (typeof window.refreshListings === 'function') window.refreshListings();
+        window.CRM?.notifyPropertyChanged?.(property.id);
         renderPropertyModal(modal, property.id, onDone);
       });
 

@@ -3171,6 +3171,52 @@ window.refreshPipelinePins = function () {
   if (typeof window._renderPipelinePins === 'function') window._renderPipelinePins();
 };
 
+// V76.7 — Listen for property/parcel mutations from other modules (CRM, etc).
+// When fired, the in-memory `pipeline` dict may be stale, so re-fetch the
+// current board's deals from the DB and re-render. dbLoad() is cheap (one
+// HTTP roundtrip, ≤50 deals typically), and only runs on user-initiated
+// CRM saves so the cost is bounded.
+async function _refreshPipelineFromDB(reason) {
+  if (!dbAvailable) return;
+  try {
+    const dict = await dbLoad();
+    if (!dict) return;
+    Object.keys(pipeline).forEach(k => delete pipeline[k]);
+    Object.assign(pipeline, dict);
+    cacheSave(pipeline);
+    if (typeof renderBoard === 'function' && kanbanVisible) renderBoard();
+    if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+    console.log('[kanban] pipeline refreshed (' + reason + ')');
+  } catch (err) {
+    console.warn('[kanban] pipeline refresh failed:', err);
+  }
+}
+
+window.addEventListener('propertyChanged', (e) => {
+  const propertyId = e?.detail?.propertyId;
+  if (!propertyId) return;
+  // Quick check: only refresh if at least one pipeline entry references this
+  // property. Avoids the round-trip when the user edits a CRM-only property
+  // that was never added to a deal.
+  const referenced = Object.values(pipeline).some(entry =>
+    String(entry?.property?.id) === String(propertyId)
+  );
+  if (!referenced) return;
+  _refreshPipelineFromDB('property ' + propertyId + ' changed');
+});
+
+window.addEventListener('parcelChanged', (e) => {
+  const parcelId = e?.detail?.parcelId;
+  if (!parcelId) return;
+  // Parcel deals use the parcel id as their property "id" slot (see
+  // dealRowToInternal parcel branch); also check _parcelId on the entry.
+  const referenced = Object.values(pipeline).some(entry =>
+    String(entry?.property?._parcelId || entry?.property?.id) === String(parcelId)
+  );
+  if (!referenced) return;
+  _refreshPipelineFromDB('parcel ' + parcelId + ' changed');
+});
+
 // Expose for cross-module navigation (CRM deep-links into a pipeline item)
 // V76.4.2: handle cross-board navigation. The local `pipeline` dict is scoped
 //   to currentBoardId only — clicking a deal link from My Actions used to fail

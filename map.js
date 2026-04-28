@@ -2424,6 +2424,31 @@ function _isNswLatLng(lat, lng) {
   return lat > -37.5 && lat < -28.0 && lng > 140.0 && lng < 154.0;
 }
 
+// Infer Australian state from coordinates using approximate bounding boxes.
+// Used as a safety net when the geocoder didn't populate state on a selection
+// (e.g. older _selectedParcels entries from before state-capture was added).
+// Order matters — checks for the smaller territories first since they sit
+// inside larger states. Returns '' if outside Australia.
+function stateFromLatLng(lat, lng) {
+  if (typeof lat !== 'number' || typeof lng !== 'number') return '';
+  // ACT — small enclave inside NSW, check first
+  if (lat > -35.92 && lat < -35.13 && lng > 148.76 && lng < 149.40) return 'ACT';
+  // NT
+  if (lat > -26.00 && lat < -10.97 && lng > 129.00 && lng < 138.00) return 'NT';
+  // TAS — south of Bass Strait
+  if (lat < -39.20 && lng > 143.80 && lng < 148.50) return 'TAS';
+  // WA
+  if (lng < 129.00) return 'WA';
+  // SA
+  if (lng < 141.00) return 'SA';
+  // QLD — north of -29
+  if (lat > -29.00) return 'QLD';
+  // VIC — south of NSW
+  if (lat < -34.00) return 'VIC';
+  // Default — NSW (the bulk of the eastern seaboard between -29 and -34)
+  return 'NSW';
+}
+
 async function addCurrentSelectionToPipeline() {
   if (typeof addToPipeline !== 'function') return;
 
@@ -2452,6 +2477,13 @@ async function addCurrentSelectionToPipeline() {
   const avgLng    = parcels.reduce((s, p) => s + p.lng, 0) / count;
   const lotDPs    = parcels.map(p => p.lotDP).filter(Boolean).join(', ');
   const listing   = parcels[0]?.listing || null;
+  // V76.7 — pass state through: prefer the listing's own state (Domain/CoreLogic),
+  // then the geocoded value captured on the click, then fall back to a bounding-box
+  // inference so we don't silently default everything to NSW.
+  const stateValue = listing?.state
+                  || parcels[0]?.state
+                  || stateFromLatLng(avgLat, avgLng)
+                  || 'NSW';
 
   // V76.5: addToPipeline now generates fresh prop_*/deal_* ids itself.
   // For listings with a real Domain id, pass it through — addToPipeline will
@@ -2465,6 +2497,7 @@ async function addCurrentSelectionToPipeline() {
     id:           incomingDomainId,
     address:      listing?.address || streetPart,
     suburb:       listing?.suburb  || suburbPart,
+    state:        stateValue,
     price:        listing?.price   || 'Unknown',
     type:         listing?.type    || 'land',
     beds:         listing?.beds    || 0,
