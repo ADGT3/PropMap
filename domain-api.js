@@ -362,6 +362,25 @@ function _unusedPlaceholder() {}
 // ─── Normalise live Domain listing → app shape ────────────────────────────────
 // Maps Domain's response fields to the structure map.js and kanban.js consume.
 
+// Strip the suburb segment from a Domain displayableAddress so it matches the
+// rest of the app's convention (suburb is stored separately on `suburb`).
+// "89 George Road, Leppington" + "Leppington" → "89 George Road"
+// "Leppington"                + "Leppington" → "Leppington" (keep — it's all we have)
+// "Catherine Field"           + "Catherine Field" → "Catherine Field"
+function stripTrailingSuburb(address, suburb) {
+  if (!address) return '';
+  if (!suburb) return address;
+  const parts = address.split(',').map(s => s.trim()).filter(Boolean);
+  // Only one segment — leave it alone; it's the only address info we have
+  if (parts.length <= 1) return parts[0] || address;
+  // If the last segment matches the suburb (case-insensitive), drop it
+  const lastIdx = parts.length - 1;
+  if (parts[lastIdx].toLowerCase() === suburb.toLowerCase()) {
+    parts.pop();
+  }
+  return parts.join(', ');
+}
+
 function normaliseLiveListing(item) {
   // Response wraps each result as { type: "PropertyListing", listing: { ... } }
   // or { type: "Project", listings: [...], project: { ... } }
@@ -390,7 +409,15 @@ function normaliseLiveListing(item) {
     // Location — coordinates live directly on propertyDetails per API docs
     lat:     pd.latitude  ?? null,
     lng:     pd.longitude ?? null,
-    address: pd.displayableAddress || [pd.streetNumber, pd.street].filter(Boolean).join(' '),
+    // V76.7 — Domain's displayableAddress includes the suburb (e.g. "89 George Road, Leppington").
+    // Other paths in the app populate `address` as street-only (suburb stored separately),
+    // so consumers concatenate `${address}, ${suburb}` — Domain's format would
+    // produce duplicates ("89 George Road, Leppington, Leppington NSW") in modals,
+    // popups and parcel labels. Strip the trailing suburb so `address` is street-only.
+    address: stripTrailingSuburb(
+               pd.displayableAddress || [pd.streetNumber, pd.street].filter(Boolean).join(' '),
+               pd.suburb
+             ),
     suburb:  pd.suburb   || '',
     state:   pd.state    || 'NSW',
     postcode: pd.postcode || '',
