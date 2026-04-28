@@ -10,6 +10,34 @@
   <link rel="stylesheet" href="styles.css"/>
   <link rel="stylesheet" href="crm-styles.css"/>
   <link rel="stylesheet" href="finance/finance-styles.css"/>
+  <style>
+    /* Reveal Price button — replaces the price text on listings where the
+       agent has withheld the price. Triggers a viewport-wide bracket probe
+       of the Domain API to derive a price range. */
+    .listing-reveal-price-btn {
+      background: #c4841a;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+    }
+    .listing-reveal-price-btn:hover { background: #a36c0a; }
+    .listing-reveal-price-btn:disabled {
+      background: #999;
+      cursor: progress;
+    }
+    /* Derived (estimated) price — italicised + lighter weight to distinguish
+       from real, agent-set prices. */
+    .listing-price-derived {
+      font-style: italic;
+      font-weight: 500;
+      color: #8a6315;
+    }
+  </style>
 </head>
 <body>
 

@@ -11,6 +11,13 @@ OVERLAYS.forEach(o => { if (window.OVERLAY_B64?.[o.id]) o.b64 = window.OVERLAY_B
 // ─── Listings — populated by Domain API ──────────────────────────────────────
 let listings = [];
 
+// Last successful Domain search options — used by Reveal Price button to
+// replay the same search at price brackets.
+let _lastDomainSearchOptions = null;
+// True while a viewport-level reveal probe is running (prevents duplicate
+// clicks from kicking off parallel batches).
+let _revealInFlight = false;
+
 // ─── State ────────────────────────────────────────────────────────────────────
 let _activeFilters = {
   // V76.3 — propertyCategory drives which API is used and which fields apply
@@ -516,12 +523,14 @@ function drawParcel(rings) {
 }
 
 // ─── Format price for display ─────────────────────────────────────────────────
-// Handles both live Domain shape { display, from, to } and static string prices.
+// Handles both live Domain shape { display, from, to, derived } and static string prices.
+// Returns plain text — used in popups, kanban modals, and as the inner text
+// of the listings-panel cards (when not a "Reveal Price" button).
 function formatPrice(price) {
   if (!price) return 'Price Unavailable';
   if (typeof price === 'string') return price;
   if (typeof price === 'object') {
-    const { display, from, to } = price;
+    const { display, from, to, derived } = price;
     const fmt = n => `$${Number(n).toLocaleString()}`;
 
     // Build numeric range string from from/to. Treat equal values as a single price.
@@ -534,7 +543,15 @@ function formatPrice(price) {
       rangeStr = `To ${fmt(to)}`;
     }
 
-    // Priority:
+    // Derived prices come from the Reveal Price bracket probe — prefix with ~
+    // and prefer the numeric range over any text display field.
+    if (derived) {
+      // No bound found — Domain quirk where the listing was exempt from filtering
+      if (!rangeStr) return 'Price withheld';
+      return `~${rangeStr} (est.)`;
+    }
+
+    // Priority for non-derived:
     //   1. Numeric range from priceFrom/priceTo (most accurate)
     //   2. displayPrice if it contains a $ figure (e.g. "$850,000", "Offers above $3,500,000")
     //   3. displayPrice as text (e.g. "Auction", "Contact Agent") — at least informative
@@ -547,6 +564,30 @@ function formatPrice(price) {
   }
   return 'Price Unavailable';
 }
+
+// Whether a listing's price is "withheld" (no numeric data, agent text only).
+// Used to decide when to show the Reveal Price button instead of price text.
+function isPriceWithheld(price) {
+  if (!price || typeof price !== 'object') return false;
+  if (price.derived) return false; // already attempted; show derived value/withheld text
+  if (price.from || price.to) return false;
+  if (typeof price.display === 'string' && /\$\s?\d/.test(price.display)) return false;
+  return true;
+}
+
+// HTML for the price cell on a listings-panel card. If the price is withheld,
+// render a "Reveal Price" button; otherwise render the formatted price text.
+function priceCellHtml(listing) {
+  if (isPriceWithheld(listing.price)) {
+    return `<button class="listing-reveal-price-btn" data-listing-id="${listing.id}" title="Probe Domain to estimate price range">Reveal Price</button>`;
+  }
+  const text = formatPrice(listing.price);
+  if (listing.price && listing.price.derived) {
+    return `<span class="listing-price-derived">${text}</span>`;
+  }
+  return text;
+}
+
 
 function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null) {
   const dl = listing && window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(listing.id) : null;
@@ -1926,7 +1967,7 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     ${pinBadge}
     ${thumbHtml}
     <div class="listing-top">
-      <div class="listing-price">${formatPrice(l.price)}</div>
+      <div class="listing-price">${priceCellHtml(l)}</div>
       <div style="display:flex;align-items:center;gap:6px">
         <div class="listing-type">${l.type}</div>
         ${domBadge}
@@ -1937,7 +1978,11 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     <div class="listing-suburb">${displaySuburb} NSW</div>
     ${nsBlock}
   `;
-  card.addEventListener('click', () => selectListing(l.id));
+  card.addEventListener('click', (e) => {
+    // Don't navigate when user clicked the Reveal Price button
+    if (e.target.closest('.listing-reveal-price-btn')) return;
+    selectListing(l.id);
+  });
 
   // V75.1 — Not Suitable handlers (stop propagation so they don't trigger card click)
   if (ns) {
@@ -3030,6 +3075,84 @@ document.addEventListener('click', e => {
   }
 });
 
+// ─── Reveal Price button (delegated handler on listings panel) ───────────────
+// Click any "Reveal Price" button on a listing card → probe Domain at all
+// price brackets within the user's active filter, derive ranges for ALL
+// price-withheld listings in the viewport in one batch, and re-render.
+// One click reveals every hidden price in the current view (same API cost
+// regardless of listing count, per Reveal Price design).
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.listing-reveal-price-btn');
+  if (!btn) return;
+  e.stopPropagation();
+  if (_revealInFlight) return;
+  if (!window.DomainAPI || !DomainAPI.revealHiddenPrices) return;
+  if (!_lastDomainSearchOptions) {
+    console.warn('[map] Reveal Price clicked before any Domain search ran');
+    return;
+  }
+
+  // Find every listing currently in the panel that needs reveal
+  const hiddenIds = listings
+    .filter(l => isPriceWithheld(l.price))
+    .map(l => String(l.id));
+  if (!hiddenIds.length) return;
+
+  // Replace all reveal buttons with a "Probing…" state
+  document.querySelectorAll('.listing-reveal-price-btn').forEach(b => {
+    b.disabled = true;
+    b.textContent = 'Probing…';
+  });
+
+  _revealInFlight = true;
+  try {
+    const opts = _lastDomainSearchOptions;
+    await DomainAPI.revealHiddenPrices({
+      geoWindow:    opts.geoWindow,
+      hiddenIds,
+      userMinPrice: opts.minPrice || null,
+      userMaxPrice: opts.maxPrice || null,
+      baseOptions: {
+        propertyTypes:        opts.propertyTypes,
+        listingTypes:         opts.listingTypes,
+        minBeds:              opts.minBeds,
+        maxBeds:              opts.maxBeds,
+        minBaths:             opts.minBaths,
+        minCars:              opts.minCars,
+        minLand:              opts.minLand,
+        maxLand:              opts.maxLand,
+        propertyFeatures:     opts.propertyFeatures,
+        listingAttributes:    opts.listingAttributes,
+        establishedType:      opts.establishedType,
+        excludeDepositTaken:  opts.excludeDepositTaken,
+        newDevOnly:           opts.newDevOnly,
+        // Note: exclude listedSince and excludePriceWithheld from probe so we
+        // don't filter out the listings we're trying to derive prices for.
+      },
+    });
+
+    // DomainAPI updated the in-memory enrichment cache and persisted to the
+    // server. Mirror those derived prices into our local `listings` array
+    // (renderListings reads from there) and re-render.
+    listings.forEach(l => {
+      const enriched = DomainAPI.getEnrichedListing(l.id);
+      if (enriched && enriched.price && enriched.price.derived) {
+        l.price = enriched.price;
+      }
+    });
+    renderListings();
+  } catch (err) {
+    console.error('[map] revealHiddenPrices failed:', err);
+    document.querySelectorAll('.listing-reveal-price-btn').forEach(b => {
+      b.disabled = false;
+      b.textContent = 'Reveal Price';
+    });
+  } finally {
+    _revealInFlight = false;
+  }
+});
+
+
 // ─── Opacity preview slider ───────────────────────────────────────────────────
 
 document.getElementById('upOpacity').addEventListener('input', function () {
@@ -3436,7 +3559,7 @@ async function runDomainSearch() {
     console.log('[map] Domain search — geoWindow:', JSON.stringify(geoWindow),
                 'listingType:', _activeFilters.listingType, 'priceRange:', priceMin, '-', priceMax,
                 'listedSince:', listedSinceISO);
-    const domainListings = await DomainAPI.search({
+    const searchOptions = {
       geoWindow,
       propertyTypes:        _activeFilters.propertyTypes,
       listingTypes:         [_activeFilters.listingType],
@@ -3455,7 +3578,10 @@ async function runDomainSearch() {
       excludeDepositTaken:  _activeFilters.excludeDepositTaken,
       newDevOnly:           _activeFilters.newDevOnly,
       listedSince:          listedSinceISO,
-    });
+    };
+    // Stash so the Reveal Price handler can replay this search at price brackets
+    _lastDomainSearchOptions = searchOptions;
+    const domainListings = await DomainAPI.search(searchOptions);
     listings.length = 0;
     domainListings.forEach(l => listings.push(l));
     console.log('[map] Domain API returned ' + listings.length + ' listings');

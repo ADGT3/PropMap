@@ -140,7 +140,220 @@ async function liveSearch(options = {}) {
     _enrichmentCache[String(l.id)] = l;
     if (l.address) _addressCache[l.address.toLowerCase()] = l;
   });
+
+  // Hydrate cached derived price estimates from the server.
+  // For listings WITHOUT a real price → apply the cached estimate (if any).
+  // For listings WITH a real price → invalidate the cache (Domain has updated).
+  await hydrateDerivedPrices(results);
+
   return results;
+}
+
+// ─── Derived price helpers ────────────────────────────────────────────────────
+// "Reveal Price" workflow: for listings with a withheld price (displayPrice
+// = "Contact Agent" etc, no priceFrom/priceTo), probe Domain by repeating
+// the search at known price brackets and noting which listings drop out.
+// Result is cached server-side in domain_price_estimates so it persists
+// across sessions and is shared with the kanban modal.
+
+const ESTIMATES_ENDPOINT = '/api/domain-price-estimates';
+
+// Bracket array — per agreement with user. Ascending order.
+// Implicit floor (<1M) and ceiling (>30M) handled by probe logic.
+const PRICE_BRACKETS = [1000000, 1500000, 2000000, 3000000, 4000000,
+                        5000000, 7500000, 10000000, 15000000, 20000000, 30000000];
+
+function listingHasRealPrice(l) {
+  const p = l.price || {};
+  if (p.from || p.to) return true;
+  if (typeof p.display === 'string' && /\$\s?\d/.test(p.display)) return true;
+  return false;
+}
+
+// Pull cached estimates from server; merge into results; invalidate any
+// rows where Domain now returns a real price.
+async function hydrateDerivedPrices(results) {
+  if (!results.length) return;
+
+  const idsToCheck = results.map(l => String(l.id)).filter(Boolean);
+  if (!idsToCheck.length) return;
+
+  let cached = {};
+  try {
+    const url = `${ESTIMATES_ENDPOINT}?ids=${encodeURIComponent(idsToCheck.join(','))}`;
+    const res = await fetch(url);
+    if (res.ok) cached = await res.json();
+  } catch (err) {
+    console.warn('[DomainAPI] hydrateDerivedPrices: lookup failed', err);
+    return;
+  }
+
+  const toInvalidate = [];
+  results.forEach(l => {
+    const cachedEntry = cached[String(l.id)];
+    if (!cachedEntry) return;
+
+    if (listingHasRealPrice(l)) {
+      // Domain now has a real price → wipe stale estimate
+      toInvalidate.push(String(l.id));
+      return;
+    }
+
+    // Apply derived range to the listing's price object.
+    // Mark with derived: true so renderers can show "(est.)" indicator.
+    l.price = {
+      ...(l.price || {}),
+      from:    cachedEntry.from,
+      to:      cachedEntry.to,
+      derived: true,
+    };
+  });
+
+  // Fire-and-forget invalidations
+  toInvalidate.forEach(id => {
+    fetch(`${ESTIMATES_ENDPOINT}?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      .catch(err => console.warn('[DomainAPI] invalidate failed for', id, err));
+  });
+}
+
+// Run a single price-bracket probe. Returns the set of listing IDs that
+// were present in the result set when filtered with minPrice = bracket.
+async function probeBracket(geoWindow, bracket, baseOptions) {
+  const probeOptions = {
+    ...(baseOptions || {}),
+    geoWindow,
+    minPrice: bracket,
+    pageSize: 100,
+    pageNumber: 1,
+  };
+  const raw = await fetchOnePage(probeOptions);
+  const ids = new Set();
+  raw.forEach(item => {
+    const listing = item.listing || item;
+    if (listing && listing.id) ids.add(String(listing.id));
+  });
+  return ids;
+}
+
+/**
+ * Reveal hidden prices for a batch of listings via bracket-sweep probing.
+ *
+ * Same API cost regardless of listing count (one Domain call per bracket
+ * tests every listing in the batch simultaneously).
+ *
+ * @param {Object} params
+ *   - geoWindow:    Domain geoWindow used by the original search
+ *   - hiddenIds:    Array<string> — listing IDs to derive prices for
+ *   - userMinPrice: number|null — user's active price filter min (Domain has
+ *                   already filtered to >= this, so we skip lower brackets)
+ *   - userMaxPrice: number|null — user's active price filter max (we skip
+ *                   higher brackets)
+ *   - baseOptions:  remaining search options (propertyTypes, beds, etc.) so
+ *                   the probe matches the same set as the original search
+ * @returns {Object} { [id]: { from, to } } — derived ranges for each id
+ */
+async function revealHiddenPrices({ geoWindow, hiddenIds, userMinPrice, userMaxPrice, baseOptions }) {
+  if (!hiddenIds?.length) return {};
+  if (!geoWindow) {
+    console.warn('[DomainAPI] revealHiddenPrices: no geoWindow, aborting');
+    return {};
+  }
+
+  const targetSet = new Set(hiddenIds.map(String));
+
+  // Pick brackets to probe based on the user's active filter — skip
+  // anything Domain has already filtered out for us.
+  const brackets = PRICE_BRACKETS.filter(b => {
+    if (userMinPrice && b <= userMinPrice) return false;
+    if (userMaxPrice && b >= userMaxPrice) return false;
+    return true;
+  });
+
+  // For each target listing, record the highest bracket at which it still
+  // appears (lowerBound) and the bracket where it first drops out (upperBound).
+  const lowerBound = {};
+  const upperBound = {};
+
+  for (const bracket of brackets) {
+    let presentIds;
+    try {
+      presentIds = await probeBracket(geoWindow, bracket, baseOptions);
+    } catch (err) {
+      console.warn(`[DomainAPI] probe at ${bracket} failed:`, err);
+      continue;
+    }
+
+    let anyPresent = false;
+    targetSet.forEach(id => {
+      if (presentIds.has(id)) {
+        lowerBound[id] = bracket;
+        anyPresent = true;
+      } else if (lowerBound[id] !== undefined && upperBound[id] === undefined) {
+        upperBound[id] = bracket;
+      }
+    });
+
+    // Early-stop: if NO target listings are still present, all higher
+    // brackets will also return zero (subset property). Stop probing.
+    if (!anyPresent && Object.keys(lowerBound).length > 0) break;
+  }
+
+  const lowestBracket  = brackets[0];
+  const highestBracket = brackets[brackets.length - 1];
+
+  const estimates = {};
+  hiddenIds.forEach(id => {
+    const lo = lowerBound[id];
+    const hi = upperBound[id];
+
+    if (lo === undefined) {
+      // Never appeared at any probed bracket → below the lowest probed value
+      const from = userMinPrice || 0;
+      estimates[id] = { from, to: lowestBracket };
+    } else if (hi === undefined && lo === highestBracket) {
+      // Present at the topmost bracket — could be 30M+ or "exempt" quirk
+      estimates[id] = { from: lo, to: userMaxPrice || null };
+    } else if (hi === undefined) {
+      // Present at some lower brackets but ran out of brackets to probe
+      estimates[id] = { from: lo, to: userMaxPrice || null };
+    } else {
+      estimates[id] = { from: lo, to: hi };
+    }
+  });
+
+  // Persist to server cache (best-effort; UI proceeds even if write fails)
+  const payload = {
+    estimates: hiddenIds.map(id => ({
+      domainId:  id,
+      priceFrom: estimates[id].from,
+      priceTo:   estimates[id].to,
+    })),
+  };
+  try {
+    await fetch(ESTIMATES_ENDPOINT, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.warn('[DomainAPI] revealHiddenPrices: cache write failed', err);
+  }
+
+  // Apply derived prices to the in-memory enrichment cache so subsequent
+  // renders pick them up immediately without another search.
+  hiddenIds.forEach(id => {
+    const cached = _enrichmentCache[String(id)];
+    if (cached) {
+      cached.price = {
+        ...(cached.price || {}),
+        from:    estimates[id].from,
+        to:      estimates[id].to,
+        derived: true,
+      };
+    }
+  });
+
+  return estimates;
 }
 
 // (fetchOnePage used by liveSearch above)
@@ -252,6 +465,14 @@ const DomainAPI = {
   getEnrichedByAddress(address) {
     if (!address) return null;
     return _addressCache[address.toLowerCase()] || null;
+  },
+
+  /**
+   * Reveal hidden prices for a batch of listings via bracket-sweep probing.
+   * See revealHiddenPrices() above for full details.
+   */
+  async revealHiddenPrices(opts) {
+    return revealHiddenPrices(opts);
   },
 
   /** Always live */
