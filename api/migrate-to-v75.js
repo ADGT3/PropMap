@@ -138,6 +138,7 @@ async function execute(res) {
         id                    TEXT PRIMARY KEY,
         address               TEXT NOT NULL DEFAULT '',
         suburb                TEXT NOT NULL DEFAULT '',
+        state                 TEXT NOT NULL DEFAULT 'NSW',
         lat                   DOUBLE PRECISION,
         lng                   DOUBLE PRECISION,
         lot_dps               TEXT NOT NULL DEFAULT '',
