@@ -11,6 +11,13 @@ OVERLAYS.forEach(o => { if (window.OVERLAY_B64?.[o.id]) o.b64 = window.OVERLAY_B
 // ─── Listings — populated by Domain API ──────────────────────────────────────
 let listings = [];
 
+// Last successful Domain search options — used by Reveal Price button to
+// replay the same search at price brackets.
+let _lastDomainSearchOptions = null;
+// True while a viewport-level reveal probe is running (prevents duplicate
+// clicks from kicking off parallel batches).
+let _revealInFlight = false;
+
 // ─── State ────────────────────────────────────────────────────────────────────
 let _activeFilters = {
   // V76.3 — propertyCategory drives which API is used and which fields apply
@@ -35,6 +42,7 @@ let _activeFilters = {
   features:               [],   // e.g. ['AirConditioning', 'SwimmingPool']
   listingAttributes:      [],   // e.g. ['HasPhotos']
   establishedType:        null, // 'New' | 'Established'
+  listedSince:            null, // null | 7 | 14 | 30 — days; converted to ISO at search time
   excludePriceWithheld:   false,
   excludeDepositTaken:    true,
   newDevOnly:             false,
@@ -476,7 +484,8 @@ async function reverseGeocode(lat, lng) {
       const a = json.address;
       return {
         label: [a.ShortLabel, a.Neighborhood || a.District || ''].filter(Boolean).join(', '),
-        lga:   a.City || ''
+        lga:   a.City || '',
+        state: a.Region || '',
       };
     }
   } catch (_) { clearTimeout(tid); }
@@ -515,32 +524,71 @@ function drawParcel(rings) {
 }
 
 // ─── Format price for display ─────────────────────────────────────────────────
-// Handles both live Domain shape { display, from, to } and static string prices.
+// Handles both live Domain shape { display, from, to, derived } and static string prices.
+// Returns plain text — used in popups, kanban modals, and as the inner text
+// of the listings-panel cards (when not a "Reveal Price" button).
 function formatPrice(price) {
   if (!price) return 'Price Unavailable';
   if (typeof price === 'string') return price;
   if (typeof price === 'object') {
-    const { display, from, to } = price;
+    const { display, from, to, derived } = price;
+    const fmt = n => `$${Number(n).toLocaleString()}`;
 
-    // Build a numeric range string if we have from/to
-    const rangeStr = from && to
-      ? `$${Number(from).toLocaleString()} – $${Number(to).toLocaleString()}`
-      : from
-        ? `From $${Number(from).toLocaleString()}`
-        : to
-          ? `To $${Number(to).toLocaleString()}`
-          : null;
+    // Build numeric range string from from/to. Treat equal values as a single price.
+    let rangeStr = null;
+    if (from && to) {
+      rangeStr = (from === to) ? fmt(from) : `${fmt(from)} – ${fmt(to)}`;
+    } else if (from) {
+      rangeStr = `From ${fmt(from)}`;
+    } else if (to) {
+      rangeStr = `To ${fmt(to)}`;
+    }
 
-    // If display is a real number string (e.g. "$850,000"), use it
-    // If display is text-only (e.g. "Contact Agent"), prefer the numeric range
-    const displayIsNumeric = display && /\d/.test(display);
-    if (displayIsNumeric) return display;
+    // Derived prices come from the Reveal Price bracket probe — prefix with ~
+    // and prefer the numeric range over any text display field.
+    if (derived) {
+      // No bound found — Domain quirk where the listing was exempt from filtering
+      if (!rangeStr) return 'Price withheld';
+      return `~${rangeStr} (est.)`;
+    }
+
+    // Priority for non-derived:
+    //   1. Numeric range from priceFrom/priceTo (most accurate)
+    //   2. displayPrice if it contains a $ figure (e.g. "$850,000", "Offers above $3,500,000")
+    //   3. displayPrice as text (e.g. "Auction", "Contact Agent") — at least informative
+    //   4. "Price Unavailable" only when truly empty
     if (rangeStr) return rangeStr;
-    // Text-only display (e.g. "Contact Agent", "Price on Application") with no range
+    const displayHasNumber = typeof display === 'string' && /\$\s?\d/.test(display);
+    if (displayHasNumber) return display;
+    if (display && display.trim()) return display;
     return 'Price Unavailable';
   }
   return 'Price Unavailable';
 }
+
+// Whether a listing's price is "withheld" (no numeric data, agent text only).
+// Used to decide when to show the Reveal Price button instead of price text.
+function isPriceWithheld(price) {
+  if (!price || typeof price !== 'object') return false;
+  if (price.derived) return false; // already attempted; show derived value/withheld text
+  if (price.from || price.to) return false;
+  if (typeof price.display === 'string' && /\$\s?\d/.test(price.display)) return false;
+  return true;
+}
+
+// HTML for the price cell on a listings-panel card. If the price is withheld,
+// render a "Reveal Price" button; otherwise render the formatted price text.
+function priceCellHtml(listing) {
+  if (isPriceWithheld(listing.price)) {
+    return `<button class="listing-reveal-price-btn" data-listing-id="${listing.id}" title="Probe Domain to estimate price range">Reveal Price</button>`;
+  }
+  const text = formatPrice(listing.price);
+  if (listing.price && listing.price.derived) {
+    return `<span class="listing-price-derived">${text}</span>`;
+  }
+  return text;
+}
+
 
 function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null) {
   const dl = listing && window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(listing.id) : null;
@@ -898,14 +946,16 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   const activeMarker = addToSelection ? newMarker : clickMarker;
 
   // Stage 1 — if we have a known listing use its address directly; otherwise reverse geocode
-  let label, lga;
+  let label, lga, state;
   if (listing) {
     label = `${listing.address}, ${listing.suburb}`;
     lga   = '';
+    state = listing.state || '';
   } else {
     const geo = await reverseGeocode(lat, lng);
     label = geo ? geo.label : `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
     lga   = geo ? geo.lga   : '';
+    state = geo ? geo.state : '';
   }
 
   // Reference to whichever marker we just placed
@@ -1147,7 +1197,7 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
         dashArray: null, interactive: false
       }).addTo(map);
     }
-    clickMarkerData = { lat, lng, label, lga, lotDP, areaSqm, zoneCode, listing, parcelLayer };
+    clickMarkerData = { lat, lng, label, lga, state, lotDP, areaSqm, zoneCode, listing, parcelLayer };
     renderMultiSelectBar();
   }
 
@@ -1189,14 +1239,14 @@ map.on('click', function (e) {
       }).addTo(map);
     } else if (marker) {
       // Repaint existing green pin as blue-#1
-      if (!d) d = { lat: marker.getLatLng().lat, lng: marker.getLatLng().lng, label: '', lga: '', lotDP: null, areaSqm: null, zoneCode: null, listing: null, parcelLayer: null };
+      if (!d) d = { lat: marker.getLatLng().lat, lng: marker.getLatLng().lng, label: '', lga: '', state: '', lotDP: null, areaSqm: null, zoneCode: null, listing: null, parcelLayer: null };
       const pinHtml1 = `<div class="search-pin" style="background:#1a4a8a;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:22px;height:22px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">1</span></div>`;
       marker.setIcon(L.divIcon({ className: '', html: pinHtml1, iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -30] }));
     }
 
     if (d && marker) {
       if (d.parcelLayer) { parcelLayer = null; }
-      _selectedParcels.push({ lat: d.lat, lng: d.lng, label: d.label, lga: d.lga, lotDP: d.lotDP, areaSqm: d.areaSqm, zoneCode: d.zoneCode, listing: d.listing, marker, parcelLayer: d.parcelLayer });
+      _selectedParcels.push({ lat: d.lat, lng: d.lng, label: d.label, lga: d.lga, state: d.state, lotDP: d.lotDP, areaSqm: d.areaSqm, zoneCode: d.zoneCode, listing: d.listing, marker, parcelLayer: d.parcelLayer });
       clickMarker = null;
       clickMarkerData = null;
     }
@@ -1920,7 +1970,7 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     ${pinBadge}
     ${thumbHtml}
     <div class="listing-top">
-      <div class="listing-price">${formatPrice(l.price)}</div>
+      <div class="listing-price">${priceCellHtml(l)}</div>
       <div style="display:flex;align-items:center;gap:6px">
         <div class="listing-type">${l.type}</div>
         ${domBadge}
@@ -1928,10 +1978,14 @@ function makeListingCard(l, { pinToTop = false } = {}) {
       </div>
     </div>
     <div class="listing-address">${displayAddress}</div>
-    <div class="listing-suburb">${displaySuburb} NSW</div>
+    <div class="listing-suburb">${displaySuburb}${l.state ? ' ' + l.state : ''}</div>
     ${nsBlock}
   `;
-  card.addEventListener('click', () => selectListing(l.id));
+  card.addEventListener('click', (e) => {
+    // Don't navigate when user clicked the Reveal Price button
+    if (e.target.closest('.listing-reveal-price-btn')) return;
+    selectListing(l.id);
+  });
 
   // V75.1 — Not Suitable handlers (stop propagation so they don't trigger card click)
   if (ns) {
@@ -2162,7 +2216,7 @@ function makeCoreLogicListingCard(l) {
       </div>
     </div>
     <div class="listing-address">${_escapeHtmlSafe(l.address)}${unitPart}</div>
-    <div class="listing-suburb">${_escapeHtmlSafe(l.suburb)} NSW</div>
+    <div class="listing-suburb">${_escapeHtmlSafe(l.suburb)}${l.state ? ' ' + _escapeHtmlSafe(l.state) : ''}</div>
     ${agentLines ? `<div class="cl-agencies">${agentLines}</div>` : ''}
     ${dateStr ? `<div class="cl-listing-date">Listed ${dateStr}</div>` : ''}
   `;
@@ -2370,6 +2424,31 @@ function _isNswLatLng(lat, lng) {
   return lat > -37.5 && lat < -28.0 && lng > 140.0 && lng < 154.0;
 }
 
+// Infer Australian state from coordinates using approximate bounding boxes.
+// Used as a safety net when the geocoder didn't populate state on a selection
+// (e.g. older _selectedParcels entries from before state-capture was added).
+// Order matters — checks for the smaller territories first since they sit
+// inside larger states. Returns '' if outside Australia.
+function stateFromLatLng(lat, lng) {
+  if (typeof lat !== 'number' || typeof lng !== 'number') return '';
+  // ACT — small enclave inside NSW, check first
+  if (lat > -35.92 && lat < -35.13 && lng > 148.76 && lng < 149.40) return 'ACT';
+  // NT
+  if (lat > -26.00 && lat < -10.97 && lng > 129.00 && lng < 138.00) return 'NT';
+  // TAS — south of Bass Strait
+  if (lat < -39.20 && lng > 143.80 && lng < 148.50) return 'TAS';
+  // WA
+  if (lng < 129.00) return 'WA';
+  // SA
+  if (lng < 141.00) return 'SA';
+  // QLD — north of -29
+  if (lat > -29.00) return 'QLD';
+  // VIC — south of NSW
+  if (lat < -34.00) return 'VIC';
+  // Default — NSW (the bulk of the eastern seaboard between -29 and -34)
+  return 'NSW';
+}
+
 async function addCurrentSelectionToPipeline() {
   if (typeof addToPipeline !== 'function') return;
 
@@ -2398,6 +2477,13 @@ async function addCurrentSelectionToPipeline() {
   const avgLng    = parcels.reduce((s, p) => s + p.lng, 0) / count;
   const lotDPs    = parcels.map(p => p.lotDP).filter(Boolean).join(', ');
   const listing   = parcels[0]?.listing || null;
+  // V76.7 — pass state through: prefer the listing's own state (Domain/CoreLogic),
+  // then the geocoded value captured on the click, then fall back to a bounding-box
+  // inference so we don't silently default everything to NSW.
+  const stateValue = listing?.state
+                  || parcels[0]?.state
+                  || stateFromLatLng(avgLat, avgLng)
+                  || 'NSW';
 
   // V76.5: addToPipeline now generates fresh prop_*/deal_* ids itself.
   // For listings with a real Domain id, pass it through — addToPipeline will
@@ -2411,6 +2497,7 @@ async function addCurrentSelectionToPipeline() {
     id:           incomingDomainId,
     address:      listing?.address || streetPart,
     suburb:       listing?.suburb  || suburbPart,
+    state:        stateValue,
     price:        listing?.price   || 'Unknown',
     type:         listing?.type    || 'land',
     beds:         listing?.beds    || 0,
@@ -2751,6 +2838,7 @@ function restoreFilters() {
     setSelect('filterMaxRentWeek',      f.maxRentWeek);
     setSelect('filterMinLand',          f.minLand);
     setSelect('filterMaxLand',          f.maxLand);
+    setSelect('filterListedSince',      f.listedSince);
     setSelect('filterMinFloor',         f.minFloor);
     setSelect('filterMaxFloor',         f.maxFloor);
     setSelect('filterMinYield',         f.minYield);
@@ -2940,6 +3028,7 @@ function updateFilterVisibility() {
       features:             getChips('filterFeatures'),
       listingAttributes:    getChips('filterAttributes'),
       establishedType:      established.length === 1 ? established[0] : null,
+      listedSince:          numVal('filterListedSince'),
       excludePriceWithheld: document.getElementById('filterExcludePriceWithheld')?.checked || false,
       excludeDepositTaken:  document.getElementById('filterExcludeDepositTaken')?.checked || false,
       newDevOnly:           document.getElementById('filterNewDevOnly')?.checked || false,
@@ -3021,6 +3110,84 @@ document.addEventListener('click', e => {
     document.querySelectorAll('.panel-btn').forEach(b => b.classList.remove('open'));
   }
 });
+
+// ─── Reveal Price button (delegated handler on listings panel) ───────────────
+// Click any "Reveal Price" button on a listing card → probe Domain at all
+// price brackets within the user's active filter, derive ranges for ALL
+// price-withheld listings in the viewport in one batch, and re-render.
+// One click reveals every hidden price in the current view (same API cost
+// regardless of listing count, per Reveal Price design).
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.listing-reveal-price-btn');
+  if (!btn) return;
+  e.stopPropagation();
+  if (_revealInFlight) return;
+  if (!window.DomainAPI || !DomainAPI.revealHiddenPrices) return;
+  if (!_lastDomainSearchOptions) {
+    console.warn('[map] Reveal Price clicked before any Domain search ran');
+    return;
+  }
+
+  // Find every listing currently in the panel that needs reveal
+  const hiddenIds = listings
+    .filter(l => isPriceWithheld(l.price))
+    .map(l => String(l.id));
+  if (!hiddenIds.length) return;
+
+  // Replace all reveal buttons with a "Probing…" state
+  document.querySelectorAll('.listing-reveal-price-btn').forEach(b => {
+    b.disabled = true;
+    b.textContent = 'Probing…';
+  });
+
+  _revealInFlight = true;
+  try {
+    const opts = _lastDomainSearchOptions;
+    await DomainAPI.revealHiddenPrices({
+      geoWindow:    opts.geoWindow,
+      hiddenIds,
+      userMinPrice: opts.minPrice || null,
+      userMaxPrice: opts.maxPrice || null,
+      baseOptions: {
+        propertyTypes:        opts.propertyTypes,
+        listingTypes:         opts.listingTypes,
+        minBeds:              opts.minBeds,
+        maxBeds:              opts.maxBeds,
+        minBaths:             opts.minBaths,
+        minCars:              opts.minCars,
+        minLand:              opts.minLand,
+        maxLand:              opts.maxLand,
+        propertyFeatures:     opts.propertyFeatures,
+        listingAttributes:    opts.listingAttributes,
+        establishedType:      opts.establishedType,
+        excludeDepositTaken:  opts.excludeDepositTaken,
+        newDevOnly:           opts.newDevOnly,
+        // Note: exclude listedSince and excludePriceWithheld from probe so we
+        // don't filter out the listings we're trying to derive prices for.
+      },
+    });
+
+    // DomainAPI updated the in-memory enrichment cache and persisted to the
+    // server. Mirror those derived prices into our local `listings` array
+    // (renderListings reads from there) and re-render.
+    listings.forEach(l => {
+      const enriched = DomainAPI.getEnrichedListing(l.id);
+      if (enriched && enriched.price && enriched.price.derived) {
+        l.price = enriched.price;
+      }
+    });
+    renderListings();
+  } catch (err) {
+    console.error('[map] revealHiddenPrices failed:', err);
+    document.querySelectorAll('.listing-reveal-price-btn').forEach(b => {
+      b.disabled = false;
+      b.textContent = 'Reveal Price';
+    });
+  } finally {
+    _revealInFlight = false;
+  }
+});
+
 
 // ─── Opacity preview slider ───────────────────────────────────────────────────
 
@@ -3362,6 +3529,9 @@ async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
   if (!window.DomainAPI || !DomainAPI.search) return null;
   const delta = 0.05;
   const geoWindow = { box: { topLeft: { lat: lat + delta, lon: lng - delta }, bottomRight: { lat: lat - delta, lon: lng + delta } } };
+  const listedSinceISO = _activeFilters.listedSince
+    ? new Date(Date.now() - _activeFilters.listedSince * 86400000).toISOString()
+    : null;
   try {
     const domainListings = await DomainAPI.search({
       geoWindow,
@@ -3375,6 +3545,7 @@ async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
       excludePriceWithheld: _activeFilters.excludePriceWithheld,
       excludeDepositTaken: _activeFilters.excludeDepositTaken,
       newDevOnly: _activeFilters.newDevOnly,
+      listedSince: listedSinceISO,
     });
     listings.length = 0;
     domainListings.forEach(l => listings.push(l));
@@ -3417,9 +3588,14 @@ async function runDomainSearch() {
     // V76.3 — use rent-per-week range when Rent, sale range when Sale
     const priceMin = isRent ? _activeFilters.minRentWeek : _activeFilters.minPrice;
     const priceMax = isRent ? _activeFilters.maxRentWeek : _activeFilters.maxPrice;
+    // Convert listedSince days → ISO datetime for Domain API
+    const listedSinceISO = _activeFilters.listedSince
+      ? new Date(Date.now() - _activeFilters.listedSince * 86400000).toISOString()
+      : null;
     console.log('[map] Domain search — geoWindow:', JSON.stringify(geoWindow),
-                'listingType:', _activeFilters.listingType, 'priceRange:', priceMin, '-', priceMax);
-    const domainListings = await DomainAPI.search({
+                'listingType:', _activeFilters.listingType, 'priceRange:', priceMin, '-', priceMax,
+                'listedSince:', listedSinceISO);
+    const searchOptions = {
       geoWindow,
       propertyTypes:        _activeFilters.propertyTypes,
       listingTypes:         [_activeFilters.listingType],
@@ -3437,7 +3613,11 @@ async function runDomainSearch() {
       excludePriceWithheld: _activeFilters.excludePriceWithheld,
       excludeDepositTaken:  _activeFilters.excludeDepositTaken,
       newDevOnly:           _activeFilters.newDevOnly,
-    });
+      listedSince:          listedSinceISO,
+    };
+    // Stash so the Reveal Price handler can replay this search at price brackets
+    _lastDomainSearchOptions = searchOptions;
+    const domainListings = await DomainAPI.search(searchOptions);
     listings.length = 0;
     domainListings.forEach(l => listings.push(l));
     console.log('[map] Domain API returned ' + listings.length + ' listings');
@@ -3543,6 +3723,7 @@ function mapCoreLogicListing(r, isLease) {
   // Quick heuristic: split on " NSW " or similar — fall back to full string
   const suburbMatch = addr.match(/([A-Z][A-Z\s]+)\s+(NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\s+\d{4}$/);
   const suburb = suburbMatch ? suburbMatch[1].trim() : '';
+  const state  = suburbMatch ? suburbMatch[2] : '';
   const street = suburbMatch ? addr.slice(0, addr.length - suburbMatch[0].length).trim() : addr;
 
   const agents = Array.isArray(r.leasingAgency) ? r.leasingAgency.map(a => a.leasingAgency).filter(Boolean) : [];
@@ -3564,6 +3745,7 @@ function mapCoreLogicListing(r, isLease) {
 
     address:          street || addr,
     suburb,
+    state,
     lat:              r.latitude,
     lng:              r.longitude,
     type:             (r.spaceType || r.propertyType || 'Commercial').toLowerCase(),
@@ -3683,6 +3865,7 @@ runListingSearch();
         display_name: [attr.StAddr, suburb].filter(Boolean).join(', '),
         _sub:         [state, attr.Postal].filter(Boolean).join(' '),
         _lga:         lga,
+        _state:       state,
         _postcode:    attr.Postal || ''
       };
     }));

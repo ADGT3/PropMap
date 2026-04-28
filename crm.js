@@ -2218,6 +2218,7 @@ function renderCRMView(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: parcel.id, name: nameInput.value.trim() }),
         });
+        window.CRM?.notifyParcelChanged?.(parcel.id);
         renderParcelModal(modal, parcelId, onDone);
       });
 
@@ -2248,6 +2249,7 @@ function renderCRMView(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'set_not_suitable', id: parcel.id, until, reason }),
         });
+        window.CRM?.notifyParcelChanged?.(parcel.id);
         renderParcelModal(modal, parcelId, onDone);
       });
       modal.querySelector('.crm-parcel-clear-ns-btn')?.addEventListener('click', async () => {
@@ -2256,6 +2258,7 @@ function renderCRMView(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'clear_not_suitable', id: parcel.id }),
         });
+        window.CRM?.notifyParcelChanged?.(parcel.id);
         renderParcelModal(modal, parcelId, onDone);
       });
 
@@ -2268,6 +2271,7 @@ function renderCRMView(container) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'remove_property', id: parcel.id, property_id: btn.dataset.propertyId }),
           });
+          window.CRM?.notifyParcelChanged?.(parcel.id);
           renderParcelModal(modal, parcelId, onDone);
         });
       });
@@ -2359,6 +2363,24 @@ function renderCRMView(container) {
       if (pane && pane.classList.contains('active')) {
         renderPropertyRows();
       }
+    };
+
+    // V76.7 — broadcast property/parcel mutations so other modules (kanban
+    // pipeline cards, map pins) can refresh their stale in-memory copies
+    // without requiring a hard page refresh. Match the existing CustomEvent
+    // pattern used by router.js.
+    window.CRM.notifyPropertyChanged = (propertyId) => {
+      if (!propertyId) return;
+      _propertiesCache = null; // also bust local cache
+      window.dispatchEvent(new CustomEvent('propertyChanged', {
+        detail: { propertyId: String(propertyId) },
+      }));
+    };
+    window.CRM.notifyParcelChanged = (parcelId) => {
+      if (!parcelId) return;
+      window.dispatchEvent(new CustomEvent('parcelChanged', {
+        detail: { parcelId: String(parcelId) },
+      }));
     };
   }
 
@@ -2629,6 +2651,14 @@ function renderCRMView(container) {
                 <div><input class="kb-input crm-prop-address-input" type="text" value="${(property.address || '').replace(/"/g,'&quot;')}" style="width:100%;box-sizing:border-box;font-size:13px"></div>
                 <div class="crm-detail-label">Suburb</div>
                 <div><input class="kb-input crm-prop-suburb-input" type="text" value="${(property.suburb || '').replace(/"/g,'&quot;')}" style="width:100%;box-sizing:border-box;font-size:13px"></div>
+                <div class="crm-detail-label">State</div>
+                <div>
+                  <select class="kb-input crm-prop-state-input" style="width:100%;box-sizing:border-box;font-size:13px">
+                    ${['NSW','VIC','QLD','WA','SA','TAS','ACT','NT'].map(s =>
+                      `<option value="${s}"${(property.state || 'NSW') === s ? ' selected' : ''}>${s}</option>`
+                    ).join('')}
+                  </select>
+                </div>
                 <div class="crm-detail-label">Lot/DP</div>
                 <div><input class="kb-input crm-prop-lotdp-input" type="text" value="${(property.lot_dps || '').replace(/"/g,'&quot;')}" style="width:100%;box-sizing:border-box;font-size:13px"></div>
                 <div class="crm-detail-label">Area</div>
@@ -2797,19 +2827,23 @@ function renderCRMView(container) {
       // Details edit — Save button appears on any change
       const addrInput  = modal.querySelector('.crm-prop-address-input');
       const subInput   = modal.querySelector('.crm-prop-suburb-input');
+      const stateInput = modal.querySelector('.crm-prop-state-input');
       const lotInput   = modal.querySelector('.crm-prop-lotdp-input');
       const saveBtn    = modal.querySelector('.crm-prop-save-btn');
       const origAddr   = property.address || '';
       const origSub    = property.suburb || '';
+      const origState  = property.state || 'NSW';
       const origLot    = property.lot_dps || '';
       const toggleSave = () => {
-        const dirty = addrInput.value.trim() !== origAddr
-                   || subInput.value.trim()  !== origSub
-                   || lotInput.value.trim()  !== origLot;
+        const dirty = addrInput.value.trim()  !== origAddr
+                   || subInput.value.trim()   !== origSub
+                   || stateInput.value        !== origState
+                   || lotInput.value.trim()   !== origLot;
         saveBtn.style.display = dirty ? '' : 'none';
       };
       addrInput.addEventListener('input', toggleSave);
       subInput.addEventListener('input',  toggleSave);
+      stateInput.addEventListener('change', toggleSave);
       lotInput.addEventListener('input',  toggleSave);
       saveBtn.addEventListener('click', async () => {
         await fetch('/api/properties', {
@@ -2819,9 +2853,12 @@ function renderCRMView(container) {
             id:      property.id,
             address: addrInput.value.trim() || null,
             suburb:  subInput.value.trim()  || null,
+            state:   stateInput.value       || null,
             lot_dps: lotInput.value.trim()  || null,
           }),
         });
+        // V76.7 — broadcast to pipeline / map so they refresh stale copies
+        window.CRM?.notifyPropertyChanged?.(property.id);
         // Re-render modal to refresh
         renderPropertyModal(modal, propertyId, onDone);
       });
@@ -2854,6 +2891,7 @@ function renderCRMView(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'set_not_suitable', id: property.id, until, reason }),
         });
+        window.CRM?.notifyPropertyChanged?.(property.id);
         renderPropertyModal(modal, propertyId, onDone);
       });
       modal.querySelector('.crm-prop-clear-ns-btn')?.addEventListener('click', async () => {
@@ -2862,6 +2900,7 @@ function renderCRMView(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'clear_not_suitable', id: property.id }),
         });
+        window.CRM?.notifyPropertyChanged?.(property.id);
         renderPropertyModal(modal, propertyId, onDone);
       });
 
@@ -3000,6 +3039,7 @@ function renderCRMView(container) {
         // map pins (refreshed automatically via cache invalidation listeners).
         if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
         if (typeof window.refreshListings === 'function') window.refreshListings();
+        window.CRM?.notifyPropertyChanged?.(property.id);
         renderPropertyModal(modal, property.id, onDone);
       });
 
@@ -3018,6 +3058,7 @@ function renderCRMView(container) {
         }
         if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
         if (typeof window.refreshListings === 'function') window.refreshListings();
+        window.CRM?.notifyPropertyChanged?.(property.id);
         renderPropertyModal(modal, property.id, onDone);
       });
 

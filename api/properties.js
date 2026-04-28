@@ -59,7 +59,7 @@ export default async function handler(req, res) {
         // client checks for explicitly (map.js isNotSuitable, crm.js NS detect).
         if (by_domain_listing) {
           const rows = await sql`
-            SELECT id, address, suburb, lat, lng, lot_dps, area_sqm,
+            SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
                    parcels, property_count, domain_listing_id, listing_url,
                    agent,
                    not_suitable_until::text AS not_suitable_until,
@@ -90,7 +90,7 @@ export default async function handler(req, res) {
         // V76.5.6: cast not_suitable_until to text — see by_domain_listing note above.
         if (id) {
           const rows = await sql`
-            SELECT id, address, suburb, lat, lng, lot_dps, area_sqm,
+            SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
                    parcels, property_count, domain_listing_id, listing_url,
                    agent,
                    not_suitable_until::text AS not_suitable_until,
@@ -107,7 +107,7 @@ export default async function handler(req, res) {
         // V75.4c: state_prop_id (nullable) for NSW propid cross-reference
         // V76.5.6: cast not_suitable_until to text (see by_domain_listing note).
         const rows = await sql`
-          SELECT id, address, suburb, lat, lng, lot_dps, area_sqm,
+          SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
                  parcels, property_count, domain_listing_id, listing_url,
                  agent,
                  not_suitable_until::text AS not_suitable_until,
@@ -213,7 +213,7 @@ export default async function handler(req, res) {
         // V75.3: dd column dropped; DD now lives per-deal in deals.data.dd
         // V76.5: id is now optional — auto-generated as prop_* if not supplied.
         const {
-          id: bodyId, address = '', suburb = '', lat = null, lng = null,
+          id: bodyId, address = '', suburb = '', state = 'NSW', lat = null, lng = null,
           lot_dps = '', area_sqm = null, parcels = [], property_count = 1,
           domain_listing_id = null, listing_url = null, agent = null,
         } = body;
@@ -222,10 +222,10 @@ export default async function handler(req, res) {
         const agentJson   = agent ? JSON.stringify(agent) : null;
         const rows = await sql`
           INSERT INTO properties (
-            id, address, suburb, lat, lng, lot_dps, area_sqm,
+            id, address, suburb, state, lat, lng, lot_dps, area_sqm,
             parcels, property_count, domain_listing_id, listing_url, agent
           ) VALUES (
-            ${id}, ${address}, ${suburb}, ${lat}, ${lng},
+            ${id}, ${address}, ${suburb}, ${state}, ${lat}, ${lng},
             ${String(lot_dps).toUpperCase()}, ${area_sqm},
             ${parcelsJson}::jsonb, ${property_count},
             ${domain_listing_id}, ${listing_url},
@@ -256,6 +256,7 @@ export default async function handler(req, res) {
           UPDATE properties SET
             address            = COALESCE(${body.address        ?? null}, address),
             suburb             = COALESCE(${body.suburb         ?? null}, suburb),
+            state              = COALESCE(${body.state          ?? null}, state),
             lat                = COALESCE(${body.lat            ?? null}, lat),
             lng                = COALESCE(${body.lng            ?? null}, lng),
             lot_dps            = COALESCE(${body.lot_dps ? String(body.lot_dps).toUpperCase() : null}, lot_dps),

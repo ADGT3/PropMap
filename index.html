@@ -10,6 +10,27 @@
   <link rel="stylesheet" href="styles.css"/>
   <link rel="stylesheet" href="crm-styles.css"/>
   <link rel="stylesheet" href="finance/finance-styles.css"/>
+  <style>
+    /* Reveal Price button — replaces the price text on listings where the
+       agent has withheld the price. Triggers a viewport-wide bracket probe
+       of the Domain API to derive a price range. */
+    .listing-reveal-price-btn {
+      background: #c4841a;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+    }
+    .listing-reveal-price-btn:hover { background: #a36c0a; }
+    .listing-reveal-price-btn:disabled {
+      background: #999;
+      cursor: progress;
+    }
+  </style>
 </head>
 <body>
 
@@ -294,6 +315,17 @@
               <option value="Commercial Land">Commercial Land</option>
               <option value="Residential Land">Residential Land</option>
               <option value="Residential">Residential</option>
+            </select>
+          </div>
+
+          <!-- Listed since (residential only — Domain field) -->
+          <div class="filter-group" data-mode="residential">
+            <label class="filter-label">Listed Since</label>
+            <select id="filterListedSince" class="filter-select-full">
+              <option value="">Any time</option>
+              <option value="7">Last 7 days</option>
+              <option value="14">Last 14 days</option>
+              <option value="30">Last 30 days</option>
             </select>
           </div>
 

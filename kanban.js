@@ -156,6 +156,7 @@ function dealRowToInternal(row) {
       id:             row.parcel_id,   // use parcel id in the .id slot for compatibility
       address:        title,
       suburb:         (kids[0] && kids[0].suburb) || '',
+      state:          (kids[0] && kids[0].state) || 'NSW',
       lat:            avgLat,
       lng:            avgLng,
       _lotDPs:        allLotDPs,
@@ -185,6 +186,7 @@ function dealRowToInternal(row) {
       id:             row.property_id,
       address:        p.address || '',
       suburb:         p.suburb  || '',
+      state:          p.state   || 'NSW',
       lat:            p.lat     ?? null,
       lng:            p.lng     ?? null,
       _lotDPs:        p.lot_dps || '',
@@ -247,6 +249,7 @@ function internalToPropertyPayload(id, entry) {
     id:                p.id || id,
     address:           p.address || '',
     suburb:            p.suburb  || '',
+    state:             p.state   || 'NSW',
     lat:               p.lat     ?? firstParcel?.lat ?? null,
     lng:               p.lng     ?? firstParcel?.lng ?? null,
     lot_dps:           (p._lotDPs || '').toString().toUpperCase(),
@@ -629,6 +632,7 @@ async function addToPipeline(listing) {
       id:          propertyId,
       address:     existingProperty?.address || listing.address,
       suburb:      existingProperty?.suburb  || listing.suburb,
+      state:       existingProperty?.state   || listing.state || 'NSW',
       price:       listing.price,
       type:        listing.type,
       beds:        listing.beds,
@@ -1571,7 +1575,7 @@ function renderBoard() {
         </div>
         <div class="kb-card-price">${formatKbPrice(p.price, terms.price)}</div>
         <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address}</div>
-        <div class="kb-card-suburb">${p.suburb} NSW</div>
+        <div class="kb-card-suburb">${p.suburb}${p.state ? ' ' + p.state : ''}</div>
         <select class="kb-stage-select">${stageOptions}</select>
         <div class="kb-card-indicators">
           ${hasTerms   ? `<span class="kb-ind kb-ind-terms" title="Vendor terms recorded">Terms</span>` : ''}
@@ -2534,7 +2538,7 @@ ${rows.join('')}`;
       <div class="kb-modal-header">
         <div style="flex:1;min-width:0">
           <div class="kb-modal-price">${formatKbPrice(p.price, terms.price)}</div>
-          <div class="kb-modal-address">📍 ${p.address}, ${p.suburb} NSW</div>
+          <div class="kb-modal-address">📍 ${p.address}, ${p.suburb}${p.state ? ' ' + p.state : ''}</div>
           ${p._lotDPs
             ? `<div class="kb-modal-lotdp" style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${p._lotDPs}</div>`
             : `<div class="kb-modal-lotdp" style="font-size:11px;color:#bbb;margin-top:3px">Lot/DP loading…</div>`}
@@ -3166,6 +3170,52 @@ window.getPipelineStages = () => resolveCurrentStages();
 window.refreshPipelinePins = function () {
   if (typeof window._renderPipelinePins === 'function') window._renderPipelinePins();
 };
+
+// V76.7 — Listen for property/parcel mutations from other modules (CRM, etc).
+// When fired, the in-memory `pipeline` dict may be stale, so re-fetch the
+// current board's deals from the DB and re-render. dbLoad() is cheap (one
+// HTTP roundtrip, ≤50 deals typically), and only runs on user-initiated
+// CRM saves so the cost is bounded.
+async function _refreshPipelineFromDB(reason) {
+  if (!dbAvailable) return;
+  try {
+    const dict = await dbLoad();
+    if (!dict) return;
+    Object.keys(pipeline).forEach(k => delete pipeline[k]);
+    Object.assign(pipeline, dict);
+    cacheSave(pipeline);
+    if (typeof renderBoard === 'function' && kanbanVisible) renderBoard();
+    if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+    console.log('[kanban] pipeline refreshed (' + reason + ')');
+  } catch (err) {
+    console.warn('[kanban] pipeline refresh failed:', err);
+  }
+}
+
+window.addEventListener('propertyChanged', (e) => {
+  const propertyId = e?.detail?.propertyId;
+  if (!propertyId) return;
+  // Quick check: only refresh if at least one pipeline entry references this
+  // property. Avoids the round-trip when the user edits a CRM-only property
+  // that was never added to a deal.
+  const referenced = Object.values(pipeline).some(entry =>
+    String(entry?.property?.id) === String(propertyId)
+  );
+  if (!referenced) return;
+  _refreshPipelineFromDB('property ' + propertyId + ' changed');
+});
+
+window.addEventListener('parcelChanged', (e) => {
+  const parcelId = e?.detail?.parcelId;
+  if (!parcelId) return;
+  // Parcel deals use the parcel id as their property "id" slot (see
+  // dealRowToInternal parcel branch); also check _parcelId on the entry.
+  const referenced = Object.values(pipeline).some(entry =>
+    String(entry?.property?._parcelId || entry?.property?.id) === String(parcelId)
+  );
+  if (!referenced) return;
+  _refreshPipelineFromDB('parcel ' + parcelId + ' changed');
+});
 
 // Expose for cross-module navigation (CRM deep-links into a pipeline item)
 // V76.4.2: handle cross-board navigation. The local `pipeline` dict is scoped
