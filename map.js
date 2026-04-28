@@ -522,22 +522,27 @@ function formatPrice(price) {
   if (typeof price === 'string') return price;
   if (typeof price === 'object') {
     const { display, from, to } = price;
+    const fmt = n => `$${Number(n).toLocaleString()}`;
 
-    // Build a numeric range string if we have from/to
-    const rangeStr = from && to
-      ? `$${Number(from).toLocaleString()} – $${Number(to).toLocaleString()}`
-      : from
-        ? `From $${Number(from).toLocaleString()}`
-        : to
-          ? `To $${Number(to).toLocaleString()}`
-          : null;
+    // Build numeric range string from from/to. Treat equal values as a single price.
+    let rangeStr = null;
+    if (from && to) {
+      rangeStr = (from === to) ? fmt(from) : `${fmt(from)} – ${fmt(to)}`;
+    } else if (from) {
+      rangeStr = `From ${fmt(from)}`;
+    } else if (to) {
+      rangeStr = `To ${fmt(to)}`;
+    }
 
-    // If display is a real $ figure (e.g. "$850,000"), use it.
-    // If display is text-only (e.g. "Contact Agent", "Auction 6/12"), prefer the numeric range.
-    const displayIsNumeric = display && /\$\s?\d/.test(display);
-    if (displayIsNumeric) return display;
+    // Priority:
+    //   1. Numeric range from priceFrom/priceTo (most accurate)
+    //   2. displayPrice if it contains a $ figure (e.g. "$850,000", "Offers above $3,500,000")
+    //   3. displayPrice as text (e.g. "Auction", "Contact Agent") — at least informative
+    //   4. "Price Unavailable" only when truly empty
     if (rangeStr) return rangeStr;
-    // Text-only display (e.g. "Contact Agent", "Price on Application") with no range
+    const displayHasNumber = typeof display === 'string' && /\$\s?\d/.test(display);
+    if (displayHasNumber) return display;
+    if (display && display.trim()) return display;
     return 'Price Unavailable';
   }
   return 'Price Unavailable';

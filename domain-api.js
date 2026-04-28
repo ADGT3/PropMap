@@ -116,6 +116,26 @@ async function liveSearch(options = {}) {
     .map(normaliseLiveListing)
     .filter(Boolean); // drops Project-type items
 
+  // Diagnostic: log any listings where we can't show a usable price.
+  // Helps identify whether the agent has truly omitted price data, or
+  // whether our normaliser is dropping something useful.
+  const missingPrice = results.filter(l => {
+    const p = l.price || {};
+    const hasRange = p.from || p.to;
+    const hasNumericDisplay = typeof p.display === 'string' && /\$\s?\d/.test(p.display);
+    return !hasRange && !hasNumericDisplay;
+  });
+  if (missingPrice.length) {
+    console.warn(`[DomainAPI] ${missingPrice.length} of ${results.length} listings lack a usable price.`,
+      'Sample raw priceDetails:',
+      missingPrice.slice(0, 3).map(l => ({
+        id: l.id,
+        address: l.address,
+        priceDetails: l._raw?.priceDetails,
+      }))
+    );
+  }
+
   results.forEach(l => {
     _enrichmentCache[String(l.id)] = l;
     if (l.address) _addressCache[l.address.toLowerCase()] = l;
@@ -171,22 +191,16 @@ function normaliseLiveListing(item) {
     headline:    listing.headline         || '',
     summary:     listing.summaryDescription || '',  // API field is summaryDescription
 
-    // Price — Domain requires agents to populate priceFrom/priceTo accurately,
-    // even when displayPrice is text like "Contact Agent" or "Auction".
-    // Treat from/to as source of truth; only keep displayPrice if it contains a $ figure.
-    price: (() => {
-      const from = price.priceFrom ?? null;
-      const to   = price.priceTo   ?? null;
-      const exact = price.price    ?? null;
-      const dp = price.displayPrice || '';
-      // Only keep displayPrice if it actually contains a dollar amount
-      const dpHasNumber = typeof dp === 'string' && /\$\s?\d/.test(dp);
-      return {
-        display: dpHasNumber ? dp : '',
-        from:    from ?? exact,
-        to:      to   ?? exact,
-      };
-    })(),
+    // Price — keep all three fields raw so the renderer can choose the best
+    // display. Domain's priceFrom/priceTo are usually populated even when
+    // displayPrice is text ("Auction", "Contact Agent"), but not always —
+    // some agents leave both null and only put text in displayPrice.
+    // Source of truth: from/to numeric range > numeric display > text display.
+    price: {
+      display: price.displayPrice || '',
+      from:    price.priceFrom ?? price.price ?? null,
+      to:      price.priceTo   ?? price.price ?? null,
+    },
 
     // Agent / agency
     advertiser: listing.advertiser || null,
