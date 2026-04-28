@@ -3418,25 +3418,35 @@ function _injectSearchCard() {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
-// Re-filter sidebar whenever the map moves or zooms
-map.on('moveend zoomend', () => {
-  if (showListings) renderListings();
-  if (_activeListingId) {
-    const _ac = document.querySelector(`.listing-card[data-id="${_activeListingId}"]`);
-    if (_ac) { _ac.classList.add('active'); _ac.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
-  }
-  _injectSearchCard();
-  // Refresh easement buffers if electricity overlay is active
-  const elecEntry = overlayRegistry['electricity-transmission'];
-  if (elecEntry && elecEntry.def.enabled) drawEasementBuffers();
-  // Re-fetch Domain listings for the new viewport
-  if (showListings && window.DomainAPI) debouncedDomainSearch();
-  // Persist viewport
-  try {
-    const c = map.getCenter();
-    localStorage.setItem('propmap_viewport', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }));
-  } catch (e) { /* ignore */ }
-});
+// V76.7 — Debounce both the sidebar render AND the Domain API search on
+// moveend/zoomend. Previously renderListings() fired immediately on every
+// zoomend, causing visible "flashing" when the user clicked a zoom button
+// multiple times in quick succession. 300ms absorbs typical multi-click
+// rhythm while staying responsive on a single pan/zoom action.
+let _viewportRefreshTimer = null;
+function _debouncedViewportRefresh() {
+  clearTimeout(_viewportRefreshTimer);
+  _viewportRefreshTimer = setTimeout(() => {
+    if (showListings) renderListings();
+    if (_activeListingId) {
+      const _ac = document.querySelector(`.listing-card[data-id="${_activeListingId}"]`);
+      if (_ac) { _ac.classList.add('active'); _ac.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    }
+    _injectSearchCard();
+    // Refresh easement buffers if electricity overlay is active
+    const elecEntry = overlayRegistry['electricity-transmission'];
+    if (elecEntry && elecEntry.def.enabled) drawEasementBuffers();
+    // Re-fetch Domain listings for the new viewport
+    if (showListings && window.DomainAPI) debouncedDomainSearch();
+    // Persist viewport
+    try {
+      const c = map.getCenter();
+      localStorage.setItem('propmap_viewport', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }));
+    } catch (e) { /* ignore */ }
+  }, 300);
+}
+
+map.on('moveend zoomend', _debouncedViewportRefresh);
 
 // Move overlay panel inside its anchor for relative positioning
 (function () {
@@ -3563,10 +3573,12 @@ let _domainSearchTimer = null;
 function debouncedDomainSearch() {
   if (_suppressNextDomainSearch) { _suppressNextDomainSearch = false; return; }
   clearTimeout(_domainSearchTimer);
-  // V76.3 — 300ms debounce on moveend/zoomend. Leaflet only fires these on
-  // mouse release (not during drag), so we just need a small buffer to absorb
-  // rapid zoom clicks.
-  _domainSearchTimer = setTimeout(runListingSearch, 300);
+  // V76.7 — 100ms small buffer. The viewport refresh wrapper that calls us
+  // already debounces by 500ms on moveend/zoomend, so most bursts are absorbed
+  // before reaching here. The inner timer just deduplicates if multiple
+  // callers (e.g. filter changes happening alongside a viewport change) all
+  // hit within the same tick.
+  _domainSearchTimer = setTimeout(runListingSearch, 100);
 }
 
 function runListingSearch() {
