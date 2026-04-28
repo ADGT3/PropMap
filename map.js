@@ -35,6 +35,7 @@ let _activeFilters = {
   features:               [],   // e.g. ['AirConditioning', 'SwimmingPool']
   listingAttributes:      [],   // e.g. ['HasPhotos']
   establishedType:        null, // 'New' | 'Established'
+  listedSince:            null, // null | 7 | 14 | 30 — days; converted to ISO at search time
   excludePriceWithheld:   false,
   excludeDepositTaken:    true,
   newDevOnly:             false,
@@ -531,9 +532,9 @@ function formatPrice(price) {
           ? `To $${Number(to).toLocaleString()}`
           : null;
 
-    // If display is a real number string (e.g. "$850,000"), use it
-    // If display is text-only (e.g. "Contact Agent"), prefer the numeric range
-    const displayIsNumeric = display && /\d/.test(display);
+    // If display is a real $ figure (e.g. "$850,000"), use it.
+    // If display is text-only (e.g. "Contact Agent", "Auction 6/12"), prefer the numeric range.
+    const displayIsNumeric = display && /\$\s?\d/.test(display);
     if (displayIsNumeric) return display;
     if (rangeStr) return rangeStr;
     // Text-only display (e.g. "Contact Agent", "Price on Application") with no range
@@ -2751,6 +2752,7 @@ function restoreFilters() {
     setSelect('filterMaxRentWeek',      f.maxRentWeek);
     setSelect('filterMinLand',          f.minLand);
     setSelect('filterMaxLand',          f.maxLand);
+    setSelect('filterListedSince',      f.listedSince);
     setSelect('filterMinFloor',         f.minFloor);
     setSelect('filterMaxFloor',         f.maxFloor);
     setSelect('filterMinYield',         f.minYield);
@@ -2940,6 +2942,7 @@ function updateFilterVisibility() {
       features:             getChips('filterFeatures'),
       listingAttributes:    getChips('filterAttributes'),
       establishedType:      established.length === 1 ? established[0] : null,
+      listedSince:          numVal('filterListedSince'),
       excludePriceWithheld: document.getElementById('filterExcludePriceWithheld')?.checked || false,
       excludeDepositTaken:  document.getElementById('filterExcludeDepositTaken')?.checked || false,
       newDevOnly:           document.getElementById('filterNewDevOnly')?.checked || false,
@@ -3362,6 +3365,9 @@ async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
   if (!window.DomainAPI || !DomainAPI.search) return null;
   const delta = 0.05;
   const geoWindow = { box: { topLeft: { lat: lat + delta, lon: lng - delta }, bottomRight: { lat: lat - delta, lon: lng + delta } } };
+  const listedSinceISO = _activeFilters.listedSince
+    ? new Date(Date.now() - _activeFilters.listedSince * 86400000).toISOString()
+    : null;
   try {
     const domainListings = await DomainAPI.search({
       geoWindow,
@@ -3375,6 +3381,7 @@ async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
       excludePriceWithheld: _activeFilters.excludePriceWithheld,
       excludeDepositTaken: _activeFilters.excludeDepositTaken,
       newDevOnly: _activeFilters.newDevOnly,
+      listedSince: listedSinceISO,
     });
     listings.length = 0;
     domainListings.forEach(l => listings.push(l));
@@ -3417,8 +3424,13 @@ async function runDomainSearch() {
     // V76.3 — use rent-per-week range when Rent, sale range when Sale
     const priceMin = isRent ? _activeFilters.minRentWeek : _activeFilters.minPrice;
     const priceMax = isRent ? _activeFilters.maxRentWeek : _activeFilters.maxPrice;
+    // Convert listedSince days → ISO datetime for Domain API
+    const listedSinceISO = _activeFilters.listedSince
+      ? new Date(Date.now() - _activeFilters.listedSince * 86400000).toISOString()
+      : null;
     console.log('[map] Domain search — geoWindow:', JSON.stringify(geoWindow),
-                'listingType:', _activeFilters.listingType, 'priceRange:', priceMin, '-', priceMax);
+                'listingType:', _activeFilters.listingType, 'priceRange:', priceMin, '-', priceMax,
+                'listedSince:', listedSinceISO);
     const domainListings = await DomainAPI.search({
       geoWindow,
       propertyTypes:        _activeFilters.propertyTypes,
@@ -3437,6 +3449,7 @@ async function runDomainSearch() {
       excludePriceWithheld: _activeFilters.excludePriceWithheld,
       excludeDepositTaken:  _activeFilters.excludeDepositTaken,
       newDevOnly:           _activeFilters.newDevOnly,
+      listedSince:          listedSinceISO,
     });
     listings.length = 0;
     domainListings.forEach(l => listings.push(l));

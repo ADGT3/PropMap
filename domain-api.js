@@ -36,6 +36,7 @@ function buildSearchPayload(options = {}) {
     excludeDepositTaken   = false,
     newDevOnly            = false,
     listingTypes          = ['Sale'],
+    listedSince           = null,   // ISO 8601 datetime — filters to listings created on/after this
     pageNumber            = 1,
     pageSize              = 100,
     sort                  = { sortKey: 'Default', direction: 'Descending' },
@@ -54,6 +55,7 @@ function buildSearchPayload(options = {}) {
     excludePriceWithheld:   excludePriceWithheld          ? true                  : undefined,
     excludeDepositTaken:    excludeDepositTaken           ? true                  : undefined,
     newDevOnly:             newDevOnly                    ? true                  : undefined,
+    listedSince:            listedSince                   || undefined,
     geoWindow:              geoWindow                     || undefined,
     locations: !geoWindow
       ? suburbs.length
@@ -169,12 +171,22 @@ function normaliseLiveListing(item) {
     headline:    listing.headline         || '',
     summary:     listing.summaryDescription || '',  // API field is summaryDescription
 
-    // Price — API uses priceFrom/priceTo, with price as exact if known
-    price: {
-      display: price.displayPrice || '',
-      from:    price.priceFrom    ?? price.price ?? null,
-      to:      price.priceTo      ?? null,
-    },
+    // Price — Domain requires agents to populate priceFrom/priceTo accurately,
+    // even when displayPrice is text like "Contact Agent" or "Auction".
+    // Treat from/to as source of truth; only keep displayPrice if it contains a $ figure.
+    price: (() => {
+      const from = price.priceFrom ?? null;
+      const to   = price.priceTo   ?? null;
+      const exact = price.price    ?? null;
+      const dp = price.displayPrice || '';
+      // Only keep displayPrice if it actually contains a dollar amount
+      const dpHasNumber = typeof dp === 'string' && /\$\s?\d/.test(dp);
+      return {
+        display: dpHasNumber ? dp : '',
+        from:    from ?? exact,
+        to:      to   ?? exact,
+      };
+    })(),
 
     // Agent / agency
     advertiser: listing.advertiser || null,
