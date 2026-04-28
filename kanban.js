@@ -1240,6 +1240,11 @@ function saveTerms(id, terms) {
 // Falls back to termsPrice if listing price is unavailable.
 
 function formatKbPrice(price, termsPrice) {
+  // Detect derived (estimated) prices from the Domain Reveal Price probe.
+  // These come through with derived: true on the price object and should be
+  // marked with ~ prefix and (est.) suffix to distinguish from real prices.
+  const isDerived = price && typeof price === 'object' && price.derived === true;
+
   const fmt = v => {
     if (!v && v !== 0) return null;
     // Already a formatted string with $ — return as-is if it has digits
@@ -1250,22 +1255,32 @@ function formatKbPrice(price, termsPrice) {
     }
     if (typeof v === 'number') return '$' + Math.round(v).toLocaleString();
     if (typeof v === 'object') {
-      // Domain API price object { display, from, to }
-      const { display, from, to } = v;
-      const hasNum = display && /\d/.test(display);
-      if (hasNum) {
-        const num = parseFloat(display.replace(/[^0-9.]/g, ''));
-        return isNaN(num) ? display : '$' + Math.round(num).toLocaleString();
+      // Domain API price object { display, from, to, derived }
+      const { display, from, to, derived } = v;
+      // For derived prices, prefer the from/to range over any text display
+      if (!derived) {
+        const hasNum = display && /\d/.test(display);
+        if (hasNum) {
+          const num = parseFloat(display.replace(/[^0-9.]/g, ''));
+          return isNaN(num) ? display : '$' + Math.round(num).toLocaleString();
+        }
       }
       if (from && to) return '$' + Math.round(from).toLocaleString() + ' – $' + Math.round(to).toLocaleString();
       if (from) return '$' + Math.round(from).toLocaleString();
       if (to)   return '$' + Math.round(to).toLocaleString();
+      // Derived but no bounds — Domain "exempt from filtering" quirk
+      if (derived) return 'Price withheld';
     }
     return null;
   };
 
   const listed = fmt(price);
-  if (listed && listed !== 'Price Unavailable') return listed;
+  if (listed && listed !== 'Price Unavailable') {
+    if (isDerived && listed !== 'Price withheld') {
+      return '~' + listed + ' <span style="font-size:10px;opacity:0.7">(est.)</span>';
+    }
+    return listed;
+  }
 
   // Fall back to vendor terms price if listing price is unavailable
   const terms = fmt(termsPrice);

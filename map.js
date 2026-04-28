@@ -577,15 +577,13 @@ function isPriceWithheld(price) {
 
 // HTML for the price cell on a listings-panel card. If the price is withheld,
 // render a "Reveal Price" button; otherwise render the formatted price text.
+// Derived (estimated) prices are marked with the "(est.)" suffix from
+// formatPrice — no separate visual style is applied.
 function priceCellHtml(listing) {
   if (isPriceWithheld(listing.price)) {
     return `<button class="listing-reveal-price-btn" data-listing-id="${listing.id}" title="Probe Domain to estimate price range">Reveal Price</button>`;
   }
-  const text = formatPrice(listing.price);
-  if (listing.price && listing.price.derived) {
-    return `<span class="listing-price-derived">${text}</span>`;
-  }
-  return text;
+  return formatPrice(listing.price);
 }
 
 
@@ -1969,7 +1967,6 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     <div class="listing-top">
       <div class="listing-price">${priceCellHtml(l)}</div>
       <div style="display:flex;align-items:center;gap:6px">
-        <div class="listing-type">${l.type}</div>
         ${domBadge}
         ${linkedBadge}
       </div>
@@ -2195,7 +2192,7 @@ function makeCoreLogicListingCard(l) {
   const noCoordsPart = l._noCoords ? '<span class="cl-tag cl-tag-nocoords" title="No coordinates in source data">📍?</span>' : '';
   const sourceBadge = l._dataSource
     ? `<span class="cl-tag cl-tag-source cl-tag-${l._dataSource.toLowerCase()}">${l._dataSource}</span>` : '';
-  const typeBadge = l.type ? `<span class="listing-type">${_escapeHtmlSafe(l.type)}</span>` : '';
+  // typeBadge removed — was crowding the price/badge row, derivable from address area context
 
   const agentLines = (l._agencies || []).slice(0, 3)
     .map(a => `<div class="cl-agency">${_escapeHtmlSafe(a)}</div>`).join('');
@@ -2206,7 +2203,6 @@ function makeCoreLogicListingCard(l) {
     <div class="listing-top">
       <div class="listing-price listing-price-tbd">Enquire</div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        ${typeBadge}
         ${strataPart}
         ${sourceBadge}
         ${noCoordsPart}
