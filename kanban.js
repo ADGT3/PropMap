@@ -1287,6 +1287,83 @@ function _renderBoardSelectorBar() {
 // the same destructive action shows the same warning, with consistent site
 // styling (CSS variables, kb-editcols-overlay pattern, no native confirm()).
 //
+// V76.7+ — Generic site-styled confirmation modal.
+//
+// Used wherever the app does a destructive action and wants the same
+// consistent overlay UX. Replaces ad-hoc native confirm() dialogs which
+// inherit OS chrome (wrong fonts, wrong colours, no design tokens).
+//
+// opts:
+//   title         (string)  — modal title (e.g. "Delete this property?")
+//   subject       (string)  — primary identifying text shown bold (e.g. an address)
+//   bodyHtml      (string)  — HTML for the explanation paragraph (already escaped)
+//   confirmLabel  (string)  — Confirm button text (default "Delete")
+//   cancelLabel   (string)  — Cancel button text (default "Cancel")
+//   danger        (bool)    — if true, confirm button uses #c0392b red (default true)
+//   onConfirm     (fn)      — called when user clicks confirm
+//
+// Returns a `close()` function the caller can use to dismiss programmatically.
+function openConfirmModal(opts = {}) {
+  const {
+    title         = 'Confirm',
+    subject       = '',
+    bodyHtml      = '',
+    confirmLabel  = 'Delete',
+    cancelLabel   = 'Cancel',
+    danger        = true,
+    onConfirm     = () => {},
+  } = opts;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'kb-editcols-overlay';
+  const subjectBlock = subject
+    ? `<div style="font-size:13px;font-weight:600">${escapeHtml(subject)}</div>`
+    : '';
+  const bodyBlock = bodyHtml
+    ? `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5">${bodyHtml}</div>`
+    : '';
+  const confirmBg = danger ? '#c0392b' : 'var(--accent, #1a6b3a)';
+
+  overlay.innerHTML = `
+    <div class="kb-editcols-modal" style="width:440px">
+      <div class="kb-editcols-header">
+        <div class="kb-editcols-title">${escapeHtml(title)}</div>
+        <button class="kb-editcols-close" type="button">✕</button>
+      </div>
+      <div class="kb-editcols-body">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          ${subjectBlock}
+          ${bodyBlock}
+        </div>
+      </div>
+      <div class="kb-editcols-footer">
+        <button class="kb-editcols-cancel" type="button">${escapeHtml(cancelLabel)}</button>
+        <button class="kb-confirm-modal-confirm" type="button"
+          style="background:${confirmBg};color:#fff;border:1px solid ${confirmBg};padding:7px 14px;border-radius:6px;
+                 font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">
+          ${escapeHtml(confirmLabel)}
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('.kb-editcols-close').addEventListener('click', close);
+  overlay.querySelector('.kb-editcols-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  overlay.querySelector('.kb-confirm-modal-confirm').addEventListener('click', () => {
+    close();
+    try { onConfirm(); } catch (err) { console.error('[openConfirmModal] onConfirm threw', err); }
+  });
+
+  return close;
+}
+
+// V76.7+ — Shared confirmation modal for deleting a deal card.
+// Used by BOTH the kanban card's X button AND the modal's Delete button so
+// the same destructive action shows the same warning, with consistent site
+// styling (CSS variables, kb-editcols-overlay pattern, no native confirm()).
+//
 // Calls removeFromPipeline(id) on confirm — which already handles in-memory
 // dict cleanup, DB delete (deal + property cascade), parcel orphan cleanup,
 // pin refresh, and CRM cache invalidation.
@@ -1299,44 +1376,15 @@ function openDeleteCardConfirm(id, closeOnConfirm) {
     ? `${entry.property.address}${entry.property.suburb ? ', ' + entry.property.suburb : ''}`
     : `deal ${id}`;
 
-  const overlay = document.createElement('div');
-  overlay.className = 'kb-editcols-overlay';
-  overlay.innerHTML = `
-    <div class="kb-editcols-modal" style="width:440px">
-      <div class="kb-editcols-header">
-        <div class="kb-editcols-title">Delete this card?</div>
-        <button class="kb-editcols-close" type="button">✕</button>
-      </div>
-      <div class="kb-editcols-body">
-        <div style="display:flex;flex-direction:column;gap:12px">
-          <div style="font-size:13px;font-weight:600">${escapeHtml(labelText)}</div>
-          <div style="font-size:12px;color:var(--text-secondary);line-height:1.5">
-            This is <strong style="color:#c0392b">permanent</strong> — it deletes the deal record and the property record (along with any data attached to them).
-            <br><br>
-            It cannot be undone from the UI.
-          </div>
-        </div>
-      </div>
-      <div class="kb-editcols-footer">
-        <button class="kb-editcols-cancel" type="button">Cancel</button>
-        <button class="kb-confirm-delete-btn" type="button"
-          style="background:#c0392b;color:#fff;border:1px solid #c0392b;padding:7px 14px;border-radius:6px;
-                 font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">
-          Delete
-        </button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-
-  const close = () => overlay.remove();
-  overlay.querySelector('.kb-editcols-close').addEventListener('click', close);
-  overlay.querySelector('.kb-editcols-cancel').addEventListener('click', close);
-  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-
-  overlay.querySelector('.kb-confirm-delete-btn').addEventListener('click', async () => {
-    close();
-    if (typeof closeOnConfirm === 'function') closeOnConfirm();
-    await removeFromPipeline(id);
+  openConfirmModal({
+    title:        'Delete this card?',
+    subject:      labelText,
+    bodyHtml:     'This is <strong style="color:#c0392b">permanent</strong> — it deletes the deal record and the property record (along with any data attached to them).<br><br>It cannot be undone from the UI.',
+    confirmLabel: 'Delete',
+    onConfirm: async () => {
+      if (typeof closeOnConfirm === 'function') closeOnConfirm();
+      await removeFromPipeline(id);
+    },
   });
 }
 
@@ -3832,3 +3880,7 @@ window.openPipelineItem = async function (pipelineId) {
 // V76.7+ — Expose addPropertyOnly for the map popup's "+ Property" button.
 // Called from map.js (via window.addCurrentSelectionAsProperty wrapper).
 window.addPropertyOnly = addPropertyOnly;
+
+// V76.7+ — Expose the generic confirm modal so other modules (CRM, map.js)
+// can use the same site-styled overlay instead of native confirm() dialogs.
+window.openConfirmModal = openConfirmModal;
