@@ -7,6 +7,7 @@
  * GET    /api/properties?id=X                   -> single property, full detail
  * GET    /api/properties?dedup_lotdp=1&q=STR    -> find existing property by lot/DP match
  * GET    /api/properties?by_domain_listing=ID   -> single property keyed by domain_listing_id (V76.5)
+ * GET    /api/properties?by_lot_dp=X             -> single property whose lot_dps list contains X exactly (V76.7+)
  * GET    /api/properties?search=STR             -> search by address/suburb/lot-DP (V76.5)
  * POST   /api/properties                        -> create property; id auto-generated if not supplied (V76.5)
  * PUT    /api/properties                        -> update property (requires id in body)
@@ -36,7 +37,7 @@ export default async function handler(req, res) {
     switch (req.method) {
 
       case 'GET': {
-        const { id, dedup_lotdp, q, by_domain_listing, search } = req.query;
+        const { id, dedup_lotdp, q, by_domain_listing, by_lot_dp, search } = req.query;
 
         // Dedup lookup by Lot/DP
         if (dedup_lotdp) {
@@ -47,6 +48,35 @@ export default async function handler(req, res) {
             WHERE lot_dps ILIKE ${needle}
             ORDER BY updated_at DESC LIMIT 10`;
           return res.status(200).json(rows);
+        }
+
+        // V76.7+ — Strict lookup by Lot/DP for duplicate-detection on map clicks.
+        // Unlike `dedup_lotdp` (which uses substring ILIKE), this matches the
+        // lot/DP as a discrete element of the comma-separated `lot_dps` field.
+        // Avoids false positives like "1/123" matching "1/12345".
+        // Returns at most one row, with the same column set as `by_domain_listing`.
+        if (by_lot_dp) {
+          const needle = String(by_lot_dp).trim().toUpperCase();
+          if (!needle) return res.status(400).json({ error: 'by_lot_dp value required' });
+          // Match: lot_dps is exactly the value, or starts with it followed by ", ",
+          // or ends with ", " then the value, or contains ", X, " in the middle.
+          // Use UPPER() on the column so the match is case-insensitive, since
+          // some legacy rows may not be uppercased.
+          const rows = await sql`
+            SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
+                   parcels, property_count, domain_listing_id, listing_url,
+                   agent,
+                   not_suitable_until::text AS not_suitable_until,
+                   not_suitable_reason,
+                   parcel_id, state_prop_id, created_at, updated_at
+              FROM properties
+              WHERE UPPER(lot_dps) = ${needle}
+                 OR UPPER(lot_dps) LIKE ${needle + ',%'}
+                 OR UPPER(lot_dps) LIKE ${'%, ' + needle}
+                 OR UPPER(lot_dps) LIKE ${'%, ' + needle + ',%'}
+            ORDER BY updated_at DESC LIMIT 1`;
+          if (!rows.length) return res.status(404).json({ error: 'Not found' });
+          return res.status(200).json(rows[0]);
         }
 
         // V76.5: lookup by Domain listing id (returns at most one row, since we
