@@ -894,13 +894,10 @@ async function addToPipeline(listing) {
   // Server-side check: maybe a property already exists with this Domain
   // listing id (e.g. user linked it before adding to pipeline). If so, reuse
   // it; if not, we'll create a new property below.
-  let existingProperty = null;
-  if (domainId) {
-    try {
-      const r = await fetch(`/api/properties?by_domain_listing=${encodeURIComponent(domainId)}`);
-      if (r.ok) existingProperty = await r.json();
-    } catch (_) { /* fall through to create */ }
-  }
+  // V76.7+ — also check by lot/DP, so a property created earlier via "+ Property"
+  // (or a previous deal that's since been deleted) is reused rather than
+  // duplicated when the user clicks "+ Pipeline" on the same parcel.
+  const existingProperty = await findExistingProperty(listing);
 
   const propertyId = existingProperty?.id || newPropertyId();
   const dealId     = newDealId();
@@ -999,31 +996,86 @@ async function addToPipeline(listing) {
 //
 // Returns { propertyId, isNew, existing } — isNew is false if a property with
 // this Domain listing id already existed and was reused.
-async function addPropertyOnly(listing) {
-  // Same id-detection convention as addToPipeline
+// V76.7+ — Look up an existing property record in the database that matches
+// the given listing/click context. Tries Domain id first (fast, indexed),
+// then each lot/DP element (also indexed via UPPER substring on properties).
+//
+// Returns the matching property row, or null.
+//
+// Used by BOTH addPropertyOnly (for "+ Property" duplicate-detection) and
+// addToPipeline (so "+ Pipeline" reuses an existing property when the user
+// clicks a parcel that was previously added via "+ Property" or another deal).
+// V76.7+ — Open a property record in the CRM Properties modal. Used when
+// the map's "+ Property" button is clicked but the property already exists.
+// Closes the kanban (if visible), shows the CRM, navigates to the Properties
+// tab, and opens the modal for that property. If the CRM is currently hidden,
+// toggleCRM(true) lazily renders it first (one-time cost on first open).
+function _openPropertyInCrm(propertyId) {
+  if (!propertyId) return;
+  // Prefer router-level navigation so /crm/properties/:id is the URL state
+  if (window.Router?.navigate) {
+    window.Router.navigate('/crm/properties/' + encodeURIComponent(propertyId));
+    return;
+  }
+  // Fallback: direct toggle + navigateTo
+  if (typeof toggleCRM === 'function') toggleCRM(true);
+  // navigateTo runs after the CRM has rendered — small timeout matches router behaviour
+  setTimeout(() => {
+    if (window.CRM?.navigateTo) window.CRM.navigateTo('properties', propertyId);
+  }, 100);
+}
+
+async function findExistingProperty(listing) {
+  // Domain id — most precise, single fetch
   const rawId = listing?.id != null ? String(listing.id) : '';
   const isDomainId = /^\d{6,}$/.test(rawId);
-  const domainId = isDomainId ? rawId : null;
-
-  // If a property already exists with this Domain listing id, reuse it.
-  // This makes "+ Property" idempotent for Domain listings — clicking it
-  // twice doesn't create duplicates.
-  let existingProperty = null;
-  if (domainId) {
+  if (isDomainId) {
     try {
-      const r = await fetch(`/api/properties?by_domain_listing=${encodeURIComponent(domainId)}`);
-      if (r.ok) existingProperty = await r.json();
-    } catch (_) { /* fall through to create */ }
+      const r = await fetch(`/api/properties?by_domain_listing=${encodeURIComponent(rawId)}`);
+      if (r.ok) {
+        const row = await r.json();
+        if (row?.id) return row;
+      }
+    } catch (_) { /* fall through */ }
   }
 
+  // Lot/DP — split the listing's lot list into individual elements and probe
+  // each. The first match wins. Most properties have one lot/DP so this is
+  // typically a single fetch.
+  const lotDpsStr = (listing._lotDPs || '').toString();
+  const lotElements = lotDpsStr.split(',').map(s => s.trim()).filter(Boolean);
+  for (const lot of lotElements) {
+    try {
+      const r = await fetch(`/api/properties?by_lot_dp=${encodeURIComponent(lot)}`);
+      if (r.ok) {
+        const row = await r.json();
+        if (row?.id) return row;
+      }
+    } catch (_) { /* try next lot */ }
+  }
+
+  return null;
+}
+
+async function addPropertyOnly(listing) {
+  // V76.7+ — Look up by Domain id OR lot/DP. If a match exists, route the
+  // user to it instead of creating a duplicate.
+  const existingProperty = await findExistingProperty(listing);
+
   if (existingProperty?.id) {
-    // Already exists. Don't recreate; just refresh CRM cache and report back.
+    // Already exists. Open the CRM Property modal so the user lands on the
+    // existing record. Refresh CRM cache so the row is current.
     if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+    _openPropertyInCrm(existingProperty.id);
+    showKanbanToast(`${existingProperty.address || 'Property'} already in CRM — opened`);
     return { propertyId: existingProperty.id, isNew: false, existing: existingProperty };
   }
 
   // No existing — create the property record.
   const propertyId = newPropertyId();
+  const rawId = listing?.id != null ? String(listing.id) : '';
+  const isDomainId = /^\d{6,}$/.test(rawId);
+  const domainId = isDomainId ? rawId : null;
 
   // Build _parcels array — multi-parcel entries already have it; single
   // entries get one synthesised from lat/lng.

@@ -3237,6 +3237,9 @@ function renderCRMView(container) {
   // window.CRM.navigateTo('parcels', 'parcel-123') → switches to Parcels tab
   // and opens the parcel modal. Called from router.js for /crm/parcels/:id and
   // future /crm/contacts/:id, /crm/properties/:id, /crm/organisations/:id.
+  // V76.7+ — properties branch added so the map's "+ Property" button can route
+  // straight to an existing property record (replaces the "lands in V75.5/later"
+  // placeholder).
   window.CRM.navigateTo = (subRoute, entityId) => {
     const tabMap = {
       contacts:      'contacts',
@@ -3254,8 +3257,10 @@ function renderCRMView(container) {
       openModal(modal => renderContactDetail(modal, parseInt(entityId), () => closeModal()));
     } else if (tabName === 'parcels') {
       openModal(modal => renderParcelModal(modal, entityId, () => closeModal()));
+    } else if (tabName === 'properties') {
+      openModal(modal => renderPropertyModal(modal, entityId, () => closeModal()));
     }
-    // properties + organisations deep-linking lands in V75.5/later
+    // organisations deep-linking still pending
   };
 
   // Initial load
