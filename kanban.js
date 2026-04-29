@@ -71,6 +71,292 @@ function columnIdToStage(columnId, boardId) {
   return col ? (col.stage_slug || col.id) : columnId;
 }
 
+// ─── Pipeline Search (V76.7+) ────────────────────────────────────────────────
+//
+// Boolean expression search for the active pipeline board. Supports:
+//   - Field=value pairs:   contact = anthony     suburb = "rossmore"
+//   - Comparison operators: price > 1000000      beds >= 4
+//   - Boolean composition:  AND OR NOT and parentheses
+//   - Free-text fallback:   anthony  → matches across address/suburb/state/
+//                                       contacts/agent/agency/headline/notes
+//
+// Field name → JSON path on the in-memory deal entry. Lowercase keys.
+// Values are compared case-insensitively (substring for strings, equality
+// for numbers). Quoted values support whitespace.
+const SEARCH_FIELD_MAP = {
+  // Address / location
+  address:   { path: 'property.address',     type: 'string' },
+  suburb:    { path: 'property.suburb',      type: 'string' },
+  state:     { path: 'property.state',       type: 'string' },
+  postcode:  { path: 'property.postcode',    type: 'string' },
+  lotdp:     { path: 'property.lot_dps',     type: 'string' },
+  // Stage / status
+  stage:     { path: 'stage',                type: 'string' },
+  status:    { path: 'status',               type: 'string' },
+  // Property attrs
+  beds:      { path: 'property.beds',        type: 'number' },
+  baths:     { path: 'property.baths',       type: 'number' },
+  cars:      { path: 'property.cars',        type: 'number' },
+  land:      { path: 'property.landAreaSqm', type: 'number' },
+  type:      { path: 'property.type',        type: 'string' },
+  // Listing fields
+  headline:  { path: 'property.headline',    type: 'string' },
+  agent:     { path: 'property.agent.name',  type: 'string' },
+  agency:    { path: 'property.agent.agency',type: 'string' },
+  // Price (numeric: search on .from for >, <; substring on .display for =)
+  price:     { path: '__price',              type: 'price'  },
+  // Contacts (lazy-loaded — see _searchContactsCache)
+  contact:   { path: '__contacts',           type: 'contact' },
+};
+
+// Free-text fallback searches across these string fields:
+const SEARCH_FREETEXT_FIELDS = ['address', 'suburb', 'state', 'agent', 'agency', 'headline', 'lotdp'];
+
+// In-memory cache: dealId → array of contact name strings (lazy-fetched on first
+// search; invalidated when the pipeline refreshes from DB).
+let _searchContactsCache = null;
+
+// Currently-applied search query (UI keeps it in sync via input event).
+let _searchQuery = '';
+
+async function _ensureContactsCache() {
+  if (_searchContactsCache) return _searchContactsCache;
+  _searchContactsCache = {};
+  const dealIds = Object.keys(pipeline);
+  // Fetch contacts for every deal in parallel — N round-trips concurrent
+  await Promise.all(dealIds.map(async id => {
+    try {
+      const res = await fetch(`/api/contacts?pipeline_id=${encodeURIComponent(id)}`);
+      if (res.ok) {
+        const list = await res.json();
+        _searchContactsCache[id] = (Array.isArray(list) ? list : [])
+          .map(c => `${c.first_name || ''} ${c.last_name || ''}`.trim().toLowerCase())
+          .filter(Boolean);
+      } else {
+        _searchContactsCache[id] = [];
+      }
+    } catch (_) {
+      _searchContactsCache[id] = [];
+    }
+  }));
+  return _searchContactsCache;
+}
+
+// Tokenise the search input. Tokens: WORD, QUOTED, OP (= != > < >= <=),
+// LPAREN, RPAREN, AND, OR, NOT.
+function _tokenise(input) {
+  const tokens = [];
+  const s = input.trim();
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (c === '(') { tokens.push({ type: 'LPAREN' }); i++; continue; }
+    if (c === ')') { tokens.push({ type: 'RPAREN' }); i++; continue; }
+    if (c === '"' || c === "'") {
+      // Quoted string
+      const quote = c;
+      let j = i + 1;
+      while (j < s.length && s[j] !== quote) j++;
+      tokens.push({ type: 'QUOTED', value: s.slice(i + 1, j) });
+      i = j + 1;
+      continue;
+    }
+    // Multi-char operators first
+    if (s.slice(i, i + 2) === '!=' || s.slice(i, i + 2) === '>=' || s.slice(i, i + 2) === '<=') {
+      tokens.push({ type: 'OP', value: s.slice(i, i + 2) });
+      i += 2;
+      continue;
+    }
+    if (c === '=' || c === '>' || c === '<') {
+      tokens.push({ type: 'OP', value: c });
+      i++;
+      continue;
+    }
+    // Word — runs until whitespace, paren, operator
+    let j = i;
+    while (j < s.length && !/[\s()=><!"']/.test(s[j])) j++;
+    const word = s.slice(i, j);
+    const upper = word.toUpperCase();
+    if (upper === 'AND' || upper === 'OR' || upper === 'NOT') {
+      tokens.push({ type: upper });
+    } else {
+      tokens.push({ type: 'WORD', value: word });
+    }
+    i = j;
+  }
+  return tokens;
+}
+
+// Parser: recursive descent.
+//   expr   := term (OR term)*
+//   term   := factor (AND? factor)*    -- implicit AND: "a b" == "a AND b"
+//   factor := NOT factor | LPAREN expr RPAREN | atom
+//   atom   := WORD OP value  |  WORD  |  QUOTED  -- bare word is free-text
+function _parse(tokens) {
+  let pos = 0;
+  const peek = () => tokens[pos];
+  const eat  = (type) => { const t = tokens[pos]; if (t && t.type === type) { pos++; return t; } return null; };
+
+  function parseExpr() {
+    let left = parseTerm();
+    while (peek()?.type === 'OR') { pos++; const right = parseTerm(); left = { type: 'or', children: [left, right] }; }
+    return left;
+  }
+  function parseTerm() {
+    let left = parseFactor();
+    while (peek() && peek().type !== 'OR' && peek().type !== 'RPAREN') {
+      // Skip explicit AND if present
+      if (peek().type === 'AND') pos++;
+      const right = parseFactor();
+      if (!right) break;
+      left = { type: 'and', children: [left, right] };
+    }
+    return left;
+  }
+  function parseFactor() {
+    if (peek()?.type === 'NOT') { pos++; return { type: 'not', child: parseFactor() }; }
+    if (peek()?.type === 'LPAREN') {
+      pos++;
+      const e = parseExpr();
+      eat('RPAREN');
+      return e;
+    }
+    return parseAtom();
+  }
+  function parseAtom() {
+    const t = peek();
+    if (!t) return null;
+    if (t.type === 'QUOTED') { pos++; return { type: 'free', text: t.value.toLowerCase() }; }
+    if (t.type !== 'WORD') return null;
+    const word = t.value;
+    pos++;
+    // Field=value form?
+    const fieldKey = word.toLowerCase();
+    if (peek()?.type === 'OP' && SEARCH_FIELD_MAP[fieldKey]) {
+      const op = peek().value; pos++;
+      const valTok = peek();
+      let value = '';
+      if (valTok?.type === 'QUOTED') { value = valTok.value; pos++; }
+      else if (valTok?.type === 'WORD') { value = valTok.value; pos++; }
+      return { type: 'term', field: fieldKey, op, value };
+    }
+    // Bare word → free-text search
+    return { type: 'free', text: word.toLowerCase() };
+  }
+
+  return parseExpr();
+}
+
+// Read a value at a JSON path from a deal entry. Handles the synthetic
+// fields __price (price.from) and __contacts (lookup in cache).
+function _readField(entry, path, dealId) {
+  if (path === '__price') {
+    const p = entry?.property?.price;
+    if (!p) return null;
+    if (typeof p === 'object') return p.from || p.to || null;
+    return null;
+  }
+  if (path === '__contacts') {
+    return (_searchContactsCache && _searchContactsCache[dealId]) || [];
+  }
+  return path.split('.').reduce((o, k) => (o == null ? o : o[k]), entry);
+}
+
+function _matchTerm(entry, dealId, term) {
+  const fieldDef = SEARCH_FIELD_MAP[term.field];
+  if (!fieldDef) return false;
+  const raw = _readField(entry, fieldDef.path, dealId);
+  const op = term.op;
+  const val = String(term.value).toLowerCase();
+
+  if (fieldDef.type === 'contact') {
+    // term.value is a name fragment; cache holds lowercase full names
+    if (!Array.isArray(raw)) return false;
+    const match = raw.some(n => n.includes(val));
+    return op === '!=' ? !match : match;
+  }
+
+  if (fieldDef.type === 'price') {
+    const num = Number(raw);
+    const tnum = Number(term.value);
+    if (op === '=' || op === '!=') {
+      // Substring match against display text if present, else numeric equality
+      const display = entry?.property?.price?.display || '';
+      const numEq = !isNaN(num) && !isNaN(tnum) && num === tnum;
+      const strMatch = display.toLowerCase().includes(val);
+      const match = numEq || strMatch;
+      return op === '!=' ? !match : match;
+    }
+    if (isNaN(num) || isNaN(tnum)) return false;
+    if (op === '>')  return num >  tnum;
+    if (op === '<')  return num <  tnum;
+    if (op === '>=') return num >= tnum;
+    if (op === '<=') return num <= tnum;
+    return false;
+  }
+
+  if (fieldDef.type === 'number') {
+    const num = Number(raw);
+    const tnum = Number(term.value);
+    if (isNaN(num) || isNaN(tnum)) return false;
+    if (op === '=')  return num === tnum;
+    if (op === '!=') return num !== tnum;
+    if (op === '>')  return num >  tnum;
+    if (op === '<')  return num <  tnum;
+    if (op === '>=') return num >= tnum;
+    if (op === '<=') return num <= tnum;
+    return false;
+  }
+
+  // string
+  const str = String(raw ?? '').toLowerCase();
+  if (op === '=')  return str.includes(val);
+  if (op === '!=') return !str.includes(val);
+  if (op === '>' || op === '<' || op === '>=' || op === '<=') {
+    return op === '>'  ? str >  val
+         : op === '<'  ? str <  val
+         : op === '>=' ? str >= val
+         :                str <= val;
+  }
+  return false;
+}
+
+function _matchFree(entry, dealId, text) {
+  // Search across all freetext fields plus contacts cache
+  for (const fk of SEARCH_FREETEXT_FIELDS) {
+    const fdef = SEARCH_FIELD_MAP[fk];
+    if (!fdef) continue;
+    const v = _readField(entry, fdef.path, dealId);
+    if (typeof v === 'string' && v.toLowerCase().includes(text)) return true;
+  }
+  const contacts = (_searchContactsCache && _searchContactsCache[dealId]) || [];
+  if (contacts.some(n => n.includes(text))) return true;
+  return false;
+}
+
+function _evalAst(ast, entry, dealId) {
+  if (!ast) return true;
+  if (ast.type === 'and')  return ast.children.every(c => _evalAst(c, entry, dealId));
+  if (ast.type === 'or')   return ast.children.some (c => _evalAst(c, entry, dealId));
+  if (ast.type === 'not')  return !_evalAst(ast.child, entry, dealId);
+  if (ast.type === 'term') return _matchTerm(entry, dealId, ast);
+  if (ast.type === 'free') return _matchFree(entry, dealId, ast.text);
+  return true;
+}
+
+// Public — check whether a given deal entry matches the current search query.
+// Empty query matches everything. Parse failures degrade to free-text on the
+// raw input so users get something useful even when their syntax is off.
+function _searchMatches(dealId, entry) {
+  const q = (_searchQuery || '').trim();
+  if (!q) return true;
+  let ast;
+  try { ast = _parse(_tokenise(q)); }
+  catch (_) { return _matchFree(entry, dealId, q.toLowerCase()); }
+  return _evalAst(ast, entry, dealId);
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 // V76.5: cache key bumped to invalidate localStorage on first load post-migration.
@@ -845,6 +1131,8 @@ function _renderBoardSelectorBar() {
     <button class="kb-toolbar-btn" id="kanbanNewBoardBtn" title="Create a new board">+ Board</button>
     <button class="kb-toolbar-btn" id="kanbanEditColumnsBtn" title="Edit this board's columns">Edit Columns</button>
     <button class="kb-toolbar-btn kb-toolbar-btn-danger" id="kanbanDeleteBoardBtn" ${canDeleteCurrent ? '' : 'disabled'} title="${canDeleteCurrent ? 'Delete this board' : 'You cannot delete this board'}">Delete Board</button>
+    <input type="search" class="kb-search-input" id="kanbanSearchInput" placeholder="Search… (e.g. contact=anthony AND suburb=rossmore)" title="Boolean search: AND, OR, NOT, parens. Fields: address, suburb, state, stage, contact, agent, beds, baths, price… or just type a word for free-text search."
+           value="${(_searchQuery || '').replace(/"/g,'&quot;')}">
   `;
 
   // Set selected AFTER options are in the DOM
@@ -884,6 +1172,23 @@ function _renderBoardSelectorBar() {
   bar.querySelector('#kanbanNewBoardBtn').addEventListener('click', () => openNewBoardModal());
   bar.querySelector('#kanbanEditColumnsBtn').addEventListener('click', () => openEditColumnsModal());
   bar.querySelector('#kanbanDeleteBoardBtn').addEventListener('click', () => openDeleteBoardConfirm());
+
+  // V76.7+ — search input. Debounce so we don't re-render on every keystroke.
+  // First non-empty query triggers contacts cache fetch (lazy).
+  const searchInput = bar.querySelector('#kanbanSearchInput');
+  let _searchDebounceTimer = null;
+  searchInput.addEventListener('input', (e) => {
+    clearTimeout(_searchDebounceTimer);
+    const val = e.target.value;
+    _searchDebounceTimer = setTimeout(async () => {
+      _searchQuery = val;
+      // If the query references contacts (or is non-empty free-text), populate
+      // the contacts cache before re-rendering. Otherwise the search would miss
+      // contact matches on the first render.
+      if (val.trim()) await _ensureContactsCache();
+      renderBoard();
+    }, 250);
+  });
 }
 
 // V75.6.2: confirm deletion of the current board. Server will reject if
@@ -1508,9 +1813,11 @@ function renderBoard() {
     // Match pipeline entries to this column. Primary match: entry._columnId === stage.id.
     // Secondary (legacy/fallback): entry.stage === stage.stage_slug (for entries
     // that don't yet have _columnId populated).
-    const entries = Object.entries(pipeline).filter(([, v]) => {
-      if (v._columnId) return v._columnId === stage.id;
-      return v.stage === stage.stage_slug;
+    // V76.7+ — also filter by active search query.
+    const entries = Object.entries(pipeline).filter(([id, v]) => {
+      const inColumn = v._columnId ? v._columnId === stage.id : v.stage === stage.stage_slug;
+      if (!inColumn) return false;
+      return _searchMatches(id, v);
     });
 
     // Sort: per-user column_order wins if present, else fall back to addedAt asc
@@ -1604,6 +1911,18 @@ function renderBoard() {
       // Remove card
       card.querySelector('.kb-remove').addEventListener('click', e => {
         e.stopPropagation();
+        // V76.7+ — confirmation dialog before delete. The X used to hard-delete
+        // the deal AND its property record (cascade) with no warning, which lost
+        // user data on accidental clicks.
+        const entry = pipeline[id];
+        const labelText = entry?.property?.address
+          ? `${entry.property.address}, ${entry.property.suburb || ''}`.trim().replace(/,$/, '')
+          : `deal ${id}`;
+        const ok = confirm(
+          `Delete this card?\n\n${labelText}\n\nThis is PERMANENT — it deletes the deal record and the property record. ` +
+          `It cannot be undone from the UI.\n\nClick OK to delete, or Cancel to keep it.`
+        );
+        if (!ok) return;
         removeFromPipeline(id);
       });
 
@@ -3176,19 +3495,78 @@ window.refreshPipelinePins = function () {
 // current board's deals from the DB and re-render. dbLoad() is cheap (one
 // HTTP roundtrip, ≤50 deals typically), and only runs on user-initiated
 // CRM saves so the cost is bounded.
+//
+// V76.7+ — Two safety improvements:
+//   (1) Defer the refresh while the user is actively interacting (drag in
+//       progress, modal open). Otherwise cards can shift columns or the modal
+//       can re-render mid-edit. The deferred refresh runs as soon as the
+//       interaction ends.
+//   (2) Show a small "Updating…" overlay during the refresh so the user knows
+//       the board is briefly unstable.
+
+let _pendingRefreshReason = null;     // queued reason while deferred
+let _refreshInProgress    = false;    // prevents reentry
+
+function _isUserInteracting() {
+  // Drag in progress?
+  if (document.querySelector('.kb-card.dragging, .kb-action-row.dragging')) return true;
+  // Modal open? (any kb-modal-overlay attached to body)
+  if (document.querySelector('.kb-modal-overlay')) return true;
+  return false;
+}
+
+function _showRefreshOverlay() {
+  const board = document.getElementById('kanbanBoard');
+  if (!board) return;
+  if (board.querySelector('.kb-refresh-overlay')) return;
+  const ov = document.createElement('div');
+  ov.className = 'kb-refresh-overlay';
+  ov.innerHTML = '<div class="kb-refresh-overlay-inner">Updating pipeline…</div>';
+  board.appendChild(ov);
+}
+function _hideRefreshOverlay() {
+  const ov = document.querySelector('#kanbanBoard .kb-refresh-overlay');
+  if (ov) ov.remove();
+}
+
 async function _refreshPipelineFromDB(reason) {
   if (!dbAvailable) return;
+  // Defer if the user is mid-interaction. Re-check on a short interval and
+  // fire as soon as they're idle.
+  if (_isUserInteracting()) {
+    _pendingRefreshReason = reason;
+    if (!_pendingRefreshReason._poller) {
+      const poll = setInterval(() => {
+        if (!_isUserInteracting()) {
+          clearInterval(poll);
+          const r = _pendingRefreshReason;
+          _pendingRefreshReason = null;
+          _refreshPipelineFromDB(r);
+        }
+      }, 250);
+    }
+    return;
+  }
+  if (_refreshInProgress) return;
+  _refreshInProgress = true;
+  _showRefreshOverlay();
   try {
     const dict = await dbLoad();
     if (!dict) return;
     Object.keys(pipeline).forEach(k => delete pipeline[k]);
     Object.assign(pipeline, dict);
     cacheSave(pipeline);
+    // V76.7+ — invalidate the contacts search cache too (deals may have been
+    // added/removed and contact links may have changed).
+    _searchContactsCache = null;
     if (typeof renderBoard === 'function' && kanbanVisible) renderBoard();
     if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
     console.log('[kanban] pipeline refreshed (' + reason + ')');
   } catch (err) {
     console.warn('[kanban] pipeline refresh failed:', err);
+  } finally {
+    _refreshInProgress = false;
+    _hideRefreshOverlay();
   }
 }
 
