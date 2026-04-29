@@ -964,9 +964,24 @@ function renderCRMView(container) {
         });
         tr.querySelector('.crm-view-delete-btn').addEventListener('click', async e => {
           e.stopPropagation();
-          if (!confirm(`Permanently delete ${displayName(c)}? This cannot be undone.`)) return;
-          await apiDelete({ id: c.id });
-          fetchContacts();
+          // V76.7+ — site-styled confirm modal (matches kanban + property + parcel UX).
+          const name = displayName(c);
+          if (!window.openConfirmModal) {
+            if (!confirm(`Permanently delete ${name}? This cannot be undone.`)) return;
+            await apiDelete({ id: c.id });
+            fetchContacts();
+            return;
+          }
+          window.openConfirmModal({
+            title:        'Delete this contact?',
+            subject:      name,
+            bodyHtml:     'This is <strong style="color:#c0392b">permanent</strong> — it deletes the contact record and any links to deals or properties.<br><br>It cannot be undone from the UI.',
+            confirmLabel: 'Delete',
+            onConfirm: async () => {
+              await apiDelete({ id: c.id });
+              fetchContacts();
+            },
+          });
         });
 
         tbody.appendChild(tr);
@@ -1579,11 +1594,25 @@ function renderCRMView(container) {
       onDone();
     });
 
-    // Delete (edit only)
+    // Delete (edit only) — V76.7+ site-styled confirm modal
     modal.querySelector('.crm-delete-btn')?.addEventListener('click', async () => {
-      if (!confirm(`Permanently delete ${displayName(prefill)}? This cannot be undone.`)) return;
-      await apiDelete({ id: prefill.id });
-      onDone();
+      const name = displayName(prefill);
+      if (!window.openConfirmModal) {
+        if (!confirm(`Permanently delete ${name}? This cannot be undone.`)) return;
+        await apiDelete({ id: prefill.id });
+        onDone();
+        return;
+      }
+      window.openConfirmModal({
+        title:        'Delete this contact?',
+        subject:      name,
+        bodyHtml:     'This is <strong style="color:#c0392b">permanent</strong> — it deletes the contact record and any links to deals or properties.<br><br>It cannot be undone from the UI.',
+        confirmLabel: 'Delete',
+        onConfirm: async () => {
+          await apiDelete({ id: prefill.id });
+          onDone();
+        },
+      });
     });
   }
 
@@ -1643,9 +1672,23 @@ function renderCRMView(container) {
         });
         tr.querySelector('.crm-view-delete-btn').addEventListener('click', async (e) => {
           e.stopPropagation();
-          if (!confirm(`Delete organisation "${org.name}"?`)) return;
-          await apiDelete({ org_id: org.id });
-          fetchOrgs(orgSearch);
+          // V76.7+ — site-styled confirm modal.
+          if (!window.openConfirmModal) {
+            if (!confirm(`Delete organisation "${org.name}"?`)) return;
+            await apiDelete({ org_id: org.id });
+            fetchOrgs(orgSearch);
+            return;
+          }
+          window.openConfirmModal({
+            title:        'Delete this organisation?',
+            subject:      org.name || 'Organisation',
+            bodyHtml:     'This is <strong style="color:#c0392b">permanent</strong> — it deletes the organisation record and any links to contacts.<br><br>It cannot be undone from the UI.',
+            confirmLabel: 'Delete',
+            onConfirm: async () => {
+              await apiDelete({ org_id: org.id });
+              fetchOrgs(orgSearch);
+            },
+          });
         });
         tbody.appendChild(tr);
       });
@@ -2226,15 +2269,29 @@ function renderCRMView(container) {
       modal.querySelector('.crm-parcel-delete-btn')?.addEventListener('click', async (e) => {
         const btn = e.currentTarget;
         if (btn.disabled) return;
-        if (!confirm('Confirm delete')) return;
-        const r = await fetch(`/api/parcels?id=${encodeURIComponent(parcel.id)}`, { method: 'DELETE' });
-        if (r.ok) {
-          // V75.5.2: sync in-memory pipeline dict, map pins, and CRM caches
-          _syncAfterEntityDelete({ parcelId: parcel.id });
-          onDone();
+        // V76.7+ — site-styled confirm modal (matches kanban + property delete UX).
+        if (!window.openConfirmModal) {
+          if (!confirm('Delete this parcel?')) return;
+          await _doDeleteParcel();
         } else {
-          const err = await r.json().catch(() => ({}));
-          alert(`Failed to delete: ${err.error || r.status}`);
+          window.openConfirmModal({
+            title:        'Delete this parcel?',
+            subject:      parcel.name || parcel.id,
+            bodyHtml:     'This is <strong style="color:#c0392b">permanent</strong> — it deletes the parcel record and any associated child properties.<br><br>It cannot be undone from the UI.',
+            confirmLabel: 'Delete',
+            onConfirm:    _doDeleteParcel,
+          });
+        }
+        async function _doDeleteParcel() {
+          const r = await fetch(`/api/parcels?id=${encodeURIComponent(parcel.id)}`, { method: 'DELETE' });
+          if (r.ok) {
+            // V75.5.2: sync in-memory pipeline dict, map pins, and CRM caches
+            _syncAfterEntityDelete({ parcelId: parcel.id });
+            onDone();
+          } else {
+            const err = await r.json().catch(() => ({}));
+            alert(`Failed to delete: ${err.error || r.status}`);
+          }
         }
       });
 
@@ -2868,15 +2925,32 @@ function renderCRMView(container) {
       modal.querySelector('.crm-prop-delete-btn')?.addEventListener('click', async (e) => {
         const btn = e.currentTarget;
         if (btn.disabled) return;
-        if (!confirm('Confirm delete')) return;
-        const r = await fetch(`/api/properties?id=${encodeURIComponent(property.id)}`, { method: 'DELETE' });
-        if (r.ok) {
-          // Sync in-memory pipeline dict, map pins, and CRM caches
-          _syncAfterEntityDelete({ propertyId: property.id });
-          onDone();
+        // V76.7+ — site-styled confirm modal (matches kanban + parcel delete UX).
+        const propLabel = property.address
+          ? `${property.address}${property.suburb ? ', ' + property.suburb : ''}`
+          : property.id;
+        if (!window.openConfirmModal) {
+          if (!confirm(`Delete ${propLabel}?`)) return;
+          await _doDeleteProperty();
         } else {
-          const err = await r.json().catch(() => ({}));
-          alert(`Failed to delete: ${err.error || r.status}`);
+          window.openConfirmModal({
+            title:        'Delete this property?',
+            subject:      propLabel,
+            bodyHtml:     'This is <strong style="color:#c0392b">permanent</strong> — it deletes the property record and any data attached to it.<br><br>It cannot be undone from the UI.',
+            confirmLabel: 'Delete',
+            onConfirm:    _doDeleteProperty,
+          });
+        }
+        async function _doDeleteProperty() {
+          const r = await fetch(`/api/properties?id=${encodeURIComponent(property.id)}`, { method: 'DELETE' });
+          if (r.ok) {
+            // Sync in-memory pipeline dict, map pins, and CRM caches
+            _syncAfterEntityDelete({ propertyId: property.id });
+            onDone();
+          } else {
+            const err = await r.json().catch(() => ({}));
+            alert(`Failed to delete: ${err.error || r.status}`);
+          }
         }
       });
 

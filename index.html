@@ -30,6 +30,47 @@
       background: #999;
       cursor: progress;
     }
+
+    /* V76.7+ — Pipeline search input in the kanban toolbar */
+    .kb-search-input {
+      flex: 1;
+      min-width: 200px;
+      max-width: 480px;
+      padding: 6px 10px;
+      font-size: 13px;
+      font-family: 'DM Sans', sans-serif;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fff;
+      margin-left: 8px;
+    }
+    .kb-search-input:focus {
+      outline: none;
+      border-color: #c4841a;
+      box-shadow: 0 0 0 2px rgba(196, 132, 26, 0.2);
+    }
+
+    /* V76.7+ — Refresh overlay shown briefly while pipeline reloads from DB.
+       Sits over the kanban board and absorbs clicks to prevent edits during
+       the unstable refresh window. */
+    #kanbanBoard { position: relative; }
+    .kb-refresh-overlay {
+      position: absolute; inset: 0;
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(2px);
+      z-index: 999;
+      display: flex; align-items: center; justify-content: center;
+      cursor: wait;
+    }
+    .kb-refresh-overlay-inner {
+      background: #c4841a;
+      color: #fff;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
   </style>
 </head>
 <body>

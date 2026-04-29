@@ -71,6 +71,292 @@ function columnIdToStage(columnId, boardId) {
   return col ? (col.stage_slug || col.id) : columnId;
 }
 
+// ─── Pipeline Search (V76.7+) ────────────────────────────────────────────────
+//
+// Boolean expression search for the active pipeline board. Supports:
+//   - Field=value pairs:   contact = anthony     suburb = "rossmore"
+//   - Comparison operators: price > 1000000      beds >= 4
+//   - Boolean composition:  AND OR NOT and parentheses
+//   - Free-text fallback:   anthony  → matches across address/suburb/state/
+//                                       contacts/agent/agency/headline/notes
+//
+// Field name → JSON path on the in-memory deal entry. Lowercase keys.
+// Values are compared case-insensitively (substring for strings, equality
+// for numbers). Quoted values support whitespace.
+const SEARCH_FIELD_MAP = {
+  // Address / location
+  address:   { path: 'property.address',     type: 'string' },
+  suburb:    { path: 'property.suburb',      type: 'string' },
+  state:     { path: 'property.state',       type: 'string' },
+  postcode:  { path: 'property.postcode',    type: 'string' },
+  lotdp:     { path: 'property.lot_dps',     type: 'string' },
+  // Stage / status
+  stage:     { path: 'stage',                type: 'string' },
+  status:    { path: 'status',               type: 'string' },
+  // Property attrs
+  beds:      { path: 'property.beds',        type: 'number' },
+  baths:     { path: 'property.baths',       type: 'number' },
+  cars:      { path: 'property.cars',        type: 'number' },
+  land:      { path: 'property.landAreaSqm', type: 'number' },
+  type:      { path: 'property.type',        type: 'string' },
+  // Listing fields
+  headline:  { path: 'property.headline',    type: 'string' },
+  agent:     { path: 'property.agent.name',  type: 'string' },
+  agency:    { path: 'property.agent.agency',type: 'string' },
+  // Price (numeric: search on .from for >, <; substring on .display for =)
+  price:     { path: '__price',              type: 'price'  },
+  // Contacts (lazy-loaded — see _searchContactsCache)
+  contact:   { path: '__contacts',           type: 'contact' },
+};
+
+// Free-text fallback searches across these string fields:
+const SEARCH_FREETEXT_FIELDS = ['address', 'suburb', 'state', 'agent', 'agency', 'headline', 'lotdp'];
+
+// In-memory cache: dealId → array of contact name strings (lazy-fetched on first
+// search; invalidated when the pipeline refreshes from DB).
+let _searchContactsCache = null;
+
+// Currently-applied search query (UI keeps it in sync via input event).
+let _searchQuery = '';
+
+async function _ensureContactsCache() {
+  if (_searchContactsCache) return _searchContactsCache;
+  _searchContactsCache = {};
+  const dealIds = Object.keys(pipeline);
+  // Fetch contacts for every deal in parallel — N round-trips concurrent
+  await Promise.all(dealIds.map(async id => {
+    try {
+      const res = await fetch(`/api/contacts?pipeline_id=${encodeURIComponent(id)}`);
+      if (res.ok) {
+        const list = await res.json();
+        _searchContactsCache[id] = (Array.isArray(list) ? list : [])
+          .map(c => `${c.first_name || ''} ${c.last_name || ''}`.trim().toLowerCase())
+          .filter(Boolean);
+      } else {
+        _searchContactsCache[id] = [];
+      }
+    } catch (_) {
+      _searchContactsCache[id] = [];
+    }
+  }));
+  return _searchContactsCache;
+}
+
+// Tokenise the search input. Tokens: WORD, QUOTED, OP (= != > < >= <=),
+// LPAREN, RPAREN, AND, OR, NOT.
+function _tokenise(input) {
+  const tokens = [];
+  const s = input.trim();
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (c === '(') { tokens.push({ type: 'LPAREN' }); i++; continue; }
+    if (c === ')') { tokens.push({ type: 'RPAREN' }); i++; continue; }
+    if (c === '"' || c === "'") {
+      // Quoted string
+      const quote = c;
+      let j = i + 1;
+      while (j < s.length && s[j] !== quote) j++;
+      tokens.push({ type: 'QUOTED', value: s.slice(i + 1, j) });
+      i = j + 1;
+      continue;
+    }
+    // Multi-char operators first
+    if (s.slice(i, i + 2) === '!=' || s.slice(i, i + 2) === '>=' || s.slice(i, i + 2) === '<=') {
+      tokens.push({ type: 'OP', value: s.slice(i, i + 2) });
+      i += 2;
+      continue;
+    }
+    if (c === '=' || c === '>' || c === '<') {
+      tokens.push({ type: 'OP', value: c });
+      i++;
+      continue;
+    }
+    // Word — runs until whitespace, paren, operator
+    let j = i;
+    while (j < s.length && !/[\s()=><!"']/.test(s[j])) j++;
+    const word = s.slice(i, j);
+    const upper = word.toUpperCase();
+    if (upper === 'AND' || upper === 'OR' || upper === 'NOT') {
+      tokens.push({ type: upper });
+    } else {
+      tokens.push({ type: 'WORD', value: word });
+    }
+    i = j;
+  }
+  return tokens;
+}
+
+// Parser: recursive descent.
+//   expr   := term (OR term)*
+//   term   := factor (AND? factor)*    -- implicit AND: "a b" == "a AND b"
+//   factor := NOT factor | LPAREN expr RPAREN | atom
+//   atom   := WORD OP value  |  WORD  |  QUOTED  -- bare word is free-text
+function _parse(tokens) {
+  let pos = 0;
+  const peek = () => tokens[pos];
+  const eat  = (type) => { const t = tokens[pos]; if (t && t.type === type) { pos++; return t; } return null; };
+
+  function parseExpr() {
+    let left = parseTerm();
+    while (peek()?.type === 'OR') { pos++; const right = parseTerm(); left = { type: 'or', children: [left, right] }; }
+    return left;
+  }
+  function parseTerm() {
+    let left = parseFactor();
+    while (peek() && peek().type !== 'OR' && peek().type !== 'RPAREN') {
+      // Skip explicit AND if present
+      if (peek().type === 'AND') pos++;
+      const right = parseFactor();
+      if (!right) break;
+      left = { type: 'and', children: [left, right] };
+    }
+    return left;
+  }
+  function parseFactor() {
+    if (peek()?.type === 'NOT') { pos++; return { type: 'not', child: parseFactor() }; }
+    if (peek()?.type === 'LPAREN') {
+      pos++;
+      const e = parseExpr();
+      eat('RPAREN');
+      return e;
+    }
+    return parseAtom();
+  }
+  function parseAtom() {
+    const t = peek();
+    if (!t) return null;
+    if (t.type === 'QUOTED') { pos++; return { type: 'free', text: t.value.toLowerCase() }; }
+    if (t.type !== 'WORD') return null;
+    const word = t.value;
+    pos++;
+    // Field=value form?
+    const fieldKey = word.toLowerCase();
+    if (peek()?.type === 'OP' && SEARCH_FIELD_MAP[fieldKey]) {
+      const op = peek().value; pos++;
+      const valTok = peek();
+      let value = '';
+      if (valTok?.type === 'QUOTED') { value = valTok.value; pos++; }
+      else if (valTok?.type === 'WORD') { value = valTok.value; pos++; }
+      return { type: 'term', field: fieldKey, op, value };
+    }
+    // Bare word → free-text search
+    return { type: 'free', text: word.toLowerCase() };
+  }
+
+  return parseExpr();
+}
+
+// Read a value at a JSON path from a deal entry. Handles the synthetic
+// fields __price (price.from) and __contacts (lookup in cache).
+function _readField(entry, path, dealId) {
+  if (path === '__price') {
+    const p = entry?.property?.price;
+    if (!p) return null;
+    if (typeof p === 'object') return p.from || p.to || null;
+    return null;
+  }
+  if (path === '__contacts') {
+    return (_searchContactsCache && _searchContactsCache[dealId]) || [];
+  }
+  return path.split('.').reduce((o, k) => (o == null ? o : o[k]), entry);
+}
+
+function _matchTerm(entry, dealId, term) {
+  const fieldDef = SEARCH_FIELD_MAP[term.field];
+  if (!fieldDef) return false;
+  const raw = _readField(entry, fieldDef.path, dealId);
+  const op = term.op;
+  const val = String(term.value).toLowerCase();
+
+  if (fieldDef.type === 'contact') {
+    // term.value is a name fragment; cache holds lowercase full names
+    if (!Array.isArray(raw)) return false;
+    const match = raw.some(n => n.includes(val));
+    return op === '!=' ? !match : match;
+  }
+
+  if (fieldDef.type === 'price') {
+    const num = Number(raw);
+    const tnum = Number(term.value);
+    if (op === '=' || op === '!=') {
+      // Substring match against display text if present, else numeric equality
+      const display = entry?.property?.price?.display || '';
+      const numEq = !isNaN(num) && !isNaN(tnum) && num === tnum;
+      const strMatch = display.toLowerCase().includes(val);
+      const match = numEq || strMatch;
+      return op === '!=' ? !match : match;
+    }
+    if (isNaN(num) || isNaN(tnum)) return false;
+    if (op === '>')  return num >  tnum;
+    if (op === '<')  return num <  tnum;
+    if (op === '>=') return num >= tnum;
+    if (op === '<=') return num <= tnum;
+    return false;
+  }
+
+  if (fieldDef.type === 'number') {
+    const num = Number(raw);
+    const tnum = Number(term.value);
+    if (isNaN(num) || isNaN(tnum)) return false;
+    if (op === '=')  return num === tnum;
+    if (op === '!=') return num !== tnum;
+    if (op === '>')  return num >  tnum;
+    if (op === '<')  return num <  tnum;
+    if (op === '>=') return num >= tnum;
+    if (op === '<=') return num <= tnum;
+    return false;
+  }
+
+  // string
+  const str = String(raw ?? '').toLowerCase();
+  if (op === '=')  return str.includes(val);
+  if (op === '!=') return !str.includes(val);
+  if (op === '>' || op === '<' || op === '>=' || op === '<=') {
+    return op === '>'  ? str >  val
+         : op === '<'  ? str <  val
+         : op === '>=' ? str >= val
+         :                str <= val;
+  }
+  return false;
+}
+
+function _matchFree(entry, dealId, text) {
+  // Search across all freetext fields plus contacts cache
+  for (const fk of SEARCH_FREETEXT_FIELDS) {
+    const fdef = SEARCH_FIELD_MAP[fk];
+    if (!fdef) continue;
+    const v = _readField(entry, fdef.path, dealId);
+    if (typeof v === 'string' && v.toLowerCase().includes(text)) return true;
+  }
+  const contacts = (_searchContactsCache && _searchContactsCache[dealId]) || [];
+  if (contacts.some(n => n.includes(text))) return true;
+  return false;
+}
+
+function _evalAst(ast, entry, dealId) {
+  if (!ast) return true;
+  if (ast.type === 'and')  return ast.children.every(c => _evalAst(c, entry, dealId));
+  if (ast.type === 'or')   return ast.children.some (c => _evalAst(c, entry, dealId));
+  if (ast.type === 'not')  return !_evalAst(ast.child, entry, dealId);
+  if (ast.type === 'term') return _matchTerm(entry, dealId, ast);
+  if (ast.type === 'free') return _matchFree(entry, dealId, ast.text);
+  return true;
+}
+
+// Public — check whether a given deal entry matches the current search query.
+// Empty query matches everything. Parse failures degrade to free-text on the
+// raw input so users get something useful even when their syntax is off.
+function _searchMatches(dealId, entry) {
+  const q = (_searchQuery || '').trim();
+  if (!q) return true;
+  let ast;
+  try { ast = _parse(_tokenise(q)); }
+  catch (_) { return _matchFree(entry, dealId, q.toLowerCase()); }
+  return _evalAst(ast, entry, dealId);
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 // V76.5: cache key bumped to invalidate localStorage on first load post-migration.
@@ -703,6 +989,97 @@ async function addToPipeline(listing) {
   }
 }
 
+// V76.7+ — Create a property record WITHOUT a deal.
+//
+// Same population logic as addToPipeline() but skips deal creation entirely.
+// Used by the map popup's "+ Property" button to support workflows where the
+// property exists in the CRM but isn't (yet) in any pipeline — e.g. tracking
+// not-suitable properties, agency listings before a deal is opened, or
+// linking a Domain listing to a known address without committing to acquisition.
+//
+// Returns { propertyId, isNew, existing } — isNew is false if a property with
+// this Domain listing id already existed and was reused.
+async function addPropertyOnly(listing) {
+  // Same id-detection convention as addToPipeline
+  const rawId = listing?.id != null ? String(listing.id) : '';
+  const isDomainId = /^\d{6,}$/.test(rawId);
+  const domainId = isDomainId ? rawId : null;
+
+  // If a property already exists with this Domain listing id, reuse it.
+  // This makes "+ Property" idempotent for Domain listings — clicking it
+  // twice doesn't create duplicates.
+  let existingProperty = null;
+  if (domainId) {
+    try {
+      const r = await fetch(`/api/properties?by_domain_listing=${encodeURIComponent(domainId)}`);
+      if (r.ok) existingProperty = await r.json();
+    } catch (_) { /* fall through to create */ }
+  }
+
+  if (existingProperty?.id) {
+    // Already exists. Don't recreate; just refresh CRM cache and report back.
+    if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+    return { propertyId: existingProperty.id, isNew: false, existing: existingProperty };
+  }
+
+  // No existing — create the property record.
+  const propertyId = newPropertyId();
+
+  // Build _parcels array — multi-parcel entries already have it; single
+  // entries get one synthesised from lat/lng.
+  const parcels = listing._parcels && listing._parcels.length > 0
+    ? listing._parcels
+    : [{ lat: listing.lat, lng: listing.lng, label: `${listing.address}, ${listing.suburb}` }];
+  const firstParcel = parcels[0];
+
+  const payload = {
+    id:                propertyId,
+    address:           listing.address || '',
+    suburb:            listing.suburb  || '',
+    state:             listing.state   || 'NSW',
+    lat:               listing.lat ?? firstParcel?.lat ?? null,
+    lng:               listing.lng ?? firstParcel?.lng ?? null,
+    lot_dps:           (listing._lotDPs || '').toString().toUpperCase(),
+    area_sqm:          listing._areaSqm ?? null,
+    parcels,
+    property_count:    listing._propertyCount ?? 1,
+    domain_listing_id: domainId,
+    listing_url:       listing.listingUrl || null,
+    agent:             listing.agent || null,
+  };
+
+  try {
+    const res = await fetch(PROPERTIES_API, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.warn('[addPropertyOnly] API error:', err);
+      showKanbanToast(`Failed to create property: ${err.error || res.statusText}`);
+      return { propertyId: null, isNew: false };
+    }
+  } catch (err) {
+    console.warn('[addPropertyOnly] fetch failed:', err);
+    showKanbanToast(`Failed to create property: ${err.message}`);
+    return { propertyId: null, isNew: false };
+  }
+
+  // Refresh CRM Properties cache so the new row is visible immediately
+  if (window.CRM?.invalidatePropertiesCache) {
+    window.CRM.invalidatePropertiesCache();
+  }
+  // Broadcast for any other module that might be listening (kanban refresh
+  // is a no-op since this property has no deal yet, but the event is harmless).
+  window.dispatchEvent(new CustomEvent('propertyChanged', {
+    detail: { propertyId: String(propertyId) },
+  }));
+
+  showKanbanToast(`${listing.address || 'Property'} added to CRM`);
+  return { propertyId, isNew: true };
+}
+
 async function removeFromPipeline(id) {
   const sid = String(id);
   // V75.4d: capture whether this was a parcel-deal BEFORE deleting from dict
@@ -845,6 +1222,8 @@ function _renderBoardSelectorBar() {
     <button class="kb-toolbar-btn" id="kanbanNewBoardBtn" title="Create a new board">+ Board</button>
     <button class="kb-toolbar-btn" id="kanbanEditColumnsBtn" title="Edit this board's columns">Edit Columns</button>
     <button class="kb-toolbar-btn kb-toolbar-btn-danger" id="kanbanDeleteBoardBtn" ${canDeleteCurrent ? '' : 'disabled'} title="${canDeleteCurrent ? 'Delete this board' : 'You cannot delete this board'}">Delete Board</button>
+    <input type="search" class="kb-search-input" id="kanbanSearchInput" placeholder="Search… (e.g. contact=anthony AND suburb=rossmore)" title="Boolean search: AND, OR, NOT, parens. Fields: address, suburb, state, stage, contact, agent, beds, baths, price… or just type a word for free-text search."
+           value="${(_searchQuery || '').replace(/"/g,'&quot;')}">
   `;
 
   // Set selected AFTER options are in the DOM
@@ -884,6 +1263,137 @@ function _renderBoardSelectorBar() {
   bar.querySelector('#kanbanNewBoardBtn').addEventListener('click', () => openNewBoardModal());
   bar.querySelector('#kanbanEditColumnsBtn').addEventListener('click', () => openEditColumnsModal());
   bar.querySelector('#kanbanDeleteBoardBtn').addEventListener('click', () => openDeleteBoardConfirm());
+
+  // V76.7+ — search input. Debounce so we don't re-render on every keystroke.
+  // First non-empty query triggers contacts cache fetch (lazy).
+  const searchInput = bar.querySelector('#kanbanSearchInput');
+  let _searchDebounceTimer = null;
+  searchInput.addEventListener('input', (e) => {
+    clearTimeout(_searchDebounceTimer);
+    const val = e.target.value;
+    _searchDebounceTimer = setTimeout(async () => {
+      _searchQuery = val;
+      // If the query references contacts (or is non-empty free-text), populate
+      // the contacts cache before re-rendering. Otherwise the search would miss
+      // contact matches on the first render.
+      if (val.trim()) await _ensureContactsCache();
+      renderBoard();
+    }, 250);
+  });
+}
+
+// V76.7+ — Shared confirmation modal for deleting a deal card.
+// Used by BOTH the kanban card's X button AND the modal's Delete button so
+// the same destructive action shows the same warning, with consistent site
+// styling (CSS variables, kb-editcols-overlay pattern, no native confirm()).
+//
+// V76.7+ — Generic site-styled confirmation modal.
+//
+// Used wherever the app does a destructive action and wants the same
+// consistent overlay UX. Replaces ad-hoc native confirm() dialogs which
+// inherit OS chrome (wrong fonts, wrong colours, no design tokens).
+//
+// opts:
+//   title         (string)  — modal title (e.g. "Delete this property?")
+//   subject       (string)  — primary identifying text shown bold (e.g. an address)
+//   bodyHtml      (string)  — HTML for the explanation paragraph (already escaped)
+//   confirmLabel  (string)  — Confirm button text (default "Delete")
+//   cancelLabel   (string)  — Cancel button text (default "Cancel")
+//   danger        (bool)    — if true, confirm button uses #c0392b red (default true)
+//   onConfirm     (fn)      — called when user clicks confirm
+//
+// Returns a `close()` function the caller can use to dismiss programmatically.
+function openConfirmModal(opts = {}) {
+  const {
+    title         = 'Confirm',
+    subject       = '',
+    bodyHtml      = '',
+    confirmLabel  = 'Delete',
+    cancelLabel   = 'Cancel',
+    danger        = true,
+    onConfirm     = () => {},
+  } = opts;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'kb-editcols-overlay';
+  const subjectBlock = subject
+    ? `<div style="font-size:13px;font-weight:600">${escapeHtml(subject)}</div>`
+    : '';
+  const bodyBlock = bodyHtml
+    ? `<div style="font-size:12px;color:var(--text-secondary);line-height:1.5">${bodyHtml}</div>`
+    : '';
+  const confirmBg = danger ? '#c0392b' : 'var(--accent, #1a6b3a)';
+
+  overlay.innerHTML = `
+    <div class="kb-editcols-modal" style="width:440px">
+      <div class="kb-editcols-header">
+        <div class="kb-editcols-title">${escapeHtml(title)}</div>
+        <button class="kb-editcols-close" type="button">✕</button>
+      </div>
+      <div class="kb-editcols-body">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          ${subjectBlock}
+          ${bodyBlock}
+        </div>
+      </div>
+      <div class="kb-editcols-footer">
+        <button class="kb-editcols-cancel" type="button">${escapeHtml(cancelLabel)}</button>
+        <button class="kb-confirm-modal-confirm" type="button"
+          style="background:${confirmBg};color:#fff;border:1px solid ${confirmBg};padding:7px 14px;border-radius:6px;
+                 font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">
+          ${escapeHtml(confirmLabel)}
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('.kb-editcols-close').addEventListener('click', close);
+  overlay.querySelector('.kb-editcols-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  overlay.querySelector('.kb-confirm-modal-confirm').addEventListener('click', () => {
+    close();
+    try { onConfirm(); } catch (err) { console.error('[openConfirmModal] onConfirm threw', err); }
+  });
+
+  return close;
+}
+
+// V76.7+ — Shared confirmation modal for deleting a deal card.
+// Used by BOTH the kanban card's X button AND the modal's Delete button so
+// the same destructive action shows the same warning, with consistent site
+// styling (CSS variables, kb-editcols-overlay pattern, no native confirm()).
+//
+// Calls removeFromPipeline(id) on confirm — which already handles in-memory
+// dict cleanup, DB delete (deal + property cascade), parcel orphan cleanup,
+// pin refresh, and CRM cache invalidation.
+//
+// Optional `closeOnConfirm` callback runs before deletion (used by the modal
+// to dismiss itself before the card disappears mid-render).
+function openDeleteCardConfirm(id, closeOnConfirm) {
+  const entry = pipeline[id];
+  const labelText = entry?.property?.address
+    ? `${entry.property.address}${entry.property.suburb ? ', ' + entry.property.suburb : ''}`
+    : `deal ${id}`;
+
+  openConfirmModal({
+    title:        'Delete this card?',
+    subject:      labelText,
+    bodyHtml:     'This is <strong style="color:#c0392b">permanent</strong> — it deletes the deal record and the property record (along with any data attached to them).<br><br>It cannot be undone from the UI.',
+    confirmLabel: 'Delete',
+    onConfirm: async () => {
+      if (typeof closeOnConfirm === 'function') closeOnConfirm();
+      await removeFromPipeline(id);
+    },
+  });
+}
+
+// Tiny HTML-escape used by the confirm modal — avoids dependency on the
+// existing _escapeHtmlSafe (which lives in map.js, not always loaded first).
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // V75.6.2: confirm deletion of the current board. Server will reject if
@@ -1508,9 +2018,11 @@ function renderBoard() {
     // Match pipeline entries to this column. Primary match: entry._columnId === stage.id.
     // Secondary (legacy/fallback): entry.stage === stage.stage_slug (for entries
     // that don't yet have _columnId populated).
-    const entries = Object.entries(pipeline).filter(([, v]) => {
-      if (v._columnId) return v._columnId === stage.id;
-      return v.stage === stage.stage_slug;
+    // V76.7+ — also filter by active search query.
+    const entries = Object.entries(pipeline).filter(([id, v]) => {
+      const inColumn = v._columnId ? v._columnId === stage.id : v.stage === stage.stage_slug;
+      if (!inColumn) return false;
+      return _searchMatches(id, v);
     });
 
     // Sort: per-user column_order wins if present, else fall back to addedAt asc
@@ -1604,7 +2116,9 @@ function renderBoard() {
       // Remove card
       card.querySelector('.kb-remove').addEventListener('click', e => {
         e.stopPropagation();
-        removeFromPipeline(id);
+        // V76.7+ — uses the shared openDeleteCardConfirm modal so the X button
+        // and the modal's Delete button show the same consistent warning.
+        openDeleteCardConfirm(id);
       });
 
       // Address — show on map
@@ -2657,13 +3171,12 @@ ${rows.join('')}`;
   // Close
   overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
 
-  // V75.5.2: Delete deal from inside modal. Confirm → reuse removeFromPipeline
-  // which already handles: pipeline dict removal, DB delete, parcel orphan-
-  // cleanup, refreshPipelinePins, and CRM cache invalidation.
-  overlay.querySelector('.kb-modal-delete')?.addEventListener('click', async () => {
-    if (!confirm('Confirm delete')) return;
-    overlay.remove();
-    await removeFromPipeline(id);
+  // V75.5.2: Delete deal from inside modal. V76.7+ uses the shared
+  // openDeleteCardConfirm modal so this matches the X-button experience.
+  // The closeOnConfirm callback dismisses the deal modal so the card
+  // doesn't try to render against a deleted entry.
+  overlay.querySelector('.kb-modal-delete')?.addEventListener('click', () => {
+    openDeleteCardConfirm(id, () => overlay.remove());
   });
 
   // V76.4: Status select — auto-save on change (deal-modal convention).
@@ -3176,19 +3689,78 @@ window.refreshPipelinePins = function () {
 // current board's deals from the DB and re-render. dbLoad() is cheap (one
 // HTTP roundtrip, ≤50 deals typically), and only runs on user-initiated
 // CRM saves so the cost is bounded.
+//
+// V76.7+ — Two safety improvements:
+//   (1) Defer the refresh while the user is actively interacting (drag in
+//       progress, modal open). Otherwise cards can shift columns or the modal
+//       can re-render mid-edit. The deferred refresh runs as soon as the
+//       interaction ends.
+//   (2) Show a small "Updating…" overlay during the refresh so the user knows
+//       the board is briefly unstable.
+
+let _pendingRefreshReason = null;     // queued reason while deferred
+let _refreshInProgress    = false;    // prevents reentry
+
+function _isUserInteracting() {
+  // Drag in progress?
+  if (document.querySelector('.kb-card.dragging, .kb-action-row.dragging')) return true;
+  // Modal open? (any kb-modal-overlay attached to body)
+  if (document.querySelector('.kb-modal-overlay')) return true;
+  return false;
+}
+
+function _showRefreshOverlay() {
+  const board = document.getElementById('kanbanBoard');
+  if (!board) return;
+  if (board.querySelector('.kb-refresh-overlay')) return;
+  const ov = document.createElement('div');
+  ov.className = 'kb-refresh-overlay';
+  ov.innerHTML = '<div class="kb-refresh-overlay-inner">Updating pipeline…</div>';
+  board.appendChild(ov);
+}
+function _hideRefreshOverlay() {
+  const ov = document.querySelector('#kanbanBoard .kb-refresh-overlay');
+  if (ov) ov.remove();
+}
+
 async function _refreshPipelineFromDB(reason) {
   if (!dbAvailable) return;
+  // Defer if the user is mid-interaction. Re-check on a short interval and
+  // fire as soon as they're idle.
+  if (_isUserInteracting()) {
+    _pendingRefreshReason = reason;
+    if (!_pendingRefreshReason._poller) {
+      const poll = setInterval(() => {
+        if (!_isUserInteracting()) {
+          clearInterval(poll);
+          const r = _pendingRefreshReason;
+          _pendingRefreshReason = null;
+          _refreshPipelineFromDB(r);
+        }
+      }, 250);
+    }
+    return;
+  }
+  if (_refreshInProgress) return;
+  _refreshInProgress = true;
+  _showRefreshOverlay();
   try {
     const dict = await dbLoad();
     if (!dict) return;
     Object.keys(pipeline).forEach(k => delete pipeline[k]);
     Object.assign(pipeline, dict);
     cacheSave(pipeline);
+    // V76.7+ — invalidate the contacts search cache too (deals may have been
+    // added/removed and contact links may have changed).
+    _searchContactsCache = null;
     if (typeof renderBoard === 'function' && kanbanVisible) renderBoard();
     if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
     console.log('[kanban] pipeline refreshed (' + reason + ')');
   } catch (err) {
     console.warn('[kanban] pipeline refresh failed:', err);
+  } finally {
+    _refreshInProgress = false;
+    _hideRefreshOverlay();
   }
 }
 
@@ -3304,3 +3876,11 @@ window.openPipelineItem = async function (pipelineId) {
     }
   })();
 };
+
+// V76.7+ — Expose addPropertyOnly for the map popup's "+ Property" button.
+// Called from map.js (via window.addCurrentSelectionAsProperty wrapper).
+window.addPropertyOnly = addPropertyOnly;
+
+// V76.7+ — Expose the generic confirm modal so other modules (CRM, map.js)
+// can use the same site-styled overlay instead of native confirm() dialogs.
+window.openConfirmModal = openConfirmModal;
