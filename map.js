@@ -611,6 +611,18 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
   // link that jumps straight to that pipeline card.
   const matchedPipelineId = findPipelineMatchForClick(listing);
 
+  // V76.7+ — "+ Property" button always available (creates property without a
+  // deal — for not-suitable tracking, agency listings, linking to known
+  // addresses, etc). Sits alongside the pipeline button.
+  const propertyBtn = `
+    <button type="button"
+      onclick="window.addCurrentSelectionAsProperty && window.addCurrentSelectionAsProperty()"
+      style="display:block;width:100%;margin-top:6px;padding:7px 10px;
+             background:#fff;color:#1a6b3a;border:1px solid #1a6b3a;border-radius:4px;
+             font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+      + Property
+    </button>`;
+
   let pipelineBtn;
   if (matchedPipelineId) {
     const pid = String(matchedPipelineId).replace(/'/g, "\\'");
@@ -621,7 +633,7 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
                background:#c4841a;color:#fff;border:none;border-radius:4px;
                font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
         ★ Open in Pipeline
-      </button>`;
+      </button>${propertyBtn}`;
   } else {
     // + Pipeline button (V74.7). Uses an inline onclick so the button keeps
     // working across popup re-renders (DD data loading, etc.). The handler
@@ -633,7 +645,7 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
                background:#1a6b3a;color:#fff;border:none;border-radius:4px;
                font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
         + Pipeline
-      </button>`;
+      </button>${propertyBtn}`;
   }
 
   // V75.1 — Not Suitable / snooze control. The popup is rendered as a string,
@@ -2568,6 +2580,101 @@ async function addCurrentSelectionToPipeline() {
   }
 }
 
+// V76.7+ — "+ Property" wrapper: same selection-resolution as
+// addCurrentSelectionToPipeline, but creates ONLY a property record (no
+// deal, no kanban entry). Used for property-management workflows that
+// don't need a pipeline workflow yet — not-suitable tracking, agency
+// listings before a deal is opened, linking Domain listings to known
+// addresses, etc.
+async function addCurrentSelectionAsProperty() {
+  if (typeof addPropertyOnly !== 'function') {
+    alert('Property helper not loaded. Reload the page and try again.');
+    return;
+  }
+
+  const hasSingle = !!clickMarkerData;
+  const hasMulti  = _selectedParcels.length > 0;
+  if (!hasSingle && !hasMulti) return;
+
+  const isMulti = _selectedParcels.length > 1;
+
+  // ── MULTI-SELECT: route to parcel-creation endpoint with create_deal=false ──
+  if (isMulti) {
+    return await _createParcelFromSelection(_selectedParcels, { createDeal: false });
+  }
+
+  // ── SINGLE: build the same listing object addToPipeline would receive,
+  //    but pass it to addPropertyOnly (no deal). NSW backfill follows.
+  const parcels  = hasMulti ? _selectedParcels : [clickMarkerData];
+  const count    = parcels.length;
+  const merged   = buildMergedAddress(parcels);
+  const parts    = merged.split(',');
+  const streetPart = parts[0]?.trim() || merged;
+  const suburbPart = parts[1]?.trim() || parcels[0]?.label?.split(',')[1]?.trim() || '';
+
+  const totalArea = parcels.reduce((s, p) => s + (p.areaSqm || 0), 0);
+  const avgLat    = parcels.reduce((s, p) => s + p.lat, 0) / count;
+  const avgLng    = parcels.reduce((s, p) => s + p.lng, 0) / count;
+  const lotDPs    = parcels.map(p => p.lotDP).filter(Boolean).join(', ');
+  const listing   = parcels[0]?.listing || null;
+  const stateValue = listing?.state
+                  || parcels[0]?.state
+                  || stateFromLatLng(avgLat, avgLng)
+                  || 'NSW';
+
+  const incomingDomainId = listing ? String(listing.id) : null;
+
+  const result = await addPropertyOnly({
+    id:           incomingDomainId,
+    address:      listing?.address || streetPart,
+    suburb:       listing?.suburb  || suburbPart,
+    state:        stateValue,
+    type:         listing?.type    || 'land',
+    beds:         listing?.beds    || 0,
+    baths:        listing?.baths   || 0,
+    cars:         listing?.cars    || 0,
+    lat:          avgLat,
+    lng:          avgLng,
+    _lotDPs:      lotDPs,
+    _areaSqm:     totalArea || null,
+    _propertyCount: count,
+    _parcels:     parcels.map(p => ({ lat: p.lat, lng: p.lng, label: p.label })),
+    agent:        listing?.agent || null,
+    listingUrl:   listing?.listingUrl || null,
+  });
+
+  if (!result?.propertyId) return;
+
+  // NSW backfill — same logic as the pipeline path, just targeting the
+  // property created by addPropertyOnly.
+  if (result.isNew && window.NSWLookup && _isNswLatLng(avgLat, avgLng)) {
+    try {
+      const lookup = await window.NSWLookup.lookupByLatLng(avgLat, avgLng);
+      if (lookup?.lotidstring || lookup?.propid) {
+        const patchBody = {
+          id:            result.propertyId,
+          lot_dps:       lookup.lotidstring || undefined,
+          state_prop_id: lookup.propid      || undefined,
+        };
+        if (!listing && lookup.address) {
+          patchBody.address = lookup.address;
+          patchBody.suburb  = lookup.suburb || undefined;
+        }
+        await fetch('/api/properties', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patchBody),
+        }).catch(() => {});
+      }
+    } catch (err) {
+      console.warn('[+Property] NSW lookup failed, keeping provisional data', err.message);
+    }
+  }
+}
+
+// Expose globally so the popup's inline onclick can reach it
+window.addCurrentSelectionAsProperty = addCurrentSelectionAsProperty;
+
 // V75.4d helper: create a real Parcel + N child Properties + Deal from a
 // multi-selection. All NSW lookups happen client-side. Aborts (with alert)
 // if any lat/lng fails to resolve — we don't want to create half-populated
@@ -2575,7 +2682,10 @@ async function addCurrentSelectionToPipeline() {
 //
 // Matches single-property "+ Pipeline" behaviour: stays on the map, shows
 // the elegant bottom toast, does NOT auto-open the Kanban card modal.
-async function _createParcelFromSelection(selections) {
+async function _createParcelFromSelection(selections, opts = {}) {
+  // V76.7+ — opts.createDeal: true (default) creates a deal alongside the parcel.
+  //                            false skips deal creation (used by "+ Property").
+  const createDeal = opts.createDeal !== false;
   if (!window.NSWLookup) {
     alert('NSW lookup helper not loaded. Reload the page and try again.');
     return;
@@ -2647,7 +2757,7 @@ async function _createParcelFromSelection(selections) {
     const r = await fetch('/api/create-parcel-from-lookup', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ properties, create_deal: true }),
+      body:    JSON.stringify({ properties, create_deal: createDeal }),
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
@@ -2698,10 +2808,11 @@ async function _createParcelFromSelection(selections) {
     // Clear map selection so no stale pins linger
     if (typeof clearParcelSelection === 'function') clearParcelSelection();
 
-    // Elegant toast — same as single-property "+ Pipeline"
+    // Elegant toast — same as single-property "+ Pipeline" / "+ Property"
     if (typeof showKanbanToast === 'function') {
       const title = result?.parcel?.name || `${properties.length} properties`;
-      showKanbanToast(`${title} added to pipeline`);
+      const verb  = createDeal ? 'added to pipeline' : 'added to CRM';
+      showKanbanToast(`${title} ${verb}`);
     }
   } catch (err) {
     console.error('[parcel-create]', err);

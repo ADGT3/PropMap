@@ -989,6 +989,97 @@ async function addToPipeline(listing) {
   }
 }
 
+// V76.7+ — Create a property record WITHOUT a deal.
+//
+// Same population logic as addToPipeline() but skips deal creation entirely.
+// Used by the map popup's "+ Property" button to support workflows where the
+// property exists in the CRM but isn't (yet) in any pipeline — e.g. tracking
+// not-suitable properties, agency listings before a deal is opened, or
+// linking a Domain listing to a known address without committing to acquisition.
+//
+// Returns { propertyId, isNew, existing } — isNew is false if a property with
+// this Domain listing id already existed and was reused.
+async function addPropertyOnly(listing) {
+  // Same id-detection convention as addToPipeline
+  const rawId = listing?.id != null ? String(listing.id) : '';
+  const isDomainId = /^\d{6,}$/.test(rawId);
+  const domainId = isDomainId ? rawId : null;
+
+  // If a property already exists with this Domain listing id, reuse it.
+  // This makes "+ Property" idempotent for Domain listings — clicking it
+  // twice doesn't create duplicates.
+  let existingProperty = null;
+  if (domainId) {
+    try {
+      const r = await fetch(`/api/properties?by_domain_listing=${encodeURIComponent(domainId)}`);
+      if (r.ok) existingProperty = await r.json();
+    } catch (_) { /* fall through to create */ }
+  }
+
+  if (existingProperty?.id) {
+    // Already exists. Don't recreate; just refresh CRM cache and report back.
+    if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+    return { propertyId: existingProperty.id, isNew: false, existing: existingProperty };
+  }
+
+  // No existing — create the property record.
+  const propertyId = newPropertyId();
+
+  // Build _parcels array — multi-parcel entries already have it; single
+  // entries get one synthesised from lat/lng.
+  const parcels = listing._parcels && listing._parcels.length > 0
+    ? listing._parcels
+    : [{ lat: listing.lat, lng: listing.lng, label: `${listing.address}, ${listing.suburb}` }];
+  const firstParcel = parcels[0];
+
+  const payload = {
+    id:                propertyId,
+    address:           listing.address || '',
+    suburb:            listing.suburb  || '',
+    state:             listing.state   || 'NSW',
+    lat:               listing.lat ?? firstParcel?.lat ?? null,
+    lng:               listing.lng ?? firstParcel?.lng ?? null,
+    lot_dps:           (listing._lotDPs || '').toString().toUpperCase(),
+    area_sqm:          listing._areaSqm ?? null,
+    parcels,
+    property_count:    listing._propertyCount ?? 1,
+    domain_listing_id: domainId,
+    listing_url:       listing.listingUrl || null,
+    agent:             listing.agent || null,
+  };
+
+  try {
+    const res = await fetch(PROPERTIES_API, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.warn('[addPropertyOnly] API error:', err);
+      showKanbanToast(`Failed to create property: ${err.error || res.statusText}`);
+      return { propertyId: null, isNew: false };
+    }
+  } catch (err) {
+    console.warn('[addPropertyOnly] fetch failed:', err);
+    showKanbanToast(`Failed to create property: ${err.message}`);
+    return { propertyId: null, isNew: false };
+  }
+
+  // Refresh CRM Properties cache so the new row is visible immediately
+  if (window.CRM?.invalidatePropertiesCache) {
+    window.CRM.invalidatePropertiesCache();
+  }
+  // Broadcast for any other module that might be listening (kanban refresh
+  // is a no-op since this property has no deal yet, but the event is harmless).
+  window.dispatchEvent(new CustomEvent('propertyChanged', {
+    detail: { propertyId: String(propertyId) },
+  }));
+
+  showKanbanToast(`${listing.address || 'Property'} added to CRM`);
+  return { propertyId, isNew: true };
+}
+
 async function removeFromPipeline(id) {
   const sid = String(id);
   // V75.4d: capture whether this was a parcel-deal BEFORE deleting from dict
@@ -3682,3 +3773,7 @@ window.openPipelineItem = async function (pipelineId) {
     }
   })();
 };
+
+// V76.7+ — Expose addPropertyOnly for the map popup's "+ Property" button.
+// Called from map.js (via window.addCurrentSelectionAsProperty wrapper).
+window.addPropertyOnly = addPropertyOnly;
