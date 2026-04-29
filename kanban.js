@@ -1282,6 +1282,72 @@ function _renderBoardSelectorBar() {
   });
 }
 
+// V76.7+ — Shared confirmation modal for deleting a deal card.
+// Used by BOTH the kanban card's X button AND the modal's Delete button so
+// the same destructive action shows the same warning, with consistent site
+// styling (CSS variables, kb-editcols-overlay pattern, no native confirm()).
+//
+// Calls removeFromPipeline(id) on confirm — which already handles in-memory
+// dict cleanup, DB delete (deal + property cascade), parcel orphan cleanup,
+// pin refresh, and CRM cache invalidation.
+//
+// Optional `closeOnConfirm` callback runs before deletion (used by the modal
+// to dismiss itself before the card disappears mid-render).
+function openDeleteCardConfirm(id, closeOnConfirm) {
+  const entry = pipeline[id];
+  const labelText = entry?.property?.address
+    ? `${entry.property.address}${entry.property.suburb ? ', ' + entry.property.suburb : ''}`
+    : `deal ${id}`;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'kb-editcols-overlay';
+  overlay.innerHTML = `
+    <div class="kb-editcols-modal" style="width:440px">
+      <div class="kb-editcols-header">
+        <div class="kb-editcols-title">Delete this card?</div>
+        <button class="kb-editcols-close" type="button">✕</button>
+      </div>
+      <div class="kb-editcols-body">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="font-size:13px;font-weight:600">${escapeHtml(labelText)}</div>
+          <div style="font-size:12px;color:var(--text-secondary);line-height:1.5">
+            This is <strong style="color:#c0392b">permanent</strong> — it deletes the deal record and the property record (along with any data attached to them).
+            <br><br>
+            It cannot be undone from the UI.
+          </div>
+        </div>
+      </div>
+      <div class="kb-editcols-footer">
+        <button class="kb-editcols-cancel" type="button">Cancel</button>
+        <button class="kb-confirm-delete-btn" type="button"
+          style="background:#c0392b;color:#fff;border:1px solid #c0392b;padding:7px 14px;border-radius:6px;
+                 font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">
+          Delete
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('.kb-editcols-close').addEventListener('click', close);
+  overlay.querySelector('.kb-editcols-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+  overlay.querySelector('.kb-confirm-delete-btn').addEventListener('click', async () => {
+    close();
+    if (typeof closeOnConfirm === 'function') closeOnConfirm();
+    await removeFromPipeline(id);
+  });
+}
+
+// Tiny HTML-escape used by the confirm modal — avoids dependency on the
+// existing _escapeHtmlSafe (which lives in map.js, not always loaded first).
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // V75.6.2: confirm deletion of the current board. Server will reject if
 // the board still has deals or the user lacks permission.
 async function openDeleteBoardConfirm() {
@@ -2002,19 +2068,9 @@ function renderBoard() {
       // Remove card
       card.querySelector('.kb-remove').addEventListener('click', e => {
         e.stopPropagation();
-        // V76.7+ — confirmation dialog before delete. The X used to hard-delete
-        // the deal AND its property record (cascade) with no warning, which lost
-        // user data on accidental clicks.
-        const entry = pipeline[id];
-        const labelText = entry?.property?.address
-          ? `${entry.property.address}, ${entry.property.suburb || ''}`.trim().replace(/,$/, '')
-          : `deal ${id}`;
-        const ok = confirm(
-          `Delete this card?\n\n${labelText}\n\nThis is PERMANENT — it deletes the deal record and the property record. ` +
-          `It cannot be undone from the UI.\n\nClick OK to delete, or Cancel to keep it.`
-        );
-        if (!ok) return;
-        removeFromPipeline(id);
+        // V76.7+ — uses the shared openDeleteCardConfirm modal so the X button
+        // and the modal's Delete button show the same consistent warning.
+        openDeleteCardConfirm(id);
       });
 
       // Address — show on map
@@ -3067,13 +3123,12 @@ ${rows.join('')}`;
   // Close
   overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
 
-  // V75.5.2: Delete deal from inside modal. Confirm → reuse removeFromPipeline
-  // which already handles: pipeline dict removal, DB delete, parcel orphan-
-  // cleanup, refreshPipelinePins, and CRM cache invalidation.
-  overlay.querySelector('.kb-modal-delete')?.addEventListener('click', async () => {
-    if (!confirm('Confirm delete')) return;
-    overlay.remove();
-    await removeFromPipeline(id);
+  // V75.5.2: Delete deal from inside modal. V76.7+ uses the shared
+  // openDeleteCardConfirm modal so this matches the X-button experience.
+  // The closeOnConfirm callback dismisses the deal modal so the card
+  // doesn't try to render against a deleted entry.
+  overlay.querySelector('.kb-modal-delete')?.addEventListener('click', () => {
+    openDeleteCardConfirm(id, () => overlay.remove());
   });
 
   // V76.4: Status select — auto-save on change (deal-modal convention).
