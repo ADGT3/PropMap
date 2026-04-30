@@ -1226,7 +1226,6 @@ header {
   transform: rotate(1.5deg) scale(0.97);
   cursor: grabbing;
   box-shadow: 0 8px 24px rgba(0,0,0,0.18);
-  pointer-events: none;
 }
 .kb-card.flash {
   animation: kb-flash 0.4s ease 2;
