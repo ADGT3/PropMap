@@ -1175,6 +1175,38 @@ header {
 .kb-cards::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
 .kb-cards.drag-over { background: rgba(196,132,26,0.07); }
 
+/* V76.9 — drop indicator: visible insertion line that moves with the cursor
+   during drag-over to show exactly where the card will land. ~3px accent line
+   with a small dot at each end so it's obvious even on light/dark backgrounds. */
+.kb-drop-indicator {
+  height: 3px;
+  background: var(--accent, #c4841a);
+  border-radius: 2px;
+  margin: -2px 0;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(196,132,26,0.18);
+  position: relative;
+  pointer-events: none;
+  animation: kb-drop-pulse 0.9s ease-in-out infinite;
+}
+.kb-drop-indicator::before,
+.kb-drop-indicator::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #c4841a);
+  transform: translateY(-50%);
+}
+.kb-drop-indicator::before { left: -1px; }
+.kb-drop-indicator::after  { right: -1px; }
+@keyframes kb-drop-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.6; }
+}
+
 /* ─── Cards ───────────────────────────────────────────────────────────────── */
 .kb-card {
   background: var(--surface);
@@ -1190,8 +1222,8 @@ header {
   border-color: rgba(0,0,0,0.15);
 }
 .kb-card.dragging {
-  opacity: 0.5;
-  transform: rotate(1.5deg);
+  opacity: 0.35;
+  transform: rotate(1.5deg) scale(0.97);
   cursor: grabbing;
   box-shadow: 0 8px 24px rgba(0,0,0,0.18);
 }

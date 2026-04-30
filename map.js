@@ -627,25 +627,31 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
   if (matchedPipelineId) {
     const pid = String(matchedPipelineId).replace(/'/g, "\\'");
     pipelineBtn = `
-      <button type="button"
-        onclick="window.openPipelineItem && window.openPipelineItem('${pid}')"
-        style="display:block;width:100%;margin-top:10px;padding:7px 10px;
-               background:#c4841a;color:#fff;border:none;border-radius:4px;
-               font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
-        ★ Open in Pipeline
-      </button>${propertyBtn}`;
+      <div class="popup-pipeline-btn-slot" data-pid="${pid}">
+        <button type="button"
+          onclick="window.openPipelineItem && window.openPipelineItem('${pid}')"
+          style="display:block;width:100%;margin-top:10px;padding:7px 10px;
+                 background:#c4841a;color:#fff;border:none;border-radius:4px;
+                 font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+          ★ Open in Pipeline
+        </button>${propertyBtn}
+      </div>`;
   } else {
     // + Pipeline button (V74.7). Uses an inline onclick so the button keeps
     // working across popup re-renders (DD data loading, etc.). The handler
     // reads live map selection state at click time, not popup-build time.
+    // V76.9: wrapper class lets us swap this for "Open in Pipeline" optimistically
+    // once the pipeline add resolves, without rebuilding the whole popup.
     pipelineBtn = `
-      <button type="button"
-        onclick="window.addCurrentSelectionToPipeline && window.addCurrentSelectionToPipeline()"
-        style="display:block;width:100%;margin-top:10px;padding:7px 10px;
-               background:#1a6b3a;color:#fff;border:none;border-radius:4px;
-               font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
-        + Pipeline
-      </button>${propertyBtn}`;
+      <div class="popup-pipeline-btn-slot">
+        <button type="button"
+          onclick="window.addCurrentSelectionToPipeline && window.addCurrentSelectionToPipeline()"
+          style="display:block;width:100%;margin-top:10px;padding:7px 10px;
+                 background:#1a6b3a;color:#fff;border:none;border-radius:4px;
+                 font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+          + Pipeline
+        </button>${propertyBtn}
+      </div>`;
   }
 
   // V75.1 — Not Suitable / snooze control. The popup is rendered as a string,
@@ -2457,6 +2463,38 @@ function stateFromLatLng(lat, lng) {
   return 'NSW';
 }
 
+// V76.9: After a successful pipeline add from the popup, swap the "+ Pipeline"
+// button for "★ Open in Pipeline" without rebuilding the whole popup. The
+// popup HTML wraps the button section in `.popup-pipeline-btn-slot`; we find
+// it (there's only one open popup at a time) and replace its inner content.
+// Falls back silently if the slot isn't there (e.g. user closed the popup
+// during the await).
+function _refreshPopupPipelineBtn(pipelineId) {
+  const slot = document.querySelector('.leaflet-popup-content .popup-pipeline-btn-slot');
+  if (!slot) return;
+  const pid = String(pipelineId).replace(/'/g, "\\'");
+  // Match the exact "Open in Pipeline" markup from buildPopupInner so the
+  // swapped button looks identical to a freshly-rendered one. We also need
+  // to preserve the "+ Property" button that follows; rebuild the whole slot.
+  const propertyBtn = `
+    <button type="button"
+      onclick="window.addCurrentSelectionAsProperty && window.addCurrentSelectionAsProperty()"
+      style="display:block;width:100%;margin-top:6px;padding:7px 10px;
+             background:#fff;color:#1a6b3a;border:1px solid #1a6b3a;border-radius:4px;
+             font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+      + Property
+    </button>`;
+  slot.dataset.pid = pid;
+  slot.innerHTML = `
+    <button type="button"
+      onclick="window.openPipelineItem && window.openPipelineItem('${pid}')"
+      style="display:block;width:100%;margin-top:10px;padding:7px 10px;
+             background:#c4841a;color:#fff;border:none;border-radius:4px;
+             font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+      ★ Open in Pipeline
+    </button>${propertyBtn}`;
+}
+
 async function addCurrentSelectionToPipeline() {
   if (typeof addToPipeline !== 'function') return;
 
@@ -2520,6 +2558,21 @@ async function addCurrentSelectionToPipeline() {
     _propertyCount: count,
     _parcels:     parcels.map(p => ({ lat: p.lat, lng: p.lng, label: p.label })),
   });
+
+  // V76.9: Swap the popup's "+ Pipeline" button for "★ Open in Pipeline"
+  // immediately after the add. We need the new deal id, which we look up
+  // via the pipeline dict by the same matching rules findPipelineMatchForClick
+  // uses (domain id first, then coord match for blank clicks). The pipeline
+  // dict has been mutated synchronously by addToPipeline, so this is reliable.
+  let _newDealId = null;
+  if (incomingDomainId && typeof window.findPipelineByDomainId === 'function') {
+    const hit = window.findPipelineByDomainId(incomingDomainId);
+    if (hit) _newDealId = hit[0];
+  }
+  if (!_newDealId && typeof findPipelineMatchForClick === 'function') {
+    _newDealId = findPipelineMatchForClick(listing || { lat: avgLat, lng: avgLng });
+  }
+  if (_newDealId) _refreshPopupPipelineBtn(_newDealId);
 
   // V76.5: resolve the actual property id that addToPipeline created so the
   // NSW backfill below can target the right row. Look up via the pipeline
