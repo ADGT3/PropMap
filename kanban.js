@@ -2254,37 +2254,60 @@ function renderBoard() {
     });
 
     // Drop zone — V75.6: also supports intra-column reordering
-    // dragover: compute the "insertion index" by measuring the mouse Y
-    // against each card's midline. Highlights the drop zone + shows the
-    // cursor where it would land.
-    function computeInsertIndex(e) {
+    // V76.9: visible insertion-line indicator + optimistic UI. The indicator
+    // (`.kb-drop-indicator`) is a thin accent-coloured line that moves with
+    // the cursor to show exactly where the card will land. The drop itself
+    // updates in-memory state and DOM immediately, then persists in the
+    // background — no waiting for the network round-trip before the card
+    // settles into place.
+    let _dropIndicator = null;
+    function ensureDropIndicator() {
+      if (_dropIndicator && _dropIndicator.parentNode === cardsEl) return _dropIndicator;
+      _dropIndicator = document.createElement('div');
+      _dropIndicator.className = 'kb-drop-indicator';
+      return _dropIndicator;
+    }
+    // computeInsertIndex also returns the reference card so we can splice the
+    // indicator into the DOM at the right location without recomputing.
+    function computeInsertSpec(e) {
       const cards = [...cardsEl.querySelectorAll('.kb-card:not(.dragging)')];
       for (let i = 0; i < cards.length; i++) {
         const rect = cards[i].getBoundingClientRect();
-        if (e.clientY < rect.top + rect.height / 2) return i;
+        if (e.clientY < rect.top + rect.height / 2) return { idx: i, before: cards[i] };
       }
-      return cards.length;
+      return { idx: cards.length, before: null };
     }
     cardsEl.addEventListener('dragover', e => {
       e.preventDefault();
       cardsEl.classList.add('drag-over');
-      // Move a visual placeholder marker to the insertion point
-      const idx = computeInsertIndex(e);
+      const { idx, before } = computeInsertSpec(e);
       cardsEl.dataset.dropIdx = String(idx);
+      const indicator = ensureDropIndicator();
+      // Position indicator at the right insertion point
+      if (before) cardsEl.insertBefore(indicator, before);
+      else        cardsEl.appendChild(indicator);
     });
-    cardsEl.addEventListener('dragleave', () => cardsEl.classList.remove('drag-over'));
-    cardsEl.addEventListener('drop', async e => {
+    cardsEl.addEventListener('dragleave', e => {
+      // Only clear if we're really leaving the column, not just hovering over
+      // a child element. relatedTarget is the element being entered.
+      if (e.relatedTarget && cardsEl.contains(e.relatedTarget)) return;
+      cardsEl.classList.remove('drag-over');
+      if (_dropIndicator?.parentNode) _dropIndicator.remove();
+    });
+    cardsEl.addEventListener('drop', e => {
       e.preventDefault();
       cardsEl.classList.remove('drag-over');
+      if (_dropIndicator?.parentNode) _dropIndicator.remove();
+
       const id = e.dataTransfer.getData('text/plain');
       if (!id || !pipeline[id]) return;
 
       const targetColumnId = stage.id;
-      const insertIdx = computeInsertIndex(e);
+      const { idx: insertIdx } = computeInsertSpec(e);
       const sameColumn = (pipeline[id]._columnId || stageToColumnId(pipeline[id].stage)) === targetColumnId;
 
       if (!sameColumn) {
-        // Cross-column: change column first
+        // Cross-column: change column first (mutates pipeline + persists in bg)
         moveToColumn(id, targetColumnId);
       }
 
@@ -2311,18 +2334,28 @@ function renderBoard() {
       // Update in-memory userDealOrder immediately so re-render reflects drop
       orderUpdates.forEach(u => { userDealOrder[u.deal_id] = u.column_order; });
 
-      // Persist per-user ordering
-      try {
-        await fetch('/api/deal-order', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ board_id: currentBoardId, order: orderUpdates }),
-        });
-      } catch (err) {
-        console.warn('[deal-order] save failed', err.message);
+      // ── Optimistic DOM update ───────────────────────────────────────────
+      // Move the dragged card into its new position immediately. For cross-
+      // column moves we also need to relocate the card to the target column.
+      const draggedCard = document.querySelector(`.kb-card[data-id="${id}"]`);
+      if (draggedCard) {
+        const siblings = [...cardsEl.querySelectorAll('.kb-card:not(.dragging)')]
+          .filter(c => c !== draggedCard);
+        const refCard = siblings[finalIdx] || null;
+        if (refCard) cardsEl.insertBefore(draggedCard, refCard);
+        else         cardsEl.appendChild(draggedCard);
+        // Refresh card content in case stage indicator etc. changed (cross-column)
+        if (!sameColumn) refreshCardLive(id);
       }
+      // Update the column counts in the headers without rebuilding everything
+      _updateColumnCounts();
 
-      renderBoard();
+      // ── Persist per-user ordering in background (don't block UI) ────────
+      fetch('/api/deal-order', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board_id: currentBoardId, order: orderUpdates }),
+      }).catch(err => console.warn('[deal-order] save failed', err.message));
     });
 
     board.appendChild(col);
@@ -2542,51 +2575,103 @@ function _paintActionsBoard(boardEl, activeBoard, actions) {
     const cardsEl = colEl.querySelector('.kb-cards');
     colActions.forEach(a => cardsEl.appendChild(_buildActionCard(a)));
 
-    // DnD drop handler — same insertion-index pattern as deal kanban
-    function computeInsertIndex(e) {
+    // DnD drop handler — V76.9: visible insertion-line + optimistic UI.
+    // Same pattern as the deal board.
+    let _actionDropIndicator = null;
+    function ensureActionDropIndicator() {
+      if (_actionDropIndicator && _actionDropIndicator.parentNode === cardsEl) return _actionDropIndicator;
+      _actionDropIndicator = document.createElement('div');
+      _actionDropIndicator.className = 'kb-drop-indicator';
+      return _actionDropIndicator;
+    }
+    function computeInsertSpec(e) {
       const cards = [...cardsEl.querySelectorAll('.kb-card:not(.dragging)')];
       for (let i = 0; i < cards.length; i++) {
         const rect = cards[i].getBoundingClientRect();
-        if (e.clientY < rect.top + rect.height / 2) return i;
+        if (e.clientY < rect.top + rect.height / 2) return { idx: i, before: cards[i] };
       }
-      return cards.length;
+      return { idx: cards.length, before: null };
     }
     cardsEl.addEventListener('dragover', e => {
       e.preventDefault();
       cardsEl.classList.add('drag-over');
+      const { before } = computeInsertSpec(e);
+      const indicator = ensureActionDropIndicator();
+      if (before) cardsEl.insertBefore(indicator, before);
+      else        cardsEl.appendChild(indicator);
     });
-    cardsEl.addEventListener('dragleave', () => cardsEl.classList.remove('drag-over'));
-    cardsEl.addEventListener('drop', async e => {
+    cardsEl.addEventListener('dragleave', e => {
+      if (e.relatedTarget && cardsEl.contains(e.relatedTarget)) return;
+      cardsEl.classList.remove('drag-over');
+      if (_actionDropIndicator?.parentNode) _actionDropIndicator.remove();
+    });
+    cardsEl.addEventListener('drop', e => {
       e.preventDefault();
       cardsEl.classList.remove('drag-over');
+      if (_actionDropIndicator?.parentNode) _actionDropIndicator.remove();
+
       const actionId = e.dataTransfer.getData('text/plain');
       if (!actionId) return;
       const actionIdNum = parseInt(actionId, 10);
       if (Number.isNaN(actionIdNum)) return;
 
-      const insertIdx = computeInsertIndex(e);
+      const { idx: insertIdx } = computeInsertSpec(e);
       const targetColId = col.id;
 
-      // PATCH action to new column + order
-      try {
-        await fetch(`${ACTIONS_API}?id=${actionIdNum}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            column_id:    targetColId,
-            column_order: insertIdx,
-          }),
-        });
-        // Drag moves a card between columns — full render needed since column
-        // placement and ordering both change. Server-side due-promotion may
-        // also reclassify status, so we need fresh data.
-        renderBoard();
+      // ── Optimistic UI: move the card immediately ──────────────────────
+      const draggedCard = document.querySelector(`.kb-action-card[data-id="${actionIdNum}"]`);
+      if (draggedCard) {
+        const siblings = [...cardsEl.querySelectorAll('.kb-card:not(.dragging)')]
+          .filter(c => c !== draggedCard);
+        const refCard = siblings[insertIdx] || null;
+        if (refCard) cardsEl.insertBefore(draggedCard, refCard);
+        else         cardsEl.appendChild(draggedCard);
+      }
+
+      // Update local cache so future renders are consistent
+      const cached = (_actionsCache || []).find(a => a.id === actionIdNum);
+      if (cached) {
+        cached.column_id = targetColId;
+        cached.column_order = insertIdx;
+        // Update status if column is mapped to a stage_slug (server will confirm)
+        if (col.stage_slug) cached.status = col.stage_slug;
+      }
+      _updateColumnCounts();
+
+      // ── Persist in background ─────────────────────────────────────────
+      fetch(`${ACTIONS_API}?id=${actionIdNum}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          column_id:    targetColId,
+          column_order: insertIdx,
+        }),
+      }).then(res => {
+        if (!res.ok) {
+          console.warn('[actions] move failed:', res.status);
+          // Roll back by re-rendering from server truth
+          renderBoard();
+          return;
+        }
+        return res.json().catch(() => null);
+      }).then(updated => {
+        // V76.9: server may have reclassified the action via auto due-promotion.
+        // Update cache + refresh just this card if it differs from optimistic state.
+        if (updated && updated.id) {
+          const idx = _actionsCache.findIndex(a => a.id === updated.id);
+          if (idx >= 0) _actionsCache[idx] = updated;
+          if (_actionsBoardCache) _actionsBoardCache.actions = _actionsCache;
+          // If server moved it to a different column than where we dropped it
+          // (e.g. due-promotion), do a full render. Otherwise patch in place.
+          if (updated.column_id !== targetColId) renderBoard();
+        }
         // V76.4: drag may move an action into/out of Due (or change a date-driven
         // status), so refresh the badge.
         refreshDueBadge();
-      } catch (err) {
+      }).catch(err => {
         console.warn('[actions] move failed:', err.message);
-      }
+        renderBoard();
+      });
     });
 
     colsWrap.appendChild(colEl);
@@ -3876,6 +3961,16 @@ const _dealsBoardSync = createBoardSync({
 function refreshCardLive(id) { return _dealsBoardSync.refreshCardLive(id); }
 function refreshPipelineIfStale(opts) { return _dealsBoardSync.refreshIfStale(opts); }
 function markPipelineFresh() { _dealsBoardSync.markFresh(); }
+
+// V76.9: After an optimistic drag-drop, the column header count badges need
+// to reflect the new card distribution. Cheaper than a full renderBoard().
+function _updateColumnCounts() {
+  document.querySelectorAll('.kb-col').forEach(col => {
+    const cards = col.querySelectorAll('.kb-cards .kb-card').length;
+    const counter = col.querySelector('.kb-col-header .kb-count');
+    if (counter) counter.textContent = String(cards);
+  });
+}
 
 // ─── Adapter: Actions board (uses the `_actionsCache` array) ─────────────────
 const _actionsBoardSync = createBoardSync({
