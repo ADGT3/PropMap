@@ -765,9 +765,24 @@ function renderFinanceView() {
     bindSelectorEvents();
     return;
   }
+
+  // Preserve scroll positions across re-render (sidebar inputs and main content
+  // each have their own scrollable area; rebuilding innerHTML resets both).
+  const sidebarPrev = container.querySelector('.fin-sidebar');
+  const mainPrev    = container.querySelector('.fin-main');
+  const sidebarScroll = sidebarPrev ? sidebarPrev.scrollTop : 0;
+  const mainScroll    = mainPrev    ? mainPrev.scrollTop    : 0;
+
   const d = _current.data;
   const r = runModel(d);
   container.innerHTML = `<div class="fin-layout">${renderSidebar(d, r)}${renderMain(d, r)}</div>`;
+
+  // Restore scroll positions on the freshly rendered elements
+  const sidebarNew = container.querySelector('.fin-sidebar');
+  const mainNew    = container.querySelector('.fin-main');
+  if (sidebarNew) sidebarNew.scrollTop = sidebarScroll;
+  if (mainNew)    mainNew.scrollTop    = mainScroll;
+
   bindInputs(r);
 }
 
@@ -1224,7 +1239,7 @@ function renderMain(d, r) {
           <div class="fin-footer-legend-label">Return on Equity (ROE)</div>
           <div class="fin-footer-legend-text">
             (Operating cashflow + property appreciation + principal paid down) ÷ cash equity at start of year. Captures total wealth return — cash plus equity buildup.
-            <em>Answers: "What total return am I earning on my equity?"</em>
+            <em>Answers: "What total annual return am I earning on my equity?"</em>
           </div>
         </div>
         <div class="fin-footer-legend-item">

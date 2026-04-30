@@ -484,7 +484,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 16px 20px;
+  padding: 8px 20px;
 }
 .fin-comparable-title {
   font-size: 11px;
@@ -665,7 +665,7 @@
   justify-content: space-between;
   cursor: pointer;
   user-select: none;
-  padding: 12px 20px;
+  padding: 6px 20px;
   border-radius: 8px;
   transition: background 0.12s;
 }
