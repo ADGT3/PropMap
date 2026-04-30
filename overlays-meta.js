@@ -277,6 +277,31 @@ const OVERLAYS = [
       "SP2": { color: "#c8c800", fillColor: "#ffff70", fillOpacity: 0.70, weight: 1 }
     }
   },
+
+  // ── Leppington — ILP (road / sub-precinct linework only) ────────────────────
+  // Source DXF was a flat single-layer export — no zone categorisation
+  // preserved, so we render the polylines as a uniform line overlay (the
+  // hatched fill polygons in the source were dropped). This shows the road
+  // network and sub-precinct boundaries; for category-coloured zoning, a
+  // re-export from the QGIS source with a "zone" attribute would be needed.
+  {
+    id: "leppington-ilp",
+    label: "Leppington – ILP (Road Layout)",
+    type: "zoning",
+    group: "zoning",
+    zone: "all",
+    enabled: false,
+    opacity: 0.85,
+    bounds: null,
+    b64: null,
+    vector: true,
+    vectorUrl: "/leppington_ilp_wgs84.geojson",
+    source: "Leppington Indicative Layout Plan, 14 Sep 2018 (lines only)",
+    vectorStyleProp: "type",
+    vectorStyleMap: {
+      "ilp_line": { color: "#1f2933", fillColor: "none", fillOpacity: 0, weight: 1, opacity: 0.85 }
+    }
+  },
   // ── South Creek West Belmore Road Precinct — ILP ────────────────────────────
   {
     id: "south-creek-west-ilp",
