@@ -153,9 +153,15 @@ function defaultModel(acquisitionPrice) {
     tdcPerLot:               350000,                   // M4
     targetYieldPct:          0.07,                     // Q4
 
+    // ── Comparable method inclusion flags (drive Comparable Value tile) ───
+    includeM1:               true,
+    includeM2:               true,
+    includeM3:               true,
+    includeM5:               true,
+
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    version:   4,
+    version:   5,
   };
 }
 
@@ -1164,7 +1170,7 @@ function renderMain(d, r) {
 
     <div class="fin-kpis">
       <div class="fin-kpi"><div class="fin-kpi-label">Acquisition Price</div><div class="fin-kpi-val">${fmtDollarK(d.acquisitionPrice)}</div></div>
-      <div class="fin-kpi fin-kpi-mean"><div class="fin-kpi-label">Comparable Value</div><div class="fin-kpi-val" id="finKpiMeanVal">${(() => { const vals=[r.m1,r.m2,r.m3,r.m5].filter(v=>v!=null&&isFinite(v)&&v!==0); return vals.length ? fmtDollarK(vals.reduce((a,b)=>a+b,0)/vals.length) : '—'; })()}</div></div>
+      <div class="fin-kpi fin-kpi-mean"><div class="fin-kpi-label">Comparable Value</div><div class="fin-kpi-val" id="finKpiMeanVal">${(() => { const m = comparableMean(d, r); return m != null ? fmtDollarK(m) : '—'; })()}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Total Loan</div><div class="fin-kpi-val">${fmtDollarK(r.loan)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Upfront)</div><div class="fin-kpi-val">${fmtDollarK(r.upfront)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Settlement)</div><div class="fin-kpi-val">${fmtDollarK(r.cashAtSettlement)}</div></div>
@@ -1190,10 +1196,23 @@ function renderMain(d, r) {
 
     <div class="fin-footer-legend" id="finFooterLegend">
       <div class="fin-footer-legend-header" id="finFooterLegendToggle">
-        <span class="fin-footer-legend-title">Returns explained — CoC (Rolling) and ROE measure different return concepts</span>
+        <span class="fin-footer-legend-title">Calculations Explained</span>
         <span class="fin-footer-legend-chevron" id="finFooterLegendChevron">${_footerLegendOpen ? '▼' : '▶'}</span>
       </div>
       <div class="fin-footer-legend-body" id="finFooterLegendBody" style="display:${_footerLegendOpen ? '' : 'none'}">
+        <div class="fin-footer-legend-item">
+          <div class="fin-footer-legend-label">Principal Paid</div>
+          <div class="fin-footer-legend-text">
+            (Net Rent − Interest) × % Profit → Debt Reduction. The portion of each year's operating profit that is applied to reduce the loan balance, controlled by the "% Profit → Debt Reduction" input. Interest = Principal (Start) × Loan Interest Rate. Principal (End) = Principal (Start) − Principal Paid; this becomes next year's Principal (Start).
+            <em>Currently: ${fmtPct(d.profitUsedForDebt)} of profit applied to debt reduction.</em>
+          </div>
+        </div>
+        <div class="fin-footer-legend-item">
+          <div class="fin-footer-legend-label">Cashflow</div>
+          <div class="fin-footer-legend-text">
+            Net Rent − Interest − Principal Paid (operating cashflow). When "Include in cashflow" is ticked on the Funds to Complete row, deposits and settlement costs are subtracted from the cashflow row in the years they fall due — for display purposes only; this does not affect CoC or ROE.
+          </div>
+        </div>
         <div class="fin-footer-legend-item">
           <div class="fin-footer-legend-label">Cash-on-Cash (Rolling)</div>
           <div class="fin-footer-legend-text">
@@ -1214,8 +1233,14 @@ function renderMain(d, r) {
             Portion of positive annual cashflow kept in the deal vs. distributed. 0% = all distributed (cash position falls each year by full cashflow); 100% = all retained (cash position unchanged by distributions). Negative cashflows always reduce cash position fully regardless of this setting.
           </div>
         </div>
+        <div class="fin-footer-legend-item">
+          <div class="fin-footer-legend-label">Cost of Funds &amp; NPV</div>
+          <div class="fin-footer-legend-text">
+            Pre-settlement: Cash Required (Upfront) × Cost of Capital. Post-settlement: Cash Required (Total) × Cost of Capital × (1 + rental growth)^(yr − settlement lag). NPV (Asset Val) = Asset Value − Cost of Funds for that year.
+          </div>
+        </div>
         <div class="fin-footer-legend-item fin-footer-legend-meta">
-          Principal Paid = (Rent − Interest) × ${fmtPct(d.profitUsedForDebt)} profit to debt · Cost of Funds = Total Cash × CoC × (1+rg)^(yr−lag) · Transfer duty auto-calculated (${d._state||'NSW'} rates, 1 July 2025) · All figures indicative only.
+          Transfer duty auto-calculated (${d._state||'NSW'} rates, 1 July 2025) · All figures indicative only.
         </div>
       </div>
     </div>
@@ -1234,9 +1259,23 @@ function updateMeanValueHeader(r) {
   meanEl.style.display = '';
 }
 
+function comparableMean(d, r) {
+  // Returns the mean of methods that are (a) flagged as included by the user
+  // (default true if undefined for legacy models) and (b) have a valid non-zero value.
+  const pairs = [
+    [d.includeM1 !== false, r.m1],
+    [d.includeM2 !== false, r.m2],
+    [d.includeM3 !== false, r.m3],
+    [d.includeM5 !== false, r.m5],
+  ];
+  const vals = pairs.filter(([on, v]) => on && v != null && isFinite(v) && v !== 0).map(([, v]) => v);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
 function renderComparableValues(d, r) {
   const methods = [
     {
+      includeKey: 'includeM1',
       label:  'Method 1: Gross Area',
       detail: `${(d.netDevelopableAreaAcres||0).toFixed(3)} NDA acres × $${(d.comparableValuePerNDA||0).toLocaleString()}/NDA + residual`,
       value:  r.m1,
@@ -1247,6 +1286,7 @@ function renderComparableValues(d, r) {
       ],
     },
     {
+      includeKey: 'includeM2',
       label:  'Method 2: 30% of GRV',
       detail: `GRV ${fmtDollar(r.grv)} ÷ 3 · NSA ${(r.nsa||0).toLocaleString()} sqm`,
       value:  r.m2,
@@ -1257,6 +1297,7 @@ function renderComparableValues(d, r) {
       ],
     },
     {
+      includeKey: 'includeM3',
       label:  'Method 3: Development Estimate (TDC $/lot)',
       detail: `GRV − TDC − holding cost − interest − profit margin`,
       value:  r.m3,
@@ -1267,6 +1308,7 @@ function renderComparableValues(d, r) {
       ],
     },
     {
+      includeKey: 'includeM5',
       label:  'Method 5: Derived from Yield',
       detail: `Net Income ${fmtDollar(r.netIncomeYr1)} ÷ ${fmtPct(d.targetYieldPct)} target yield`,
       value:  r.m5,
@@ -1276,8 +1318,7 @@ function renderComparableValues(d, r) {
     },
   ];
 
-  const vals = [r.m1, r.m2, r.m3, r.m5].filter(v => v != null && isFinite(v) && v !== 0);
-  const mean = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  const mean = comparableMean(d, r);
 
   return `<div class="fin-comparable" id="finComparable">
     <div class="fin-comparable-header" id="finComparableToggle">
@@ -1289,13 +1330,19 @@ function renderComparableValues(d, r) {
     </div>
     <div class="fin-comparable-body" id="finComparableBody">
       <div class="fin-comparable-grid">
-        ${methods.map(m => `
-          <div class="fin-comp-card">
-            <div class="fin-comp-method">${m.label}</div>
+        ${methods.map(m => {
+          const included = d[m.includeKey] !== false; // default true for legacy models
+          return `
+          <div class="fin-comp-card${included ? '' : ' fin-comp-card-excluded'}">
+            <label class="fin-comp-include-label" title="Include in Comparable Value mean">
+              <input type="checkbox" class="fin-comp-include-checkbox" data-include-key="${m.includeKey}"${included ? ' checked' : ''}>
+              <span class="fin-comp-method">${m.label}</span>
+            </label>
             <div class="fin-comp-detail">${m.detail}</div>
             <div class="fin-comp-value ${m.value < 0 ? 'fin-neg' : ''}">${fmtDollar(m.value)}</div>
             <div class="fin-comp-inputs">${m.inputs.join('')}</div>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>
       <div class="fin-comp-note">GRV (ex GST): ${fmtDollar(r.grv)} · Net Sellable Area: ${(r.nsa||0).toLocaleString()} sqm · Acquisition Price: ${fmtDollar(d.acquisitionPrice)}</div>
     </div>
@@ -1410,6 +1457,19 @@ function bindInputs(r) {
       legChev.textContent   = _footerLegendOpen ? '▼' : '▶';
     });
   }
+
+  // Comparable Value — per-method include checkboxes
+  document.querySelectorAll('.fin-comp-include-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const key = cb.dataset.includeKey;
+      if (!key) return;
+      _current.data[key] = cb.checked;
+      _current.data.updatedAt = Date.now();
+      _allModels[_current.pipelineId] = _current.data;
+      renderFinanceView();
+      autoSave();
+    });
+  });
 
   // Collapsible sidebar sections
   document.querySelectorAll('.fin-section-toggle').forEach(toggle => {
