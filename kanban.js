@@ -800,6 +800,12 @@ function toggleKanban(show) {
     // No polling — the count refreshes only on view open (and after action
     // mutations, which is what the user asked for).
     refreshDueBadge();
+    // V76.9: opportunistic multi-user sync on view open. Picks up background
+    // changes from this user (other tabs) or other users. Debounced via the
+    // BoardSync framework so rapid open/close doesn't hammer the API. The
+    // appropriate adapter runs based on which board is currently active.
+    refreshPipelineIfStale();
+    refreshActionsIfStale();
   }
 }
 
@@ -1830,12 +1836,31 @@ function formatKbPrice(price, termsPrice) {
     return null;
   };
 
+  // Helper: does a value contain a real (non-zero) price?
+  const hasRealPrice = v => {
+    if (v === null || v === undefined || v === '') return false;
+    if (typeof v === 'number') return v > 0;
+    if (typeof v === 'string') {
+      const num = parseFloat(v.replace(/[^0-9.]/g, ''));
+      return !isNaN(num) && num > 0;
+    }
+    if (typeof v === 'object') {
+      const { display, from, to } = v;
+      if (display && /\d/.test(display)) return true;
+      if ((from && from > 0) || (to && to > 0)) return true;
+    }
+    return false;
+  };
+
+  // Vendor terms price wins when it's been recorded — it's the agreed deal price.
+  // Fall back to listing price otherwise.
+  if (hasRealPrice(termsPrice)) {
+    const terms = fmt(termsPrice);
+    if (terms) return terms + ' <span style="font-size:10px;opacity:0.7">(vendor terms)</span>';
+  }
+
   const listed = fmt(price);
   if (listed && listed !== 'Price Unavailable') return listed;
-
-  // Fall back to vendor terms price if listing price is unavailable
-  const terms = fmt(termsPrice);
-  if (terms) return terms + ' <span style="font-size:10px;opacity:0.7">(vendor terms)</span>';
 
   return 'Price Unavailable';
 }
@@ -2290,6 +2315,9 @@ function renderBoard() {
 const ACTIONS_API = '/api/actions';
 let _actionsCache = [];           // Most-recent action rows (for current user)
 let _actionsContactCache = null;  // [{id, name, email}] — lazy-loaded for picker
+// V76.9: cache the most recent (board, actions) pair so renderActionsBoard
+// can paint from cache before the fresh fetch returns (stale-while-revalidate).
+let _actionsBoardCache = null;
 
 async function fetchMyActions() {
   try {
@@ -2358,9 +2386,69 @@ function _isOverdue(action) {
  * board is an action board. Fetches data async; renders skeleton first,
  * then replaces with real cards.
  */
+// V76.9: Build a single action card DOM element. Extracted from
+// renderActionsBoard so that single-card refreshes (`refreshActionCardLive`)
+// can rebuild one card without touching the rest of the board.
+function _buildActionCard(a) {
+  const card = document.createElement('div');
+  card.className = 'kb-card kb-action-card';
+  if (_isOverdue(a)) card.classList.add('kb-card-attention');
+  card.draggable = true;
+  card.dataset.id = a.id;
+
+  const assignee = a.assignee?.name || 'Unassigned';
+  const dealLabel = a.deal?.label ? `🔗 ${a.deal.label}` : '';
+  const dueLabel  = a.due_date ? `📅 ${_formatDateShort(a.due_date)}` : '';
+  const remLabel  = a.reminder_date ? `⏰ ${_formatDateShort(a.reminder_date)}` : '';
+
+  card.innerHTML = `
+    <div class="kb-action-desc">${_escapeHtml(a.description)}</div>
+    <div class="kb-action-meta">
+      <span class="kb-action-assignee">👤 ${_escapeHtml(assignee)}</span>
+      ${dueLabel ? `<span class="kb-action-due ${_isOverdue(a) ? 'overdue' : ''}">${dueLabel}</span>` : ''}
+    </div>
+    ${(remLabel || dealLabel) ? `
+      <div class="kb-action-meta-sub">
+        ${remLabel ? `<span>${remLabel}</span>` : ''}
+        ${dealLabel ? `<span title="${_escapeHtml(a.deal?.label || '')}">${_escapeHtml(dealLabel)}</span>` : ''}
+      </div>
+    ` : ''}
+    ${(a.effort_days || a.duration_days) ? `
+      <div class="kb-action-effort">
+        ${a.effort_days ? `Effort: ${_formatDaysShort(a.effort_days)}` : ''}
+        ${a.effort_days && a.duration_days ? ' · ' : ''}
+        ${a.duration_days ? `Duration: ${_formatDaysShort(a.duration_days)}` : ''}
+      </div>
+    ` : ''}
+  `;
+
+  card.addEventListener('dragstart', e => {
+    e.dataTransfer.setData('text/plain', String(a.id));
+    e.dataTransfer.effectAllowed = 'move';
+    card.classList.add('dragging');
+  });
+  card.addEventListener('dragend', () => card.classList.remove('dragging'));
+  card.addEventListener('click', e => {
+    if (e.target.closest('button')) return;
+    openActionModal(a.id, null);
+  });
+
+  return card;
+}
+
 async function renderActionsBoard(board) {
   const boardEl = document.getElementById('kanbanBoard');
-  boardEl.innerHTML = '<div class="kb-actions-loading">Loading actions…</div>';
+
+  // V76.9: Stale-while-revalidate. If we have cached actions from a previous
+  // open, paint them immediately so the user sees content (not a spinner)
+  // while the fresh fetch runs in the background. On first load (cache empty)
+  // we still show the loading placeholder.
+  const haveCache = _actionsCache && _actionsCache.length > 0;
+  if (haveCache && _actionsBoardCache?.activeBoard) {
+    _paintActionsBoard(boardEl, _actionsBoardCache.activeBoard, _actionsCache);
+  } else {
+    boardEl.innerHTML = '<div class="kb-actions-loading">Loading actions…</div>';
+  }
 
   const { board: srvBoard, actions } = await fetchMyActions();
   // Prefer server's authoritative board (includes any column renames) over
@@ -2376,6 +2464,12 @@ async function renderActionsBoard(board) {
   }
 
   _actionsCache = actions;
+  _actionsBoardCache = { activeBoard, actions };
+  _paintActionsBoard(boardEl, activeBoard, actions);
+}
+
+// Pure paint function — given a board + actions list, build the DOM. No fetch.
+function _paintActionsBoard(boardEl, activeBoard, actions) {
   boardEl.innerHTML = '';
 
   // V76.2: "+ New Action" lives in Header 2 (`.kanban-header-controls`)
@@ -2419,55 +2513,7 @@ async function renderActionsBoard(board) {
     `;
 
     const cardsEl = colEl.querySelector('.kb-cards');
-
-    colActions.forEach(a => {
-      const card = document.createElement('div');
-      card.className = 'kb-card kb-action-card';
-      // V76.4.3: generic attention indicator (was kb-action-card-overdue).
-      // Same class is also applied to deal cards when they have due actions.
-      if (_isOverdue(a)) card.classList.add('kb-card-attention');
-      card.draggable = true;
-      card.dataset.id = a.id;
-
-      const assignee = a.assignee?.name || 'Unassigned';
-      const dealLabel = a.deal?.label ? `🔗 ${a.deal.label}` : '';
-      const dueLabel  = a.due_date ? `📅 ${_formatDateShort(a.due_date)}` : '';
-      const remLabel  = a.reminder_date ? `⏰ ${_formatDateShort(a.reminder_date)}` : '';
-
-      card.innerHTML = `
-        <div class="kb-action-desc">${_escapeHtml(a.description)}</div>
-        <div class="kb-action-meta">
-          <span class="kb-action-assignee">👤 ${_escapeHtml(assignee)}</span>
-          ${dueLabel ? `<span class="kb-action-due ${_isOverdue(a) ? 'overdue' : ''}">${dueLabel}</span>` : ''}
-        </div>
-        ${(remLabel || dealLabel) ? `
-          <div class="kb-action-meta-sub">
-            ${remLabel ? `<span>${remLabel}</span>` : ''}
-            ${dealLabel ? `<span title="${_escapeHtml(a.deal?.label || '')}">${_escapeHtml(dealLabel)}</span>` : ''}
-          </div>
-        ` : ''}
-        ${(a.effort_days || a.duration_days) ? `
-          <div class="kb-action-effort">
-            ${a.effort_days ? `Effort: ${_formatDaysShort(a.effort_days)}` : ''}
-            ${a.effort_days && a.duration_days ? ' · ' : ''}
-            ${a.duration_days ? `Duration: ${_formatDaysShort(a.duration_days)}` : ''}
-          </div>
-        ` : ''}
-      `;
-
-      card.addEventListener('dragstart', e => {
-        e.dataTransfer.setData('text/plain', String(a.id));
-        e.dataTransfer.effectAllowed = 'move';
-        card.classList.add('dragging');
-      });
-      card.addEventListener('dragend', () => card.classList.remove('dragging'));
-      card.addEventListener('click', e => {
-        if (e.target.closest('button')) return;
-        openActionModal(a.id, null);
-      });
-
-      cardsEl.appendChild(card);
-    });
+    colActions.forEach(a => cardsEl.appendChild(_buildActionCard(a)));
 
     // DnD drop handler — same insertion-index pattern as deal kanban
     function computeInsertIndex(e) {
@@ -2504,7 +2550,9 @@ async function renderActionsBoard(board) {
             column_order: insertIdx,
           }),
         });
-        // Re-render — fetches fresh data + re-runs server-side due promotion
+        // Drag moves a card between columns — full render needed since column
+        // placement and ordering both change. Server-side due-promotion may
+        // also reclassify status, so we need fresh data.
         renderBoard();
         // V76.4: drag may move an action into/out of Due (or change a date-driven
         // status), so refresh the badge.
@@ -2530,6 +2578,11 @@ function _escapeHtml(s) {
  *   openActionModal(id, null)                              → edit existing
  */
 async function openActionModal(id, defaults) {
+  // V76.9: Opportunistic multi-user sync. If editing, exclude the current
+  // action from the diff so the user isn't disrupted mid-edit. Fire-and-forget.
+  if (id != null) refreshActionsIfStale({ editingId: id });
+  else            refreshActionsIfStale();
+
   // Fetch existing action if editing
   let action = null;
   if (id) {
@@ -2791,11 +2844,35 @@ async function openActionModal(id, defaults) {
         alert(err.error || `Save failed (${res.status})`);
         return;
       }
+      // V76.9: API returns the updated/created enriched row. Use it to patch
+      // the in-memory cache + refresh just the affected card, instead of
+      // refetching everything and rebuilding the whole board.
+      const saved = await res.json().catch(() => null);
       close();
-      // Refresh context — either the actions board or the deal modal's actions list
+
       const activeBoard = boards.find(b => b.id === currentBoardId);
       if (activeBoard?.board_type === 'action') {
-        renderBoard();
+        if (saved && saved.id) {
+          // Update cache
+          const idx = _actionsCache.findIndex(a => String(a.id) === String(saved.id));
+          if (idx >= 0) _actionsCache[idx] = saved;
+          else _actionsCache.push(saved);
+          if (_actionsBoardCache) _actionsBoardCache.actions = _actionsCache;
+
+          // If the column changed (status promotion server-side, or column_id
+          // change), the card needs to move — full render. Otherwise patch.
+          const movedColumn = isEdit && action && (
+            action.column_id   !== saved.column_id ||
+            action.status      !== saved.status
+          );
+          if (!isEdit || movedColumn) {
+            renderBoard();
+          } else {
+            refreshActionCardLive(saved.id);
+          }
+        } else {
+          renderBoard();
+        }
       } else if (defaults?.deal_id || action?.deal_id) {
         // Deal modal is open — refresh its actions section
         const dealId = defaults?.deal_id || action?.deal_id;
@@ -2818,7 +2895,12 @@ async function openActionModal(id, defaults) {
         close();
         const activeBoard = boards.find(b => b.id === currentBoardId);
         if (activeBoard?.board_type === 'action') {
-          renderBoard();
+          // V76.9: drop from cache, then remove the single card from DOM —
+          // no full board rebuild needed.
+          const idx = _actionsCache.findIndex(a => String(a.id) === String(action.id));
+          if (idx >= 0) _actionsCache.splice(idx, 1);
+          if (_actionsBoardCache) _actionsBoardCache.actions = _actionsCache;
+          refreshActionCardLive(action.id);
         } else if (action.deal_id && typeof refreshDealActions === 'function') {
           refreshDealActions(action.deal_id);
         }
@@ -2932,6 +3014,12 @@ function openCardModal(id) {
   const item = pipeline[id];
   if (!item) return;
   const p = item.property;
+
+  // V76.9: Opportunistic multi-user sync — pull any background changes from
+  // other users (or other tabs) so the modal shows current state. The deal
+  // we're about to open is excluded from the diff so it can't be clobbered
+  // mid-edit. Fires fire-and-forget; modal opens immediately on cached data.
+  refreshPipelineIfStale({ editingId: id });
 
   // Remove any existing modal
   const existing = document.getElementById('kb-modal');
@@ -3339,8 +3427,7 @@ ${rows.join('')}`;
         const ok = await deleteNote(id, n.id);
         if (ok) {
           renderNotesList();
-          const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
-          if (boardCard) refreshCardIndicators(boardCard, id);
+          refreshCardLive(id);
         }
       });
       listEl.appendChild(entry);
@@ -3412,8 +3499,7 @@ ${rows.join('')}`;
     noteInput.value = '';
     clearContactTag();
     renderNotesList();
-    const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
-    if (boardCard) refreshCardIndicators(boardCard, id);
+    refreshCardLive(id);
   });
   noteInput.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) modal.querySelector('.kb-note-add-btn').click();
@@ -3428,8 +3514,7 @@ ${rows.join('')}`;
     t.price      = parsedPrice || null;  // null not 0 — so falsy check works correctly
     t.settlement = parseSettlementDays(rawSettlement) || null;
     saveTerms(id, t);
-    const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
-    if (boardCard) refreshCardIndicators(boardCard, id);
+    refreshCardLive(id);
   }
   // Sync only on blur so price is fully typed before parsing
   modal.querySelector('.kb-terms-price').addEventListener('blur', function() {
@@ -3556,8 +3641,7 @@ ${rows.join('')}`;
     if (_settleEl) _settleEl.value = '';
     if (_depsEl) _depsEl.innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }], 0);
     refreshFinancePicker();
-    const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
-    if (boardCard) refreshCardIndicators(boardCard, id);
+    refreshCardLive(id);
     showKanbanToast('Offer recorded');
   });
 
@@ -3567,8 +3651,7 @@ ${rows.join('')}`;
     if (!btn) return;
     deleteOffer(id, btn.dataset.offerId);
     refreshFinancePicker();
-    const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
-    if (boardCard) refreshCardIndicators(boardCard, id);
+    refreshCardLive(id);
   });
 
   // DD
@@ -3582,8 +3665,7 @@ ${rows.join('')}`;
     dd[key].status = val;
     saveDd(id, dd);
     sel.className = `kb-dd-select dd-risk-${val || 'none'}`;
-    const boardCard = document.querySelector(`.kb-card[data-id="${id}"]`);
-    if (boardCard) refreshCardIndicators(boardCard, id);
+    refreshCardLive(id);
   });
   modal.querySelector('.kb-dd').addEventListener('input', e => {
     if (!e.target.matches('.kb-dd-note')) return;
@@ -3594,6 +3676,220 @@ ${rows.join('')}`;
     saveDd(id, dd);
   });
 }
+
+// V76.9: ─── Board sync framework ─────────────────────────────────────────────
+//
+// Both the deal board and the actions board share the same lifecycle concerns:
+//   - Render-card-in-place (after a save, without rebuilding the whole board)
+//   - Stale-while-revalidate (paint cached data immediately, refresh from server)
+//   - Multi-user sync (pull background changes when the user takes an action)
+//
+// Rather than duplicate this logic per board, we expose a small generic helper
+// (`createBoardSync`) and define one adapter per board. Each adapter knows how
+// to: fetch, identify cards, locate them in the DOM, refresh them in place,
+// and detect filter mismatches.
+//
+// Adapter shape:
+//   {
+//     name:           string           // for log prefixes
+//     load():         Promise<Map>     // fetch all rows; returns id→entity Map
+//     getCache():     Map              // current in-memory cache (id→entity)
+//     setCache(map):  void             // replace in-memory cache
+//     fingerprint(e): string           // cheap value identity (eg JSON of entity)
+//     cardSelector(id): string         // CSS selector for the DOM card
+//     matchesFilter(id, entity): bool  // does this entity match active search?
+//     patchCard(id):  void             // update DOM card content in place
+//     fullRender():   void             // full re-render of the board
+//     boardVisible(): bool             // is this board currently shown?
+//   }
+//
+// The framework returns:
+//   {
+//     refreshCardLive(id): void              // patch one card after a save
+//     refreshIfStale({ editingId, force }): Promise<void>  // multi-user check
+//   }
+function createBoardSync(adapter) {
+  const MIN_INTERVAL_MS = 30_000;
+  let inflight = false;
+  let lastFreshAt = 0;
+
+  // Single-card refresh — handles three cases without rebuilding the board:
+  //   (a) Card on board, still matches filter → patch in place
+  //   (b) Card on board, no longer matches filter → remove from DOM
+  //   (c) Card not on board, now matches filter → fall back to full render
+  //       (column placement & ordering need recomputing)
+  function refreshCardLive(id) {
+    const cache = adapter.getCache();
+    const entity = cache.get(id);
+    if (!entity) {
+      // Entity removed — drop the card if it's there
+      const stale = document.querySelector(adapter.cardSelector(id));
+      if (stale) stale.remove();
+      return;
+    }
+    const card = document.querySelector(adapter.cardSelector(id));
+    const stillMatches = adapter.matchesFilter(id, entity);
+    if (card && stillMatches) { adapter.patchCard(id); return; }
+    if (card && !stillMatches) { card.remove(); return; }
+    // Card belongs on the board but isn't there → full render
+    adapter.fullRender();
+  }
+
+  // Stale-while-revalidate refresh. Compares fresh server data against the
+  // local cache and surgically updates only the cards that changed. Skips the
+  // entity currently being edited so the user isn't disrupted mid-edit.
+  // Debounced — at most one call per MIN_INTERVAL_MS unless force=true.
+  async function refreshIfStale(opts = {}) {
+    const now = Date.now();
+    const minInterval = opts.force ? 0 : MIN_INTERVAL_MS;
+    if (now - lastFreshAt < minInterval) return;
+    if (inflight) return;
+    inflight = true;
+    try {
+      const fresh = await adapter.load();
+      if (!fresh) return;
+
+      const editingId = opts.editingId != null ? String(opts.editingId) : null;
+      const cache = adapter.getCache();
+      const changedIds = new Set();
+
+      // Added or modified
+      for (const [id, after] of fresh.entries()) {
+        if (editingId && String(id) === editingId) continue;
+        const before = cache.get(id);
+        if (!before || adapter.fingerprint(before) !== adapter.fingerprint(after)) {
+          changedIds.add(id);
+        }
+      }
+      // Removed
+      for (const id of cache.keys()) {
+        if (editingId && String(id) === editingId) continue;
+        if (!fresh.has(id)) changedIds.add(id);
+      }
+
+      if (changedIds.size === 0) {
+        lastFreshAt = now;
+        return;
+      }
+
+      // Reconcile cache (preserving the entity being edited as-is)
+      const next = new Map();
+      if (editingId && cache.has(editingId)) next.set(editingId, cache.get(editingId));
+      for (const [id, entity] of fresh.entries()) {
+        if (editingId && String(id) === editingId) continue;
+        next.set(id, entity);
+      }
+      adapter.setCache(next);
+
+      // Threshold: if too many cards changed, a full render is cheaper than
+      // N in-place updates (and avoids visible flicker from many DOM mutations).
+      if (!adapter.boardVisible()) { lastFreshAt = now; return; }
+      if (changedIds.size > 5) {
+        adapter.fullRender();
+      } else {
+        changedIds.forEach(id => refreshCardLive(id));
+      }
+      lastFreshAt = now;
+    } catch (err) {
+      console.warn(`[${adapter.name}] staleness check failed:`, err.message);
+    } finally {
+      inflight = false;
+    }
+  }
+
+  return { refreshCardLive, refreshIfStale };
+}
+
+// ─── Adapter: Deal board (uses the `pipeline` dict) ──────────────────────────
+const _dealsBoardSync = createBoardSync({
+  name: 'pipeline',
+  async load() {
+    if (!dbAvailable) return null;
+    const dict = await dbLoad();
+    if (!dict) return null;
+    return new Map(Object.entries(dict));
+  },
+  getCache() {
+    return new Map(Object.entries(pipeline));
+  },
+  setCache(map) {
+    for (const k of Object.keys(pipeline)) delete pipeline[k];
+    for (const [id, entity] of map.entries()) pipeline[id] = entity;
+  },
+  fingerprint(entity) { return JSON.stringify(entity); },
+  cardSelector(id) { return `.kb-card[data-id="${id}"]`; },
+  matchesFilter(id, entity) { return _searchMatches(id, entity); },
+  patchCard(id) {
+    const item = pipeline[id]; if (!item) return;
+    const card = document.querySelector(`.kb-card[data-id="${id}"]`);
+    if (!card) return;
+    refreshCardIndicators(card, id);
+    card.classList.toggle('kb-card-attention', !!item._hasOverdueAction);
+    const sel = card.querySelector('.kb-stage-select');
+    if (sel) {
+      const wantedColId = item._columnId || stageToColumnId(item.stage);
+      if (sel.value !== wantedColId) sel.value = wantedColId;
+    }
+  },
+  fullRender() { renderBoard(); },
+  boardVisible() {
+    if (!kanbanVisible) return false;
+    const active = boards.find(b => b.id === currentBoardId);
+    return active?.board_type !== 'action';
+  },
+});
+
+// Public aliases — call sites use these names; the actions equivalents below
+// are exported via _actionsBoardSync.
+function refreshCardLive(id) { return _dealsBoardSync.refreshCardLive(id); }
+function refreshPipelineIfStale(opts) { return _dealsBoardSync.refreshIfStale(opts); }
+
+// ─── Adapter: Actions board (uses the `_actionsCache` array) ─────────────────
+const _actionsBoardSync = createBoardSync({
+  name: 'actions',
+  async load() {
+    const { actions } = await fetchMyActions();
+    if (!actions) return null;
+    return new Map(actions.map(a => [String(a.id), a]));
+  },
+  getCache() {
+    return new Map((_actionsCache || []).map(a => [String(a.id), a]));
+  },
+  setCache(map) {
+    _actionsCache = Array.from(map.values());
+    if (_actionsBoardCache) _actionsBoardCache.actions = _actionsCache;
+  },
+  fingerprint(a) {
+    // Cheap value identity — only fields that affect rendering.
+    return [
+      a.description, a.column_id, a.column_order, a.status,
+      a.assignee?.id, a.assignee?.name, a.deal?.id, a.deal?.label,
+      a.due_date, a.reminder_date, a.effort_days, a.duration_days,
+    ].join('|');
+  },
+  cardSelector(id) { return `.kb-action-card[data-id="${id}"]`; },
+  matchesFilter(_id, _entity) { return true; }, // actions board has no search filter (yet)
+  patchCard(id) {
+    const a = (_actionsCache || []).find(x => String(x.id) === String(id));
+    if (!a) return;
+    const oldCard = document.querySelector(`.kb-action-card[data-id="${id}"]`);
+    if (!oldCard) return;
+    // Build a fresh card and swap in place. Cheap because it's one card,
+    // and avoids hand-coding every field-level patch (description, dates,
+    // assignee, deal link, effort/duration, attention bar).
+    const newCard = _buildActionCard(a);
+    oldCard.replaceWith(newCard);
+  },
+  fullRender() { renderBoard(); },
+  boardVisible() {
+    if (!kanbanVisible) return false;
+    const active = boards.find(b => b.id === currentBoardId);
+    return active?.board_type === 'action';
+  },
+});
+
+function refreshActionCardLive(id) { return _actionsBoardSync.refreshCardLive(id); }
+function refreshActionsIfStale(opts) { return _actionsBoardSync.refreshIfStale(opts); }
 
 // Refresh just the indicator pills on a board card without re-rendering the whole board
 function refreshCardIndicators(card, id) {
@@ -3839,6 +4135,16 @@ window.addEventListener('parcelChanged', (e) => {
   );
   if (!referenced) return;
   _refreshPipelineFromDB('parcel ' + parcelId + ' changed');
+});
+
+// V76.9: Multi-user sync — when the tab regains focus (user comes back from
+// another tab/window), opportunistically check whether the server has fresher
+// data than what's cached. Both the deal pipeline and the actions board are
+// checked; their respective BoardSync adapters debounce each independently.
+window.addEventListener('focus', () => {
+  if (!kanbanVisible) return;
+  refreshPipelineIfStale();
+  refreshActionsIfStale();
 });
 
 // Expose for cross-module navigation (CRM deep-links into a pipeline item)
