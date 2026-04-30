@@ -1556,11 +1556,26 @@ function buildLeafletLayer(def) {
             const label       = p.name || p.zone || p.elevation || p.flood_depth || p.road || '';
             const description = p.description || '';
             const source      = p.source || def.source || '';
-            layer.bindPopup(
+            // V76.10: Bind popup but DO NOT auto-open on left-click. Overlay
+            // features used to call `layer.bindPopup(...)` which makes Leaflet
+            // open the popup on left-click — that consumed the click before it
+            // reached the map, breaking the measure tool and property selection
+            // whenever an overlay was visible.
+            //
+            // New behaviour: left-click passes through to the map (measure /
+            // property select work normally even with overlays on); right-click
+            // (contextmenu) opens the feature's info popup at the cursor.
+            const popupHtml =
               `<b>${label}</b>` +
               (description ? `<br>${description}` : '') +
-              (source ? `<br><small style="color:#888">${source}</small>` : '')
-            );
+              (source ? `<br><small style="color:#888">${source}</small>` : '');
+            layer.bindPopup(popupHtml);
+            layer.off('click');  // prevent Leaflet's default click-to-open
+            layer.on('contextmenu', e => {
+              L.DomEvent.preventDefault(e.originalEvent);
+              L.DomEvent.stopPropagation(e);
+              layer.openPopup(e.latlng);
+            });
           }
         }).addTo(layerGroup);
       })
