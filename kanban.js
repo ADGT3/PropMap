@@ -726,59 +726,84 @@ async function initPipeline() {
   pipeline = cacheLoad();
   updateAddButtons();
 
+  // V76.9: Parallelise init API calls. Previously these ran sequentially
+  // (auth/me → loadBoards → actions-bootstrap → loadUserDealOrder → dbLoad),
+  // which on a typical connection was ~600-1500ms of blocking before the
+  // first render of fresh data. Most of these calls are independent.
+  //
+  // Phase 1 (parallel):  auth/me, loadBoards
+  // Phase 2 (parallel):  actions-bootstrap (needs session), userDealOrder
+  //                       and dbLoad (both need currentBoardId from boards)
+  //
   // V75.6: load boards + per-user ordering first, then the deal list.
   // Also prime the admin flag cache so the toolbar's Delete Board button
   // renders correctly on first paint (system boards only deletable by admin).
   // V75.7: also prime the session-user id so the actions module can default
   // assignee to the current user.
+
+  const phase1Promises = [];
+
   if (window._pipelineIsAdmin === undefined || window._sessionUserId === undefined) {
-    try {
-      const me = await fetch('/api/auth/me').then(r => r.ok ? r.json() : null);
-      const user = me?.user || me || {};
-      window._pipelineIsAdmin = !!(user.isAdmin || user.is_admin);
-      // session.sub is the contact id (numeric string) or 'fallback'
-      const uid = user.id;
-      if (typeof uid === 'number') window._sessionUserId = uid;
-      else if (typeof uid === 'string' && /^\d+$/.test(uid)) window._sessionUserId = parseInt(uid, 10);
-      else window._sessionUserId = null;
-      window._sessionUserName = user.name || user.email || null;
-    } catch (_) {
-      window._pipelineIsAdmin = false;
-      window._sessionUserId = null;
-      window._sessionUserName = null;
-    }
+    phase1Promises.push(
+      fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(me => {
+        const user = me?.user || me || {};
+        window._pipelineIsAdmin = !!(user.isAdmin || user.is_admin);
+        const uid = user.id;
+        if (typeof uid === 'number') window._sessionUserId = uid;
+        else if (typeof uid === 'string' && /^\d+$/.test(uid)) window._sessionUserId = parseInt(uid, 10);
+        else window._sessionUserId = null;
+        window._sessionUserName = user.name || user.email || null;
+      }).catch(() => {
+        window._pipelineIsAdmin = false;
+        window._sessionUserId = null;
+        window._sessionUserName = null;
+      })
+    );
   }
 
-  await loadBoards();
+  phase1Promises.push(loadBoards());
 
+  await Promise.all(phase1Promises);
+
+  // Phase 2 — these all depend on phase 1 results (session id, currentBoardId).
   // V75.7: ensure My Actions board exists for this user. Hits /api/actions
   // with assignee=me which auto-creates the board + 5 default columns on
   // first call. Then reload boards so the selector includes it.
-  if (window._sessionUserId) {
-    try {
-      const actResp = await fetch('/api/actions?assignee=me');
-      if (actResp.ok) {
-        const payload = await actResp.json();
-        if (payload?.board && !boards.find(b => b.id === payload.board.id)) {
-          // Newly-bootstrapped board — append to local list so the selector shows it
-          boards.push(payload.board);
-        }
-      }
-    } catch (err) {
-      console.warn('[actions] bootstrap failed:', err.message);
-    }
-  }
+  const actionsBootstrapPromise = window._sessionUserId
+    ? fetch('/api/actions?assignee=me')
+        .then(r => r.ok ? r.json() : null)
+        .then(payload => {
+          if (payload?.board && !boards.find(b => b.id === payload.board.id)) {
+            boards.push(payload.board);
+          }
+          // Cache the actions data too so first Pipeline open can paint from cache
+          if (payload?.actions) {
+            _actionsCache = payload.actions;
+            _actionsBoardCache = { activeBoard: payload.board, actions: payload.actions };
+            markActionsFresh();
+          }
+        })
+        .catch(err => console.warn('[actions] bootstrap failed:', err.message))
+    : Promise.resolve();
 
-  await loadUserDealOrder();
+  const dealOrderPromise = loadUserDealOrder();
+  const remotePromise    = dbLoad();
 
-  // Then try to sync from DB in background
-  const remote = await dbLoad();
+  const [, , remote] = await Promise.all([
+    actionsBootstrapPromise,
+    dealOrderPromise,
+    remotePromise,
+  ]);
+
   if (remote !== null) {
     pipeline = remote;
     cacheSave(pipeline);
     if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
     updateAddButtons();
     if (kanbanVisible) renderBoard();
+    // V76.9: we just loaded fresh deal data — mark BoardSync so the next
+    // openPipeline doesn't redundantly hit dbLoad() again within the debounce window.
+    markPipelineFresh();
   }
 }
 
@@ -1315,6 +1340,8 @@ function _renderBoardSelectorBar() {
     }
     cacheSave(pipeline);
     renderBoard();
+    // V76.9: just freshly loaded — debounce subsequent stale-checks
+    markPipelineFresh();
     if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
   });
 
@@ -3797,7 +3824,12 @@ function createBoardSync(adapter) {
     }
   }
 
-  return { refreshCardLive, refreshIfStale };
+  // Mark the cache as freshly loaded right now — useful when an external
+  // path has just done its own fetch (e.g. initPipeline or board switch),
+  // so our debounce avoids a redundant duplicate fetch right after.
+  function markFresh() { lastFreshAt = Date.now(); }
+
+  return { refreshCardLive, refreshIfStale, markFresh };
 }
 
 // ─── Adapter: Deal board (uses the `pipeline` dict) ──────────────────────────
@@ -3843,6 +3875,7 @@ const _dealsBoardSync = createBoardSync({
 // are exported via _actionsBoardSync.
 function refreshCardLive(id) { return _dealsBoardSync.refreshCardLive(id); }
 function refreshPipelineIfStale(opts) { return _dealsBoardSync.refreshIfStale(opts); }
+function markPipelineFresh() { _dealsBoardSync.markFresh(); }
 
 // ─── Adapter: Actions board (uses the `_actionsCache` array) ─────────────────
 const _actionsBoardSync = createBoardSync({
@@ -3890,6 +3923,7 @@ const _actionsBoardSync = createBoardSync({
 
 function refreshActionCardLive(id) { return _actionsBoardSync.refreshCardLive(id); }
 function refreshActionsIfStale(opts) { return _actionsBoardSync.refreshIfStale(opts); }
+function markActionsFresh() { _actionsBoardSync.markFresh(); }
 
 // Refresh just the indicator pills on a board card without re-rendering the whole board
 function refreshCardIndicators(card, id) {
@@ -4103,6 +4137,9 @@ async function _refreshPipelineFromDB(reason) {
     _searchContactsCache = null;
     if (typeof renderBoard === 'function' && kanbanVisible) renderBoard();
     if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
+    // V76.9: just freshly loaded — debounce subsequent stale-checks so the
+    // next user action doesn't immediately re-fetch.
+    markPipelineFresh();
     console.log('[kanban] pipeline refreshed (' + reason + ')');
   } catch (err) {
     console.warn('[kanban] pipeline refresh failed:', err);
