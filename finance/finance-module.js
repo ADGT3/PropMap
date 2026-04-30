@@ -10,8 +10,20 @@
  *  Principal Paid   = (Rent - Interest) * profitUsedForDebt   ← driven by B10/G36
  *  Interest Paid    = PrincipalStart * interestRate
  *  Principal End    = PrincipalStart - PrincipalPaid
- *  Cashflow         = Rent - Interest - PrincipalPaid          ← not just Rent-Interest
- *  ROE              = Cashflow / totalCashRequired(Total)
+ *  Cashflow         = Rent - Interest - PrincipalPaid          ← operating cashflow
+ *
+ *  Return metrics (rolling cash equity basis):
+ *    cashEquity[start of yr 0]  = FTC due in yr 0
+ *    cashEquity[start of yr N]  = cashEquity[end of yr N-1] + FTC due in yr N
+ *    distribution(yr)           = max(0, cashflow(yr)) * (1 - retainedEarnings%)
+ *    cashEquity[end of yr]      = cashEquity[start of yr]
+ *                               - distribution(yr)        if cashflow > 0
+ *                               - |cashflow(yr)|          if cashflow < 0
+ *                                 (positive: retained portion stays, distributed portion leaves;
+ *                                  negative: retention irrelevant, full loss erodes equity)
+ *
+ *    CoC (Rolling) = cashflow(yr) / cashEquity[start of yr]
+ *    ROE           = (cashflow(yr) + Δ assetValue + principalPaid) / cashEquity[start of yr]
  *
  *  Cost of Funds:
  *    pre-settlement  = upfrontCash * costOfCapital
@@ -19,7 +31,7 @@
  *  NPV (Asset Val)  = AssetValue - CostOfFunds                 (per-year, not cumulative)
  *
  *  totalCashRequired(Upfront) = SUM(deposit + stampDuty + valuation + solicitor + inspections + otherCosts)
- *  totalCashRequired(Total)   = Upfront - SUM(cashflows where yr < holdDurationPreReval)
+ *  totalCashRequired(Total)   = Upfront + cashAtSettlement (kept for KPI display & Cost of Funds)
  *
  * INPUTS (grey cells — user editable):
  *   Feasibility sheet: B2 acquisitionPrice, B3 interestRate, B4 rentalGrowth,
@@ -53,6 +65,7 @@ let _current           = null;
 let _financeVisible    = false;
 let _allModels         = {};
 let _comparableOpen    = false;  // persists collapse state across re-renders
+let _footerLegendOpen  = false;  // persists collapse state for returns legend
 let _financeInitDone   = false;  // guard against duplicate initFinance() calls
 let _saveTimer         = null;   // debounce timer for auto-save
 let _costsInCashflow   = true;   // whether Funds to Complete costs are included in cashflow
@@ -104,6 +117,7 @@ function defaultModel(acquisitionPrice) {
     projectDuration:         5,                        // B12
     depositPct:              0.05,                     // E2
     salesCommissionPct:      0,                        // E3
+    retainedEarningsPct:     0,                        // 0=all distributed, 1=all retained (positive cashflow only)
 
     // ── Purchase costs (direct $ inputs) ─────────────────────────────────
     stampDuty:               0,                        // C33 — NSW auto-calc
@@ -139,9 +153,15 @@ function defaultModel(acquisitionPrice) {
     tdcPerLot:               350000,                   // M4
     targetYieldPct:          0.07,                     // Q4
 
+    // ── Comparable method inclusion flags (drive Comparable Value tile) ───
+    includeM1:               true,
+    includeM2:               true,
+    includeM3:               true,
+    includeM5:               true,
+
     createdAt: Date.now(),
     updatedAt: Date.now(),
-    version:   3,
+    version:   5,
   };
 }
 
@@ -487,14 +507,15 @@ function runModel(d) {
     const interest      = principalStart * (d.interestRate || 0);   // B21 = B19 * B3
     const principalPaid = (rent - interest) * pdPct;                 // B20 = (B17-B21)*G36
     const principalEnd  = principalStart - principalPaid;            // B22 = B19 - B20
-    const cashflow      = rent - interest - principalPaid;           // B23 = B17-B21-B20
+    const operatingCashflow = rent - interest - principalPaid;       // B23 = B17-B21-B20 (always raw, used for return metrics)
+    const cashflow      = operatingCashflow;                         // display cashflow — may be adjusted below by toggle
     // _costsAdjustment applied below after years array is built
     const assetValue    = yr === 0 ? price : price * Math.pow(1 + cg, yr); // B25, then *(1+B6)
 
     years.push({
       yr, rent, grossRentYr1: settled ? grossRentYr1 * Math.pow(1 + rg, yr) : 0,
       principalStart, interest, principalPaid, principalEnd,
-      cashflow, assetValue,
+      cashflow, operatingCashflow, assetValue,
     });
 
     // Carry principal end forward as next year's start
@@ -512,14 +533,59 @@ function runModel(d) {
   // ── Total Cash Required (Total) ──────────────────────────────────────
   // = Upfront + Cash at Settlement - sum(cashflows where yr < holdDurationPreReval)
   // Negative cashflows during pre-reval period add to total cash required (funding gap)
+  // NOTE: kept for legacy KPI tile + Cost of Funds calc; NOT used in return metrics.
   const preCashflowSum = years
     .filter(y => y.yr < hold)
     .reduce((s, y) => s + y.cashflow, 0);
   const totalCashReqd = upfront + cashAtSettlement - preCashflowSum;
 
-  // ── ROE uses totalCashReqd (G31) ─────────────────────────────────────
+  // ── Return metrics: rolling cash equity basis ────────────────────────
+  // cashEquity[start of yr N] = cash actually tied up in the deal at start of yr N
+  //   = cumulative Funds-to-Complete paid up to and including yr N
+  //   - cumulative distributions taken in yrs 0..N-1
+  //   + cumulative absolute losses absorbed in yrs 0..N-1
+  //
+  // Timing convention: FTC due in year Y is committed AT THE START of year Y
+  // (so it's part of the Year Y denominator). Cashflow in year Y arrives during
+  // the year, so distribution from it lands at the START of Year Y+1.
+  //
+  // Distribution rule (asymmetric):
+  //   positive operating cashflow → distribution = cashflow * (1 - retainedPct)
+  //   negative operating cashflow → no distribution; full loss reduces cash position
+  const retainedPct = Math.max(0, Math.min(1, d.retainedEarningsPct || 0));
+  let cashEquity = 0;
   years.forEach(y => {
-    y.roe = totalCashReqd !== 0 ? y.cashflow / totalCashReqd : 0;
+    // Step 1: FTC due in this year is paid at start — increases cash equity now
+    const ftcThisYear = _ftcByYear[y.yr] || 0;
+    cashEquity += ftcThisYear;
+
+    // Step 2: snapshot start-of-year denominator (after FTC, before this year's cashflow)
+    y.cashEquityStart = cashEquity;
+
+    // Step 3: distribution / loss absorption based on operating cashflow
+    //   positive op: distribute portion based on retainedPct; cash position falls by distribution
+    //   negative op: full loss erodes cash position (retention irrelevant — there's nothing to retain)
+    const op = y.operatingCashflow;
+    let distribution = 0;
+    if (op > 0) {
+      distribution = op * (1 - retainedPct);
+      cashEquity -= distribution;          // distributed cash leaves the deal
+    } else if (op < 0) {
+      cashEquity -= Math.abs(op);          // loss erodes cash position fully
+    }
+    y.cashEquityEnd = cashEquity;
+    y.distribution  = distribution;
+
+    // ROE numerator: operating cashflow + appreciation + principal paid down
+    // Δ assetValue from start of year (= prev year's assetValue) to end of year
+    const prevAssetValue = y.yr === 0 ? price : (years[y.yr - 1]?.assetValue ?? price);
+    y.appreciation = y.assetValue - prevAssetValue;
+
+    // Avoid divide-by-zero (only happens if yr 0 has no FTC at all)
+    y.coc = y.cashEquityStart > 0 ? y.operatingCashflow / y.cashEquityStart : 0;
+    y.roe = y.cashEquityStart > 0
+      ? (y.operatingCashflow + y.appreciation + y.principalPaid) / y.cashEquityStart
+      : 0;
   });
 
   // ── Cost of Funds ─────────────────────────────────────────────────────
@@ -699,9 +765,24 @@ function renderFinanceView() {
     bindSelectorEvents();
     return;
   }
+
+  // Preserve scroll positions across re-render (sidebar inputs and main content
+  // each have their own scrollable area; rebuilding innerHTML resets both).
+  const sidebarPrev = container.querySelector('.fin-sidebar');
+  const mainPrev    = container.querySelector('.fin-main');
+  const sidebarScroll = sidebarPrev ? sidebarPrev.scrollTop : 0;
+  const mainScroll    = mainPrev    ? mainPrev.scrollTop    : 0;
+
   const d = _current.data;
   const r = runModel(d);
   container.innerHTML = `<div class="fin-layout">${renderSidebar(d, r)}${renderMain(d, r)}</div>`;
+
+  // Restore scroll positions on the freshly rendered elements
+  const sidebarNew = container.querySelector('.fin-sidebar');
+  const mainNew    = container.querySelector('.fin-main');
+  if (sidebarNew) sidebarNew.scrollTop = sidebarScroll;
+  if (mainNew)    mainNew.scrollTop    = mainScroll;
+
   bindInputs(r);
 }
 
@@ -800,6 +881,7 @@ function renderSidebar(d, r) {
         ${ff('capitalGrowth',      'Asset Value Growth (pa)',      fmtPct(d.capitalGrowth),         'pct')}
         ${ff('costOfCapital',      'Cost of Capital (%)',          fmtPct(d.costOfCapital),         'pct')}
         ${ff('profitUsedForDebt',  '% Profit → Debt Reduction',   fmtPct(d.profitUsedForDebt),     'pct')}
+        ${ff('retainedEarningsPct','Retained Earnings (%)',        fmtPct(d.retainedEarningsPct || 0),   'pct')}
         ${ff('holdDurationPreReval','Next Valuation (yrs)',        d.holdDurationPreReval+' yrs',   'int')}
         ${ff('termOfOwnership',    'Term of Ownership (yrs)',      d.termOfOwnership+' yrs',        'int')}
         ${ff('settlementLag',      'Settlement Lag (yrs)',         d.settlementLag+' yrs',          'int')}
@@ -966,9 +1048,15 @@ function renderMain(d, r) {
       avgCls: avg(holdYrs.map(y => y.cashflow)) < 0 ? 'fin-neg' : 'fin-pos',
     },
     {
+      label: 'CoC (Rolling)',
+      rows: years.map(y => `<td class="fin-pct-cell ${y.coc < 0 ? 'fin-neg' : 'fin-pos'}">${y.cashEquityStart > 0 ? fmtPct(y.coc) : '—'}</td>`),
+      avg: fmtPct(avg(holdYrs.filter(y => y.cashEquityStart > 0).map(y => y.coc))),
+      avgCls: 'fin-pct-cell',
+    },
+    {
       label: 'ROE',
-      rows: years.map(y => `<td class="fin-pct-cell ${y.roe < 0 ? 'fin-neg' : 'fin-pos'}">${fmtPct(y.roe)}</td>`),
-      avg: fmtPct(avg(holdYrs.map(y => y.roe))),
+      rows: years.map(y => `<td class="fin-pct-cell ${y.roe < 0 ? 'fin-neg' : 'fin-pos'}">${y.cashEquityStart > 0 ? fmtPct(y.roe) : '—'}</td>`),
+      avg: fmtPct(avg(holdYrs.filter(y => y.cashEquityStart > 0).map(y => y.roe))),
       avgCls: 'fin-pct-cell',
     },
     {
@@ -1097,7 +1185,7 @@ function renderMain(d, r) {
 
     <div class="fin-kpis">
       <div class="fin-kpi"><div class="fin-kpi-label">Acquisition Price</div><div class="fin-kpi-val">${fmtDollarK(d.acquisitionPrice)}</div></div>
-      <div class="fin-kpi fin-kpi-mean"><div class="fin-kpi-label">Comparable Value</div><div class="fin-kpi-val" id="finKpiMeanVal">${(() => { const vals=[r.m1,r.m2,r.m3,r.m5].filter(v=>v!=null&&isFinite(v)&&v!==0); return vals.length ? fmtDollarK(vals.reduce((a,b)=>a+b,0)/vals.length) : '—'; })()}</div></div>
+      <div class="fin-kpi fin-kpi-mean"><div class="fin-kpi-label">Comparable Value</div><div class="fin-kpi-val" id="finKpiMeanVal">${(() => { const m = comparableMean(d, r); return m != null ? fmtDollarK(m) : '—'; })()}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Total Loan</div><div class="fin-kpi-val">${fmtDollarK(r.loan)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Upfront)</div><div class="fin-kpi-val">${fmtDollarK(r.upfront)}</div></div>
       <div class="fin-kpi"><div class="fin-kpi-label">Cash Required (Settlement)</div><div class="fin-kpi-val">${fmtDollarK(r.cashAtSettlement)}</div></div>
@@ -1121,9 +1209,55 @@ function renderMain(d, r) {
 
     ${renderComparableValues(d, r)}
 
-    <div class="fin-footer">
-      <span>Principal Paid = (Rent − Interest) × ${fmtPct(d.profitUsedForDebt)} profit to debt · ROE on Total Cash Required · Cost of Funds = Total Cash × CoC × (1+rg)^(yr−lag)</span>
-      <span>Transfer duty auto-calculated (${d._state||'NSW'} rates, 1 July 2025). All figures indicative only.</span>
+    <div class="fin-footer-legend" id="finFooterLegend">
+      <div class="fin-footer-legend-header" id="finFooterLegendToggle">
+        <span class="fin-footer-legend-title">Calculations Explained</span>
+        <span class="fin-footer-legend-chevron" id="finFooterLegendChevron">${_footerLegendOpen ? '▼' : '▶'}</span>
+      </div>
+      <div class="fin-footer-legend-body" id="finFooterLegendBody" style="display:${_footerLegendOpen ? '' : 'none'}">
+        <div class="fin-footer-legend-item">
+          <div class="fin-footer-legend-label">Principal Paid</div>
+          <div class="fin-footer-legend-text">
+            (Net Rent − Interest) × % Profit → Debt Reduction. The portion of each year's operating profit that is applied to reduce the loan balance, controlled by the "% Profit → Debt Reduction" input. Interest = Principal (Start) × Loan Interest Rate. Principal (End) = Principal (Start) − Principal Paid; this becomes next year's Principal (Start).
+            <em>Currently: ${fmtPct(d.profitUsedForDebt)} of profit applied to debt reduction.</em>
+          </div>
+        </div>
+        <div class="fin-footer-legend-item">
+          <div class="fin-footer-legend-label">Cashflow</div>
+          <div class="fin-footer-legend-text">
+            Net Rent − Interest − Principal Paid (operating cashflow). When "Include in cashflow" is ticked on the Funds to Complete row, deposits and settlement costs are subtracted from the cashflow row in the years they fall due — for display purposes only; this does not affect CoC or ROE.
+          </div>
+        </div>
+        <div class="fin-footer-legend-item">
+          <div class="fin-footer-legend-label">Cash-on-Cash (Rolling)</div>
+          <div class="fin-footer-legend-text">
+            Annual operating cashflow ÷ cash equity at start of year. Denominator grows with each Funds-to-Complete payment and shrinks as positive cashflow is distributed (controlled by Retained Earnings %). Negative cashflow always reduces cash position fully.
+            <em>Answers: "What yield am I earning on the cash I currently have tied up?"</em>
+          </div>
+        </div>
+        <div class="fin-footer-legend-item">
+          <div class="fin-footer-legend-label">Return on Equity (ROE)</div>
+          <div class="fin-footer-legend-text">
+            (Operating cashflow + property appreciation + principal paid down) ÷ cash equity at start of year. Captures total wealth return — cash plus equity buildup.
+            <em>Answers: "What total annual return am I earning on my equity?"</em>
+          </div>
+        </div>
+        <div class="fin-footer-legend-item">
+          <div class="fin-footer-legend-label">Retained Earnings %</div>
+          <div class="fin-footer-legend-text">
+            Portion of positive annual cashflow kept in the deal vs. distributed. 0% = all distributed (cash position falls each year by full cashflow); 100% = all retained (cash position unchanged by distributions). Negative cashflows always reduce cash position fully regardless of this setting.
+          </div>
+        </div>
+        <div class="fin-footer-legend-item">
+          <div class="fin-footer-legend-label">Cost of Funds &amp; NPV</div>
+          <div class="fin-footer-legend-text">
+            Pre-settlement: Cash Required (Upfront) × Cost of Capital. Post-settlement: Cash Required (Total) × Cost of Capital × (1 + rental growth)^(yr − settlement lag). NPV (Asset Val) = Asset Value − Cost of Funds for that year.
+          </div>
+        </div>
+        <div class="fin-footer-legend-item fin-footer-legend-meta">
+          Transfer duty auto-calculated (${d._state||'NSW'} rates, 1 July 2025) · All figures indicative only.
+        </div>
+      </div>
     </div>
   </div>`;
 }
@@ -1140,9 +1274,23 @@ function updateMeanValueHeader(r) {
   meanEl.style.display = '';
 }
 
+function comparableMean(d, r) {
+  // Returns the mean of methods that are (a) flagged as included by the user
+  // (default true if undefined for legacy models) and (b) have a valid non-zero value.
+  const pairs = [
+    [d.includeM1 !== false, r.m1],
+    [d.includeM2 !== false, r.m2],
+    [d.includeM3 !== false, r.m3],
+    [d.includeM5 !== false, r.m5],
+  ];
+  const vals = pairs.filter(([on, v]) => on && v != null && isFinite(v) && v !== 0).map(([, v]) => v);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
 function renderComparableValues(d, r) {
   const methods = [
     {
+      includeKey: 'includeM1',
       label:  'Method 1: Gross Area',
       detail: `${(d.netDevelopableAreaAcres||0).toFixed(3)} NDA acres × $${(d.comparableValuePerNDA||0).toLocaleString()}/NDA + residual`,
       value:  r.m1,
@@ -1153,6 +1301,7 @@ function renderComparableValues(d, r) {
       ],
     },
     {
+      includeKey: 'includeM2',
       label:  'Method 2: 30% of GRV',
       detail: `GRV ${fmtDollar(r.grv)} ÷ 3 · NSA ${(r.nsa||0).toLocaleString()} sqm`,
       value:  r.m2,
@@ -1163,6 +1312,7 @@ function renderComparableValues(d, r) {
       ],
     },
     {
+      includeKey: 'includeM3',
       label:  'Method 3: Development Estimate (TDC $/lot)',
       detail: `GRV − TDC − holding cost − interest − profit margin`,
       value:  r.m3,
@@ -1173,6 +1323,7 @@ function renderComparableValues(d, r) {
       ],
     },
     {
+      includeKey: 'includeM5',
       label:  'Method 5: Derived from Yield',
       detail: `Net Income ${fmtDollar(r.netIncomeYr1)} ÷ ${fmtPct(d.targetYieldPct)} target yield`,
       value:  r.m5,
@@ -1182,8 +1333,7 @@ function renderComparableValues(d, r) {
     },
   ];
 
-  const vals = [r.m1, r.m2, r.m3, r.m5].filter(v => v != null && isFinite(v) && v !== 0);
-  const mean = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  const mean = comparableMean(d, r);
 
   return `<div class="fin-comparable" id="finComparable">
     <div class="fin-comparable-header" id="finComparableToggle">
@@ -1195,13 +1345,19 @@ function renderComparableValues(d, r) {
     </div>
     <div class="fin-comparable-body" id="finComparableBody">
       <div class="fin-comparable-grid">
-        ${methods.map(m => `
-          <div class="fin-comp-card">
-            <div class="fin-comp-method">${m.label}</div>
+        ${methods.map(m => {
+          const included = d[m.includeKey] !== false; // default true for legacy models
+          return `
+          <div class="fin-comp-card${included ? '' : ' fin-comp-card-excluded'}">
+            <label class="fin-comp-include-label" title="Include in Comparable Value mean">
+              <input type="checkbox" class="fin-comp-include-checkbox" data-include-key="${m.includeKey}"${included ? ' checked' : ''}>
+              <span class="fin-comp-method">${m.label}</span>
+            </label>
             <div class="fin-comp-detail">${m.detail}</div>
             <div class="fin-comp-value ${m.value < 0 ? 'fin-neg' : ''}">${fmtDollar(m.value)}</div>
             <div class="fin-comp-inputs">${m.inputs.join('')}</div>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>
       <div class="fin-comp-note">GRV (ex GST): ${fmtDollar(r.grv)} · Net Sellable Area: ${(r.nsa||0).toLocaleString()} sqm · Acquisition Price: ${fmtDollar(d.acquisitionPrice)}</div>
     </div>
@@ -1303,6 +1459,31 @@ function bindInputs(r) {
     e.stopPropagation();
     _sectionCollapsed['fin-funds-complete'] = !_sectionCollapsed['fin-funds-complete'];
     renderFinanceView();
+  });
+
+  // Returns legend — collapsible footer
+  const legToggle = document.getElementById('finFooterLegendToggle');
+  const legBody   = document.getElementById('finFooterLegendBody');
+  const legChev   = document.getElementById('finFooterLegendChevron');
+  if (legToggle && legBody && legChev) {
+    legToggle.addEventListener('click', () => {
+      _footerLegendOpen = !_footerLegendOpen;
+      legBody.style.display = _footerLegendOpen ? '' : 'none';
+      legChev.textContent   = _footerLegendOpen ? '▼' : '▶';
+    });
+  }
+
+  // Comparable Value — per-method include checkboxes
+  document.querySelectorAll('.fin-comp-include-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const key = cb.dataset.includeKey;
+      if (!key) return;
+      _current.data[key] = cb.checked;
+      _current.data.updatedAt = Date.now();
+      _allModels[_current.pipelineId] = _current.data;
+      renderFinanceView();
+      autoSave();
+    });
   });
 
   // Collapsible sidebar sections

@@ -289,16 +289,72 @@
 .fin-pos { color: var(--green); }
 .fin-neg { color: var(--red); }
 
-/* ── Footer note ────────────────────────────────────────────────────────────── */
-.fin-footer {
+/* ── Footer legend (collapsible — explains return metrics) ──────────────────── */
+.fin-footer-legend {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.fin-footer-legend-header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  padding: 6px 4px;
+  border-radius: 4px;
+  transition: background 0.12s;
+}
+.fin-footer-legend-header:hover { background: var(--surface2); }
+.fin-footer-legend-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.fin-footer-legend-chevron {
   font-size: 10px;
   color: var(--muted);
-  padding: 4px 0;
-  flex-wrap: wrap;
-  gap: 4px;
+  flex-shrink: 0;
+}
+.fin-footer-legend-body {
+  padding: 8px 4px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.fin-footer-legend-item {
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.fin-footer-legend-label {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.fin-footer-legend-text {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.fin-footer-legend-text em {
+  display: block;
+  margin-top: 3px;
+  color: var(--text);
   font-style: italic;
+  font-size: 10px;
+}
+.fin-footer-legend-meta {
+  font-size: 9.5px;
+  color: var(--muted);
+  font-style: italic;
+  border-top: 1px dashed var(--border);
+  padding-top: 6px;
+  line-height: 1.5;
 }
 
 /* ── Property selector (no model loaded) ────────────────────────────────────── */
@@ -428,7 +484,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 16px 20px;
+  padding: 8px 20px;
 }
 .fin-comparable-title {
   font-size: 11px;
@@ -448,12 +504,34 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 12px 14px;
+  transition: opacity 0.15s, background 0.15s;
+}
+.fin-comp-card-excluded {
+  opacity: 0.5;
+  background: var(--surface);
+}
+.fin-comp-card-excluded .fin-comp-value {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.fin-comp-include-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+  cursor: pointer;
+  user-select: none;
+}
+.fin-comp-include-checkbox {
+  margin: 0;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 .fin-comp-method {
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
-  margin-bottom: 3px;
+  margin-bottom: 0;
 }
 .fin-comp-detail {
   font-size: 10px;
@@ -587,7 +665,7 @@
   justify-content: space-between;
   cursor: pointer;
   user-select: none;
-  padding: 12px 20px;
+  padding: 6px 20px;
   border-radius: 8px;
   transition: background 0.12s;
 }
