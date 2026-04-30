@@ -5,7 +5,7 @@
   },
   "rewrites": [
     { "source": "/api/tiles/:path*", "destination": "/api/tiles" },
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/(.*)", "destination": "/$1" }
+    { "source": "/api/(.*)",         "destination": "/api/$1" },
+    { "source": "/((?!api/).*)",     "destination": "/index.html" }
   ]
 }
