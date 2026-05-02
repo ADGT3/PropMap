@@ -385,6 +385,59 @@ const OVERLAYS = [
       layers: "show:1"
     }
   },
+  {
+    // Ground Surface Elevation — Geoscience Australia 1-second SRTM-derived DEM
+    // Coloured DEM (greens to browns by height) — same data as Digital Atlas of Australia "Ground Surface Elevation"
+    // Source: https://services.ga.gov.au/gis/rest/services/DEM_SRTM_1Second_2024/MapServer
+    id: "ga-ground-surface-elevation",
+    label: "Ground Surface Elevation (DEM)",
+    type: "elevation",
+    group: "environmental",
+    zone: "all",
+    enabled: false,
+    opacity: 0.6,
+    bounds: null,
+    b64: null,
+    wms: {
+      url: "https://services.ga.gov.au/gis/rest/services/DEM_SRTM_1Second_2024/MapServer/export",
+      layers: "show:3"
+    }
+  },
+  {
+    // Existing Rail Network — Geoscience Australia Foundation Rail Infrastructure (Railway Lines)
+    // National rail line dataset: railways, sidings, tramlines, light rail
+    // Source: https://services.ga.gov.au/gis/rest/services/Foundation_Rail_Infrastructure/MapServer/1
+    id: "ga-rail-lines",
+    label: "Existing Rail Network (GA)",
+    type: "rail",
+    group: "transport",
+    zone: "all",
+    enabled: false,
+    opacity: 0.85,
+    bounds: null,
+    b64: null,
+    wms: {
+      url: "https://services.ga.gov.au/gis/rest/services/Foundation_Rail_Infrastructure/MapServer/export",
+      layers: "show:1"
+    }
+  },
+  {
+    // Railway Stations — Geoscience Australia Foundation Rail Infrastructure (Stations as points)
+    // Source: https://services.ga.gov.au/gis/rest/services/Foundation_Rail_Infrastructure/MapServer/0
+    id: "ga-rail-stations",
+    label: "Railway Stations (GA)",
+    type: "rail",
+    group: "transport",
+    zone: "all",
+    enabled: false,
+    opacity: 0.9,
+    bounds: null,
+    b64: null,
+    wms: {
+      url: "https://services.ga.gov.au/gis/rest/services/Foundation_Rail_Infrastructure/MapServer/export",
+      layers: "show:0"
+    }
+  },
 
   // ── SEPP (Precincts—Western Parkland City) 2021 ──────────────────────────────
   {
@@ -596,6 +649,8 @@ const OVERLAY_TYPE_META = {
   'future-roads':        { label: "Future Roads",       color: "#c0392b" },
   'transport-corridors': { label: "Transport Corridor", color: "#922b21" },
   'rail-corridors':      { label: "Rail Corridor",      color: "#6c3483" },
+  'rail':                { label: "Rail Network",       color: "#5b2c6f" },
+  'elevation':           { label: "Elevation",          color: "#7e6b3a" },
   electricity: { label: "Electricity",    color: "#e67e22" },
   wastewater:  { label: "Wastewater",    color: "#2980b9" },
   potable:    { label: "Potable Water", color: "#27ae60" },
