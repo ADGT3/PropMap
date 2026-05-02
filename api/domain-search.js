@@ -10,7 +10,12 @@
  *
  * Environment variable required (set in Vercel dashboard):
  *   DOMAIN_API_KEY=your_key_here
+ *
+ * Each call is logged to api_usage_log (api_name='domain') for the
+ * System Settings → API Dashboard view.
  */
+
+import { logApiCall } from './usage.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -46,6 +51,13 @@ export default async function handler(req, res) {
 
     const data = await domainRes.json();
 
+    // Log every call (success or failure) for the API dashboard
+    await logApiCall({
+      api_name: 'domain',
+      status_code: domainRes.status,
+      metadata: domainRes.ok ? null : { detail: typeof data === 'object' ? data : { raw: String(data).slice(0, 500) } },
+    });
+
     if (!domainRes.ok) {
       console.error('[domain-search] Domain API error:', domainRes.status, JSON.stringify(data));
       return res.status(domainRes.status).json({
@@ -59,6 +71,7 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error('[domain-search] Fetch failed:', err);
+    await logApiCall({ api_name: 'domain', status_code: 0, metadata: { error: err.message } });
     return res.status(500).json({ error: 'Failed to reach Domain API', detail: err.message });
   }
 };
