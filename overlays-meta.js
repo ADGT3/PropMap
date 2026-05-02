@@ -386,46 +386,31 @@ const OVERLAYS = [
     }
   },
   {
-    // Ground Surface Elevation — Geoscience Australia 1-second SRTM-derived DEM
-    // Coloured DEM (greens to browns by height) — same data as Digital Atlas of Australia "Ground Surface Elevation"
-    // Source: https://services.ga.gov.au/gis/rest/services/DEM_SRTM_1Second_2024/MapServer
-    id: "ga-ground-surface-elevation",
-    label: "Ground Surface Elevation (DEM)",
+    // NSW Topographic Map — DCS Spatial Services (1:25k / 1:50k / 1:100k series)
+    // Official NSW topo with contour lines, spot heights, terrain shading, transport, hydro.
+    // Far more granular than the 30m SRTM DEM. Tiled cache, fast.
+    // Source: https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Topo_Map/MapServer
+    id: "nsw-topo-map",
+    label: "NSW Topographic Map",
     type: "elevation",
     group: "environmental",
     zone: "all",
     enabled: false,
-    opacity: 0.6,
+    opacity: 0.75,
     bounds: null,
     b64: null,
     wms: {
-      url: "https://services.ga.gov.au/gis/rest/services/DEM_SRTM_1Second_2024/MapServer/export",
-      layers: "show:3"
+      url: "https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+      layers: null,
+      tiled: true
     }
   },
   {
-    // Existing Rail Network — Geoscience Australia Foundation Rail Infrastructure (Railway Lines)
-    // National rail line dataset: railways, sidings, tramlines, light rail
-    // Source: https://services.ga.gov.au/gis/rest/services/Foundation_Rail_Infrastructure/MapServer/1
-    id: "ga-rail-lines",
-    label: "Existing Rail Network (GA)",
-    type: "rail",
-    group: "transport",
-    zone: "all",
-    enabled: false,
-    opacity: 0.85,
-    bounds: null,
-    b64: null,
-    wms: {
-      url: "https://services.ga.gov.au/gis/rest/services/Foundation_Rail_Infrastructure/MapServer/export",
-      layers: "show:1"
-    }
-  },
-  {
-    // Railway Stations — Geoscience Australia Foundation Rail Infrastructure (Stations as points)
-    // Source: https://services.ga.gov.au/gis/rest/services/Foundation_Rail_Infrastructure/MapServer/0
-    id: "ga-rail-stations",
-    label: "Railway Stations (GA)",
+    // Existing Rail Network & Stations — Geoscience Australia Foundation Rail Infrastructure
+    // Combined layer: Railway_Lines (1) + Railway_Stations (0) rendered together
+    // Source: https://services.ga.gov.au/gis/rest/services/Foundation_Rail_Infrastructure/MapServer
+    id: "ga-rail-network",
+    label: "Existing Rail Network & Stations",
     type: "rail",
     group: "transport",
     zone: "all",
@@ -435,7 +420,7 @@ const OVERLAYS = [
     b64: null,
     wms: {
       url: "https://services.ga.gov.au/gis/rest/services/Foundation_Rail_Infrastructure/MapServer/export",
-      layers: "show:0"
+      layers: "show:0,1"
     }
   },
 
@@ -650,7 +635,7 @@ const OVERLAY_TYPE_META = {
   'transport-corridors': { label: "Transport Corridor", color: "#922b21" },
   'rail-corridors':      { label: "Rail Corridor",      color: "#6c3483" },
   'rail':                { label: "Rail Network",       color: "#5b2c6f" },
-  'elevation':           { label: "Elevation",          color: "#7e6b3a" },
+  'elevation':           { label: "Topographic",        color: "#7e6b3a" },
   electricity: { label: "Electricity",    color: "#e67e22" },
   wastewater:  { label: "Wastewater",    color: "#2980b9" },
   potable:    { label: "Potable Water", color: "#27ae60" },
