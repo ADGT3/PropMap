@@ -1489,14 +1489,50 @@ async function renderTiffToB64(file, buf, tags, width, height) {
 // ─── Overlay helpers ──────────────────────────────────────────────────────────
 
 function buildLeafletLayer(def) {
-  // Tiled cache layer — uses L.tileLayer (e.g. Biodiversity Values)
+  // Tiled cache layer — uses L.tileLayer (e.g. Biodiversity Values, TessaDEM elevation)
   if (def.wms && def.wms.tiled) {
-    return L.tileLayer(def.wms.url, {
+    const layer = L.tileLayer(def.wms.url, {
       opacity:     def.opacity ?? 0.65,
-      attribution: '© NSW Government',
+      attribution: def.id === 'tessadem-elevation' ? '© TessaDEM' : '© NSW Government',
       maxZoom:     19,
       tileSize:    256
     });
+
+    // V75.5 — TessaDEM quota detection.
+    // L.tileLayer's 'tileerror' fires on any non-200, but doesn't expose the status code.
+    // We do a lightweight HEAD probe on the failed tile to read the JSON error body and
+    // surface the quota_exhausted / auth states to the user.
+    if (def.id === 'tessadem-elevation') {
+      let quotaTripped = false;
+      layer.on('tileerror', (e) => {
+        if (quotaTripped) return;
+        const url = e.tile && e.tile.src;
+        if (!url) return;
+        // Re-fetch the URL to read the JSON error response
+        fetch(url, { credentials: 'same-origin' })
+          .then(async (r) => {
+            if (r.status === 402) {
+              quotaTripped = true;
+              if (typeof window.showElevationQuotaBanner === 'function') {
+                window.showElevationQuotaBanner();
+              }
+              // Auto-disable the layer client-side so it stops hammering the API
+              try {
+                map.removeLayer(layer);
+                // Sync overlay panel state if available
+                if (typeof window.setOverlayEnabled === 'function') {
+                  window.setOverlayEnabled('tessadem-elevation', false);
+                }
+              } catch {}
+            } else if (r.status === 401) {
+              console.error('[elevation] TessaDEM API key rejected');
+            }
+          })
+          .catch(() => { /* ignore — already a tile error */ });
+      });
+    }
+
+    return layer;
   }
 
   // ArcGIS MapServer dynamic layer (uses /export endpoint per tile bbox)

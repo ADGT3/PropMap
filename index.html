@@ -935,8 +935,7 @@
     <div class="kanban-board" id="kanbanBoard"></div>
   </div>
 
-  <!-- System Settings view — empty scaffold for V75.2. Populated in V75.5
-       with Role Management and other admin-only configuration sections. -->
+  <!-- System Settings view — V75.2 scaffold; API Dashboard sub-section added below. -->
   <div class="settings-view" id="settingsView">
     <div class="settings-header">
       <div class="settings-title">
@@ -946,13 +945,85 @@
       <button class="panel-close" id="settingsClose" title="Close settings">✕</button>
     </div>
     <div class="settings-body">
-      <div class="settings-placeholder">
-        <p>System Settings sections will appear here.</p>
-        <p class="settings-placeholder-sub">
-          Role Management and other admin configuration tools land in a future release.
-        </p>
+      <!-- Sub-menu navigation (admin-only sections) -->
+      <div class="settings-submenu" id="settingsSubmenu">
+        <button class="settings-submenu-item active" data-section="api-dashboard">API Dashboard</button>
+      </div>
+
+      <!-- API Dashboard section -->
+      <div class="settings-section" id="settingsSectionApiDashboard">
+        <div class="settings-section-header">
+          <h2>API Dashboard</h2>
+          <p class="settings-section-sub">External API call counts and quota for this deployment.</p>
+        </div>
+        <div class="api-dashboard-cards" id="apiDashboardCards">
+          <div class="api-card" id="apiCardTessadem" data-api="tessadem">
+            <div class="api-card-header">
+              <h3>TessaDEM Elevation</h3>
+              <span class="api-card-status" data-role="status">—</span>
+            </div>
+            <div class="api-card-stats">
+              <div class="api-stat">
+                <div class="api-stat-label">This month</div>
+                <div class="api-stat-value" data-role="this-month">—</div>
+              </div>
+              <div class="api-stat">
+                <div class="api-stat-label">Since last reset</div>
+                <div class="api-stat-value" data-role="since-reset">—</div>
+              </div>
+              <div class="api-stat">
+                <div class="api-stat-label">Balance remaining</div>
+                <div class="api-stat-value" data-role="balance">—</div>
+              </div>
+              <div class="api-stat">
+                <div class="api-stat-label">Last call</div>
+                <div class="api-stat-value api-stat-value-sm" data-role="last-call">—</div>
+              </div>
+            </div>
+            <div class="api-card-actions">
+              <a class="api-card-btn api-card-btn-primary" href="https://tessadem.com/dashboard/" target="_blank" rel="noopener">
+                Top up at TessaDEM →
+              </a>
+              <button class="api-card-btn" data-action="reset" data-api="tessadem">
+                Mark as Topped Up
+              </button>
+            </div>
+          </div>
+
+          <div class="api-card" id="apiCardDomain" data-api="domain">
+            <div class="api-card-header">
+              <h3>Domain API</h3>
+              <span class="api-card-status" data-role="status">—</span>
+            </div>
+            <div class="api-card-stats">
+              <div class="api-stat">
+                <div class="api-stat-label">This month</div>
+                <div class="api-stat-value" data-role="this-month">—</div>
+              </div>
+              <div class="api-stat">
+                <div class="api-stat-label">Since last reset</div>
+                <div class="api-stat-value" data-role="since-reset">—</div>
+              </div>
+              <div class="api-stat">
+                <div class="api-stat-label">Last call</div>
+                <div class="api-stat-value api-stat-value-sm" data-role="last-call">—</div>
+              </div>
+            </div>
+            <div class="api-card-actions">
+              <button class="api-card-btn" data-action="reset" data-api="domain">
+                Reset counter
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
+  </div>
+
+  <!-- Elevation quota banner (top of map). Hidden until elevation tile fetch returns 402. -->
+  <div class="elevation-quota-banner" id="elevationQuotaBanner" style="display:none;" role="alert">
+    <span id="elevationQuotaBannerText"></span>
+    <button class="elevation-quota-banner-close" id="elevationQuotaBannerClose" aria-label="Dismiss">✕</button>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -1074,12 +1145,139 @@
       const view = document.getElementById('settingsView');
       if (!view) return;
       view.classList.toggle('visible', _settingsVisible);
+      // V75.5 — load API dashboard when opened (admin-only API; non-admins get a 403)
+      if (_settingsVisible) {
+        if (window.currentUser && window.currentUser.isAdmin) {
+          loadApiDashboard();
+        }
+      }
     }
     window.toggleSettings = toggleSettings;
     document.getElementById('settingsClose')?.addEventListener('click', () => {
       if (window.Router) Router.navigate('/mapping');
       else toggleSettings(false);
     });
+
+    // ── API Dashboard (V75.5) ──────────────────────────────────────────────
+    function fmtCount(n) {
+      if (n == null) return '—';
+      return Number(n).toLocaleString('en-AU');
+    }
+    function fmtTime(iso) {
+      if (!iso) return 'Never';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '—';
+      const now = new Date();
+      const sameDay = d.toDateString() === now.toDateString();
+      const opts = sameDay
+        ? { hour: '2-digit', minute: '2-digit' }
+        : { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' };
+      return d.toLocaleString('en-AU', opts);
+    }
+
+    function paintApiCard(apiName, stats) {
+      const card = document.querySelector(`.api-card[data-api="${apiName}"]`);
+      if (!card || !stats) return;
+      card.querySelector('[data-role="this-month"]').textContent = fmtCount(stats.this_month);
+      card.querySelector('[data-role="since-reset"]').textContent = fmtCount(stats.since_reset);
+      const lastCall = card.querySelector('[data-role="last-call"]');
+      if (lastCall) lastCall.textContent = fmtTime(stats.last_call_at);
+      const balance = card.querySelector('[data-role="balance"]');
+      if (balance) {
+        balance.textContent = (stats.last_balance != null) ? fmtCount(stats.last_balance) : '—';
+        // visual cue when low (< 500)
+        balance.classList.toggle('api-stat-low', stats.last_balance != null && stats.last_balance < 500);
+      }
+      const status = card.querySelector('[data-role="status"]');
+      if (status) {
+        if (stats.last_balance != null && stats.last_balance <= 0) {
+          status.textContent = 'Quota exhausted';
+          status.className = 'api-card-status api-card-status-bad';
+        } else if (stats.last_balance != null && stats.last_balance < 500) {
+          status.textContent = 'Low quota';
+          status.className = 'api-card-status api-card-status-warn';
+        } else if (stats.last_call_at) {
+          status.textContent = 'Active';
+          status.className = 'api-card-status api-card-status-ok';
+        } else {
+          status.textContent = 'Idle';
+          status.className = 'api-card-status';
+        }
+      }
+    }
+
+    async function loadApiDashboard() {
+      try {
+        const r = await fetch('/api/usage', { credentials: 'include' });
+        if (!r.ok) {
+          console.warn('[apiDashboard] usage fetch failed:', r.status);
+          return;
+        }
+        const d = await r.json();
+        if (d.tessadem) paintApiCard('tessadem', d.tessadem);
+        if (d.domain)   paintApiCard('domain',   d.domain);
+      } catch (err) {
+        console.warn('[apiDashboard] error:', err);
+      }
+    }
+
+    // Reset button — POST /api/usage/reset with admin session
+    document.getElementById('apiDashboardCards')?.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-action="reset"]');
+      if (!btn) return;
+      const apiName = btn.getAttribute('data-api');
+      const label = (apiName === 'tessadem') ? 'Mark TessaDEM as Topped Up?' : 'Reset Domain counter?';
+      if (!confirm(label + ' This clears the "Since last reset" count.')) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/usage/reset', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_name: apiName }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          alert(`Reset failed: ${err.error || r.status}`);
+        } else {
+          loadApiDashboard();
+        }
+      } catch (err) {
+        alert('Reset failed: ' + err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // ── Elevation quota banner (V75.5) ─────────────────────────────────────
+    // Shown when /api/elevation-tile returns 402 (quota_exhausted).
+    // Admin: links to Settings dashboard. Non-admin: instructs to contact admin.
+    window.showElevationQuotaBanner = function () {
+      const banner = document.getElementById('elevationQuotaBanner');
+      const text = document.getElementById('elevationQuotaBannerText');
+      if (!banner || !text) return;
+      const isAdmin = !!(window.currentUser && window.currentUser.isAdmin);
+      if (isAdmin) {
+        text.innerHTML = 'Elevation quota exhausted &mdash; <a href="#/settings" class="elevation-quota-banner-link" id="elevQuotaLink">Settings</a>';
+      } else {
+        text.textContent = 'Elevation quota exhausted — please contact administrator';
+      }
+      banner.style.display = '';
+      // Wire link click for admin path
+      const link = document.getElementById('elevQuotaLink');
+      if (link) {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (window.Router) Router.navigate('/settings');
+          else toggleSettings(true);
+        }, { once: true });
+      }
+    };
+    window.hideElevationQuotaBanner = function () {
+      const banner = document.getElementById('elevationQuotaBanner');
+      if (banner) banner.style.display = 'none';
+    };
+    document.getElementById('elevationQuotaBannerClose')?.addEventListener('click', window.hideElevationQuotaBanner);
 
     // ── Close buttons on existing views now return to Mapping via router ───
     // (was: directly flipping the .visible class)

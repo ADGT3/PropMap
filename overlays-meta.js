@@ -386,21 +386,21 @@ const OVERLAYS = [
     }
   },
   {
-    // NSW Topographic Map — DCS Spatial Services (1:25k / 1:50k / 1:100k series)
-    // Official NSW topo with contour lines, spot heights, terrain shading, transport, hydro.
-    // Far more granular than the 30m SRTM DEM. Tiled cache, fast.
-    // Source: https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Topo_Map/MapServer
-    id: "nsw-topo-map",
-    label: "NSW Topographic Map",
+    // Elevation Gradient — TessaDEM via server-side tile proxy (api/elevation-tile.js)
+    // Coloured ramp (greens → yellow → brown → white at peaks), 30m resolution.
+    // Same data source as topographic-map.com. Tiles are CDN-cached for 30 days.
+    // Quota tracked in System Settings → API Dashboard. Layer auto-disables on 402.
+    id: "tessadem-elevation",
+    label: "Elevation Gradient",
     type: "elevation",
     group: "environmental",
     zone: "all",
     enabled: false,
-    opacity: 0.75,
+    opacity: 0.65,
     bounds: null,
     b64: null,
     wms: {
-      url: "https://maps.six.nsw.gov.au/arcgis/rest/services/public/NSW_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+      url: "/api/elevation-tile?z={z}&x={x}&y={y}",
       layers: null,
       tiled: true
     }
