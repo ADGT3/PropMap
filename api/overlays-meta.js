@@ -400,7 +400,7 @@ const OVERLAYS = [
     bounds: null,
     b64: null,
     wms: {
-      url: "/api/elevation-tile?z={z}&x={x}&y={y}",
+      url: "/api/elevation-tile?z={z}&x={x}&y={y}&min={min}&max={max}",
       layers: null,
       tiled: true
     }

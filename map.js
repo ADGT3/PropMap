@@ -1489,14 +1489,180 @@ async function renderTiffToB64(file, buf, tags, width, height) {
 // ─── Overlay helpers ──────────────────────────────────────────────────────────
 
 function buildLeafletLayer(def) {
-  // Tiled cache layer — uses L.tileLayer (e.g. Biodiversity Values)
+  // Tiled cache layer — uses L.tileLayer (e.g. Biodiversity Values, TessaDEM elevation)
   if (def.wms && def.wms.tiled) {
-    return L.tileLayer(def.wms.url, {
+    // V75.6 — TessaDEM elevation: viewport-adaptive ramp.
+    // We override getTileUrl below to inject the current viewport min/max, so the
+    // URL template need only contain {z}/{x}/{y} for Leaflet's standard substitution.
+    const isElevation = def.id === 'tessadem-elevation';
+    const layerOpts = {
       opacity:     def.opacity ?? 0.65,
-      attribution: '© NSW Government',
+      attribution: isElevation ? '© TessaDEM' : '© NSW Government',
       maxZoom:     19,
       tileSize:    256
-    });
+    };
+
+    // For elevation, we build a URL template with just z/x/y; min/max come from
+    // local state (rangeMin/rangeMax) and are appended in our getTileUrl override.
+    const baseUrl = isElevation
+      ? '/api/elevation-tile?z={z}&x={x}&y={y}'
+      : def.wms.url;
+
+    const layer = L.tileLayer(baseUrl, layerOpts);
+
+    if (isElevation) {
+      // Track whether we have a valid probe yet — we suppress tile loads until then.
+      let hasValidRange = false;
+      let rangeMin = 0;
+      let rangeMax = 1;
+      let probeInFlight = null;
+      let probeDebounce = null;
+      let quotaTripped = false;
+
+      // Override getTileUrl: until we have a valid probe, return a transparent
+      // placeholder so Leaflet doesn't fetch real tiles. After probe, append
+      // &min=&max= to each tile URL so the server can render at the current scale.
+      const baseGetTileUrl = layer.getTileUrl.bind(layer);
+      layer.getTileUrl = function (coords) {
+        if (!hasValidRange) {
+          // Transparent 1x1 GIF — fully cached by browser, never hits network twice.
+          return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        }
+        const baseUrl = baseGetTileUrl(coords);
+        return `${baseUrl}&min=${rangeMin}&max=${rangeMax}`;
+      };
+
+      /**
+       * Probe TessaDEM for current viewport min/max, then update the layer's
+       * range options and redraw tiles. Debounced so rapid pan/zoom doesn't burn quota.
+       */
+      function probeAndRefresh() {
+        if (quotaTripped) return;
+        if (!map.hasLayer(layer)) return;
+        if (probeDebounce) clearTimeout(probeDebounce);
+        probeDebounce = setTimeout(async () => {
+          if (!map.hasLayer(layer)) return;
+          const b = map.getBounds();
+          let south = b.getSouth();
+          let west  = b.getWest();
+          let north = b.getNorth();
+          let east  = b.getEast();
+          // Guard against invalid / degenerate bounds (uninitialised map, dateline wrap)
+          if (![south, west, north, east].every(Number.isFinite)) {
+            console.warn('[elevation probe] non-finite bounds; skipping', { south, west, north, east });
+            return;
+          }
+          if (south >= north || west >= east) {
+            console.warn('[elevation probe] degenerate bounds; skipping', { south, west, north, east });
+            return;
+          }
+          // Clamp to valid lat/lng (TessaDEM coverage is 80°S..84°N)
+          south = Math.max(-80, Math.min(80, south));
+          north = Math.max(-80, Math.min(84, north));
+          west  = Math.max(-180, Math.min(180, west));
+          east  = Math.max(-180, Math.min(180, east));
+          if (south >= north || west >= east) return;
+
+          const params = new URLSearchParams({
+            mode:  'probe',
+            south: south.toFixed(5),
+            west:  west.toFixed(5),
+            north: north.toFixed(5),
+            east:  east.toFixed(5),
+          });
+          const url = `/api/elevation-tile?${params.toString()}`;
+          try {
+            // Cancel any in-flight previous probe (we only care about latest viewport)
+            if (probeInFlight) probeInFlight.abort();
+            const ctrl = new AbortController();
+            probeInFlight = ctrl;
+            const r = await fetch(url, { signal: ctrl.signal, credentials: 'same-origin' });
+            probeInFlight = null;
+            if (!r.ok) {
+              if (r.status === 402) {
+                quotaTripped = true;
+                if (typeof window.showElevationQuotaBanner === 'function') {
+                  window.showElevationQuotaBanner();
+                }
+                try {
+                  map.removeLayer(layer);
+                  if (typeof window.setOverlayEnabled === 'function') {
+                    window.setOverlayEnabled('tessadem-elevation', false);
+                  }
+                } catch {}
+                return;
+              }
+              if (r.status === 401) {
+                console.error('[elevation] TessaDEM API key rejected');
+                return;
+              }
+              // Surface the server's reason so we can debug 400/500 responses
+              let detail = '';
+              try { detail = await r.text(); } catch {}
+              console.warn('[elevation probe] failed:', r.status, detail.slice(0, 300), 'url:', url);
+              return;
+            }
+            const data = await r.json();
+            if (typeof data.min !== 'number' || typeof data.max !== 'number') return;
+            // Round so tiny noise in min/max doesn't bust the cache key on every move.
+            // 1m granularity is fine — the ramp re-renders if range changes meaningfully.
+            const newMin = Math.floor(data.min);
+            const newMax = Math.ceil(data.max);
+            if (newMin === rangeMin && newMax === rangeMax && hasValidRange) {
+              return; // No change → no redraw needed
+            }
+            rangeMin = newMin;
+            rangeMax = newMax;
+            hasValidRange = true;
+            layer.redraw();
+          } catch (err) {
+            if (err.name !== 'AbortError') {
+              console.warn('[elevation probe] error:', err.message);
+            }
+          }
+        }, 400); // debounce 400ms
+      }
+
+      // Hook moveend — only listen while the layer is actually on the map.
+      // We attach on 'add' and detach on 'remove' so we don't probe when off.
+      layer.on('add', () => {
+        map.on('moveend', probeAndRefresh);
+        probeAndRefresh(); // initial fetch on enable
+      });
+      layer.on('remove', () => {
+        map.off('moveend', probeAndRefresh);
+        if (probeInFlight) { try { probeInFlight.abort(); } catch {} }
+        if (probeDebounce) { clearTimeout(probeDebounce); probeDebounce = null; }
+        // Reset range so re-enabling forces a fresh probe
+        hasValidRange = false;
+      });
+
+      // Tile-error fallback for the rare case where a tile 402's individually
+      // (e.g. quota crossed mid-viewport)
+      layer.on('tileerror', (e) => {
+        if (quotaTripped) return;
+        const url = e.tile && e.tile.src;
+        if (!url || url.startsWith('data:')) return;
+        fetch(url, { credentials: 'same-origin' })
+          .then((r) => {
+            if (r.status === 402) {
+              quotaTripped = true;
+              if (typeof window.showElevationQuotaBanner === 'function') {
+                window.showElevationQuotaBanner();
+              }
+              try {
+                map.removeLayer(layer);
+                if (typeof window.setOverlayEnabled === 'function') {
+                  window.setOverlayEnabled('tessadem-elevation', false);
+                }
+              } catch {}
+            }
+          })
+          .catch(() => {});
+      });
+    }
+
+    return layer;
   }
 
   // ArcGIS MapServer dynamic layer (uses /export endpoint per tile bbox)
@@ -3235,18 +3401,60 @@ function updateFilterVisibility() {
 // into the sidebar's own header (id #listingsPanelToggle). Wire both so
 // either element triggers the same show/hide logic. #listingsToggle stays
 // as a hidden stub to keep legacy references happy.
+//
+// V75.7: clicking the Listings button also toggles the Domain API's is_active
+// flag server-side (any signed-in user — special exception to admin-only rule).
+// The button shows green when Domain is active, grey when inactive.
 
-function _listingsToggleHandler() {
-  showListings = !showListings;
+async function _toggleDomainApiActive(newActive) {
+  try {
+    const r = await fetch('/api/usage/active', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_name: 'domain', is_active: newActive }),
+    });
+    if (!r.ok) {
+      console.warn('[listings] failed to toggle Domain API:', r.status);
+      return false;
+    }
+    const data = await r.json();
+    if (data.subscription) {
+      window._apiState = window._apiState || {};
+      window._apiState.domain = data.subscription;
+      if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
+    }
+    return true;
+  } catch (err) {
+    console.warn('[listings] toggle error:', err.message);
+    return false;
+  }
+}
+
+async function _listingsToggleHandler() {
+  // Determine new state from current Domain API state if available; fall back to
+  // the legacy showListings flag.
+  const apiState = (window._apiState && window._apiState.domain) || null;
+  const currentlyActive = apiState ? !!apiState.is_active : !!showListings;
+  const newActive = !currentlyActive;
+
+  // Persist to server first so we don't get out of sync. If the server fails,
+  // fall back to client-only behaviour for the current session.
+  await _toggleDomainApiActive(newActive);
+
+  showListings = newActive;
   const stub = document.getElementById('listingsToggle');
   const live = document.getElementById('listingsPanelToggle');
   if (stub) stub.classList.toggle('active', showListings);
   if (live) live.classList.toggle('active', showListings);
+
   Object.values(markers).forEach(m => {
     if (showListings) m.addTo(map); else map.removeLayer(m);
   });
   if (showListings) {
     renderListings();
+    // Trigger a fresh search now that API is back on
+    if (typeof debouncedDomainSearch === 'function') debouncedDomainSearch();
   } else {
     const list = document.getElementById('listingsList');
     if (list) list.innerHTML = '';
