@@ -3401,18 +3401,60 @@ function updateFilterVisibility() {
 // into the sidebar's own header (id #listingsPanelToggle). Wire both so
 // either element triggers the same show/hide logic. #listingsToggle stays
 // as a hidden stub to keep legacy references happy.
+//
+// V75.7: clicking the Listings button also toggles the Domain API's is_active
+// flag server-side (any signed-in user — special exception to admin-only rule).
+// The button shows green when Domain is active, grey when inactive.
 
-function _listingsToggleHandler() {
-  showListings = !showListings;
+async function _toggleDomainApiActive(newActive) {
+  try {
+    const r = await fetch('/api/usage/active', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_name: 'domain', is_active: newActive }),
+    });
+    if (!r.ok) {
+      console.warn('[listings] failed to toggle Domain API:', r.status);
+      return false;
+    }
+    const data = await r.json();
+    if (data.subscription) {
+      window._apiState = window._apiState || {};
+      window._apiState.domain = data.subscription;
+      if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
+    }
+    return true;
+  } catch (err) {
+    console.warn('[listings] toggle error:', err.message);
+    return false;
+  }
+}
+
+async function _listingsToggleHandler() {
+  // Determine new state from current Domain API state if available; fall back to
+  // the legacy showListings flag.
+  const apiState = (window._apiState && window._apiState.domain) || null;
+  const currentlyActive = apiState ? !!apiState.is_active : !!showListings;
+  const newActive = !currentlyActive;
+
+  // Persist to server first so we don't get out of sync. If the server fails,
+  // fall back to client-only behaviour for the current session.
+  await _toggleDomainApiActive(newActive);
+
+  showListings = newActive;
   const stub = document.getElementById('listingsToggle');
   const live = document.getElementById('listingsPanelToggle');
   if (stub) stub.classList.toggle('active', showListings);
   if (live) live.classList.toggle('active', showListings);
+
   Object.values(markers).forEach(m => {
     if (showListings) m.addTo(map); else map.removeLayer(m);
   });
   if (showListings) {
     renderListings();
+    // Trigger a fresh search now that API is back on
+    if (typeof debouncedDomainSearch === 'function') debouncedDomainSearch();
   } else {
     const list = document.getElementById('listingsList');
     if (list) list.innerHTML = '';

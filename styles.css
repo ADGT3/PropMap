@@ -3583,3 +3583,224 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 .elevation-quota-banner-close:hover {
   opacity: 1;
 }
+
+/* ─── V75.7 — API Dashboard subscription model ──────────────────────────────── */
+
+/* Active toggle (replaces status badge) */
+.api-active-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.api-active-toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+.api-active-toggle-track {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  background: var(--border);
+  border-radius: 999px;
+  transition: background 0.15s ease;
+}
+.api-active-toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+}
+.api-active-toggle input:checked + .api-active-toggle-track {
+  background: #16a34a;
+}
+.api-active-toggle input:checked + .api-active-toggle-track::after {
+  transform: translateX(16px);
+}
+.api-active-toggle input:disabled + .api-active-toggle-track {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.api-active-toggle-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Card visual when inactive */
+.api-card-inactive {
+  opacity: 0.7;
+}
+.api-card-inactive .api-stat-value {
+  color: var(--muted);
+}
+
+/* Subscription field rows (between header and stats) */
+.api-card-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  padding: 12px 14px;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.api-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.api-field-label {
+  color: var(--muted);
+  font-weight: 500;
+}
+.api-field-value {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Period sub-label (e.g. "(27 Apr → 27 May)") */
+.api-stat-period {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 4px;
+}
+
+/* Balance state — zero (red) */
+.api-stat-zero {
+  color: #DC2626;
+}
+
+/* ─── Edit subscription modal ──────────────────────────────────────────────── */
+.api-edit-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.api-edit-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+}
+.api-edit-modal-content {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 95%;
+  max-width: 460px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+  display: flex;
+  flex-direction: column;
+}
+.api-edit-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.api-edit-modal-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.api-edit-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.api-edit-modal-close:hover { color: var(--text); }
+.api-edit-modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.api-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.api-edit-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.api-edit-field input,
+.api-edit-field select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+.api-edit-field input:focus,
+.api-edit-field select:focus {
+  outline: 2px solid var(--accent, #4f46e5);
+  outline-offset: -1px;
+}
+.api-edit-help {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+}
+.api-edit-error {
+  font-size: 12px;
+  color: #DC2626;
+  margin: 0;
+}
+.api-edit-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+}
+
+/* ─── Listings button — Domain API state ───────────────────────────────────── */
+.sidebar-listings-toggle.api-inactive {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+}
+.sidebar-listings-toggle.api-inactive .dot {
+  background: #9ca3af;  /* grey when API off */
+}
+
+/* ─── Overlay row — disabled because API is off ────────────────────────────── */
+.overlay-row.overlay-row-api-disabled {
+  opacity: 0.5;
+  pointer-events: auto;
+}
+.overlay-row.overlay-row-api-disabled .overlay-label::after {
+  content: ' (API off)';
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+}

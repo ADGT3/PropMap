@@ -954,65 +954,136 @@
       <div class="settings-section" id="settingsSectionApiDashboard">
         <div class="settings-section-header">
           <h2>API Dashboard</h2>
-          <p class="settings-section-sub">External API call counts and quota for this deployment.</p>
+          <p class="settings-section-sub">External API subscriptions and usage. Edit fields, toggle active, and top up.</p>
         </div>
         <div class="api-dashboard-cards" id="apiDashboardCards">
+          <!-- TessaDEM card -->
           <div class="api-card" id="apiCardTessadem" data-api="tessadem">
             <div class="api-card-header">
               <h3>TessaDEM Elevation</h3>
-              <span class="api-card-status" data-role="status">—</span>
+              <label class="api-active-toggle">
+                <input type="checkbox" data-role="active-toggle" />
+                <span class="api-active-toggle-track"></span>
+                <span class="api-active-toggle-label" data-role="active-label">Active</span>
+              </label>
+            </div>
+            <div class="api-card-fields">
+              <div class="api-field">
+                <span class="api-field-label">Type</span>
+                <span class="api-field-value" data-role="sub-type">—</span>
+              </div>
+              <div class="api-field">
+                <span class="api-field-label">Subscription Amount</span>
+                <span class="api-field-value" data-role="sub-amount">—</span>
+              </div>
+              <div class="api-field">
+                <span class="api-field-label">Effective Start Date</span>
+                <span class="api-field-value" data-role="effective-start">—</span>
+              </div>
             </div>
             <div class="api-card-stats">
               <div class="api-stat">
-                <div class="api-stat-label">This month</div>
-                <div class="api-stat-value" data-role="this-month">—</div>
-              </div>
-              <div class="api-stat">
-                <div class="api-stat-label">Since last reset</div>
-                <div class="api-stat-value" data-role="since-reset">—</div>
-              </div>
-              <div class="api-stat">
-                <div class="api-stat-label">Balance remaining</div>
+                <div class="api-stat-label">Balance Remaining</div>
                 <div class="api-stat-value" data-role="balance">—</div>
               </div>
               <div class="api-stat">
-                <div class="api-stat-label">Last call</div>
+                <div class="api-stat-label">This Period <span class="api-stat-period" data-role="period-label"></span></div>
+                <div class="api-stat-value" data-role="period-calls">—</div>
+              </div>
+              <div class="api-stat">
+                <div class="api-stat-label">Last Call</div>
                 <div class="api-stat-value api-stat-value-sm" data-role="last-call">—</div>
               </div>
             </div>
             <div class="api-card-actions">
-              <a class="api-card-btn api-card-btn-primary" href="https://tessadem.com/dashboard/" target="_blank" rel="noopener">
+              <button class="api-card-btn api-card-btn-primary" data-action="edit" data-api="tessadem">
+                Edit subscription
+              </button>
+              <a class="api-card-btn" href="https://tessadem.com/dashboard/" target="_blank" rel="noopener">
                 Top up at TessaDEM →
               </a>
-              <button class="api-card-btn" data-action="reset" data-api="tessadem">
-                Mark as Topped Up
-              </button>
             </div>
           </div>
 
+          <!-- Domain card -->
           <div class="api-card" id="apiCardDomain" data-api="domain">
             <div class="api-card-header">
               <h3>Domain API</h3>
-              <span class="api-card-status" data-role="status">—</span>
+              <label class="api-active-toggle">
+                <input type="checkbox" data-role="active-toggle" />
+                <span class="api-active-toggle-track"></span>
+                <span class="api-active-toggle-label" data-role="active-label">Active</span>
+              </label>
+            </div>
+            <div class="api-card-fields">
+              <div class="api-field">
+                <span class="api-field-label">Type</span>
+                <span class="api-field-value" data-role="sub-type">—</span>
+              </div>
+              <div class="api-field">
+                <span class="api-field-label">Subscription Amount</span>
+                <span class="api-field-value" data-role="sub-amount">—</span>
+              </div>
+              <div class="api-field">
+                <span class="api-field-label">Effective Start Date</span>
+                <span class="api-field-value" data-role="effective-start">—</span>
+              </div>
             </div>
             <div class="api-card-stats">
               <div class="api-stat">
-                <div class="api-stat-label">This month</div>
-                <div class="api-stat-value" data-role="this-month">—</div>
+                <div class="api-stat-label">Balance Remaining</div>
+                <div class="api-stat-value" data-role="balance">—</div>
               </div>
               <div class="api-stat">
-                <div class="api-stat-label">Since last reset</div>
-                <div class="api-stat-value" data-role="since-reset">—</div>
+                <div class="api-stat-label">This Period <span class="api-stat-period" data-role="period-label"></span></div>
+                <div class="api-stat-value" data-role="period-calls">—</div>
               </div>
               <div class="api-stat">
-                <div class="api-stat-label">Last call</div>
+                <div class="api-stat-label">Last Call</div>
                 <div class="api-stat-value api-stat-value-sm" data-role="last-call">—</div>
               </div>
             </div>
             <div class="api-card-actions">
-              <button class="api-card-btn" data-action="reset" data-api="domain">
-                Reset counter
+              <button class="api-card-btn api-card-btn-primary" data-action="edit" data-api="domain">
+                Edit subscription
               </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Edit subscription modal -->
+        <div class="api-edit-modal" id="apiEditModal" style="display:none;">
+          <div class="api-edit-modal-backdrop" data-role="modal-close"></div>
+          <div class="api-edit-modal-content">
+            <div class="api-edit-modal-header">
+              <h3 id="apiEditModalTitle">Edit Subscription</h3>
+              <button class="api-edit-modal-close" data-role="modal-close" aria-label="Close">✕</button>
+            </div>
+            <div class="api-edit-modal-body">
+              <input type="hidden" id="apiEditApiName" />
+              <div class="api-edit-field">
+                <label for="apiEditSubType">Type</label>
+                <select id="apiEditSubType">
+                  <option value="monthly">Monthly</option>
+                  <option value="total">Total</option>
+                </select>
+              </div>
+              <div class="api-edit-field">
+                <label for="apiEditSubAmount">Subscription Amount (calls)</label>
+                <input type="number" id="apiEditSubAmount" min="0" step="1" />
+              </div>
+              <div class="api-edit-field">
+                <label for="apiEditEffectiveStart">Effective Start Date</label>
+                <input type="date" id="apiEditEffectiveStart" />
+              </div>
+              <p class="api-edit-help">
+                Saving will re-baseline calculations. For top-up, set the new amount and effective start date.
+              </p>
+              <p class="api-edit-error" id="apiEditError" style="display:none;"></p>
+            </div>
+            <div class="api-edit-modal-footer">
+              <button class="api-card-btn" data-role="modal-close">Cancel</button>
+              <button class="api-card-btn api-card-btn-primary" id="apiEditSave">Save</button>
             </div>
           </div>
         </div>
@@ -1145,10 +1216,18 @@
       const view = document.getElementById('settingsView');
       if (!view) return;
       view.classList.toggle('visible', _settingsVisible);
-      // V75.5 — load API dashboard when opened (admin-only API; non-admins get a 403)
+      // V75.7 — load dashboard for any signed-in user (server gates writes only)
       if (_settingsVisible) {
-        if (window.currentUser && window.currentUser.isAdmin) {
+        if (window.currentUser) {
           loadApiDashboard();
+          // Hide admin-only controls for non-admins
+          const isAdmin = !!window.currentUser.isAdmin;
+          document.querySelectorAll('#apiDashboardCards [data-action="edit"]').forEach(btn => {
+            btn.style.display = isAdmin ? '' : 'none';
+          });
+          // TessaDEM toggle is admin-only; Domain toggle is allowed for all
+          const tessToggle = document.querySelector('#apiCardTessadem [data-role="active-toggle"]');
+          if (tessToggle) tessToggle.disabled = !isAdmin;
         }
       }
     }
@@ -1158,7 +1237,7 @@
       else toggleSettings(false);
     });
 
-    // ── API Dashboard (V75.5) ──────────────────────────────────────────────
+    // ── API Dashboard (V75.7) ──────────────────────────────────────────────
     function fmtCount(n) {
       if (n == null) return '—';
       return Number(n).toLocaleString('en-AU');
@@ -1174,35 +1253,63 @@
         : { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' };
       return d.toLocaleString('en-AU', opts);
     }
+    function fmtDate(isoOrDate) {
+      if (!isoOrDate) return '—';
+      const d = new Date(isoOrDate);
+      if (isNaN(d.getTime())) return '—';
+      return d.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+    function fmtDateInput(isoOrDate) {
+      if (!isoOrDate) return '';
+      const d = new Date(isoOrDate);
+      if (isNaN(d.getTime())) return '';
+      // YYYY-MM-DD
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
 
-    function paintApiCard(apiName, stats) {
+    // Cached last-known state, used by listings button + overlay greying
+    window._apiState = window._apiState || { tessadem: null, domain: null };
+
+    function paintApiCard(apiName, sub) {
       const card = document.querySelector(`.api-card[data-api="${apiName}"]`);
-      if (!card || !stats) return;
-      card.querySelector('[data-role="this-month"]').textContent = fmtCount(stats.this_month);
-      card.querySelector('[data-role="since-reset"]').textContent = fmtCount(stats.since_reset);
+      if (!card || !sub) return;
+
+      // Active toggle state
+      const toggle = card.querySelector('[data-role="active-toggle"]');
+      const toggleLabel = card.querySelector('[data-role="active-label"]');
+      if (toggle) toggle.checked = !!sub.is_active;
+      if (toggleLabel) toggleLabel.textContent = sub.is_active ? 'Active' : 'Inactive';
+      card.classList.toggle('api-card-inactive', !sub.is_active);
+
+      // Subscription fields
+      card.querySelector('[data-role="sub-type"]').textContent =
+        sub.sub_type === 'monthly' ? 'Monthly' : 'Total';
+      card.querySelector('[data-role="sub-amount"]').textContent = fmtCount(sub.sub_amount);
+      card.querySelector('[data-role="effective-start"]').textContent = fmtDate(sub.effective_start_date);
+
+      // Stats
+      card.querySelector('[data-role="balance"]').textContent = fmtCount(sub.balance_remaining);
+      card.querySelector('[data-role="period-calls"]').textContent = fmtCount(sub.period_calls);
       const lastCall = card.querySelector('[data-role="last-call"]');
-      if (lastCall) lastCall.textContent = fmtTime(stats.last_call_at);
+      if (lastCall) lastCall.textContent = fmtTime(sub.last_call_at);
+
+      // Period label e.g. "(27 Apr → 27 May)" for monthly, "(since 3 May 2026)" for total
+      const periodLabel = card.querySelector('[data-role="period-label"]');
+      if (periodLabel) {
+        if (sub.sub_type === 'monthly' && sub.period_start && sub.period_end) {
+          periodLabel.textContent = `(${fmtDate(sub.period_start)} → ${fmtDate(sub.period_end)})`;
+        } else if (sub.sub_type === 'total' && sub.period_start) {
+          periodLabel.textContent = `(since ${fmtDate(sub.period_start)})`;
+        } else {
+          periodLabel.textContent = '';
+        }
+      }
+
+      // Highlight low balance
       const balance = card.querySelector('[data-role="balance"]');
       if (balance) {
-        balance.textContent = (stats.last_balance != null) ? fmtCount(stats.last_balance) : '—';
-        // visual cue when low (< 500)
-        balance.classList.toggle('api-stat-low', stats.last_balance != null && stats.last_balance < 500);
-      }
-      const status = card.querySelector('[data-role="status"]');
-      if (status) {
-        if (stats.last_balance != null && stats.last_balance <= 0) {
-          status.textContent = 'Quota exhausted';
-          status.className = 'api-card-status api-card-status-bad';
-        } else if (stats.last_balance != null && stats.last_balance < 500) {
-          status.textContent = 'Low quota';
-          status.className = 'api-card-status api-card-status-warn';
-        } else if (stats.last_call_at) {
-          status.textContent = 'Active';
-          status.className = 'api-card-status api-card-status-ok';
-        } else {
-          status.textContent = 'Idle';
-          status.className = 'api-card-status';
-        }
+        balance.classList.toggle('api-stat-low', sub.balance_remaining > 0 && sub.balance_remaining < 500);
+        balance.classList.toggle('api-stat-zero', sub.balance_remaining <= 0);
       }
     }
 
@@ -1214,40 +1321,176 @@
           return;
         }
         const d = await r.json();
-        if (d.tessadem) paintApiCard('tessadem', d.tessadem);
-        if (d.domain)   paintApiCard('domain',   d.domain);
+        if (d.tessadem) { window._apiState.tessadem = d.tessadem; paintApiCard('tessadem', d.tessadem); }
+        if (d.domain)   { window._apiState.domain   = d.domain;   paintApiCard('domain',   d.domain); }
+        // Sync any UI elements that depend on API state
+        if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
       } catch (err) {
         console.warn('[apiDashboard] error:', err);
       }
     }
+    window.loadApiDashboard = loadApiDashboard;
 
-    // Reset button — POST /api/usage/reset with admin session
-    document.getElementById('apiDashboardCards')?.addEventListener('click', async (e) => {
-      const btn = e.target.closest('button[data-action="reset"]');
-      if (!btn) return;
-      const apiName = btn.getAttribute('data-api');
-      const label = (apiName === 'tessadem') ? 'Mark TessaDEM as Topped Up?' : 'Reset Domain counter?';
-      if (!confirm(label + ' This clears the "Since last reset" count.')) return;
-      btn.disabled = true;
+    // Active toggle — admin-only writes (server enforces)
+    document.getElementById('apiDashboardCards')?.addEventListener('change', async (e) => {
+      const cb = e.target.closest('input[data-role="active-toggle"]');
+      if (!cb) return;
+      const card = cb.closest('.api-card');
+      const apiName = card?.getAttribute('data-api');
+      if (!apiName) return;
+      const newActive = !!cb.checked;
       try {
-        const r = await fetch('/api/usage/reset', {
+        const r = await fetch('/api/usage/active', {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ api_name: apiName }),
+          body: JSON.stringify({ api_name: apiName, is_active: newActive }),
         });
         if (!r.ok) {
           const err = await r.json().catch(() => ({}));
-          alert(`Reset failed: ${err.error || r.status}`);
-        } else {
-          loadApiDashboard();
+          alert(`Failed to toggle: ${err.error || r.status}`);
+          cb.checked = !newActive; // revert
+          return;
+        }
+        const data = await r.json();
+        if (data.subscription) {
+          window._apiState[apiName] = data.subscription;
+          paintApiCard(apiName, data.subscription);
+          if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
         }
       } catch (err) {
-        alert('Reset failed: ' + err.message);
-      } finally {
-        btn.disabled = false;
+        alert('Toggle failed: ' + err.message);
+        cb.checked = !newActive;
       }
     });
+
+    // Edit subscription modal — open
+    document.getElementById('apiDashboardCards')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action="edit"]');
+      if (!btn) return;
+      const apiName = btn.getAttribute('data-api');
+      const sub = window._apiState[apiName];
+      if (!sub) return;
+      document.getElementById('apiEditApiName').value = apiName;
+      document.getElementById('apiEditModalTitle').textContent =
+        `Edit ${apiName === 'tessadem' ? 'TessaDEM' : 'Domain'} Subscription`;
+      document.getElementById('apiEditSubType').value = sub.sub_type;
+      document.getElementById('apiEditSubAmount').value = sub.sub_amount;
+      document.getElementById('apiEditEffectiveStart').value = fmtDateInput(sub.effective_start_date);
+      document.getElementById('apiEditError').style.display = 'none';
+      document.getElementById('apiEditError').textContent = '';
+      document.getElementById('apiEditModal').style.display = '';
+    });
+
+    // Edit modal — close
+    document.getElementById('apiEditModal')?.addEventListener('click', (e) => {
+      if (e.target.matches('[data-role="modal-close"]')) {
+        document.getElementById('apiEditModal').style.display = 'none';
+      }
+    });
+
+    // Edit modal — save
+    document.getElementById('apiEditSave')?.addEventListener('click', async () => {
+      const apiName = document.getElementById('apiEditApiName').value;
+      const sub_type = document.getElementById('apiEditSubType').value;
+      const sub_amount = parseInt(document.getElementById('apiEditSubAmount').value, 10);
+      const effective_start_date = document.getElementById('apiEditEffectiveStart').value;
+      const errEl = document.getElementById('apiEditError');
+      errEl.style.display = 'none';
+
+      if (!Number.isFinite(sub_amount) || sub_amount < 0) {
+        errEl.textContent = 'Subscription Amount must be a non-negative number.';
+        errEl.style.display = '';
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(effective_start_date)) {
+        errEl.textContent = 'Effective Start Date is required (YYYY-MM-DD).';
+        errEl.style.display = '';
+        return;
+      }
+
+      try {
+        const r = await fetch('/api/usage', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_name: apiName, sub_type, sub_amount, effective_start_date }),
+        });
+        const data = await r.json();
+        if (!r.ok) {
+          errEl.textContent = `Save failed: ${data.error || r.status}`;
+          errEl.style.display = '';
+          return;
+        }
+        if (data.subscription) {
+          window._apiState[apiName] = data.subscription;
+          paintApiCard(apiName, data.subscription);
+          if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
+        }
+        document.getElementById('apiEditModal').style.display = 'none';
+      } catch (err) {
+        errEl.textContent = 'Save failed: ' + err.message;
+        errEl.style.display = '';
+      }
+    });
+
+    // ── Cross-cutting UI sync (V75.7) ──────────────────────────────────────
+    // Called whenever API state changes. Updates:
+    //   - Listings button (green when Domain active, grey when not)
+    //   - Elevation overlay row (greyed/disabled when TessaDEM inactive)
+    window.syncApiDependentUi = function () {
+      const t = window._apiState.tessadem;
+      const d = window._apiState.domain;
+
+      // Listings button: green (.active) when Domain active, grey when inactive.
+      // The .active class drives the existing green styling. When Domain is off,
+      // we strip .active and add .api-inactive (which paints grey).
+      const listingsBtn = document.getElementById('listingsPanelToggle');
+      if (listingsBtn && d) {
+        listingsBtn.classList.toggle('active', !!d.is_active);
+        listingsBtn.classList.toggle('api-inactive', !d.is_active);
+        listingsBtn.title = d.is_active
+          ? 'Show/hide listings on map (Domain API ON)'
+          : 'Domain API is OFF — click to enable';
+        // Keep showListings state in sync with API state on first load
+        if (typeof window.showListings !== 'undefined') {
+          window.showListings = !!d.is_active;
+        }
+      }
+
+      // Elevation overlay: grey out when TessaDEM inactive
+      const elevRow = document.querySelector('#ov-tessadem-elevation');
+      const row = elevRow?.closest('.overlay-row');
+      if (row && t) {
+        const inactive = !t.is_active;
+        row.classList.toggle('overlay-row-api-disabled', inactive);
+        if (elevRow) {
+          if (inactive) {
+            elevRow.disabled = true;
+            elevRow.title = 'TessaDEM API is OFF — enable in Settings → API Dashboard';
+            // Force-uncheck if currently on
+            if (elevRow.checked) {
+              elevRow.checked = false;
+              elevRow.dispatchEvent(new Event('change'));
+            }
+          } else {
+            elevRow.disabled = false;
+            elevRow.title = '';
+          }
+        }
+      }
+    };
+
+    // Initial sync on page load (covers state before settings is opened)
+    fetch('/api/usage', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return;
+        if (d.tessadem) window._apiState.tessadem = d.tessadem;
+        if (d.domain)   window._apiState.domain   = d.domain;
+        if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
+      })
+      .catch(() => {});
 
     // ── Elevation quota banner (V75.5) ─────────────────────────────────────
     // Shown when /api/elevation-tile returns 402 (quota_exhausted).
