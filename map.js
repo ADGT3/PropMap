@@ -1491,44 +1491,149 @@ async function renderTiffToB64(file, buf, tags, width, height) {
 function buildLeafletLayer(def) {
   // Tiled cache layer — uses L.tileLayer (e.g. Biodiversity Values, TessaDEM elevation)
   if (def.wms && def.wms.tiled) {
-    const layer = L.tileLayer(def.wms.url, {
+    // V75.6 — TessaDEM elevation: viewport-adaptive ramp.
+    // The URL template carries {min}/{max} placeholders that Leaflet substitutes
+    // from layer options. We update those options after each viewport probe and
+    // call layer.redraw() to fetch new tiles for the new range.
+    const isElevation = def.id === 'tessadem-elevation';
+    const layerOpts = {
       opacity:     def.opacity ?? 0.65,
-      attribution: def.id === 'tessadem-elevation' ? '© TessaDEM' : '© NSW Government',
+      attribution: isElevation ? '© TessaDEM' : '© NSW Government',
       maxZoom:     19,
       tileSize:    256
-    });
+    };
+    if (isElevation) {
+      // Initial placeholders — tiles won't actually fetch until we have a valid
+      // probe result and call setRangeAndRedraw(). We start with sentinel values
+      // so the URL template substitutes cleanly.
+      layerOpts.min = 0;
+      layerOpts.max = 1;
+    }
 
-    // V75.5 — TessaDEM quota detection.
-    // L.tileLayer's 'tileerror' fires on any non-200, but doesn't expose the status code.
-    // We do a lightweight HEAD probe on the failed tile to read the JSON error body and
-    // surface the quota_exhausted / auth states to the user.
-    if (def.id === 'tessadem-elevation') {
+    const layer = L.tileLayer(def.wms.url, layerOpts);
+
+    if (isElevation) {
+      // Track whether we have a valid probe yet — we suppress tile loads until then.
+      let hasValidRange = false;
+      let probeInFlight = null;
+      let probeDebounce = null;
       let quotaTripped = false;
+
+      // Override getTileUrl to skip rendering entirely until first probe completes.
+      // (Returning '' makes Leaflet skip the tile, no error.)
+      const baseGetTileUrl = layer.getTileUrl.bind(layer);
+      layer.getTileUrl = function (coords) {
+        if (!hasValidRange) {
+          // Return a transparent 1x1 PNG data URL so Leaflet doesn't 404
+          return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        }
+        return baseGetTileUrl(coords);
+      };
+
+      /**
+       * Probe TessaDEM for current viewport min/max, then update the layer's
+       * range options and redraw tiles. Debounced so rapid pan/zoom doesn't burn quota.
+       */
+      function probeAndRefresh() {
+        if (quotaTripped) return;
+        if (!map.hasLayer(layer)) return;
+        if (probeDebounce) clearTimeout(probeDebounce);
+        probeDebounce = setTimeout(async () => {
+          if (!map.hasLayer(layer)) return;
+          const b = map.getBounds();
+          const params = new URLSearchParams({
+            mode:  'probe',
+            south: b.getSouth().toFixed(5),
+            west:  b.getWest().toFixed(5),
+            north: b.getNorth().toFixed(5),
+            east:  b.getEast().toFixed(5),
+          });
+          const url = `/api/elevation-tile?${params.toString()}`;
+          try {
+            // Cancel any in-flight previous probe (we only care about latest viewport)
+            if (probeInFlight) probeInFlight.abort();
+            const ctrl = new AbortController();
+            probeInFlight = ctrl;
+            const r = await fetch(url, { signal: ctrl.signal, credentials: 'same-origin' });
+            probeInFlight = null;
+            if (!r.ok) {
+              if (r.status === 402) {
+                quotaTripped = true;
+                if (typeof window.showElevationQuotaBanner === 'function') {
+                  window.showElevationQuotaBanner();
+                }
+                try {
+                  map.removeLayer(layer);
+                  if (typeof window.setOverlayEnabled === 'function') {
+                    window.setOverlayEnabled('tessadem-elevation', false);
+                  }
+                } catch {}
+                return;
+              }
+              if (r.status === 401) {
+                console.error('[elevation] TessaDEM API key rejected');
+                return;
+              }
+              console.warn('[elevation probe] failed:', r.status);
+              return;
+            }
+            const data = await r.json();
+            if (typeof data.min !== 'number' || typeof data.max !== 'number') return;
+            // Round so tiny noise in min/max doesn't bust the cache key on every move.
+            // 1m granularity is fine — the ramp re-renders if range changes meaningfully.
+            const newMin = Math.floor(data.min);
+            const newMax = Math.ceil(data.max);
+            if (newMin === layer.options.min && newMax === layer.options.max && hasValidRange) {
+              return; // No change → no redraw needed
+            }
+            layer.options.min = newMin;
+            layer.options.max = newMax;
+            hasValidRange = true;
+            layer.redraw();
+          } catch (err) {
+            if (err.name !== 'AbortError') {
+              console.warn('[elevation probe] error:', err.message);
+            }
+          }
+        }, 400); // debounce 400ms
+      }
+
+      // Hook moveend — only listen while the layer is actually on the map.
+      // We attach on 'add' and detach on 'remove' so we don't probe when off.
+      layer.on('add', () => {
+        map.on('moveend', probeAndRefresh);
+        probeAndRefresh(); // initial fetch on enable
+      });
+      layer.on('remove', () => {
+        map.off('moveend', probeAndRefresh);
+        if (probeInFlight) { try { probeInFlight.abort(); } catch {} }
+        if (probeDebounce) { clearTimeout(probeDebounce); probeDebounce = null; }
+        // Reset range so re-enabling forces a fresh probe
+        hasValidRange = false;
+      });
+
+      // Tile-error fallback for the rare case where a tile 402's individually
+      // (e.g. quota crossed mid-viewport)
       layer.on('tileerror', (e) => {
         if (quotaTripped) return;
         const url = e.tile && e.tile.src;
-        if (!url) return;
-        // Re-fetch the URL to read the JSON error response
+        if (!url || url.startsWith('data:')) return;
         fetch(url, { credentials: 'same-origin' })
-          .then(async (r) => {
+          .then((r) => {
             if (r.status === 402) {
               quotaTripped = true;
               if (typeof window.showElevationQuotaBanner === 'function') {
                 window.showElevationQuotaBanner();
               }
-              // Auto-disable the layer client-side so it stops hammering the API
               try {
                 map.removeLayer(layer);
-                // Sync overlay panel state if available
                 if (typeof window.setOverlayEnabled === 'function') {
                   window.setOverlayEnabled('tessadem-elevation', false);
                 }
               } catch {}
-            } else if (r.status === 401) {
-              console.error('[elevation] TessaDEM API key rejected');
             }
           })
-          .catch(() => { /* ignore — already a tile error */ });
+          .catch(() => {});
       });
     }
 
