@@ -1492,9 +1492,8 @@ function buildLeafletLayer(def) {
   // Tiled cache layer — uses L.tileLayer (e.g. Biodiversity Values, TessaDEM elevation)
   if (def.wms && def.wms.tiled) {
     // V75.6 — TessaDEM elevation: viewport-adaptive ramp.
-    // The URL template carries {min}/{max} placeholders that Leaflet substitutes
-    // from layer options. We update those options after each viewport probe and
-    // call layer.redraw() to fetch new tiles for the new range.
+    // We override getTileUrl below to inject the current viewport min/max, so the
+    // URL template need only contain {z}/{x}/{y} for Leaflet's standard substitution.
     const isElevation = def.id === 'tessadem-elevation';
     const layerOpts = {
       opacity:     def.opacity ?? 0.65,
@@ -1502,32 +1501,35 @@ function buildLeafletLayer(def) {
       maxZoom:     19,
       tileSize:    256
     };
-    if (isElevation) {
-      // Initial placeholders — tiles won't actually fetch until we have a valid
-      // probe result and call setRangeAndRedraw(). We start with sentinel values
-      // so the URL template substitutes cleanly.
-      layerOpts.min = 0;
-      layerOpts.max = 1;
-    }
 
-    const layer = L.tileLayer(def.wms.url, layerOpts);
+    // For elevation, we build a URL template with just z/x/y; min/max come from
+    // local state (rangeMin/rangeMax) and are appended in our getTileUrl override.
+    const baseUrl = isElevation
+      ? '/api/elevation-tile?z={z}&x={x}&y={y}'
+      : def.wms.url;
+
+    const layer = L.tileLayer(baseUrl, layerOpts);
 
     if (isElevation) {
       // Track whether we have a valid probe yet — we suppress tile loads until then.
       let hasValidRange = false;
+      let rangeMin = 0;
+      let rangeMax = 1;
       let probeInFlight = null;
       let probeDebounce = null;
       let quotaTripped = false;
 
-      // Override getTileUrl to skip rendering entirely until first probe completes.
-      // (Returning '' makes Leaflet skip the tile, no error.)
+      // Override getTileUrl: until we have a valid probe, return a transparent
+      // placeholder so Leaflet doesn't fetch real tiles. After probe, append
+      // &min=&max= to each tile URL so the server can render at the current scale.
       const baseGetTileUrl = layer.getTileUrl.bind(layer);
       layer.getTileUrl = function (coords) {
         if (!hasValidRange) {
-          // Return a transparent 1x1 PNG data URL so Leaflet doesn't 404
+          // Transparent 1x1 GIF — fully cached by browser, never hits network twice.
           return 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
         }
-        return baseGetTileUrl(coords);
+        const baseUrl = baseGetTileUrl(coords);
+        return `${baseUrl}&min=${rangeMin}&max=${rangeMax}`;
       };
 
       /**
@@ -1541,12 +1543,32 @@ function buildLeafletLayer(def) {
         probeDebounce = setTimeout(async () => {
           if (!map.hasLayer(layer)) return;
           const b = map.getBounds();
+          let south = b.getSouth();
+          let west  = b.getWest();
+          let north = b.getNorth();
+          let east  = b.getEast();
+          // Guard against invalid / degenerate bounds (uninitialised map, dateline wrap)
+          if (![south, west, north, east].every(Number.isFinite)) {
+            console.warn('[elevation probe] non-finite bounds; skipping', { south, west, north, east });
+            return;
+          }
+          if (south >= north || west >= east) {
+            console.warn('[elevation probe] degenerate bounds; skipping', { south, west, north, east });
+            return;
+          }
+          // Clamp to valid lat/lng (TessaDEM coverage is 80°S..84°N)
+          south = Math.max(-80, Math.min(80, south));
+          north = Math.max(-80, Math.min(84, north));
+          west  = Math.max(-180, Math.min(180, west));
+          east  = Math.max(-180, Math.min(180, east));
+          if (south >= north || west >= east) return;
+
           const params = new URLSearchParams({
             mode:  'probe',
-            south: b.getSouth().toFixed(5),
-            west:  b.getWest().toFixed(5),
-            north: b.getNorth().toFixed(5),
-            east:  b.getEast().toFixed(5),
+            south: south.toFixed(5),
+            west:  west.toFixed(5),
+            north: north.toFixed(5),
+            east:  east.toFixed(5),
           });
           const url = `/api/elevation-tile?${params.toString()}`;
           try {
@@ -1574,7 +1596,10 @@ function buildLeafletLayer(def) {
                 console.error('[elevation] TessaDEM API key rejected');
                 return;
               }
-              console.warn('[elevation probe] failed:', r.status);
+              // Surface the server's reason so we can debug 400/500 responses
+              let detail = '';
+              try { detail = await r.text(); } catch {}
+              console.warn('[elevation probe] failed:', r.status, detail.slice(0, 300), 'url:', url);
               return;
             }
             const data = await r.json();
@@ -1583,11 +1608,11 @@ function buildLeafletLayer(def) {
             // 1m granularity is fine — the ramp re-renders if range changes meaningfully.
             const newMin = Math.floor(data.min);
             const newMax = Math.ceil(data.max);
-            if (newMin === layer.options.min && newMax === layer.options.max && hasValidRange) {
+            if (newMin === rangeMin && newMax === rangeMax && hasValidRange) {
               return; // No change → no redraw needed
             }
-            layer.options.min = newMin;
-            layer.options.max = newMax;
+            rangeMin = newMin;
+            rangeMax = newMax;
             hasValidRange = true;
             layer.redraw();
           } catch (err) {
