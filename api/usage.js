@@ -38,7 +38,7 @@
  */
 
 import { neon } from '@neondatabase/serverless';
-import { requireSession, requireAdmin, isAdmin } from '../lib/auth.js';
+import { requireSession, requireAdmin } from '../lib/auth.js';
 
 function getDb() {
   const url = process.env.pipeline_POSTGRES_URL
@@ -246,8 +246,6 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 
-  const url = req.url || '';
-
   // ── GET — read state (any signed-in user, so listings button can read is_active) ─
   if (req.method === 'GET') {
     const session = await requireSession(req, res);
@@ -315,44 +313,6 @@ export default async function handler(req, res) {
     } catch (err) {
       console.error('[usage PUT] failed:', err);
       return res.status(500).json({ error: 'Failed to update subscription', detail: err.message });
-    }
-  }
-
-  // ── POST /api/usage/active — toggle is_active (Domain: any user, TessaDEM: admin) ─
-  if (req.method === 'POST' && url.includes('/active')) {
-    const session = await requireSession(req, res);
-    if (!session) return;
-
-    let body = req.body;
-    if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
-    if (!body || typeof body !== 'object') body = {};
-
-    const { api_name, is_active } = body;
-    if (!VALID_APIS.includes(api_name)) {
-      return res.status(400).json({ error: `api_name must be one of: ${VALID_APIS.join(', ')}` });
-    }
-    if (typeof is_active !== 'boolean') {
-      return res.status(400).json({ error: 'is_active must be boolean' });
-    }
-    // TessaDEM: admin-only; Domain: any signed-in user
-    if (api_name === 'tessadem' && !isAdmin(session)) {
-      return res.status(403).json({ error: 'Admin access required for tessadem' });
-    }
-
-    try {
-      const updatedBy = session.email || session.name || 'user';
-      await sql`
-        UPDATE api_subscriptions
-        SET is_active = ${is_active},
-            updated_at = NOW(),
-            updated_by = ${updatedBy}
-        WHERE api_name = ${api_name}
-      `;
-      const stats = await getStatsForApi(sql, api_name);
-      return res.status(200).json({ ok: true, subscription: stats });
-    } catch (err) {
-      console.error('[usage POST /active] failed:', err);
-      return res.status(500).json({ error: 'Failed to toggle active', detail: err.message });
     }
   }
 
