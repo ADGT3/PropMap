@@ -1270,30 +1270,45 @@
     // Cached last-known state, used by listings button + overlay greying
     window._apiState = window._apiState || { tessadem: null, domain: null };
 
-    function paintApiCard(apiName, sub) {
+    // Paint the parts that come from /api/usage/config (fast):
+    // active toggle, sub_type, sub_amount, effective_start_date, card-inactive class.
+    function paintApiCardConfig(apiName, sub) {
       const card = document.querySelector(`.api-card[data-api="${apiName}"]`);
       if (!card || !sub) return;
 
-      // Active toggle state
       const toggle = card.querySelector('[data-role="active-toggle"]');
       const toggleLabel = card.querySelector('[data-role="active-label"]');
       if (toggle) toggle.checked = !!sub.is_active;
       if (toggleLabel) toggleLabel.textContent = sub.is_active ? 'Active' : 'Inactive';
       card.classList.toggle('api-card-inactive', !sub.is_active);
 
-      // Subscription fields
       card.querySelector('[data-role="sub-type"]').textContent =
         sub.sub_type === 'monthly' ? 'Monthly' : 'Total';
       card.querySelector('[data-role="sub-amount"]').textContent = fmtCount(sub.sub_amount);
       card.querySelector('[data-role="effective-start"]').textContent = fmtDate(sub.effective_start_date);
 
-      // Stats
+      // Show "Loading…" placeholders in the stat fields until the slower call returns
+      const balance = card.querySelector('[data-role="balance"]');
+      if (balance) balance.textContent = '…';
+      const periodCalls = card.querySelector('[data-role="period-calls"]');
+      if (periodCalls) periodCalls.textContent = '…';
+      const lastCall = card.querySelector('[data-role="last-call"]');
+      if (lastCall) lastCall.textContent = '…';
+      const periodLabel = card.querySelector('[data-role="period-label"]');
+      if (periodLabel) periodLabel.textContent = '';
+    }
+
+    // Paint the parts that come from /api/usage (slow):
+    // balance, period calls, last call, period label.
+    function paintApiCardStats(apiName, sub) {
+      const card = document.querySelector(`.api-card[data-api="${apiName}"]`);
+      if (!card || !sub) return;
+
       card.querySelector('[data-role="balance"]').textContent = fmtCount(sub.balance_remaining);
       card.querySelector('[data-role="period-calls"]').textContent = fmtCount(sub.period_calls);
       const lastCall = card.querySelector('[data-role="last-call"]');
       if (lastCall) lastCall.textContent = fmtTime(sub.last_call_at);
 
-      // Period label e.g. "(27 Apr → 27 May)" for monthly, "(since 3 May 2026)" for total
       const periodLabel = card.querySelector('[data-role="period-label"]');
       if (periodLabel) {
         if (sub.sub_type === 'monthly' && sub.period_start && sub.period_end) {
@@ -1305,7 +1320,6 @@
         }
       }
 
-      // Highlight low balance
       const balance = card.querySelector('[data-role="balance"]');
       if (balance) {
         balance.classList.toggle('api-stat-low', sub.balance_remaining > 0 && sub.balance_remaining < 500);
@@ -1313,20 +1327,51 @@
       }
     }
 
+    // Combined paint — used after edits/toggles when we already have the full state
+    function paintApiCard(apiName, sub) {
+      paintApiCardConfig(apiName, sub);
+      paintApiCardStats(apiName, sub);
+    }
+
     async function loadApiDashboard() {
-      try {
-        const r = await fetch('/api/usage', { credentials: 'include' });
-        if (!r.ok) {
-          console.warn('[apiDashboard] usage fetch failed:', r.status);
-          return;
+      // Two-phase load:
+      //   Phase 1 — /api/usage/config (fast: one SELECT, no counting)
+      //             → paints toggle, type, amount, effective start immediately
+      //   Phase 2 — /api/usage (slower: period math + counts + last-call lookup)
+      //             → fills in balance, period calls, last call
+      const configPromise = fetch('/api/usage/config', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null);
+      const statsPromise = fetch('/api/usage', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null);
+
+      const config = await configPromise;
+      if (config) {
+        if (config.tessadem) {
+          // Merge config into _apiState (preserves any existing stats)
+          window._apiState.tessadem = { ...(window._apiState.tessadem || {}), ...config.tessadem };
+          paintApiCardConfig('tessadem', config.tessadem);
         }
-        const d = await r.json();
-        if (d.tessadem) { window._apiState.tessadem = d.tessadem; paintApiCard('tessadem', d.tessadem); }
-        if (d.domain)   { window._apiState.domain   = d.domain;   paintApiCard('domain',   d.domain); }
-        // Sync any UI elements that depend on API state
+        if (config.domain) {
+          window._apiState.domain = { ...(window._apiState.domain || {}), ...config.domain };
+          paintApiCardConfig('domain', config.domain);
+        }
+        // Sync dependent UI from config alone (we know is_active now)
         if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
-      } catch (err) {
-        console.warn('[apiDashboard] error:', err);
+      }
+
+      const stats = await statsPromise;
+      if (stats) {
+        if (stats.tessadem) {
+          window._apiState.tessadem = stats.tessadem;
+          paintApiCardStats('tessadem', stats.tessadem);
+        }
+        if (stats.domain) {
+          window._apiState.domain = stats.domain;
+          paintApiCardStats('domain', stats.domain);
+        }
+        if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
       }
     }
     window.loadApiDashboard = loadApiDashboard;
@@ -1481,8 +1526,10 @@
       }
     };
 
-    // Initial sync on page load (covers state before settings is opened)
-    fetch('/api/usage', { credentials: 'include' })
+    // Initial sync on page load — uses the fast config endpoint since we only
+    // need is_active for the listings button + overlay greying. Full stats are
+    // loaded lazily when the dashboard is opened.
+    fetch('/api/usage/config', { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (!d) return;
