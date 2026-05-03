@@ -31,7 +31,7 @@
 
 import { fromArrayBuffer } from 'geotiff';
 import sharp from 'sharp';
-import { logApiCall } from './usage.js';
+import { logApiCall, checkApiAllowed } from './usage.js';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const TESSADEM_URL  = 'https://tessadem.com/api/elevation';
@@ -173,6 +173,20 @@ export default async function handler(req, res) {
   if (!apiKey) {
     console.error('[elevation-tile] TESSADEM_API_KEY env var not set');
     return res.status(500).json({ error: 'Elevation service not configured' });
+  }
+
+  // V75.7 — block calls when API is inactive or balance exhausted
+  const allow = await checkApiAllowed('tessadem');
+  if (!allow.allowed) {
+    if (allow.reason === 'inactive') {
+      return res.status(503).json({ error: 'Elevation API is disabled', code: 'inactive' });
+    }
+    if (allow.reason === 'quota_exhausted') {
+      return res.status(402).json({ error: 'Elevation quota exhausted', code: 'quota_exhausted' });
+    }
+    if (allow.reason === 'subscription_not_found') {
+      return res.status(500).json({ error: 'Elevation API subscription not configured' });
+    }
   }
 
   // ── Mode: probe (viewport min/max) ──────────────────────────────────────────

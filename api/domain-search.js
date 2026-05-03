@@ -15,7 +15,7 @@
  * System Settings → API Dashboard view.
  */
 
-import { logApiCall } from './usage.js';
+import { logApiCall, checkApiAllowed } from './usage.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -26,6 +26,20 @@ export default async function handler(req, res) {
   if (!apiKey) {
     console.error('[domain-search] DOMAIN_API_KEY environment variable is not set');
     return res.status(500).json({ error: 'Domain API key not configured on server' });
+  }
+
+  // V75.7 — block calls when API is inactive or balance exhausted
+  const allow = await checkApiAllowed('domain');
+  if (!allow.allowed) {
+    if (allow.reason === 'inactive') {
+      return res.status(503).json({ error: 'Domain API is disabled', code: 'inactive' });
+    }
+    if (allow.reason === 'quota_exhausted') {
+      return res.status(402).json({ error: 'Domain API quota exhausted', code: 'quota_exhausted' });
+    }
+    if (allow.reason === 'subscription_not_found') {
+      return res.status(500).json({ error: 'Domain API subscription not configured' });
+    }
   }
 
   // Parse body — Vercel provides req.body automatically for JSON content-type
