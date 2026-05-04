@@ -685,24 +685,15 @@ async function dbSave(id, entry) {
   }
 }
 
-async function dbDelete(id, wasParcel = false, propertyId = null) {
+async function dbDelete(id) {
+  // V76.12b: Deal-delete is deal-only. Both property-deals and parcel-deals
+  // route to /api/deals — server cascades to deal-scoped associations
+  // (financials, deal contact links, deal notes, actions) but never
+  // touches properties, parcels, or property-scoped data. Property/
+  // parcel deletion is a CRM-only operation.
   if (!dbAvailable) return;
   try {
-    // V75.4d: route to the right endpoint based on whether this was a parcel-deal
-    // (caller passes this because by the time we're called, the entry is already
-    // removed from the in-memory pipeline dict).
-    //
-    // For parcel-deals: DELETE /api/deals — the deals.js DELETE handler also
-    // cleans up the orphaned parcel + its children if no other deals reference it.
-    // V76.5: For property-deals: deal.id no longer equals property.id, so callers
-    // must pass propertyId explicitly. Falls back to id for legacy compatibility
-    // during the migration transition (where they may still be equal).
-    if (wasParcel) {
-      await fetch(`${DEALS_API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
-    } else {
-      const targetId = propertyId || id;
-      await fetch(`${PROPERTIES_API}?id=${encodeURIComponent(targetId)}`, { method: 'DELETE' });
-    }
+    await fetch(`${DEALS_API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
   } catch (_) {}
 }
 
@@ -1164,32 +1155,20 @@ async function addPropertyOnly(listing) {
 }
 
 async function removeFromPipeline(id) {
+  // V76.12b: deal-only delete. The server no longer touches properties or
+  // parcels, so we don't need to capture _isParcel / propertyId for routing.
   const sid = String(id);
-  // V75.4d: capture whether this was a parcel-deal BEFORE deleting from dict
-  // so dbDelete can route to the right endpoint (deals vs properties).
-  // V76.5: also capture the property id so dbDelete can target the right row.
-  const wasParcel  = !!pipeline[sid]?._isParcel;
-  const propertyId = pipeline[sid]?.property?.id || null;
   delete pipeline[sid];
   cacheSave(pipeline);
-  // V75.4d.5: AWAIT dbDelete so the cache-invalidate below happens AFTER the
-  // server commit. Without the await, the subsequent re-fetch from
-  // invalidateParcelsCache races the DELETE and still sees the stale parcel.
-  await dbDelete(sid, wasParcel, propertyId);
+  await dbDelete(sid);
   updateAddButtons();
   renderBoard();
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
-  // V75.4d: if this was a parcel-deal, the server may have auto-cleaned
-  // the parcel. Invalidate the CRM Parcels cache so it stays in sync.
-  if (wasParcel && window.CRM?.invalidateParcelsCache) {
-    window.CRM.invalidateParcelsCache();
-  }
-  // V75.5: any deal removal may have removed a property (if not a parcel-deal,
-  // the property was deleted via cascade; for parcel-deals the child properties
-  // were deleted server-side by the orphan cleanup). Invalidate Properties cache.
-  if (window.CRM?.invalidatePropertiesCache) {
-    window.CRM.invalidatePropertiesCache();
-  }
+  // V76.12b: deal-delete no longer touches property/parcel rows, but the CRM
+  // views display deal counts and active-deal status on properties and
+  // parcels — invalidate so they re-fetch.
+  if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+  if (window.CRM?.invalidateParcelsCache)    window.CRM.invalidateParcelsCache();
 }
 
 function moveToStage(id, stageId) {
@@ -1449,9 +1428,13 @@ function openConfirmModal(opts = {}) {
 // the same destructive action shows the same warning, with consistent site
 // styling (CSS variables, kb-editcols-overlay pattern, no native confirm()).
 //
-// Calls removeFromPipeline(id) on confirm — which already handles in-memory
-// dict cleanup, DB delete (deal + property cascade), parcel orphan cleanup,
-// pin refresh, and CRM cache invalidation.
+// V76.12b: deal-delete is deal-only. Property/parcel records and any
+// property-scoped contacts, notes, or other associations are untouched.
+// Wording reflects this so users who experienced the V76 bug aren't left
+// guessing what gets removed.
+//
+// Calls removeFromPipeline(id) on confirm — which deletes the deal row plus
+// its deal-scoped data (financials, deal contact links, deal notes, actions).
 //
 // Optional `closeOnConfirm` callback runs before deletion (used by the modal
 // to dismiss itself before the card disappears mid-render).
@@ -1464,7 +1447,9 @@ function openDeleteCardConfirm(id, closeOnConfirm) {
   openConfirmModal({
     title:        'Delete this card?',
     subject:      labelText,
-    bodyHtml:     'This is <strong style="color:#c0392b">permanent</strong> — it deletes the deal record and the property record (along with any data attached to them).<br><br>It cannot be undone from the UI.',
+    bodyHtml:     'Are you sure you want to delete this card?<br><br>' +
+                  'The property record and any associated contacts, notes ' +
+                  'or other property-level data will not be affected.',
     confirmLabel: 'Delete',
     onConfirm: async () => {
       if (typeof closeOnConfirm === 'function') closeOnConfirm();
@@ -3421,7 +3406,21 @@ ${rows.join('')}`;
   })();
 
   // Close
-  overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
+  // V76.12b: All explicit-close paths (X, backdrop, Escape) repaint the
+  // kanban board on dismiss. Without this, changes that happened during
+  // the modal session — including a new card inserted by openPipelineItem
+  // (when "+ New Deal" is clicked from the CRM property modal), or
+  // in-modal edits that change card visuals (offer count, DD colour) —
+  // stay invisible until the next render trigger. renderBoard() repaints
+  // from the in-memory pipeline dict (no fetch, cheap). The Finance-picker
+  // transition and the delete-from-modal path do NOT use this helper —
+  // Finance is leaving the view, and removeFromPipeline already calls
+  // renderBoard itself.
+  const closeAndRefresh = () => {
+    overlay.remove();
+    if (kanbanVisible) renderBoard();
+  };
+  overlay.querySelector('.kb-modal-close').addEventListener('click', closeAndRefresh);
 
   // V75.5.2: Delete deal from inside modal. V76.7+ uses the shared
   // openDeleteCardConfirm modal so this matches the X-button experience.
@@ -3474,9 +3473,9 @@ ${rows.join('')}`;
       return;
     }
   });
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeAndRefresh(); });
   document.addEventListener('keydown', function escClose(e) {
-    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escClose); }
+    if (e.key === 'Escape') { closeAndRefresh(); document.removeEventListener('keydown', escClose); }
   });
 
   // Re-run Auto DD
