@@ -686,7 +686,7 @@ async function dbSave(id, entry) {
 }
 
 async function dbDelete(id) {
-  // V77: Deal-delete is deal-only. Both property-deals and parcel-deals
+  // V76.12b: Deal-delete is deal-only. Both property-deals and parcel-deals
   // route to /api/deals — server cascades to deal-scoped associations
   // (financials, deal contact links, deal notes, actions) but never
   // touches properties, parcels, or property-scoped data. Property/
@@ -1155,7 +1155,7 @@ async function addPropertyOnly(listing) {
 }
 
 async function removeFromPipeline(id) {
-  // V77: deal-only delete. The server no longer touches properties or
+  // V76.12b: deal-only delete. The server no longer touches properties or
   // parcels, so we don't need to capture _isParcel / propertyId for routing.
   const sid = String(id);
   delete pipeline[sid];
@@ -1164,7 +1164,7 @@ async function removeFromPipeline(id) {
   updateAddButtons();
   renderBoard();
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
-  // V77: deal-delete no longer touches property/parcel rows, but the CRM
+  // V76.12b: deal-delete no longer touches property/parcel rows, but the CRM
   // views display deal counts and active-deal status on properties and
   // parcels — invalidate so they re-fetch.
   if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
@@ -1428,7 +1428,7 @@ function openConfirmModal(opts = {}) {
 // the same destructive action shows the same warning, with consistent site
 // styling (CSS variables, kb-editcols-overlay pattern, no native confirm()).
 //
-// V77: deal-delete is deal-only. Property/parcel records and any
+// V76.12b: deal-delete is deal-only. Property/parcel records and any
 // property-scoped contacts, notes, or other associations are untouched.
 // Wording reflects this so users who experienced the V76 bug aren't left
 // guessing what gets removed.
@@ -3406,7 +3406,21 @@ ${rows.join('')}`;
   })();
 
   // Close
-  overlay.querySelector('.kb-modal-close').addEventListener('click', () => overlay.remove());
+  // V76.12b: All explicit-close paths (X, backdrop, Escape) repaint the
+  // kanban board on dismiss. Without this, changes that happened during
+  // the modal session — including a new card inserted by openPipelineItem
+  // (when "+ New Deal" is clicked from the CRM property modal), or
+  // in-modal edits that change card visuals (offer count, DD colour) —
+  // stay invisible until the next render trigger. renderBoard() repaints
+  // from the in-memory pipeline dict (no fetch, cheap). The Finance-picker
+  // transition and the delete-from-modal path do NOT use this helper —
+  // Finance is leaving the view, and removeFromPipeline already calls
+  // renderBoard itself.
+  const closeAndRefresh = () => {
+    overlay.remove();
+    if (kanbanVisible) renderBoard();
+  };
+  overlay.querySelector('.kb-modal-close').addEventListener('click', closeAndRefresh);
 
   // V75.5.2: Delete deal from inside modal. V76.7+ uses the shared
   // openDeleteCardConfirm modal so this matches the X-button experience.
@@ -3459,9 +3473,9 @@ ${rows.join('')}`;
       return;
     }
   });
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeAndRefresh(); });
   document.addEventListener('keydown', function escClose(e) {
-    if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escClose); }
+    if (e.key === 'Escape') { closeAndRefresh(); document.removeEventListener('keydown', escClose); }
   });
 
   // Re-run Auto DD

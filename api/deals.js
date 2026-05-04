@@ -8,12 +8,12 @@
  * GET    /api/deals?property_id=X                         -> all deals on a property
  * POST   /api/deals                                       -> create deal
  * PUT    /api/deals                                       -> update deal
- * DELETE /api/deals?id=X                                  -> delete deal (V77: DEAL-ONLY)
+ * DELETE /api/deals?id=X                                  -> delete deal (V76.12b: DEAL-ONLY)
  * POST   /api/deals { action:'close',  id, status }       -> close (status='won'|'lost'|'archived')
  * POST   /api/deals { action:'reopen', id }               -> reopen closed deal
  * POST   /api/deals { action:'new_on_property', property_id, workflow, stage, seed_financials_from? }
  *
- * V77 delete behaviour: removes the deal row plus its deal-scoped data
+ * V76.12b delete behaviour: removes the deal row plus its deal-scoped data
  * (financials by deal_id, deal contact links, deal notes, actions). Does
  * NOT delete the property, parcel, child properties, property-scoped
  * contacts, or property-scoped notes. Property/parcel deletion is a
@@ -369,7 +369,7 @@ export default async function handler(req, res) {
       }
 
       case 'DELETE': {
-        // V77: Deal-delete is DEAL-ONLY. Never touches properties or parcels.
+        // V76.12b: Deal-delete is DEAL-ONLY. Never touches properties or parcels.
         // Property/parcel deletion is a CRM-only operation (where contact and
         // note implications are visible to the user). This handler cleans up
         // ONLY deal-scoped associations:
@@ -442,7 +442,7 @@ export default async function handler(req, res) {
           contact_links_deleted: contactLinksDeleted,
           notes_deleted:         notesDeleted,
           actions_deleted:       actionsDeleted,
-          // Explicitly NOT touched in V77 — preserved in response shape for
+          // Explicitly NOT touched in V76.12b — preserved in response shape for
           // any consumers that previously read these flags.
           property_deleted:   false,
           parcel_deleted:     false,
