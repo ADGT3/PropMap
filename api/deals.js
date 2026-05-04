@@ -8,10 +8,16 @@
  * GET    /api/deals?property_id=X                         -> all deals on a property
  * POST   /api/deals                                       -> create deal
  * PUT    /api/deals                                       -> update deal
- * DELETE /api/deals?id=X                                  -> delete deal
+ * DELETE /api/deals?id=X                                  -> delete deal (V76.12b: DEAL-ONLY)
  * POST   /api/deals { action:'close',  id, status }       -> close (status='won'|'lost'|'archived')
  * POST   /api/deals { action:'reopen', id }               -> reopen closed deal
  * POST   /api/deals { action:'new_on_property', property_id, workflow, stage, seed_financials_from? }
+ *
+ * V76.12b delete behaviour: removes the deal row plus its deal-scoped data
+ * (financials by deal_id, deal contact links, deal notes, actions). Does
+ * NOT delete the property, parcel, child properties, property-scoped
+ * contacts, or property-scoped notes. Property/parcel deletion is a
+ * CRM-only operation.
  */
 
 import { neon } from '@neondatabase/serverless';
@@ -363,36 +369,84 @@ export default async function handler(req, res) {
       }
 
       case 'DELETE': {
+        // V76.12b: Deal-delete is DEAL-ONLY. Never touches properties or parcels.
+        // Property/parcel deletion is a CRM-only operation (where contact and
+        // note implications are visible to the user). This handler cleans up
+        // ONLY deal-scoped associations:
+        //   - property_financials  (keyed by deal_id)
+        //   - entity_contacts      (where entity_type='deal' AND entity_id=<id>)
+        //   - notes                (where entity_type='deal' AND entity_id=<id>)
+        //   - actions              (deal_id=<id> — deleted, not orphaned)
+        //   - deal_user_order      (cascades automatically via FK)
+        // The deal row's JSONB data (offers, terms, dd, note) goes with the row.
+        // Properties, parcels, child properties, and property-scoped contacts/
+        // notes are explicitly NOT touched.
+
         const { id } = req.query;
         if (!id) return res.status(400).json({ error: 'id required' });
 
-        // V75.4d: before deleting the deal, check if it's on a parcel.
-        // If so, and that parcel has no OTHER deals, the parcel will be
-        // orphaned — so we clean it up too (which cascades to its child
-        // properties via FK). A parcel that has other deals stays.
-        const dealBefore = (await sql`SELECT parcel_id FROM deals WHERE id = ${id}`)[0];
-        const parcelId = dealBefore?.parcel_id || null;
+        // Verify the deal exists; 404 if not
+        const dealCheck = await sql`SELECT id FROM deals WHERE id = ${id}`;
+        if (!dealCheck.length) return res.status(404).json({ error: 'Not found' });
 
+        // Cascade to deal-scoped associations BEFORE deleting the deal row.
+        // Each block is wrapped so a missing table on an older DB doesn't
+        // break the whole delete — fail-soft on "relation does not exist".
+
+        let financialsDeleted = 0;
+        try {
+          const r = await sql`DELETE FROM property_financials WHERE deal_id = ${id} RETURNING deal_id`;
+          financialsDeleted = r.length;
+        } catch (err) {
+          if (!/relation .* does not exist/i.test(err.message)) throw err;
+        }
+
+        let contactLinksDeleted = 0;
+        try {
+          const r = await sql`
+            DELETE FROM entity_contacts
+             WHERE entity_type = 'deal' AND entity_id = ${id}
+             RETURNING contact_id`;
+          contactLinksDeleted = r.length;
+        } catch (err) {
+          if (!/relation .* does not exist/i.test(err.message)) throw err;
+        }
+
+        let notesDeleted = 0;
+        try {
+          const r = await sql`
+            DELETE FROM notes
+             WHERE entity_type = 'deal' AND entity_id = ${id}
+             RETURNING id`;
+          notesDeleted = r.length;
+        } catch (err) {
+          if (!/relation .* does not exist/i.test(err.message)) throw err;
+        }
+
+        let actionsDeleted = 0;
+        try {
+          const r = await sql`DELETE FROM actions WHERE deal_id = ${id} RETURNING id`;
+          actionsDeleted = r.length;
+        } catch (err) {
+          if (!/relation .* does not exist/i.test(err.message)) throw err;
+        }
+
+        // Finally delete the deal row itself.
+        // deal_user_order has FK ON DELETE CASCADE to deals — handled automatically.
         await sql`DELETE FROM deals WHERE id = ${id}`;
 
-        let parcelDeleted = false;
-        let propertiesDeleted = 0;
-        if (parcelId) {
-          const otherDeals = await sql`SELECT 1 FROM deals WHERE parcel_id = ${parcelId} LIMIT 1`;
-          if (otherDeals.length === 0) {
-            // Before deleting the parcel, explicitly delete its child properties.
-            // The `properties.parcel_id` FK uses ON DELETE SET NULL (not CASCADE),
-            // so deleting the parcel alone would leave the children orphaned.
-            const children = await sql`DELETE FROM properties WHERE parcel_id = ${parcelId} RETURNING id`;
-            propertiesDeleted = children.length;
-            await sql`DELETE FROM parcels WHERE id = ${parcelId}`;
-            parcelDeleted = true;
-          }
-        }
         return res.status(200).json({
           ok: true,
-          parcel_deleted: parcelDeleted,
-          properties_deleted: propertiesDeleted,
+          deal_deleted: true,
+          financials_deleted:    financialsDeleted,
+          contact_links_deleted: contactLinksDeleted,
+          notes_deleted:         notesDeleted,
+          actions_deleted:       actionsDeleted,
+          // Explicitly NOT touched in V76.12b — preserved in response shape for
+          // any consumers that previously read these flags.
+          property_deleted:   false,
+          parcel_deleted:     false,
+          properties_deleted: 0,
         });
       }
 
