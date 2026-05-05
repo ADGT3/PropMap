@@ -653,36 +653,39 @@ async function execute(req, res) {
   // ── F) SOURCE FK REWORK on contacts ──────────────────────────────────────
 
   await recordRanStep(steps, 'DROP existing CHECK constraint on contacts.source', async () => {
-    // Previous CHECK constraint listed canonical sources. Find by introspection
-    // and drop via PostgreSQL anonymous DO block (which can use EXECUTE for
-    // dynamic identifiers without needing driver-level identifier escaping).
-    const checks = await sql`
+    // Postgres default CHECK constraint naming is `<table>_<column>_check`.
+    // We try the standard candidates; IF EXISTS makes them safe no-ops if not present.
+    // We also do a final introspection check to detect any remaining unexpected CHECK
+    // and report it (without trying to drop dynamically — driver v0.10.x can't).
+    const candidates = ['contacts_source_check', 'contacts_check'];
+    const dropped = [];
+    for (const name of candidates) {
+      // Hardcoded names — no dynamic identifier, safe with tagged template literal.
+      // Switch on name to use a compile-time literal in each branch.
+      if (name === 'contacts_source_check') {
+        await sql`ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_source_check`;
+        dropped.push(name);
+      } else if (name === 'contacts_check') {
+        await sql`ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_check`;
+        dropped.push(name);
+      }
+    }
+    // Detect anything else still present
+    const remaining = await sql`
       SELECT con.conname
       FROM pg_constraint con
       JOIN pg_class cls ON cls.oid = con.conrelid
       WHERE cls.relname = 'contacts'
         AND con.contype = 'c'
         AND pg_get_constraintdef(con.oid) ILIKE '%source%'`;
-    const dropped = [];
-    for (const c of checks) {
-      const name = c.conname;
-      // Sanity-check identifier format before letting Postgres handle the dynamic SQL
-      if (!/^[a-zA-Z0-9_]+$/.test(name)) continue;
-      try {
-        // DO block runs EXECUTE inside Postgres — safe for dynamic identifiers
-        // because we've already validated the name format
-        await sql`
-          DO $$
-          BEGIN
-            EXECUTE 'ALTER TABLE contacts DROP CONSTRAINT IF EXISTS ' || quote_ident(${name});
-          END
-          $$`;
-        dropped.push(name);
-      } catch (err) {
-        // continue — non-fatal
-      }
+    if (remaining.length > 0) {
+      // Non-fatal — the FK add step will catch any conflict if relevant
+      return {
+        attempted_drops: dropped,
+        warning: `Unexpected CHECK constraint(s) remain on contacts.source: ${remaining.map(r => r.conname).join(', ')}. If FK add step fails, manually drop these.`,
+      };
     }
-    return { dropped };
+    return { attempted_drops: dropped, remaining_check_count: 0 };
   });
 
   await recordRanStep(steps, 'MAP existing contacts.source values to slug ids', async () => {
@@ -752,26 +755,40 @@ async function execute(req, res) {
     if (fks[0].confdeltype === 'n') {
       return { skipped: 'FK already ON DELETE SET NULL' };
     }
-    // Drop old FK by name (sanity-checked format) via DO block
-    const oldName = fks[0].conname;
-    if (!/^[a-zA-Z0-9_]+$/.test(oldName)) {
-      throw new Error(`Refusing to drop FK with unsafe name: ${oldName}`);
+    // Postgres default FK naming is `<table>_<column>_fkey`. Drop the standard
+    // candidates with IF EXISTS — no dynamic identifier interpolation needed
+    // (driver v0.10.x doesn't support that). We checked above that an FK exists;
+    // by trying the most common names, we'll catch nearly all real-world cases.
+    await sql`ALTER TABLE entity_contacts DROP CONSTRAINT IF EXISTS entity_contacts_role_id_fkey`;
+    await sql`ALTER TABLE entity_contacts DROP CONSTRAINT IF EXISTS entity_contacts_roleid_fkey`;
+    // Verify the original FK got dropped
+    const stillThere = await sql`
+      SELECT con.conname
+      FROM pg_constraint con
+      JOIN pg_class cls ON cls.oid = con.conrelid
+      JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = ANY(con.conkey)
+      WHERE cls.relname = 'entity_contacts'
+        AND con.contype = 'f'
+        AND att.attname = 'role_id'`;
+    if (stillThere.length > 0) {
+      throw new Error(
+        `Couldn't drop existing FK on entity_contacts.role_id: ` +
+        `unexpected name "${stillThere[0].conname}". Manually run: ` +
+        `ALTER TABLE entity_contacts DROP CONSTRAINT "${stillThere[0].conname}";`
+      );
     }
-    await sql`
-      DO $$
-      BEGIN
-        EXECUTE 'ALTER TABLE entity_contacts DROP CONSTRAINT IF EXISTS ' || quote_ident(${oldName});
-      END
-      $$`;
     // entity_contacts.role_id is currently NOT NULL — we need to allow NULL for SET NULL to work
     await sql`ALTER TABLE entity_contacts ALTER COLUMN role_id DROP NOT NULL`;
-    // Re-add with SET NULL (constraint name is now hardcoded, no dynamic identifier)
+    // Re-add with SET NULL
     await sql`
       ALTER TABLE entity_contacts
       ADD CONSTRAINT entity_contacts_role_id_fkey
       FOREIGN KEY (role_id)
       REFERENCES roles(id) ON DELETE SET NULL`;
-    return { dropped: oldName, recreated: 'entity_contacts_role_id_fkey ON DELETE SET NULL' };
+    return {
+      original_fk_name: fks[0].conname,
+      recreated: 'entity_contacts_role_id_fkey ON DELETE SET NULL',
+    };
   });
 
   // ── H) NEW ROLE ROWS ──────────────────────────────────────────────────────
