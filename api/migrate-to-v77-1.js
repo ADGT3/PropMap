@@ -653,7 +653,9 @@ async function execute(req, res) {
   // ── F) SOURCE FK REWORK on contacts ──────────────────────────────────────
 
   await recordRanStep(steps, 'DROP existing CHECK constraint on contacts.source', async () => {
-    // Previous CHECK constraint listed canonical sources. Find by name pattern.
+    // Previous CHECK constraint listed canonical sources. Find by introspection
+    // and drop via PostgreSQL anonymous DO block (which can use EXECUTE for
+    // dynamic identifiers without needing driver-level identifier escaping).
     const checks = await sql`
       SELECT con.conname
       FROM pg_constraint con
@@ -663,15 +665,18 @@ async function execute(req, res) {
         AND pg_get_constraintdef(con.oid) ILIKE '%source%'`;
     const dropped = [];
     for (const c of checks) {
-      // Constraint names from pg_constraint are trusted (came from pg catalog),
-      // and we sanity-check the format before interpolating.
       const name = c.conname;
-      if (!/^[a-zA-Z0-9_]+$/.test(name)) {
-        // Skip anything with unusual characters defensively
-        continue;
-      }
+      // Sanity-check identifier format before letting Postgres handle the dynamic SQL
+      if (!/^[a-zA-Z0-9_]+$/.test(name)) continue;
       try {
-        await sql`ALTER TABLE contacts DROP CONSTRAINT IF EXISTS ${sql.unsafe(name)}`;
+        // DO block runs EXECUTE inside Postgres — safe for dynamic identifiers
+        // because we've already validated the name format
+        await sql`
+          DO $$
+          BEGIN
+            EXECUTE 'ALTER TABLE contacts DROP CONSTRAINT IF EXISTS ' || quote_ident(${name});
+          END
+          $$`;
         dropped.push(name);
       } catch (err) {
         // continue — non-fatal
@@ -747,15 +752,20 @@ async function execute(req, res) {
     if (fks[0].confdeltype === 'n') {
       return { skipped: 'FK already ON DELETE SET NULL' };
     }
-    // Drop old FK by name (sanity-checked format)
+    // Drop old FK by name (sanity-checked format) via DO block
     const oldName = fks[0].conname;
     if (!/^[a-zA-Z0-9_]+$/.test(oldName)) {
       throw new Error(`Refusing to drop FK with unsafe name: ${oldName}`);
     }
-    await sql`ALTER TABLE entity_contacts DROP CONSTRAINT IF EXISTS ${sql.unsafe(oldName)}`;
+    await sql`
+      DO $$
+      BEGIN
+        EXECUTE 'ALTER TABLE entity_contacts DROP CONSTRAINT IF EXISTS ' || quote_ident(${oldName});
+      END
+      $$`;
     // entity_contacts.role_id is currently NOT NULL — we need to allow NULL for SET NULL to work
     await sql`ALTER TABLE entity_contacts ALTER COLUMN role_id DROP NOT NULL`;
-    // Re-add with SET NULL
+    // Re-add with SET NULL (constraint name is now hardcoded, no dynamic identifier)
     await sql`
       ALTER TABLE entity_contacts
       ADD CONSTRAINT entity_contacts_role_id_fkey
