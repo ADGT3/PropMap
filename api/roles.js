@@ -1,14 +1,18 @@
 /**
  * api/roles.js
  * Role catalogue — CRUD for the roles table. Admin-only for writes.
- * New in V75.
+ * New in V75. Extended in V77.1: ref_count query, delete-with-references support.
  *
  * GET    /api/roles                -> list all (ordered by sort_order)
  * GET    /api/roles?active=1       -> active only
  * GET    /api/roles?id=X           -> single role
+ * GET    /api/roles?id=X&ref_count=1 -> single role with usage count for delete-with-ref UI (V77.1)
  * POST   /api/roles                -> create custom role (non-system)
  * PUT    /api/roles                -> update label/scopes/default_scope/sort_order/active
- * DELETE /api/roles?id=X           -> delete (only non-system, only if zero entity_contacts use it)
+ * DELETE /api/roles?id=X           -> delete (only non-system).
+ *                                     V77.1 change: refs allowed — entity_contacts.role_id FK
+ *                                     is now ON DELETE SET NULL. System roles still cannot be
+ *                                     deleted (only deactivated).
  */
 
 import { neon } from '@neondatabase/serverless';
@@ -41,11 +45,20 @@ export default async function handler(req, res) {
     switch (req.method) {
 
       case 'GET': {
-        const { id, active } = req.query;
+        const { id, active, ref_count } = req.query;
         if (id) {
           const rows = await sql`SELECT * FROM roles WHERE id = ${id}`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
-          return res.status(200).json(rows[0]);
+          const result = rows[0];
+          // V77.1: ref_count for delete-with-warning UI in Parameters page
+          if (ref_count) {
+            const refs = await sql`SELECT COUNT(*)::int AS c FROM entity_contacts WHERE role_id = ${id}`;
+            result.references = {
+              entity_contacts: refs[0]?.c ?? 0,
+              total:           refs[0]?.c ?? 0,
+            };
+          }
+          return res.status(200).json(result);
         }
         if (active) {
           const rows = await sql`SELECT * FROM roles WHERE active = true ORDER BY sort_order, label`;
@@ -100,15 +113,15 @@ export default async function handler(req, res) {
         if (!requireAdmin(session, res)) return;
         const { id } = req.query;
         if (!id) return res.status(400).json({ error: 'id required' });
-        // Guard: system roles cannot be deleted
+        // Guard: system roles cannot be deleted (only deactivated)
         const roleRows = await sql`SELECT id, system FROM roles WHERE id = ${id}`;
         if (!roleRows.length) return res.status(404).json({ error: 'Not found' });
-        if (roleRows[0].system) return res.status(400).json({ error: 'System roles cannot be deleted (disable instead)' });
-        // Guard: role in use
-        const uses = await sql`SELECT COUNT(*)::int AS c FROM entity_contacts WHERE role_id = ${id}`;
-        if (uses[0].c > 0) {
-          return res.status(400).json({ error: `Role in use by ${uses[0].c} contact link(s) — reassign or disable instead` });
+        if (roleRows[0].system) {
+          return res.status(400).json({ error: 'System roles cannot be deleted (disable instead)' });
         }
+        // V77.1: refs allowed — entity_contacts.role_id FK is ON DELETE SET NULL.
+        // Caller (Parameters UI) is expected to fetch ?ref_count=1 first and confirm with user
+        // about how many entity_contacts will lose their role assignment.
         await sql`DELETE FROM roles WHERE id = ${id}`;
         return res.status(200).json({ ok: true });
       }
