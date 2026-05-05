@@ -1,0 +1,505 @@
+/**
+ * api/applications.js — V77.1
+ *
+ * Lease Offer (Application) record. One Lease Enquiry deal can have multiple
+ * applications (Scenario A: revisions; Scenario C: withdrawn-then-resubmitted).
+ * V77.1 builds the agent-side flow only — applications are created and edited
+ * by agents on the deal modal. V77.2 adds the public form layer where applicants
+ * submit Step 1 (offer details) and Step 2 (evidence) themselves.
+ *
+ * Schema overview:
+ *
+ *   applications  — top-level record
+ *     id, deal_id, status, submitted_at, accepted_at, evidence_submitted_at,
+ *     validated_at, requested_rent, bond_weeks, lease_term_months,
+ *     preferred_start_date, terms, annual_income_claimed,
+ *     credit_check_consent_at, tenancy_database_consent_at,
+ *     occupants (jsonb), pets (jsonb), applicants_jsonb (jsonb),
+ *     notes, created_by, created_at, updated_at
+ *
+ *   application_housing_history — per-applicant prior addresses with optional evidence
+ *   application_income_history  — per-applicant income sources with optional evidence
+ *
+ * Status lifecycle (per build plan §4.4):
+ *   draft → submitted → offer_accepted (or rejected) → evidence_submitted →
+ *   validated → leased   (terminal)
+ *   withdrawn (terminal, can happen from any non-terminal state)
+ *   rejected  (terminal, can happen from submitted)
+ *
+ * Routes:
+ *   GET    /api/applications?deal_id=X
+ *           → all applications for that deal, newest first, with applicant_count summary
+ *   GET    /api/applications?id=N
+ *           → single application with nested housing_history + income_history arrays
+ *   GET    /api/applications?id=N&with_children=1
+ *           → same as above (default behaviour) — explicit flag for clarity
+ *   GET    /api/applications?listing_deal_id=X
+ *           → V77.1 cross-reference: all Lease Offers received across all enquirer
+ *             households for this Lease Listing. Joins through Enquiry deals
+ *             on the same property to find applications.
+ *
+ *   POST   /api/applications
+ *           Body: { deal_id, status?, ...top-level fields,
+ *                   housing_history?: [{...}], income_history?: [{...}] }
+ *           Creates application + nested rows. Returns full record.
+ *
+ *   PUT    /api/applications
+ *           Body: { id, ...fields to change,
+ *                   housing_history?: [{...}], income_history?: [{...}] }
+ *           Top-level fields update. Nested arrays REPLACE existing ones (full
+ *           list semantics — easier than diff-based PUT for the agent UI).
+ *           Status transitions validated against the lifecycle.
+ *
+ *   DELETE /api/applications?id=N
+ *           Cascade-deletes housing/income children and applicant_form_tokens
+ *           (FKs are ON DELETE CASCADE). Use status='withdrawn' instead when
+ *           an audit trail matters.
+ */
+
+import { neon } from '@neondatabase/serverless';
+import { requireSession } from '../lib/auth.js';
+import { getDatabaseUrl } from '../lib/db.js';
+const sql = neon(getDatabaseUrl());
+
+// Status lifecycle — reachable transitions per build plan §4.4
+const VALID_STATUSES = new Set([
+  'draft', 'submitted', 'offer_accepted', 'rejected',
+  'evidence_submitted', 'validated', 'leased', 'withdrawn',
+]);
+
+const TERMINAL_STATUSES = new Set(['leased', 'withdrawn', 'rejected']);
+
+const ALLOWED_TRANSITIONS = {
+  draft:               new Set(['submitted', 'withdrawn']),
+  submitted:           new Set(['offer_accepted', 'rejected', 'withdrawn']),
+  offer_accepted:      new Set(['evidence_submitted', 'withdrawn']),
+  rejected:            new Set([]),                                 // terminal
+  evidence_submitted:  new Set(['validated', 'withdrawn']),
+  validated:           new Set(['leased', 'withdrawn']),
+  leased:              new Set([]),                                 // terminal
+  withdrawn:           new Set([]),                                 // terminal
+};
+
+// Housing types matching what build plan §4.4.3 lists
+const HOUSING_TYPES = new Set([
+  'rented', 'mortgaged', 'owned_outright', 'living_with_family',
+  'temporary', 'other',
+]);
+
+// Income types
+const INCOME_TYPES = new Set([
+  'employment', 'self_employed', 'pension', 'rental_income',
+  'investments', 'savings', 'other',
+]);
+
+const TERM_UNITS = new Set(['days', 'months', 'years']);
+
+function resolveCreator(session) {
+  if (!session) return null;
+  const sub = session.sub;
+  if (typeof sub === 'number' || (typeof sub === 'string' && /^\d+$/.test(sub))) {
+    return parseInt(sub, 10);
+  }
+  return null;
+}
+
+// ── Validation helpers ─────────────────────────────────────────────────────
+
+function validateHousingEntry(h, idx) {
+  if (!h.housing_type) return `housing_history[${idx}]: housing_type required`;
+  if (!HOUSING_TYPES.has(h.housing_type)) return `housing_history[${idx}]: invalid housing_type '${h.housing_type}'`;
+  if (!h.address) return `housing_history[${idx}]: address required`;
+  if (h.term_unit !== undefined && h.term_unit !== null && !TERM_UNITS.has(h.term_unit)) {
+    return `housing_history[${idx}]: invalid term_unit '${h.term_unit}'`;
+  }
+  return null;
+}
+
+function validateIncomeEntry(e, idx) {
+  if (!e.income_type) return `income_history[${idx}]: income_type required`;
+  if (!INCOME_TYPES.has(e.income_type)) return `income_history[${idx}]: invalid income_type '${e.income_type}'`;
+  if (!e.income_source_name) return `income_history[${idx}]: income_source_name required`;
+  if (e.term_unit !== undefined && e.term_unit !== null && !TERM_UNITS.has(e.term_unit)) {
+    return `income_history[${idx}]: invalid term_unit '${e.term_unit}'`;
+  }
+  return null;
+}
+
+// ── Nested fetch helpers ───────────────────────────────────────────────────
+
+async function fetchChildren(applicationId) {
+  const [housing, income] = await Promise.all([
+    sql`
+      SELECT * FROM application_housing_history
+      WHERE application_id = ${applicationId}
+      ORDER BY sort_order, id`,
+    sql`
+      SELECT * FROM application_income_history
+      WHERE application_id = ${applicationId}
+      ORDER BY sort_order, id`,
+  ]);
+  return { housing_history: housing, income_history: income };
+}
+
+async function applicationWithChildren(applicationId) {
+  const rows = await sql`SELECT * FROM applications WHERE id = ${applicationId}`;
+  if (!rows.length) return null;
+  const children = await fetchChildren(applicationId);
+  return { ...rows[0], ...children };
+}
+
+// ── Insert nested children for a fresh application ─────────────────────────
+
+async function insertHousingHistory(applicationId, items) {
+  const inserted = [];
+  for (let i = 0; i < items.length; i++) {
+    const h = items[i];
+    const r = await sql`
+      INSERT INTO application_housing_history (
+        application_id, applicant_contact_id, housing_type, address,
+        monthly_amount, term_value, term_unit, term_start_date, term_end_date,
+        landlord_lender_name, landlord_lender_contact,
+        evidence_url, evidence_label, notes, sort_order
+      )
+      VALUES (
+        ${applicationId},
+        ${h.applicant_contact_id ?? null},
+        ${h.housing_type},
+        ${h.address},
+        ${h.monthly_amount         ?? null},
+        ${h.term_value             ?? null},
+        ${h.term_unit              ?? null},
+        ${h.term_start_date        ?? null},
+        ${h.term_end_date          ?? null},
+        ${h.landlord_lender_name   ?? null},
+        ${h.landlord_lender_contact?? null},
+        ${h.evidence_url           ?? null},
+        ${h.evidence_label         ?? null},
+        ${h.notes                  ?? null},
+        ${h.sort_order ?? i}
+      )
+      RETURNING *`;
+    inserted.push(r[0]);
+  }
+  return inserted;
+}
+
+async function insertIncomeHistory(applicationId, items) {
+  const inserted = [];
+  for (let i = 0; i < items.length; i++) {
+    const e = items[i];
+    const r = await sql`
+      INSERT INTO application_income_history (
+        application_id, applicant_contact_id, income_type, income_source_name,
+        role, annual_income, term_value, term_unit, term_start_date, term_end_date,
+        employer_contact_name, employer_contact_email, employer_contact_mobile,
+        evidence_url, evidence_label, notes, sort_order
+      )
+      VALUES (
+        ${applicationId},
+        ${e.applicant_contact_id    ?? null},
+        ${e.income_type},
+        ${e.income_source_name},
+        ${e.role                    ?? null},
+        ${e.annual_income           ?? null},
+        ${e.term_value              ?? null},
+        ${e.term_unit               ?? null},
+        ${e.term_start_date         ?? null},
+        ${e.term_end_date           ?? null},
+        ${e.employer_contact_name   ?? null},
+        ${e.employer_contact_email  ?? null},
+        ${e.employer_contact_mobile ?? null},
+        ${e.evidence_url            ?? null},
+        ${e.evidence_label          ?? null},
+        ${e.notes                   ?? null},
+        ${e.sort_order ?? i}
+      )
+      RETURNING *`;
+    inserted.push(r[0]);
+  }
+  return inserted;
+}
+
+// ── Status transition derivative timestamps ────────────────────────────────
+//
+// When status moves to a particular value, we also stamp the corresponding
+// timestamp column. This keeps the "when did this happen" audit trail accurate
+// without making the agent UI manage timestamps separately.
+function timestampForStatus(status) {
+  switch (status) {
+    case 'submitted':           return { col: 'submitted_at',          val: 'now' };
+    case 'offer_accepted':      return { col: 'accepted_at',           val: 'now' };
+    case 'evidence_submitted':  return { col: 'evidence_submitted_at', val: 'now' };
+    case 'validated':           return { col: 'validated_at',          val: 'now' };
+    default: return null;
+  }
+}
+
+// ── Handler ────────────────────────────────────────────────────────────────
+
+export default async function handler(req, res) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  try {
+    if (req.method === 'GET')    return await handleGet(req, res);
+    if (req.method === 'POST')   return await handlePost(req, res, session);
+    if (req.method === 'PUT')    return await handlePut(req, res);
+    if (req.method === 'DELETE') return await handleDelete(req, res);
+    res.setHeader('Allow', 'GET, POST, PUT, DELETE');
+    return res.status(405).json({ error: 'Method not allowed' });
+  } catch (err) {
+    console.error('[api/applications]', err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleGet(req, res) {
+  const { id, deal_id, listing_deal_id } = req.query;
+
+  // Single application with nested children
+  if (id) {
+    const result = await applicationWithChildren(parseInt(id, 10));
+    if (!result) return res.status(404).json({ error: 'Not found' });
+    return res.status(200).json(result);
+  }
+
+  // All applications for an Enquiry deal (returns shallow rows, no children)
+  if (deal_id) {
+    const rows = await sql`
+      SELECT a.*,
+        (SELECT COUNT(*)::int FROM application_housing_history h WHERE h.application_id = a.id) AS housing_count,
+        (SELECT COUNT(*)::int FROM application_income_history  i WHERE i.application_id = a.id) AS income_count
+      FROM applications a
+      WHERE a.deal_id = ${deal_id}
+      ORDER BY a.created_at DESC`;
+    return res.status(200).json(rows);
+  }
+
+  // Cross-reference: all Lease Offers received across all enquirer households
+  // for a given Lease Listing deal (build plan §4.5 — Lease Offers Received)
+  if (listing_deal_id) {
+    // Get the listing deal's property to find sibling enquiry deals
+    const listing = await sql`
+      SELECT id, board_id, property_id, parcel_id FROM deals WHERE id = ${listing_deal_id}`;
+    if (!listing.length) return res.status(404).json({ error: 'Listing deal not found' });
+    if (listing[0].board_id !== 'sys_lease_listings') {
+      return res.status(400).json({ error: `Deal is on '${listing[0].board_id}', not Lease Listings` });
+    }
+
+    let enquiryRows;
+    if (listing[0].property_id) {
+      enquiryRows = await sql`
+        SELECT id FROM deals
+        WHERE board_id   = 'sys_lease_enquiry'
+          AND property_id = ${listing[0].property_id}`;
+    } else if (listing[0].parcel_id) {
+      enquiryRows = await sql`
+        SELECT id FROM deals
+        WHERE board_id  = 'sys_lease_enquiry'
+          AND parcel_id = ${listing[0].parcel_id}`;
+    } else {
+      return res.status(200).json([]);
+    }
+    if (!enquiryRows.length) return res.status(200).json([]);
+    const enquiryIds = enquiryRows.map(r => r.id);
+
+    const apps = await sql`
+      SELECT a.*,
+        (SELECT COUNT(*)::int FROM application_housing_history h WHERE h.application_id = a.id) AS housing_count,
+        (SELECT COUNT(*)::int FROM application_income_history  i WHERE i.application_id = a.id) AS income_count
+      FROM applications a
+      WHERE a.deal_id = ANY(${enquiryIds})
+      ORDER BY a.created_at DESC`;
+    return res.status(200).json(apps);
+  }
+
+  return res.status(400).json({ error: 'Specify id, deal_id, or listing_deal_id' });
+}
+
+async function handlePost(req, res, session) {
+  const body = req.body || {};
+  const { deal_id } = body;
+  if (!deal_id) return res.status(400).json({ error: 'deal_id required' });
+
+  // Verify deal exists and is on a Lease Enquiry board
+  const deal = await sql`SELECT id, board_id FROM deals WHERE id = ${deal_id}`;
+  if (!deal.length) return res.status(404).json({ error: 'Deal not found' });
+  if (deal[0].board_id !== 'sys_lease_enquiry') {
+    return res.status(400).json({
+      error: `Deal is on '${deal[0].board_id}', not Lease Enquiry — applications must be on Lease Enquiry deals`,
+    });
+  }
+
+  // Validate status if provided
+  const status = body.status || 'draft';
+  if (!VALID_STATUSES.has(status)) {
+    return res.status(400).json({ error: `Invalid status '${status}'` });
+  }
+
+  // Validate nested children if provided
+  const housing = Array.isArray(body.housing_history) ? body.housing_history : [];
+  const income  = Array.isArray(body.income_history)  ? body.income_history  : [];
+  for (let i = 0; i < housing.length; i++) {
+    const err = validateHousingEntry(housing[i], i);
+    if (err) return res.status(400).json({ error: err });
+  }
+  for (let i = 0; i < income.length; i++) {
+    const err = validateIncomeEntry(income[i], i);
+    if (err) return res.status(400).json({ error: err });
+  }
+
+  const createdBy = resolveCreator(session);
+  const submittedAt           = status === 'submitted'          ? new Date().toISOString() : null;
+  const acceptedAt            = status === 'offer_accepted'     ? new Date().toISOString() : null;
+  const evidenceSubmittedAt   = status === 'evidence_submitted' ? new Date().toISOString() : null;
+  const validatedAt           = status === 'validated'          ? new Date().toISOString() : null;
+
+  const rows = await sql`
+    INSERT INTO applications (
+      deal_id, status,
+      submitted_at, accepted_at, evidence_submitted_at, validated_at,
+      requested_rent, bond_weeks, lease_term_months, preferred_start_date,
+      terms, annual_income_claimed,
+      credit_check_consent_at, tenancy_database_consent_at,
+      occupants, pets, applicants_jsonb,
+      notes, created_by
+    )
+    VALUES (
+      ${deal_id}, ${status},
+      ${submittedAt}, ${acceptedAt}, ${evidenceSubmittedAt}, ${validatedAt},
+      ${body.requested_rent      ?? null},
+      ${body.bond_weeks          ?? 4},
+      ${body.lease_term_months   ?? null},
+      ${body.preferred_start_date?? null},
+      ${body.terms               ?? null},
+      ${body.annual_income_claimed ?? null},
+      ${body.credit_check_consent_at      ?? null},
+      ${body.tenancy_database_consent_at  ?? null},
+      ${body.occupants         ? JSON.stringify(body.occupants)        : null}::jsonb,
+      ${body.pets              ? JSON.stringify(body.pets)             : null}::jsonb,
+      ${body.applicants_jsonb  ? JSON.stringify(body.applicants_jsonb) : null}::jsonb,
+      ${body.notes ?? null},
+      ${createdBy}
+    )
+    RETURNING *`;
+  const application = rows[0];
+
+  if (housing.length) await insertHousingHistory(application.id, housing);
+  if (income.length)  await insertIncomeHistory(application.id, income);
+
+  const result = await applicationWithChildren(application.id);
+  return res.status(201).json(result);
+}
+
+async function handlePut(req, res) {
+  const body = req.body || {};
+  const id = body.id;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const applicationId = parseInt(id, 10);
+
+  // Fetch existing for transition validation
+  const existing = await sql`SELECT * FROM applications WHERE id = ${applicationId}`;
+  if (!existing.length) return res.status(404).json({ error: 'Not found' });
+  const cur = existing[0];
+
+  // Validate status transition if status is changing
+  let nextStatus = cur.status;
+  let derivedTimestamp = null;
+  if (body.status !== undefined && body.status !== cur.status) {
+    if (!VALID_STATUSES.has(body.status)) {
+      return res.status(400).json({ error: `Invalid status '${body.status}'` });
+    }
+    const allowed = ALLOWED_TRANSITIONS[cur.status] || new Set();
+    if (!allowed.has(body.status)) {
+      return res.status(400).json({
+        error: `Invalid status transition: ${cur.status} → ${body.status}. ` +
+               `Allowed from '${cur.status}': ${[...allowed].join(', ') || '(none — terminal state)'}`,
+      });
+    }
+    nextStatus = body.status;
+    const ts = timestampForStatus(nextStatus);
+    if (ts) derivedTimestamp = ts;
+  }
+
+  // Validate nested children if provided
+  const replaceHousing = Array.isArray(body.housing_history);
+  const replaceIncome  = Array.isArray(body.income_history);
+  if (replaceHousing) {
+    for (let i = 0; i < body.housing_history.length; i++) {
+      const err = validateHousingEntry(body.housing_history[i], i);
+      if (err) return res.status(400).json({ error: err });
+    }
+  }
+  if (replaceIncome) {
+    for (let i = 0; i < body.income_history.length; i++) {
+      const err = validateIncomeEntry(body.income_history[i], i);
+      if (err) return res.status(400).json({ error: err });
+    }
+  }
+
+  // Build the UPDATE — fetch-modify-save pattern (cleaner than chained COALESCE)
+  // for the many optional fields here.
+  const merged = {
+    status:                       nextStatus,
+    submitted_at:                 derivedTimestamp?.col === 'submitted_at'           ? new Date().toISOString() : cur.submitted_at,
+    accepted_at:                  derivedTimestamp?.col === 'accepted_at'            ? new Date().toISOString() : cur.accepted_at,
+    evidence_submitted_at:        derivedTimestamp?.col === 'evidence_submitted_at'  ? new Date().toISOString() : cur.evidence_submitted_at,
+    validated_at:                 derivedTimestamp?.col === 'validated_at'           ? new Date().toISOString() : cur.validated_at,
+    requested_rent:               body.requested_rent              ?? cur.requested_rent,
+    bond_weeks:                   body.bond_weeks                  ?? cur.bond_weeks,
+    lease_term_months:            body.lease_term_months           ?? cur.lease_term_months,
+    preferred_start_date:         body.preferred_start_date        ?? cur.preferred_start_date,
+    terms:                        body.terms                       ?? cur.terms,
+    annual_income_claimed:        body.annual_income_claimed       ?? cur.annual_income_claimed,
+    credit_check_consent_at:      body.credit_check_consent_at     ?? cur.credit_check_consent_at,
+    tenancy_database_consent_at:  body.tenancy_database_consent_at ?? cur.tenancy_database_consent_at,
+    occupants:                    body.occupants !== undefined        ? body.occupants        : cur.occupants,
+    pets:                         body.pets      !== undefined        ? body.pets             : cur.pets,
+    applicants_jsonb:             body.applicants_jsonb !== undefined ? body.applicants_jsonb : cur.applicants_jsonb,
+    notes:                        body.notes                       ?? cur.notes,
+  };
+
+  await sql`
+    UPDATE applications SET
+      status                       = ${merged.status},
+      submitted_at                 = ${merged.submitted_at},
+      accepted_at                  = ${merged.accepted_at},
+      evidence_submitted_at        = ${merged.evidence_submitted_at},
+      validated_at                 = ${merged.validated_at},
+      requested_rent               = ${merged.requested_rent},
+      bond_weeks                   = ${merged.bond_weeks},
+      lease_term_months            = ${merged.lease_term_months},
+      preferred_start_date         = ${merged.preferred_start_date},
+      terms                        = ${merged.terms},
+      annual_income_claimed        = ${merged.annual_income_claimed},
+      credit_check_consent_at      = ${merged.credit_check_consent_at},
+      tenancy_database_consent_at  = ${merged.tenancy_database_consent_at},
+      occupants                    = ${merged.occupants        ? JSON.stringify(merged.occupants)        : null}::jsonb,
+      pets                         = ${merged.pets             ? JSON.stringify(merged.pets)             : null}::jsonb,
+      applicants_jsonb             = ${merged.applicants_jsonb ? JSON.stringify(merged.applicants_jsonb) : null}::jsonb,
+      notes                        = ${merged.notes},
+      updated_at                   = now()
+    WHERE id = ${applicationId}`;
+
+  // Replace nested children if they were supplied — full-list semantics
+  if (replaceHousing) {
+    await sql`DELETE FROM application_housing_history WHERE application_id = ${applicationId}`;
+    if (body.housing_history.length) await insertHousingHistory(applicationId, body.housing_history);
+  }
+  if (replaceIncome) {
+    await sql`DELETE FROM application_income_history WHERE application_id = ${applicationId}`;
+    if (body.income_history.length) await insertIncomeHistory(applicationId, body.income_history);
+  }
+
+  const result = await applicationWithChildren(applicationId);
+  return res.status(200).json(result);
+}
+
+async function handleDelete(req, res) {
+  const { id } = req.query;
+  if (!id) return res.status(400).json({ error: 'id required' });
+  const result = await sql`DELETE FROM applications WHERE id = ${parseInt(id, 10)} RETURNING id`;
+  if (!result.length) return res.status(404).json({ error: 'Not found' });
+  return res.status(200).json({ ok: true });
+}
