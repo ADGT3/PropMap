@@ -242,11 +242,33 @@ export default async function handler(req, res) {
         // Create
         // V75.3: dd column dropped; DD now lives per-deal in deals.data.dd
         // V76.5: id is now optional — auto-generated as prop_* if not supplied.
+        // V77.1: properties MUST be georeferenced — lat AND lng required.
+        //   Properties are map-rooted by design: every property has to exist on
+        //   the map for visibility / boundary lookup / proximity searches.
+        //   Reject the request if either coordinate is missing or non-numeric.
         const {
           id: bodyId, address = '', suburb = '', state = 'NSW', lat = null, lng = null,
           lot_dps = '', area_sqm = null, parcels = [], property_count = 1,
           domain_listing_id = null, listing_url = null, agent = null,
         } = body;
+
+        // V77.1 georeference guard
+        if (lat === null || lat === undefined || lat === ''
+            || lng === null || lng === undefined || lng === '') {
+          return res.status(400).json({
+            error: 'lat and lng are required — properties must be georeferenced. ' +
+                   'Use the map "+ Pipeline" flow which always sets coordinates.',
+          });
+        }
+        const latNum = Number(lat);
+        const lngNum = Number(lng);
+        if (Number.isNaN(latNum) || Number.isNaN(lngNum)) {
+          return res.status(400).json({ error: 'lat and lng must be numeric' });
+        }
+        if (latNum < -90 || latNum > 90 || lngNum < -180 || lngNum > 180) {
+          return res.status(400).json({ error: 'lat must be -90..90 and lng must be -180..180' });
+        }
+
         const id = bodyId || newPropertyId();
         const parcelsJson = JSON.stringify(parcels);
         const agentJson   = agent ? JSON.stringify(agent) : null;
@@ -255,7 +277,7 @@ export default async function handler(req, res) {
             id, address, suburb, state, lat, lng, lot_dps, area_sqm,
             parcels, property_count, domain_listing_id, listing_url, agent
           ) VALUES (
-            ${id}, ${address}, ${suburb}, ${state}, ${lat}, ${lng},
+            ${id}, ${address}, ${suburb}, ${state}, ${latNum}, ${lngNum},
             ${String(lot_dps).toUpperCase()}, ${area_sqm},
             ${parcelsJson}::jsonb, ${property_count},
             ${domain_listing_id}, ${listing_url},

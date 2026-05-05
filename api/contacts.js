@@ -420,18 +420,65 @@ export default async function handler(req, res) {
         }
 
         // ── Create contact
-        const { first_name, last_name = '', mobile = '', email = '', organisation_id = null, source = 'manual', domain_id = null } = body;
+        // V77.1 changes:
+        //   - default `source` changed from 'manual' (which now violates the FK
+        //     to contact_sources) to null. Caller can pass any contact_sources.id.
+        //   - dob, current_address (+ suburb/state/postcode), and consent fields
+        //     all accepted on create — same tri-state convention as PUT for consents.
+        const {
+          first_name, last_name = '', mobile = '', email = '', organisation_id = null,
+          source = null, domain_id = null,
+          dob = null,
+          current_address = null, current_address_suburb = null,
+          current_address_state = null, current_address_postcode = null,
+          privacy_consent, marketing_email_consent, marketing_sms_consent, do_not_contact,
+        } = body;
         if (!first_name?.trim()) return res.status(400).json({ error: 'first_name required' });
+
+        const consentField = (input) => {
+          if (input === undefined) return null;
+          if (input === true) return new Date().toISOString();
+          return null; // false/'revoke'/null/anything else → no timestamp
+        };
+        const privacyAt   = consentField(privacy_consent);
+        const emailMktAt  = consentField(marketing_email_consent);
+        const smsMktAt    = consentField(marketing_sms_consent);
+        const doNotCtcAt  = consentField(do_not_contact);
+
         const rows = await sql`
-          INSERT INTO contacts (first_name, last_name, mobile, email, organisation_id, source, domain_id)
-          VALUES (${first_name.trim()}, ${last_name.trim()}, ${mobile.trim()}, ${email.trim()}, ${organisation_id}, ${source}, ${domain_id})
+          INSERT INTO contacts (
+            first_name, last_name, mobile, email, organisation_id,
+            source, domain_id,
+            dob, current_address, current_address_suburb,
+            current_address_state, current_address_postcode,
+            privacy_consent_at, marketing_email_consent_at,
+            marketing_sms_consent_at, do_not_contact_at
+          ) VALUES (
+            ${first_name.trim()}, ${last_name.trim()}, ${mobile.trim()}, ${email.trim()}, ${organisation_id},
+            ${source}, ${domain_id},
+            ${dob}, ${current_address}, ${current_address_suburb},
+            ${current_address_state}, ${current_address_postcode},
+            ${privacyAt}, ${emailMktAt}, ${smsMktAt}, ${doNotCtcAt}
+          )
           RETURNING *`;
         return res.status(201).json(rows[0]);
       }
 
       // ══════════════════════════════════════════════════════════════════════
       case 'PUT': {
-        const { id, org_id, first_name, last_name, mobile, email, organisation_id, source, domain_id, name, phone, website } = req.body;
+        const {
+          id, org_id, first_name, last_name, mobile, email, organisation_id, source, domain_id,
+          name, phone, website,
+          // V77.1 — new columns on contacts
+          dob,
+          current_address, current_address_suburb, current_address_state, current_address_postcode,
+          // Consent fields use a tri-state convention:
+          //   true        → stamp now() (user ticked the consent box)
+          //   false / 'revoke' → set to NULL (user un-ticked / revoked)
+          //   undefined   → leave column untouched
+          // Frontend sends the boolean; backend converts to timestamp.
+          privacy_consent, marketing_email_consent, marketing_sms_consent, do_not_contact,
+        } = req.body;
 
         // Update organisation
         if (org_id) {
@@ -449,16 +496,53 @@ export default async function handler(req, res) {
         }
 
         if (!id) return res.status(400).json({ error: 'id required' });
+
+        // V77.1 consent helper — translate tri-state boolean to timestamp value
+        // for SQL. Returns:
+        //   { touch: false, value: null }  if undefined (leave column alone)
+        //   { touch: true,  value: ISO    } if true  (stamp now)
+        //   { touch: true,  value: null   } if false/'revoke' (clear)
+        const consentField = (input) => {
+          if (input === undefined) return { touch: false, value: null };
+          if (input === true) return { touch: true, value: new Date().toISOString() };
+          if (input === false || input === 'revoke' || input === null) return { touch: true, value: null };
+          return { touch: false, value: null };
+        };
+        const cPrivacy   = consentField(privacy_consent);
+        const cEmailMkt  = consentField(marketing_email_consent);
+        const cSmsMkt    = consentField(marketing_sms_consent);
+        const cDoNotCtc  = consentField(do_not_contact);
+
+        // First: fetch current row so we can preserve untouched consent timestamps
+        const cur = await sql`SELECT * FROM contacts WHERE id = ${parseInt(id)}`;
+        if (!cur.length) return res.status(404).json({ error: 'Not found' });
+        const c = cur[0];
+
+        // Final consent values to write — touch ones get new value, untouched keep current
+        const nextPrivacy  = cPrivacy.touch  ? cPrivacy.value  : c.privacy_consent_at;
+        const nextEmailMkt = cEmailMkt.touch ? cEmailMkt.value : c.marketing_email_consent_at;
+        const nextSmsMkt   = cSmsMkt.touch   ? cSmsMkt.value   : c.marketing_sms_consent_at;
+        const nextDoNotCtc = cDoNotCtc.touch ? cDoNotCtc.value : c.do_not_contact_at;
+
         const rows = await sql`
           UPDATE contacts SET
-            first_name      = COALESCE(${first_name      ?? null}, first_name),
-            last_name       = COALESCE(${last_name       ?? null}, last_name),
-            mobile          = COALESCE(${mobile          ?? null}, mobile),
-            email           = COALESCE(${email           ?? null}, email),
-            organisation_id = COALESCE(${organisation_id ?? null}, organisation_id),
-            source          = COALESCE(${source          ?? null}, source),
-            domain_id       = COALESCE(${domain_id       ?? null}, domain_id),
-            updated_at      = now()
+            first_name                  = COALESCE(${first_name              ?? null}, first_name),
+            last_name                   = COALESCE(${last_name               ?? null}, last_name),
+            mobile                      = COALESCE(${mobile                  ?? null}, mobile),
+            email                       = COALESCE(${email                   ?? null}, email),
+            organisation_id             = COALESCE(${organisation_id         ?? null}, organisation_id),
+            source                      = COALESCE(${source                  ?? null}, source),
+            domain_id                   = COALESCE(${domain_id               ?? null}, domain_id),
+            dob                         = COALESCE(${dob                     ?? null}, dob),
+            current_address             = COALESCE(${current_address         ?? null}, current_address),
+            current_address_suburb      = COALESCE(${current_address_suburb  ?? null}, current_address_suburb),
+            current_address_state       = COALESCE(${current_address_state   ?? null}, current_address_state),
+            current_address_postcode    = COALESCE(${current_address_postcode?? null}, current_address_postcode),
+            privacy_consent_at          = ${nextPrivacy},
+            marketing_email_consent_at  = ${nextEmailMkt},
+            marketing_sms_consent_at    = ${nextSmsMkt},
+            do_not_contact_at           = ${nextDoNotCtc},
+            updated_at                  = now()
           WHERE id = ${parseInt(id)}
           RETURNING *`;
         if (!rows.length) return res.status(404).json({ error: 'Not found' });
