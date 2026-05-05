@@ -83,6 +83,7 @@ const CONTACT_SOURCES = [
   { id: 'domain_com_au',      label: 'Domain.com.au',      sort_order: 30 },
   { id: 'instagram',          label: 'Instagram',          sort_order: 40 },
   { id: 'facebook',           label: 'Facebook',           sort_order: 50 },
+  { id: 'edm',                label: 'EDM',                sort_order: 55 },
   { id: 'letter_drop',        label: 'Letter Drop',        sort_order: 60 },
   { id: 'door_knocking',      label: 'Door Knocking',      sort_order: 70 },
   { id: 'inspection',         label: 'Inspection',         sort_order: 80 },  // renamed from open_house
@@ -96,15 +97,21 @@ const CONTACT_SOURCES = [
 // Mapping table: how to convert existing contacts.source string values to new slug ids.
 // Keys are case-insensitive and match the labels users have been seeing.
 // 'Open House' is the V76-and-earlier label for what we now call 'Inspection'.
+// 'Inbound EDM' / 'EDM' both map to new 'edm' source.
+// 'domain_agent' (system-generated when contact created from Domain listing agent
+// details) collapses into 'domain_com_au' — single Domain source from user perspective.
 const SOURCE_VALUE_MAP = {
   'our website':         'our_website',
   'realestate.com.au':   'realestate_com_au',
   'domain.com.au':       'domain_com_au',
+  'domain_agent':        'domain_com_au',     // collapse system-generated tag
   'instagram':           'instagram',
   'facebook':            'facebook',
+  'edm':                 'edm',
+  'inbound edm':         'edm',                // strip 'inbound' prefix
   'letter drop':         'letter_drop',
   'door knocking':       'door_knocking',
-  'open house':          'inspection',       // RENAME
+  'open house':          'inspection',         // RENAME
   'inspection':          'inspection',
   'walk-in':             'walk_in',
   'walk in':             'walk_in',
@@ -113,8 +120,8 @@ const SOURCE_VALUE_MAP = {
   'cold calling':        'cold_calling',
   'referral':            'referral',
   'other':               'other',
-  'manual':              'other',             // legacy default
-  '':                    null,                // empty → NULL
+  'manual':              'other',              // legacy default
+  '':                    null,                 // empty → NULL
 };
 
 // Interaction types (10 system seeds, with direction driving Note form behaviour)
