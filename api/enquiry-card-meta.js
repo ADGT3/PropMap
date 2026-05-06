@@ -39,13 +39,16 @@ export default async function handler(req, res) {
     // We do this in a few queries since neon's tagged template doesn't allow IN-list interpolation.
     // Using = ANY(${array}) pattern.
 
-    // 1. Enquirer contact name — first non-agent contact linked to the deal
+    // 1. Enquirer contact name — first non-agent contact linked to the deal.
+    //    LEFT JOIN organisations to get org name (contacts.organisation_id is the FK).
     const contactRows = await sql`
       SELECT ec.entity_id AS deal_id,
-             c.first_name, c.last_name, c.org_name,
+             c.first_name, c.last_name,
+             o.name AS org_name,
              ec.role_id
       FROM entity_contacts ec
       JOIN contacts c ON c.id = ec.contact_id
+      LEFT JOIN organisations o ON o.id = c.organisation_id
       WHERE ec.entity_type = 'deal'
         AND ec.entity_id = ANY(${dealIds})
         AND ec.role_id <> 'agent'
@@ -68,24 +71,22 @@ export default async function handler(req, res) {
       WHERE deal_id = ANY(${dealIds})
       GROUP BY deal_id`;
 
-    // 3. Inspection attended per deal (Sales Enquiry)
-    //    — uses the inspection_attendances table where attended_at is set
+    // 3. Inspection attended per deal (Sales Enquiry).
+    //    inspection_attendances.attended_at is NOT NULL DEFAULT now() — every row counts.
     const inspRows = await sql`
       SELECT enquiry_deal_id AS deal_id, COUNT(*)::int AS attended_count
       FROM inspection_attendances
       WHERE enquiry_deal_id = ANY(${dealIds})
-        AND attended_at IS NOT NULL
       GROUP BY enquiry_deal_id`;
 
-    // 4. Contract requested per deal — proxied via a note with interaction_type='contract_request'
-    //    (interaction_type seeded only if needed — tolerated absent here)
+    // 4. Contract requested per deal — derived from inspection_attendances.requested_contract_at
+    //    (the schema-correct flag). Set when the agent ticks "Contract Requested" at check-in.
     const contractRows = await sql`
-      SELECT entity_id AS deal_id, COUNT(*)::int AS contract_count
-      FROM notes
-      WHERE entity_type = 'deal'
-        AND entity_id = ANY(${dealIds})
-        AND interaction_type = 'contract_request'
-      GROUP BY entity_id`;
+      SELECT enquiry_deal_id AS deal_id, COUNT(*)::int AS contract_count
+      FROM inspection_attendances
+      WHERE enquiry_deal_id = ANY(${dealIds})
+        AND requested_contract_at IS NOT NULL
+      GROUP BY enquiry_deal_id`;
 
     // Build lookup maps
     const contactsByDeal = {};
