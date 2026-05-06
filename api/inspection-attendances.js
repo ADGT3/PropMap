@@ -170,11 +170,11 @@ async function findOrCreateEnquiryDeal({
   const stage    = ENQUIRY_INITIAL_STAGE;
   const columnId = ENQUIRY_INITIAL_COLUMN(enquiryBoardId);
   await sql`
-    INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id)
+    INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id, parent_deal_id)
     VALUES (
       ${id}, ${propertyId ?? null}, ${parcelId ?? null},
       ${workflow}, ${stage}, 'active', ${dataJson}::jsonb,
-      ${enquiryBoardId}, ${columnId}
+      ${enquiryBoardId}, ${columnId}, ${listingDealId}
     )`;
 
   // Link the contact as 'enquirer' on the new deal (entity_contacts upsert)

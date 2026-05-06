@@ -253,6 +253,7 @@ export default async function handler(req, res) {
             stage        = 'shortlisted',
             board_id,                  // optional — derived from workflow if absent
             column_id,                 // optional — derived from board_id+stage if absent
+            parent_deal_id = null,     // V77.1b — for Enquiry deals: the Listing deal they're enquiring about
             data         = {},
             seed_financials_from, // optional deal_id to seed from
           } = body;
@@ -278,9 +279,9 @@ export default async function handler(req, res) {
           const dataJson = JSON.stringify({ addedAt: Date.now(), ...data });
 
           const dealRows = await sql`
-            INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id)
+            INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id, parent_deal_id)
             VALUES (${id}, ${property_id}, ${parcel_id}, ${workflow}, ${stage}, 'active', ${dataJson}::jsonb,
-                    ${boardIdFinal}, ${columnIdFinal})
+                    ${boardIdFinal}, ${columnIdFinal}, ${parent_deal_id})
             RETURNING *`;
 
           // Seed financials — find most recent prior deal's financial record if not specified
@@ -328,6 +329,7 @@ export default async function handler(req, res) {
           status   = 'active',
           board_id,
           column_id,
+          parent_deal_id = null,    // V77.1b — for Enquiry deals
           data     = {},
         } = body;
         if (!property_id && !parcel_id) return res.status(400).json({ error: 'property_id or parcel_id required' });
@@ -337,9 +339,9 @@ export default async function handler(req, res) {
         const boardIdFinal2  = board_id  || `sys_${workflow}`;
         const columnIdFinal2 = column_id || `${boardIdFinal2}_${stage}`;
         const rows = await sql`
-          INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id)
+          INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id, parent_deal_id)
           VALUES (${id}, ${property_id}, ${parcel_id}, ${workflow}, ${stage}, ${status}, ${dataJson}::jsonb,
-                  ${boardIdFinal2}, ${columnIdFinal2})
+                  ${boardIdFinal2}, ${columnIdFinal2}, ${parent_deal_id})
           ON CONFLICT (id) DO NOTHING
           RETURNING *`;
         if (!rows.length) {
