@@ -948,7 +948,6 @@
       <!-- Sub-menu navigation (admin-only sections) -->
       <div class="settings-submenu" id="settingsSubmenu">
         <button class="settings-submenu-item active" data-section="api-dashboard">API Dashboard</button>
-        <button class="settings-submenu-item" data-section="parameters">Parameters</button>
       </div>
 
       <!-- API Dashboard section -->
@@ -1089,18 +1088,6 @@
           </div>
         </div>
       </div>
-
-      <!-- Parameters section (V77.1) -->
-      <div class="settings-section" id="settingsSectionParameters" style="display:none">
-        <div class="settings-section-header">
-          <h2>Parameters</h2>
-          <p class="settings-section-sub">Lookup tables that drive contact roles, lead sources, and note interaction types. System rows are protected — they cannot be deleted, only deactivated. Custom rows can be deleted; references will have their assignment set to NULL.</p>
-        </div>
-        <div id="parametersPageContainer">
-          <div class="params-loading">Click Parameters to load…</div>
-        </div>
-      </div>
-
     </div>
   </div>
 
@@ -1121,8 +1108,6 @@
   <script src="dd-risks.js"></script>
   <script src="lib/parcel-format.js"></script>
   <script src="nsw-lookup-client.js"></script>
-  <script src="lookups.js"></script>
-  <script src="parameters-page.js"></script>
   <script src="crm.js"></script>
   <script src="map.js"></script>
   <script src="kanban.js"></script>
@@ -1250,31 +1235,6 @@
     document.getElementById('settingsClose')?.addEventListener('click', () => {
       if (window.Router) Router.navigate('/mapping');
       else toggleSettings(false);
-    });
-
-    // V77.1 — Settings sub-menu navigation. Stores active section and shows/hides
-    // sections accordingly. Parameters page is rendered lazily on first visit.
-    let _parametersRendered = false;
-    function showSettingsSection(sectionKey) {
-      // Update active button
-      document.querySelectorAll('.settings-submenu-item').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-section') === sectionKey);
-      });
-      // Show/hide section divs
-      document.getElementById('settingsSectionApiDashboard').style.display = sectionKey === 'api-dashboard' ? '' : 'none';
-      const paramsSection = document.getElementById('settingsSectionParameters');
-      if (paramsSection) paramsSection.style.display = sectionKey === 'parameters' ? '' : 'none';
-      // Lazy-render Parameters on first visit
-      if (sectionKey === 'parameters' && !_parametersRendered && window.ParametersPage) {
-        const container = document.getElementById('parametersPageContainer');
-        if (container) {
-          ParametersPage.render(container);
-          _parametersRendered = true;
-        }
-      }
-    }
-    document.querySelectorAll('.settings-submenu-item').forEach(btn => {
-      btn.addEventListener('click', () => showSettingsSection(btn.getAttribute('data-section')));
     });
 
     // ── API Dashboard (V75.7) ──────────────────────────────────────────────

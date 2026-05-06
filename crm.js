@@ -12,10 +12,6 @@
 
 const CRM_BASE = '/api/contacts';
 
-// V77.1 — fallback array (used if Lookups module isn't loaded yet or fetch fails).
-// Preferred path: window.Lookups (lookups.js) which fetches /api/roles and caches.
-// Production frontend should always have lookups.js loaded; this array is just
-// a hardcoded backup so the UI doesn't blank-out if the cache is empty.
 const ROLES = [
   // Property-scope — belongs to the property itself across deals
   { value: 'vendor',           label: 'Vendor',           scopes: ['property'] },
@@ -31,22 +27,9 @@ const ROLES = [
   { value: 'referrer',         label: 'Referrer',         scopes: ['property', 'deal'] },
 ];
 function rolesForScope(scope) {
-  // V77.1 — prefer cached Lookups roles if available; falls back to hardcoded array
-  if (window.Lookups) {
-    const cached = Lookups.rolesForScope(scope);
-    if (cached.length) {
-      // Map to existing { value, label, scopes } shape that callsites expect
-      return cached.map(r => ({ value: r.id, label: r.label, scopes: r.scopes }));
-    }
-  }
   return ROLES.filter(r => r.scopes.includes(scope));
 }
 function roleLabel(id) {
-  // V77.1 — prefer cached Lookups
-  if (window.Lookups) {
-    const lbl = Lookups.roleLabel(id);
-    if (lbl && lbl !== id) return lbl;  // cache returns id when not found
-  }
   const r = ROLES.find(x => x.value === id);
   return r ? r.label : id;
 }
@@ -2174,7 +2157,7 @@ function renderCRMView(container) {
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${parcelDeals.length})</span></span>
               ${activeDeal
                 ? `<button class="crm-parcel-open-deal-btn kb-add-offer-btn" data-deal-id="${activeDeal.id}">Open Active Deal</button>`
-                : (closedCount ? `<span class="crm-section-meta" style="font-size:11px;color:var(--text-secondary)">(history: ${closedCount} closed) — create new deals via the map "+ Pipeline" button</span>` : '')
+                : `<button class="crm-parcel-new-deal-btn kb-add-offer-btn">+ New Deal${closedCount ? ` <span style="font-weight:400;font-size:10px;color:rgba(255,255,255,0.75)">(history: ${closedCount} closed)</span>` : ''}</button>`
               }
             </div>
             <div class="crm-section-body">
@@ -2788,7 +2771,7 @@ function renderCRMView(container) {
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${propertyDeals.length})</span></span>
               ${activeDeal
                 ? `<button class="crm-prop-open-deal-btn kb-add-offer-btn" data-deal-id="${activeDeal.id}">Open Active Deal</button>`
-                : (inParcel ? '' : (closedCount ? `<span class="crm-section-meta" style="font-size:11px;color:var(--text-secondary)">(history: ${closedCount} closed) — create new deals via the map "+ Pipeline" button</span>` : ''))
+                : (inParcel ? '' : `<button class="crm-prop-new-deal-btn kb-add-offer-btn">+ New Deal${closedCount ? ` <span style="font-weight:400;font-size:10px;color:rgba(255,255,255,0.75)">(history: ${closedCount} closed)</span>` : ''}</button>`)
               }
             </div>
             <div class="crm-section-body">
