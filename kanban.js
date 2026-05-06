@@ -1263,6 +1263,16 @@ function _renderBoardSelectorBar() {
       existing.innerHTML = expectedHtml;
       existing.value = currentBoardId;
     }
+    // V77.1: re-evaluate the "+ New Card" button visibility for this board
+    if (window.KanbanNewCard) {
+      KanbanNewCard.attachToToolbar(bar, currentBoardId, (newDealId) => {
+        pipeline = {};
+        renderBoard();
+        setTimeout(() => {
+          if (typeof openPipelineItem === 'function') openPipelineItem(newDealId);
+        }, 300);
+      });
+    }
     return;
   }
 
@@ -1344,6 +1354,19 @@ function _renderBoardSelectorBar() {
       renderBoard();
     }, 250);
   });
+
+  // V77.1: attach the "+ New Card" button (only visible on V77.1 system boards).
+  if (window.KanbanNewCard) {
+    KanbanNewCard.attachToToolbar(bar, currentBoardId, (newDealId) => {
+      // After a deal is created, refresh the board view so the new card shows
+      pipeline = {};
+      renderBoard();
+      // Open the new deal modal for immediate edit
+      setTimeout(() => {
+        if (typeof openPipelineItem === 'function') openPipelineItem(newDealId);
+      }, 300);
+    });
+  }
 }
 
 // V76.7+ — Shared confirmation modal for deleting a deal card.
@@ -3323,6 +3346,12 @@ ${rows.join('')}`;
 
         <div class="crm-section-placeholder"></div>
 
+        <!-- V77.1 — Listings sections (Inspection Schedule + Agency Agreements).
+             These are populated only for sys_sales_listings / sys_lease_listings;
+             the renderer functions silently no-op for other boards. -->
+        <div class="v77-inspections-mount" data-deal-id="${id}"></div>
+        <div class="v77-agreements-mount" data-deal-id="${id}"></div>
+
         <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
         <div class="kb-terms">
           <div class="kb-terms-row">
@@ -3395,6 +3424,19 @@ ${rows.join('')}`;
       const placeholder = modal.querySelector('.crm-section-placeholder');
       if (placeholder) placeholder.replaceWith(crmEl);
     });
+  }
+
+  // V77.1: Mount Listings sections (Inspection Schedule + Agency Agreements).
+  // These are only populated for sys_sales_listings / sys_lease_listings deals;
+  // the renderer functions are no-ops for other boards.
+  const dealBoardForSections = item._boardId || currentBoardId;
+  if (window.InspectionsSection) {
+    const mount = modal.querySelector('.v77-inspections-mount');
+    if (mount) InspectionsSection.render(mount, id, dealBoardForSections);
+  }
+  if (window.AgencyAgreementsSection) {
+    const mount = modal.querySelector('.v77-agreements-mount');
+    if (mount) AgencyAgreementsSection.render(mount, id, dealBoardForSections);
   }
 
   // V75.7: load Actions for this deal into the Actions section

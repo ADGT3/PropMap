@@ -948,6 +948,7 @@
       <!-- Sub-menu navigation (admin-only sections) -->
       <div class="settings-submenu" id="settingsSubmenu">
         <button class="settings-submenu-item active" data-section="api-dashboard">API Dashboard</button>
+        <button class="settings-submenu-item" data-section="agency-agreements">Agency Agreements</button>
         <button class="settings-submenu-item" data-section="parameters">Parameters</button>
       </div>
 
@@ -1090,6 +1091,17 @@
         </div>
       </div>
 
+      <!-- Agency Agreements report (V77.1) -->
+      <div class="settings-section" id="settingsSectionAgencyAgreements" style="display:none">
+        <div class="settings-section-header">
+          <h2>Agency Agreements</h2>
+          <p class="settings-section-sub">All agency agreements across every deal. Click any column header to sort. Click ↗ to jump to a deal.</p>
+        </div>
+        <div id="agencyAgreementsReportContainer">
+          <div class="aar-loading">Click Agency Agreements to load…</div>
+        </div>
+      </div>
+
       <!-- Parameters section (V77.1) -->
       <div class="settings-section" id="settingsSectionParameters" style="display:none">
         <div class="settings-section-header">
@@ -1123,6 +1135,10 @@
   <script src="nsw-lookup-client.js"></script>
   <script src="lookups.js"></script>
   <script src="parameters-page.js"></script>
+  <script src="inspections-section.js"></script>
+  <script src="agency-agreements-section.js"></script>
+  <script src="agency-agreements-report.js"></script>
+  <script src="kanban-new-card.js"></script>
   <script src="crm.js"></script>
   <script src="map.js"></script>
   <script src="kanban.js"></script>
@@ -1255,6 +1271,7 @@
     // V77.1 — Settings sub-menu navigation. Stores active section and shows/hides
     // sections accordingly. Parameters page is rendered lazily on first visit.
     let _parametersRendered = false;
+    let _aarRendered = false;
     function showSettingsSection(sectionKey) {
       // Update active button
       document.querySelectorAll('.settings-submenu-item').forEach(btn => {
@@ -1262,6 +1279,8 @@
       });
       // Show/hide section divs
       document.getElementById('settingsSectionApiDashboard').style.display = sectionKey === 'api-dashboard' ? '' : 'none';
+      const aarSection = document.getElementById('settingsSectionAgencyAgreements');
+      if (aarSection) aarSection.style.display = sectionKey === 'agency-agreements' ? '' : 'none';
       const paramsSection = document.getElementById('settingsSectionParameters');
       if (paramsSection) paramsSection.style.display = sectionKey === 'parameters' ? '' : 'none';
       // Lazy-render Parameters on first visit
@@ -1270,6 +1289,14 @@
         if (container) {
           ParametersPage.render(container);
           _parametersRendered = true;
+        }
+      }
+      // Lazy-render Agency Agreements on first visit
+      if (sectionKey === 'agency-agreements' && !_aarRendered && window.AgencyAgreementsReport) {
+        const container = document.getElementById('agencyAgreementsReportContainer');
+        if (container) {
+          AgencyAgreementsReport.render(container);
+          _aarRendered = true;
         }
       }
     }
