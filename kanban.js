@@ -2171,13 +2171,13 @@ function renderStandardCard(card, id, item, p, stages) {
 function renderEnquiryCard(card, id, item, p, stages, boardId) {
   // V77.1 — Enquiry card layout. No "type/price headline" gold writing — we
   // show contact name instead. No Land/beds/baths badges. Interest level is
-  // a slider rendered up-front. Other badges (Offer, Evidenced, Latest Offer
-  // Price for Lease; Inspected, Contract Requested, Latest Offer Price for
-  // Sales) are populated from item._enquiryMeta (filled async after board
-  // render — see enrichEnquiryCardsAsync()).
+  // shown as a small numeric badge (the slider lives in the deal modal,
+  // above Status). Other badges (Offer, Evidenced, Latest Offer Price for
+  // Lease; Inspected, Contract Requested, Latest Offer Price for Sales) come
+  // from item._enquiryMeta (filled async — see enrichEnquiryCardsAsync()).
   const interestLevel = (item.data?.interest_level != null)
     ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
-    : 0;
+    : null;
 
   const meta = item._enquiryMeta || {};
   const isLease = boardId === 'sys_lease_enquiry';
@@ -2199,6 +2199,10 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
     if (meta.has_contract_requested)  badges.push(`<span class="kb-ind kb-ind-enq kb-ind-contract"  title="Contract requested">Contract</span>`);
     if (meta.latest_rent != null)     badges.push(`<span class="kb-ind kb-ind-enq kb-ind-rent" title="Latest offer price">$${Math.round(meta.latest_rent).toLocaleString('en-AU')}</span>`);
   }
+  // Interest level badge — only when set (not null)
+  if (interestLevel != null) {
+    badges.push(`<span class="kb-ind kb-ind-enq kb-ind-interest" title="Interest level (0–100)">Interest ${interestLevel}</span>`);
+  }
   // Common across both Enquiry types
   if (item._dueActionCount > 0) {
     badges.push(`<span class="kb-ind kb-ind-action-due" title="${item._dueActionCount} action${item._dueActionCount === 1 ? '' : 's'} due">🔔 ${item._dueActionCount}</span>`);
@@ -2211,42 +2215,20 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
     </div>
     <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
     <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
-    <div class="kb-card-interest" title="Interest level — drag to set">
-      <label class="kb-interest-label">
-        <span class="kb-interest-text">Interest</span>
-        <span class="kb-interest-value">${interestLevel}</span>
-      </label>
-      <input type="range" class="kb-interest-slider" min="0" max="100" step="5" value="${interestLevel}" data-deal-id="${id}">
-    </div>
     <select class="kb-stage-select">${stageOptions}</select>
     <div class="kb-card-indicators">${badges.join('')}</div>
   `;
-
-  // Wire interest slider — debounced PUT to /api/deals data.interest_level
-  const slider = card.querySelector('.kb-interest-slider');
-  const valueEl = card.querySelector('.kb-interest-value');
-  let _interestSaveTimer = null;
-  slider.addEventListener('input', (e) => {
-    e.stopPropagation();
-    valueEl.textContent = slider.value;
-  });
-  slider.addEventListener('change', (e) => {
-    e.stopPropagation();
-    const newLevel = parseInt(slider.value, 10);
-    clearTimeout(_interestSaveTimer);
-    _interestSaveTimer = setTimeout(() => saveInterestLevel(id, newLevel), 200);
-  });
-  // Prevent drag from starting when grabbing slider
-  slider.addEventListener('mousedown', (e) => e.stopPropagation());
 }
 
-// Persist interest_level for an Enquiry deal — sets data.interest_level via /api/deals PUT.
+// Persist interest_level for an Enquiry deal — sets data.interest_level via the
+// standard pipeline save. Called from the deal-modal slider.
 async function saveInterestLevel(dealId, level) {
   if (!pipeline[dealId]) return;
   if (!pipeline[dealId].data) pipeline[dealId].data = {};
   pipeline[dealId].data.interest_level = level;
-  // Trigger the standard save pipeline
   savePipeline(dealId);
+  // Refresh the kanban card badge in place if board is visible
+  refreshCardLive(dealId);
 }
 
 // V77.1 — Enrich Enquiry cards with metadata fetched from server.
@@ -3629,6 +3611,12 @@ ${rows.join('')}`;
         <!-- V77.1b — Listing Summary section (Enquiry boards only). -->
         <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
 
+        <!-- V77.1 — Interest level slider (Enquiry boards only — appears above Status). -->
+        <div class="v77-interest-mount" data-deal-id="${id}"></div>
+
+        <!-- V77.1 — Deal Status select (kanban stage) — appears just above board-specific sections. -->
+        <div class="v77-status-mount" data-deal-id="${id}"></div>
+
         <!-- V77.1 — Lease Offer + Validation sections (Lease Enquiry only). -->
         <div class="v77-lease-offer-mount" data-deal-id="${id}"></div>
         <div class="v77-validation-mount" data-deal-id="${id}"></div>
@@ -3711,6 +3699,59 @@ ${rows.join('')}`;
     if (mount) {
       const parentDealId = item.parent_deal_id || item._parentDealId || null;
       ListingSummarySection.render(mount, id, dealBoardForSections, parentDealId);
+    }
+  }
+
+  // V77.1: Interest level slider — Enquiry boards only. Appears between Listing
+  // Summary and the deal Status. Persists data.interest_level via savePipeline().
+  if (dealBoardForSections === 'sys_sales_enquiry' || dealBoardForSections === 'sys_lease_enquiry') {
+    const interestMount = modal.querySelector('.v77-interest-mount');
+    if (interestMount) {
+      const initialLevel = (item.data?.interest_level != null)
+        ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
+        : 0;
+      interestMount.innerHTML = `
+        <div class="kb-section-label" style="margin-top:12px">Interest Level</div>
+        <div class="kb-modal-interest">
+          <div class="kb-interest-row">
+            <input type="range" class="kb-modal-interest-slider" min="0" max="100" step="5" value="${initialLevel}">
+            <span class="kb-modal-interest-value">${initialLevel}</span>
+          </div>
+          <div class="kb-modal-interest-help">0 — low interest    ·    100 — very strong interest</div>
+        </div>
+      `;
+      const slider = interestMount.querySelector('.kb-modal-interest-slider');
+      const valEl  = interestMount.querySelector('.kb-modal-interest-value');
+      let _saveT = null;
+      slider.addEventListener('input', () => { valEl.textContent = slider.value; });
+      slider.addEventListener('change', () => {
+        const newLevel = parseInt(slider.value, 10);
+        clearTimeout(_saveT);
+        _saveT = setTimeout(() => saveInterestLevel(id, newLevel), 200);
+      });
+    }
+  }
+
+  // V77.1: Deal Status select — mirrors the kanban card's stage dropdown so
+  // agents can change stage without leaving the modal. Common to all boards.
+  {
+    const statusMount = modal.querySelector('.v77-status-mount');
+    if (statusMount) {
+      const stagesForDeal = resolveCurrentStages(); // current board's columns
+      const currentColId = item._columnId || stageToColumnId(item.stage, item._boardId || currentBoardId);
+      const statusOptions = stagesForDeal.map(s =>
+        `<option value="${s.id}" ${s.id === currentColId ? 'selected' : ''}>${s.label}</option>`
+      ).join('');
+      statusMount.innerHTML = `
+        <div class="kb-section-label" style="margin-top:12px">Status</div>
+        <select class="kb-input kb-modal-status-select">${statusOptions}</select>
+      `;
+      const sel = statusMount.querySelector('.kb-modal-status-select');
+      sel.addEventListener('change', () => {
+        moveToColumn(id, sel.value);
+        // Keep modal open; just refresh the kanban card behind it
+        refreshCardLive(id);
+      });
     }
   }
 

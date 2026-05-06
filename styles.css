@@ -3967,25 +3967,28 @@ body:not([data-route="mapping"]) .leaflet-control-container {
    the form integrates cleanly without a CSS-deploy sequencing problem.
    ════════════════════════════════════════════════════════════════════════════ */
 
-.nf-type-row {
+/* V77.1 — Note form: Type select + Tag-a-contact share one row */
+.nf-top-row {
   display: flex;
   gap: 8px;
   margin-bottom: 6px;
+  align-items: flex-start;
 }
-.nf-type-select,
-.nf-source-select {
-  flex: 1;
+.nf-type-select {
+  flex: 0 0 140px;
   font-size: 12px;
   padding: 4px 8px;
 }
-.nf-contact-row {
-  margin-bottom: 6px;
+.nf-contact-wrap {
+  flex: 1;
   position: relative;
+  min-width: 0;
 }
 .nf-contact-search {
   width: 100%;
   font-size: 12px;
   padding: 4px 8px;
+  box-sizing: border-box;
 }
 .nf-contact-results {
   position: absolute;
@@ -4908,56 +4911,7 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   white-space: nowrap;
 }
 
-.kb-card-interest {
-  margin: 6px 0 4px;
-}
-.kb-interest-label {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 10px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 2px;
-}
-.kb-interest-text { }
-.kb-interest-value {
-  font-weight: 600;
-  color: var(--text);
-  font-size: 12px;
-}
-.kb-interest-slider {
-  width: 100%;
-  -webkit-appearance: none;
-  appearance: none;
-  height: 4px;
-  background: var(--surface2);
-  border-radius: 2px;
-  outline: none;
-  cursor: pointer;
-  margin: 0;
-}
-.kb-interest-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  background: var(--accent);
-  border-radius: 50%;
-  border: 2px solid #fff;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
-  cursor: grab;
-}
-.kb-interest-slider::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  background: var(--accent);
-  border-radius: 50%;
-  border: 2px solid #fff;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
-  cursor: grab;
-}
+/* V77.1 — Card-level interest slider replaced by a number badge (.kb-ind-interest) and the slider in the deal modal. */
 
 /* Enquiry-specific badge variants (extend .kb-ind base styling) */
 .kb-ind-enq                  { background: var(--surface2); color: var(--text); }
@@ -4966,3 +4920,75 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 .kb-ind-rent                 { background: #d4ead4 !important; color: #2d6e2d !important; font-weight: 600; }
 .kb-ind-inspected            { background: #cee7ea !important; color: #266872 !important; }
 .kb-ind-contract             { background: #f5e7d6 !important; color: #855e2c !important; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Interest slider + Status select inside deal modal
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.kb-modal-interest {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.kb-interest-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.kb-modal-interest-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: var(--surface2);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  margin: 0;
+}
+.kb-modal-interest-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  cursor: grab;
+}
+.kb-modal-interest-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  cursor: grab;
+}
+.kb-modal-interest-value {
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--accent);
+  min-width: 32px;
+  text-align: right;
+}
+.kb-modal-interest-help {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+  text-align: center;
+}
+
+.kb-modal-status-select {
+  width: 100%;
+  font-size: 13px;
+}
+
+/* Interest badge on kanban card */
+.kb-ind-interest {
+  background: rgba(196,132,26,0.15) !important;
+  color: var(--accent) !important;
+  font-weight: 600;
+}

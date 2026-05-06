@@ -44,21 +44,23 @@
   function buildHtml(opts) {
     const showContactTagger = opts.showContactTagger !== false;
     const placeholder       = opts.placeholder || 'Add a note…';
+    // V77.1 — source dropdown removed from this generic NoteForm. Source is
+    // an enquiry-origination concept, captured ONLY on the first note of an
+    // Enquiry deal via the "+ New Card" wizard (which builds its own UI).
+    // Subsequent notes don't have a meaningful source.
+    // Type and Tag-a-contact share one row to save vertical space.
     return `
-      <div class="nf-type-row">
+      <div class="nf-top-row">
         <select class="nf-type-select kb-input" data-role="type">
           <option value="">Loading types…</option>
         </select>
-        <select class="nf-source-select kb-input" data-role="source" style="display:none">
-          <option value="">— Select source —</option>
-        </select>
+        ${showContactTagger ? `
+        <div class="nf-contact-wrap">
+          <input class="kb-input nf-contact-search" type="text" placeholder="Tag a contact (optional)…" data-role="contact-search">
+          <div class="nf-contact-results" data-role="contact-results"></div>
+          <div class="nf-contact-tag" data-role="contact-tag" style="display:none"></div>
+        </div>` : ''}
       </div>
-      ${showContactTagger ? `
-      <div class="nf-contact-row">
-        <input class="kb-input nf-contact-search" type="text" placeholder="Tag a contact (optional)…" data-role="contact-search">
-        <div class="nf-contact-results" data-role="contact-results"></div>
-        <div class="nf-contact-tag" data-role="contact-tag" style="display:none"></div>
-      </div>` : ''}
       <div class="nf-input-row">
         <textarea class="kb-input nf-text-input" placeholder="${placeholder}" rows="2" data-role="text"></textarea>
         <button class="nf-add-btn kb-action-btn" data-role="add">Add</button>
@@ -66,16 +68,13 @@
     `;
   }
 
-  // Just the type+source dropdown HTML, for callers that want to assemble
-  // the rest of the form themselves
+  // Just the type dropdown HTML (no source — see V77.1 note above), for
+  // callers that want to assemble the rest of the form themselves.
   function renderTypeSourceDropdownsHtml() {
     return `
-      <div class="nf-type-row">
+      <div class="nf-top-row">
         <select class="nf-type-select kb-input" data-role="type">
           <option value="">Loading types…</option>
-        </select>
-        <select class="nf-source-select kb-input" data-role="source" style="display:none">
-          <option value="">— Select source —</option>
         </select>
       </div>
     `;
@@ -100,43 +99,14 @@
     }
   }
 
-  async function populateSourceDropdown(selectEl, defaultId) {
-    if (!window.Lookups) {
-      selectEl.innerHTML = '<option value="">— Select source —</option>';
-      return;
-    }
-    const sources = await Lookups.getSourcesActive();
-    selectEl.innerHTML =
-      '<option value="">— Select source —</option>' +
-      sources
-        .map(s => `<option value="${s.id}" ${s.id === defaultId ? 'selected' : ''}>${escapeHtml(s.label)}</option>`)
-        .join('');
-    if (defaultId && sources.some(s => s.id === defaultId)) {
-      selectEl.value = defaultId;
-    }
-  }
+  // V77.1 — populateSourceDropdown / applySourceVisibility removed.
+  // Source is no longer part of the generic NoteForm. The "+ New Card" wizard
+  // captures enquiry source on its own UI when creating an Enquiry deal.
 
   function escapeHtml(s) {
     return String(s ?? '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  }
-
-  // ── Direction-dependent source visibility ─────────────────────────────────
-
-  function applySourceVisibility(typeSelect, sourceSelect) {
-    if (!window.Lookups) {
-      sourceSelect.style.display = 'none';
-      return;
-    }
-    const dir = Lookups.interactionDirection(typeSelect.value);
-    if (dir === 'inbound') {
-      sourceSelect.style.display = '';
-    } else {
-      // Per Q2 (a) — silently clear value when direction changes away from inbound
-      sourceSelect.value = '';
-      sourceSelect.style.display = 'none';
-    }
   }
 
   // ── Mount full form ───────────────────────────────────────────────────────
@@ -146,7 +116,6 @@
     containerEl.innerHTML = buildHtml(opts);
 
     const typeSelect    = containerEl.querySelector('[data-role="type"]');
-    const sourceSelect  = containerEl.querySelector('[data-role="source"]');
     const textInput     = containerEl.querySelector('[data-role="text"]');
     const addBtn        = containerEl.querySelector('[data-role="add"]');
     const contactSearch = containerEl.querySelector('[data-role="contact-search"]');
@@ -156,19 +125,9 @@
     let _taggedContactId   = opts.defaultTaggedContactId || null;
     let _taggedContactName = null;
 
-    // Populate dropdowns
-    Promise.all([
-      populateTypeDropdown(typeSelect, opts.defaultInteractionType || 'file_note'),
-      populateSourceDropdown(sourceSelect, opts.defaultSource || null),
-    ]).then(() => {
-      applySourceVisibility(typeSelect, sourceSelect);
-    }).catch(err => {
-      console.warn('[NoteForm] dropdown populate failed:', err);
-    });
-
-    // Type change → show/hide source dropdown
-    typeSelect.addEventListener('change', () => {
-      applySourceVisibility(typeSelect, sourceSelect);
+    // Populate type dropdown
+    populateTypeDropdown(typeSelect, opts.defaultInteractionType || 'file_note').catch(err => {
+      console.warn('[NoteForm] type dropdown populate failed:', err);
     });
 
     // Contact tagger
@@ -246,7 +205,7 @@
     function getValues() {
       return {
         interaction_type: typeSelect.value || 'file_note',
-        source: sourceSelect.value || null,
+        // V77.1 — source removed from generic NoteForm; captured on Enquiry origination only
         tagged_contact_id: _taggedContactId,
         note_text: textInput.value.trim(),
       };
@@ -254,9 +213,7 @@
     function reset() {
       textInput.value = '';
       clearContactTag();
-      // Reset type to default; source clears automatically via change handler
       typeSelect.value = opts.defaultInteractionType || 'file_note';
-      applySourceVisibility(typeSelect, sourceSelect);
     }
     function focus() {
       textInput.focus();
