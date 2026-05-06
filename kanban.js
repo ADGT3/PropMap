@@ -3371,6 +3371,12 @@ ${rows.join('')}`;
 
         <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
 
+        ${(() => {
+          // V77.1: Due Diligence section is Acquisition-workflow only.
+          // Listings (Sales/Lease) and Enquiry (Sales/Lease) boards don't have DD.
+          const dealBoardForDD = item._boardId || currentBoardId;
+          if (dealBoardForDD !== 'sys_acquisition') return '';
+          return `
         <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
         <div style="display:flex;justify-content:flex-end;margin-bottom:4px">
           <button class="kb-rerun-dd-btn kb-add-offer-btn" data-id="${id}" title="Re-run Auto DD">↻ Auto DD</button>
@@ -3390,6 +3396,8 @@ ${rows.join('')}`;
               </div>`;
           }).join('')}
         </div>
+          `;
+        })()}
 
         <div class="kb-section-label" style="margin-top:16px">Actions</div>
         <div class="kb-deal-actions-section" data-deal-actions="${id}">
