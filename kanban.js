@@ -3500,10 +3500,17 @@ ${rows.join('')}`;
       </div>
       <div class="kb-modal-body">
 
+        <!-- V77.1 — Status select (Enquiry boards only — first section, above Contacts).
+             Non-Enquiry boards keep Status in the legacy IIFE just below. -->
+        <div class="v77-status-mount" data-deal-id="${id}"></div>
+
+        <!-- V77.1 — Interest level slider (Enquiry boards only — second section, above Contacts). -->
+        <div class="v77-interest-mount" data-deal-id="${id}"></div>
+
         ${(() => {
           // V76.4 / V77.1: Status select position depends on board type.
-          //   - Enquiry boards (Sales/Lease): Status renders AFTER Interest Level,
-          //     via the v77-status-mount further down. Suppressed here.
+          //   - Enquiry boards (Sales/Lease): Status renders FIRST (above Contacts),
+          //     via the v77-status-mount above. Suppressed here.
           //   - All other boards: Status stays at top of modal (legacy V76.4 layout).
           const dealBoardId = item._boardId || currentBoardId;
           if (dealBoardId === 'sys_sales_enquiry' || dealBoardId === 'sys_lease_enquiry') return '';
@@ -3610,12 +3617,6 @@ ${rows.join('')}`;
              Renderers no-op for non-Listings boards. -->
         <div class="v77-inspections-mount" data-deal-id="${id}"></div>
         <div class="v77-agreements-mount" data-deal-id="${id}"></div>
-
-        <!-- V77.1 — Interest level slider (Enquiry boards only — appears above Listing Summary). -->
-        <div class="v77-interest-mount" data-deal-id="${id}"></div>
-
-        <!-- V77.1 — Deal Status select (kanban stage) — appears above Listing Summary. -->
-        <div class="v77-status-mount" data-deal-id="${id}"></div>
 
         <!-- V77.1b — Listing Summary section (Enquiry boards only). -->
         <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
@@ -3746,7 +3747,7 @@ ${rows.join('')}`;
         `<option value="${s.id}" ${s.id === currentColId ? 'selected' : ''}>${s.label}</option>`
       ).join('');
       statusMount.innerHTML = `
-        <div class="kb-section-label" style="margin-top:12px">Status</div>
+        <div class="kb-section-label" style="margin-top:0">Status</div>
         <select class="kb-input kb-modal-status-select">${statusOptions}</select>
       `;
       const sel = statusMount.querySelector('.kb-modal-status-select');
