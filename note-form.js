@@ -138,6 +138,12 @@
         contactTag.style.display = 'none';
         contactTag.innerHTML = '';
       }
+      if (contactSearch) {
+        contactSearch.style.display = '';
+        contactSearch.value = '';
+        contactSearch.focus();
+      }
+      if (contactResults) contactResults.innerHTML = '';
     }
 
     let _contactSearchTimer = null;
@@ -163,10 +169,13 @@
               item.addEventListener('click', () => {
                 _taggedContactId = c.id;
                 _taggedContactName = name;
+                // V77.1 — picked contact replaces the search input visually:
+                // hide the input, show the chip in its place (same row).
+                contactSearch.style.display = 'none';
                 contactSearch.value = '';
                 contactResults.innerHTML = '';
                 contactTag.style.display = '';
-                contactTag.innerHTML = `<span>@${escapeHtml(name)}</span><button class="nf-contact-clear" type="button">✕</button>`;
+                contactTag.innerHTML = `<span class="nf-contact-tag-name">@${escapeHtml(name)}</span><button class="nf-contact-clear" type="button" title="Clear">✕</button>`;
                 contactTag.querySelector('.nf-contact-clear').addEventListener('click', clearContactTag);
               });
               contactResults.appendChild(item);

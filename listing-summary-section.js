@@ -142,7 +142,7 @@
             <span class="ls-value">${esc(r.value)}</span>
           </div>`).join('')}
         <div class="ls-row">
-          <span class="ls-label">Stage</span>
+          <span class="ls-label">Listing Stage</span>
           <span class="ls-value">${esc(stage)} <span class="ls-status-pill ls-status-${esc(status)}">${esc(status)}</span></span>
         </div>
         <div class="ls-actions">

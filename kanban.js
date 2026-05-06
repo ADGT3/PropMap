@@ -2210,9 +2210,10 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
 
   card.innerHTML = `
     <div class="kb-card-top">
-      <span class="kb-card-contact">${contactName}</span>
+      <span class="kb-card-type">${isLease ? 'Lease Enquiry' : 'Sales Enquiry'}</span>
       <button class="kb-remove" title="Remove from pipeline">✕</button>
     </div>
+    <div class="kb-card-price">${contactName}</div>
     <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
     <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
     <select class="kb-stage-select">${stageOptions}</select>
@@ -3608,14 +3609,14 @@ ${rows.join('')}`;
         <div class="v77-inspections-mount" data-deal-id="${id}"></div>
         <div class="v77-agreements-mount" data-deal-id="${id}"></div>
 
-        <!-- V77.1b — Listing Summary section (Enquiry boards only). -->
-        <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
-
-        <!-- V77.1 — Interest level slider (Enquiry boards only — appears above Status). -->
+        <!-- V77.1 — Interest level slider (Enquiry boards only — appears above Listing Summary). -->
         <div class="v77-interest-mount" data-deal-id="${id}"></div>
 
-        <!-- V77.1 — Deal Status select (kanban stage) — appears just above board-specific sections. -->
+        <!-- V77.1 — Deal Status select (kanban stage) — appears above Listing Summary. -->
         <div class="v77-status-mount" data-deal-id="${id}"></div>
+
+        <!-- V77.1b — Listing Summary section (Enquiry boards only). -->
+        <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
 
         <!-- V77.1 — Lease Offer + Validation sections (Lease Enquiry only). -->
         <div class="v77-lease-offer-mount" data-deal-id="${id}"></div>
@@ -3935,13 +3936,15 @@ ${rows.join('')}`;
   // at .v77-note-form-mount. Replaces the legacy inline note input wiring.
   if (window.NoteForm && modal.querySelector('.v77-note-form-mount')) {
     const noteMount = modal.querySelector('.v77-note-form-mount');
-    NoteForm.mount(noteMount, {
+    let _kbNoteFormHandle = null;
+    _kbNoteFormHandle = NoteForm.mount(noteMount, {
       placeholder: 'Add a note…',
       showContactTagger: true,
       onAdd: async (vals) => {
         const text = (vals.note_text || '').trim();
         if (!text) return;
         await addNote(id, text, vals.tagged_contact_id || null, vals.interaction_type || null, vals.source || null);
+        if (_kbNoteFormHandle?.reset) _kbNoteFormHandle.reset();
         renderNotesList();
         refreshCardLive(id);
       },
