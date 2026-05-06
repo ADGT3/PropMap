@@ -76,13 +76,55 @@
       }
 
       const terms = listing.data?.terms || {};
-      const price = fmtPrice(terms.price);
-      const settlement = fmtSettlement(terms.settlement);
+      const stage = listing.stage || '—';
+      const status = listing.status || 'active';
       const address = listing.property?.address
         ? `${listing.property.address}${listing.property.suburb ? ', ' + listing.property.suburb : ''}`
         : '—';
-      const stage = listing.stage || '—';
-      const status = listing.status || 'active';
+
+      // Detect Sales vs Lease listing by parent's board_id
+      const isLease = listing.board_id === 'sys_lease_listings';
+
+      let primaryRow, metaRows = [];
+      if (isLease) {
+        // Lease: rent prominent, bond/term/available as meta
+        const rentAmt    = terms.rent_amount;
+        const rentPeriod = terms.rent_period || 'weekly';
+        const rentLabel  = rentAmt != null
+          ? `$${Number(rentAmt).toLocaleString('en-AU')}/${rentPeriod === 'monthly' ? 'month' : 'week'}`
+          : '—';
+        primaryRow = {
+          label: 'Asking Rent',
+          value: rentLabel,
+          prominent: true,
+        };
+        if (terms.bond != null) {
+          metaRows.push({ label: 'Bond', value: `$${Number(terms.bond).toLocaleString('en-AU')}` });
+        }
+        if (terms.term_months != null) {
+          metaRows.push({ label: 'Term', value: `${terms.term_months} months` });
+        }
+        if (terms.available_from) {
+          const d = new Date(terms.available_from);
+          const formatted = !isNaN(d.getTime())
+            ? `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
+            : terms.available_from;
+          metaRows.push({ label: 'Available from', value: formatted });
+        }
+        if (terms.special_terms) {
+          metaRows.push({ label: 'Special terms', value: terms.special_terms });
+        }
+      } else {
+        // Sales: price prominent, settlement as meta
+        primaryRow = {
+          label: 'Listing Price',
+          value: terms.price != null ? `$${Number(terms.price).toLocaleString('en-AU')}` : '—',
+          prominent: true,
+        };
+        if (terms.settlement != null) {
+          metaRows.push({ label: 'Settlement', value: `${terms.settlement} days` });
+        }
+      }
 
       const summary = containerEl.querySelector('.ls-summary');
       summary.innerHTML = `
@@ -91,13 +133,14 @@
           <span class="ls-value">${esc(address)}</span>
         </div>
         <div class="ls-row">
-          <span class="ls-label">Listing Price</span>
-          <span class="ls-value ls-value-prom">${esc(price)}</span>
+          <span class="ls-label">${esc(primaryRow.label)}</span>
+          <span class="ls-value ls-value-prom">${esc(primaryRow.value)}</span>
         </div>
-        <div class="ls-row">
-          <span class="ls-label">Settlement</span>
-          <span class="ls-value">${esc(settlement)}</span>
-        </div>
+        ${metaRows.map(r => `
+          <div class="ls-row">
+            <span class="ls-label">${esc(r.label)}</span>
+            <span class="ls-value">${esc(r.value)}</span>
+          </div>`).join('')}
         <div class="ls-row">
           <span class="ls-label">Stage</span>
           <span class="ls-value">${esc(stage)} <span class="ls-status-pill ls-status-${esc(status)}">${esc(status)}</span></span>

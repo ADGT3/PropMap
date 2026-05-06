@@ -1984,6 +1984,21 @@ function formatDepositDue(val) {
   return formatSettlement(val); // reuse same logic — normalises to "X days"
 }
 
+// V77.1: Lease term parser — accepts "12 months", "1 year", "6m", "2y" etc.
+// Returns integer number of months, or null if unparseable / empty.
+function parseLeaseTermMonths(val) {
+  if (val == null || val === '') return null;
+  if (typeof val === 'number') return Math.round(val);
+  const s = String(val).trim().toLowerCase();
+  if (!s) return null;
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*(m|mo|month|months|y|yr|year|years)?/);
+  if (!m) return null;
+  const num  = parseFloat(m[1]);
+  const unit = m[2] || 'months';
+  if (/^y/.test(unit)) return Math.round(num * 12);
+  return Math.round(num);
+}
+
 function getTerms(id) {
   const t = pipeline[id]?.terms || {};
   if (!Array.isArray(t.deposits) || t.deposits.length === 0) {
@@ -3348,28 +3363,12 @@ ${rows.join('')}`;
 
         <div class="crm-section-placeholder"></div>
 
-        <!-- V77.1 — Listings sections (Inspection Schedule + Agency Agreements).
-             These are populated only for sys_sales_listings / sys_lease_listings;
-             the renderer functions silently no-op for other boards. -->
-        <div class="v77-inspections-mount" data-deal-id="${id}"></div>
-        <div class="v77-agreements-mount" data-deal-id="${id}"></div>
-
-        <!-- V77.1b — Listing Summary section (Enquiry boards only).
-             Read-only display of the parent Listing's address, agent and price.
-             Populated by ListingSummarySection module. -->
-        <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
-
         ${(() => {
-          // V77.1: Vendor Terms — visible on Acquisition AND Listings boards.
-          //   - Acquisition: purchase offer terms (the price we're offering)
-          //   - Listings:    listing/asking terms (the price we're asking)
-          //   - Enquiry:     hidden (read-only Listing Summary section above)
-          //   - Deferred V78 'modal section visibility' will replace this hardcoded gate
+          // V77.1: Vendor Terms — Sales Listings + Acquisition (price/settlement/deposits)
           const dealBoardForTerms = item._boardId || currentBoardId;
-          const showTerms = dealBoardForTerms === 'sys_acquisition'
-                         || dealBoardForTerms === 'sys_sales_listings'
-                         || dealBoardForTerms === 'sys_lease_listings';
-          if (!showTerms) return '';
+          const showVendorTerms = dealBoardForTerms === 'sys_acquisition'
+                              || dealBoardForTerms === 'sys_sales_listings';
+          if (!showVendorTerms) return '';
           return `
         <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
         <div class="kb-terms">
@@ -3391,15 +3390,69 @@ ${rows.join('')}`;
         })()}
 
         ${(() => {
-          // V77.1: Finance Picker (purchase offers) — Acquisition only. Listings
-          // don't receive offers in this section; offers come via Lease Offer
-          // (Lease Enquiry) or sales offer flow (future). Enquiry never has it.
+          // V77.1: Finance Picker (purchase offers) — Acquisition only.
           const dealBoardForFinance = item._boardId || currentBoardId;
           if (dealBoardForFinance !== 'sys_acquisition') return '';
           return `
         <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
           `;
         })()}
+
+        ${(() => {
+          // V77.1: Lease Terms — Lease Listings only
+          // Different shape from Sales: rent_amount, rent_period, bond, term_months, available_from, special_terms
+          const dealBoardForLease = item._boardId || currentBoardId;
+          if (dealBoardForLease !== 'sys_lease_listings') return '';
+          const lt = terms || {};
+          const rentAmt    = lt.rent_amount != null ? formatInputPrice(String(lt.rent_amount)) : '';
+          const rentPeriod = lt.rent_period || 'weekly';
+          const bond       = lt.bond != null ? formatInputPrice(String(lt.bond)) : '';
+          const termText   = lt.term_months != null ? `${lt.term_months} months` : '';
+          const availFrom  = lt.available_from || '';
+          const special    = lt.special_terms || '';
+          return `
+        <div class="kb-section-label" style="margin-top:12px">Lease Terms</div>
+        <div class="kb-lease-terms">
+          <div class="kb-lease-rent-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Rent</label>
+              <input class="kb-input kb-lease-rent-amount" type="text" placeholder="e.g. $650" value="${rentAmt}">
+            </div>
+            <div class="kb-lease-period-toggle" data-role="period-toggle">
+              <button class="kb-lease-period-btn ${rentPeriod === 'weekly' ? 'active' : ''}" data-period="weekly" type="button">Weekly</button>
+              <button class="kb-lease-period-btn ${rentPeriod === 'monthly' ? 'active' : ''}" data-period="monthly" type="button">Monthly</button>
+            </div>
+            <input type="hidden" class="kb-lease-rent-period" value="${rentPeriod}">
+          </div>
+          <div class="kb-terms-row">
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Bond</label>
+              <input class="kb-input kb-lease-bond" type="text" placeholder="e.g. $2,600" value="${bond}">
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Term</label>
+              <input class="kb-input kb-lease-term" type="text" placeholder="e.g. 12 months, 1 year, 6m" value="${termText}">
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Available from</label>
+              <input class="kb-input kb-lease-available" type="date" value="${availFrom}">
+            </div>
+          </div>
+          <div class="kb-field-wrap" style="margin-top:8px">
+            <label class="kb-field-label">Special Terms</label>
+            <textarea class="kb-input kb-lease-special" rows="2" placeholder="e.g. Garden maintenance included, Water included">${special}</textarea>
+          </div>
+        </div>
+          `;
+        })()}
+
+        <!-- V77.1 — Listings sections (Inspection Schedule + Agency Agreements).
+             Renderers no-op for non-Listings boards. -->
+        <div class="v77-inspections-mount" data-deal-id="${id}"></div>
+        <div class="v77-agreements-mount" data-deal-id="${id}"></div>
+
+        <!-- V77.1b — Listing Summary section (Enquiry boards only). -->
+        <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
 
         ${(() => {
           // V77.1: Due Diligence section is Acquisition-workflow only.
@@ -3770,6 +3823,56 @@ ${rows.join('')}`;
     modal.querySelector('.kb-deposits').innerHTML = buildDepositsHtml(getTerms(id).deposits);
   });
   } // end V77.1 Vendor Terms gate
+
+  // V77.1: Lease Terms — wires only if section is rendered (Lease Listings only)
+  if (modal.querySelector('.kb-lease-rent-amount')) {
+    function syncLeaseTerms() {
+      const t = getTerms(id);
+      const rentAmtRaw   = modal.querySelector('.kb-lease-rent-amount').value;
+      const rentPeriod   = modal.querySelector('.kb-lease-rent-period').value || 'weekly';
+      const bondRaw      = modal.querySelector('.kb-lease-bond').value;
+      const termRaw      = modal.querySelector('.kb-lease-term').value;
+      const availFromRaw = modal.querySelector('.kb-lease-available').value;
+      const specialRaw   = modal.querySelector('.kb-lease-special').value;
+
+      t.rent_amount = parseDepositAmountKanban(rentAmtRaw, null) || null;
+      t.rent_period = rentPeriod;
+      t.bond        = parseDepositAmountKanban(bondRaw, null) || null;
+      // term — parse "12 months", "1 year", "6m" → integer months
+      t.term_months = parseLeaseTermMonths(termRaw);
+      t.available_from = availFromRaw || null;
+      t.special_terms  = specialRaw.trim() || null;
+      saveTerms(id, t);
+      refreshCardLive(id);
+    }
+
+    modal.querySelector('.kb-lease-rent-amount').addEventListener('blur', function() {
+      this.value = this.value.trim() ? formatInputPrice(this.value) : '';
+      syncLeaseTerms();
+    });
+    modal.querySelector('.kb-lease-bond').addEventListener('blur', function() {
+      this.value = this.value.trim() ? formatInputPrice(this.value) : '';
+      syncLeaseTerms();
+    });
+    modal.querySelector('.kb-lease-term').addEventListener('blur', function() {
+      const months = parseLeaseTermMonths(this.value);
+      this.value = months != null ? `${months} months` : '';
+      syncLeaseTerms();
+    });
+    modal.querySelector('.kb-lease-available').addEventListener('change', syncLeaseTerms);
+    modal.querySelector('.kb-lease-special').addEventListener('blur', syncLeaseTerms);
+
+    // Period toggle (Weekly / Monthly)
+    const toggle = modal.querySelector('[data-role="period-toggle"]');
+    toggle.addEventListener('click', e => {
+      const btn = e.target.closest('.kb-lease-period-btn');
+      if (!btn) return;
+      const period = btn.getAttribute('data-period');
+      toggle.querySelectorAll('.kb-lease-period-btn').forEach(b => b.classList.toggle('active', b === btn));
+      modal.querySelector('.kb-lease-rent-period').value = period;
+      syncLeaseTerms();
+    });
+  }
 
   // Offer form — delegated on overlay so handlers survive picker HTML rebuilds
   overlay.addEventListener('blur', e => {

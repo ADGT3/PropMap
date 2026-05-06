@@ -4580,3 +4580,51 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Lease Terms section (Lease Listings only)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.kb-lease-terms {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.kb-lease-rent-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.kb-lease-period-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface2);
+  align-self: flex-end;
+  margin-bottom: 0;
+}
+.kb-lease-period-btn {
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 500;
+}
+.kb-lease-period-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.kb-lease-period-btn:not(.active):hover {
+  background: rgba(0,0,0,0.04);
+  color: var(--text);
+}
+.kb-lease-special {
+  resize: vertical;
+  min-height: 50px;
+  font-family: inherit;
+}

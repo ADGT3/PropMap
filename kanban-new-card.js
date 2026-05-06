@@ -287,14 +287,24 @@
             const addr = d.property?.address || '—';
             const sub  = d.property?.suburb ? `, ${d.property.suburb}` : '';
             const stage = d.stage ? `<span class="knc-listing-stage">${esc(d.stage)}</span>` : '';
-            const priceVal = d.data?.terms?.price;
-            const price = priceVal != null
-              ? `$${Number(priceVal).toLocaleString('en-AU')}`
-              : '<span style="color:var(--muted)">no price set</span>';
+            const t = d.data?.terms || {};
+            const isLease = targetListingBoard === 'sys_lease_listings';
+            let priceLabel;
+            if (isLease) {
+              const r = t.rent_amount;
+              const period = t.rent_period === 'monthly' ? 'month' : 'week';
+              priceLabel = r != null
+                ? `$${Number(r).toLocaleString('en-AU')}/${period}`
+                : '<span style="color:var(--muted)">no rent set</span>';
+            } else {
+              priceLabel = t.price != null
+                ? `$${Number(t.price).toLocaleString('en-AU')}`
+                : '<span style="color:var(--muted)">no price set</span>';
+            }
             return `
               <div class="knc-result" data-id="${esc(d.id)}" data-property-id="${esc(d.property_id || '')}" data-label="${esc(addr + sub)}">
                 <div class="knc-result-main">${esc(addr + sub)} ${stage}</div>
-                <div class="knc-result-sub">Listing: ${price}</div>
+                <div class="knc-result-sub">${isLease ? 'Rent' : 'Listing'}: ${priceLabel}</div>
               </div>
             `;
           }).join('');
