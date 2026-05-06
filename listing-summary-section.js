@@ -78,8 +78,8 @@
       const terms = listing.data?.terms || {};
       const price = fmtPrice(terms.price);
       const settlement = fmtSettlement(terms.settlement);
-      const address = listing.property_address
-        ? `${listing.property_address}${listing.property_suburb ? ', ' + listing.property_suburb : ''}`
+      const address = listing.property?.address
+        ? `${listing.property.address}${listing.property.suburb ? ', ' + listing.property.suburb : ''}`
         : '—';
       const stage = listing.stage || '—';
       const status = listing.status || 'active';

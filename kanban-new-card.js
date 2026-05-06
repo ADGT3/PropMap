@@ -275,8 +275,8 @@
           const deals = await r.json();
           const ql = q.toLowerCase();
           const matches = deals.filter(d => {
-            const addr = (d.property_address || '').toLowerCase();
-            const sub  = (d.property_suburb  || '').toLowerCase();
+            const addr = (d.property?.address || '').toLowerCase();
+            const sub  = (d.property?.suburb  || '').toLowerCase();
             return addr.includes(ql) || sub.includes(ql);
           });
           if (!matches.length) {
@@ -284,8 +284,8 @@
             return;
           }
           results.innerHTML = matches.slice(0, 10).map(d => {
-            const addr = d.property_address || '—';
-            const sub  = d.property_suburb ? `, ${d.property_suburb}` : '';
+            const addr = d.property?.address || '—';
+            const sub  = d.property?.suburb ? `, ${d.property.suburb}` : '';
             const stage = d.stage ? `<span class="knc-listing-stage">${esc(d.stage)}</span>` : '';
             const priceVal = d.data?.terms?.price;
             const price = priceVal != null
