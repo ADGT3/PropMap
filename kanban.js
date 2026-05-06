@@ -3567,22 +3567,23 @@ ${rows.join('')}`;
     if (e.key === 'Escape') { closeAndRefresh(); document.removeEventListener('keydown', escClose); }
   });
 
-  // Re-run Auto DD
-  modal.querySelector('.kb-rerun-dd-btn').addEventListener('click', () => {
-    const p       = pipeline[id]?.property;
-    const parcels = p?._parcels || [];
-    const lat     = p?.lat ?? parcels[0]?.lat ?? null;
-    const lng     = p?.lng ?? parcels[0]?.lng ?? null;
-    if (!lat || !lng || !window.queryDDRisks) {
-      console.warn('[DD] Re-run skipped — no coordinates or queryDDRisks unavailable');
-      return;
-    }
-    const btn = modal.querySelector('.kb-rerun-dd-btn');
-    btn.textContent = '↻ Running…';
-    btn.disabled = true;
-    queryDDRisks(lat, lng).then(dd => {
-      if (!pipeline[id]) return;
-      Object.entries(dd).forEach(([key, val]) => {
+  // Re-run Auto DD — V77.1: only on Acquisition (DD section gated out elsewhere)
+  if (modal.querySelector('.kb-rerun-dd-btn')) {
+    modal.querySelector('.kb-rerun-dd-btn').addEventListener('click', () => {
+      const p       = pipeline[id]?.property;
+      const parcels = p?._parcels || [];
+      const lat     = p?.lat ?? parcels[0]?.lat ?? null;
+      const lng     = p?.lng ?? parcels[0]?.lng ?? null;
+      if (!lat || !lng || !window.queryDDRisks) {
+        console.warn('[DD] Re-run skipped — no coordinates or queryDDRisks unavailable');
+        return;
+      }
+      const btn = modal.querySelector('.kb-rerun-dd-btn');
+      btn.textContent = '↻ Running…';
+      btn.disabled = true;
+      queryDDRisks(lat, lng).then(dd => {
+        if (!pipeline[id]) return;
+        Object.entries(dd).forEach(([key, val]) => {
         pipeline[id].dd[key] = val;
       });
       savePipeline(id);
@@ -3594,7 +3595,8 @@ ${rows.join('')}`;
       btn.textContent = '↻ Auto DD';
       btn.disabled = false;
     });
-  });
+    });
+  } // end V77.1 DD button gate
 
   // Notes (V75.3 — async, backed by /api/notes)
   function formatNoteDate(ts) {
@@ -3858,27 +3860,29 @@ ${rows.join('')}`;
     });
   }
 
-  // DD
-  modal.querySelector('.kb-dd').addEventListener('change', e => {
-    const sel = e.target.closest('.kb-dd-select');
-    if (!sel) return;
-    const key = sel.dataset.key;
-    const val = sel.value;
-    const dd  = getDd(id);
-    if (!dd[key]) dd[key] = { status: '', note: '' };
-    dd[key].status = val;
-    saveDd(id, dd);
-    sel.className = `kb-dd-select dd-risk-${val || 'none'}`;
-    refreshCardLive(id);
-  });
-  modal.querySelector('.kb-dd').addEventListener('input', e => {
-    if (!e.target.matches('.kb-dd-note')) return;
-    const key = e.target.dataset.key;
-    const dd  = getDd(id);
-    if (!dd[key]) dd[key] = { status: '', note: '' };
-    dd[key].note = e.target.value;
-    saveDd(id, dd);
-  });
+  // DD — V77.1: Acquisition only
+  if (modal.querySelector('.kb-dd')) {
+    modal.querySelector('.kb-dd').addEventListener('change', e => {
+      const sel = e.target.closest('.kb-dd-select');
+      if (!sel) return;
+      const key = sel.dataset.key;
+      const val = sel.value;
+      const dd  = getDd(id);
+      if (!dd[key]) dd[key] = { status: '', note: '' };
+      dd[key].status = val;
+      saveDd(id, dd);
+      sel.className = `kb-dd-select dd-risk-${val || 'none'}`;
+      refreshCardLive(id);
+    });
+    modal.querySelector('.kb-dd').addEventListener('input', e => {
+      if (!e.target.matches('.kb-dd-note')) return;
+      const key = e.target.dataset.key;
+      const dd  = getDd(id);
+      if (!dd[key]) dd[key] = { status: '', note: '' };
+      dd[key].note = e.target.value;
+      saveDd(id, dd);
+    });
+  }
 }
 
 // V76.9: ─── Board sync framework ─────────────────────────────────────────────
