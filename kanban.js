@@ -3486,7 +3486,17 @@ ${rows.join('')}`;
     <div class="kb-modal">
       <div class="kb-modal-header">
         <div style="flex:1;min-width:0">
-          <div class="kb-modal-price">${formatKbPrice(p.price, terms.price)}</div>
+          ${(() => {
+            const dealBoardForHeader = item._boardId || currentBoardId;
+            const isEnquiryBoard = dealBoardForHeader === 'sys_sales_enquiry' || dealBoardForHeader === 'sys_lease_enquiry';
+            if (isEnquiryBoard) {
+              // V77.1: Enquiry modal headline = enquirer contact name. Falls back
+              // to "Loading…" until populated by fetchEnquirerNameForModal() below.
+              const cached = item._enquiryMeta?.contact_name || '';
+              return `<div class="kb-modal-price kb-modal-enquirer" data-deal-id="${id}">${cached || 'Loading…'}</div>`;
+            }
+            return `<div class="kb-modal-price">${formatKbPrice(p.price, terms.price)}</div>`;
+          })()}
           <div class="kb-modal-address">📍 ${p.address}, ${p.suburb}${p.state ? ' ' + p.state : ''}</div>
           ${p._lotDPs
             ? `<div class="kb-modal-lotdp" style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${p._lotDPs}</div>`
@@ -3682,6 +3692,32 @@ ${rows.join('')}`;
       const placeholder = modal.querySelector('.crm-section-placeholder');
       if (placeholder) placeholder.replaceWith(crmEl);
     });
+  }
+
+  // V77.1: Async-populate the Enquiry headline (contact name in modal header).
+  // The kanban-card enrichment (enrichEnquiryCardsAsync) might not have run yet
+  // when modal opens via openPipelineItem from outside the board, so we hit the
+  // batch endpoint with this single deal id.
+  const _hdrBoard = item._boardId || currentBoardId;
+  if (_hdrBoard === 'sys_sales_enquiry' || _hdrBoard === 'sys_lease_enquiry') {
+    const headlineEl = modal.querySelector('.kb-modal-enquirer');
+    if (headlineEl) {
+      const cached = item._enquiryMeta?.contact_name;
+      if (!cached) {
+        fetch(`/api/enquiry-card-meta?deal_ids=${encodeURIComponent(id)}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(metaMap => {
+            const meta = metaMap?.[id];
+            if (!meta) return;
+            if (pipeline[id]) pipeline[id]._enquiryMeta = meta;
+            const name = meta.contact_name || '(no contact linked)';
+            // Re-resolve the headline element in case the modal HTML was rebuilt
+            const stillThere = document.querySelector(`.kb-modal-enquirer[data-deal-id="${CSS.escape(String(id))}"]`);
+            if (stillThere) stillThere.textContent = name;
+          })
+          .catch(() => { /* leave Loading… visible */ });
+      }
+    }
   }
 
   // V77.1: Mount Listings sections (Inspection Schedule + Agency Agreements).
