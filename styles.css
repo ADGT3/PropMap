@@ -4716,3 +4716,180 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   flex-shrink: 0;
   font-size: 11px;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Lease Offer section (Lease Enquiry deals)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.lo-section .lo-add-btn { font-size: 11px; }
+.lo-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.lo-empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
+
+.lo-row {
+  display: flex; gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  align-items: center;
+}
+.lo-row-main { flex: 1; min-width: 0; }
+.lo-row-headline {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  font-size: 13px;
+}
+.lo-row-terms {
+  font-size: 11px; color: var(--muted); margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lo-rent { font-weight: 600; color: var(--text); }
+.lo-meta { font-size: 11px; color: var(--muted); }
+.lo-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.lo-edit-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text); padding: 3px 8px; border-radius: 3px;
+  font-size: 11px; cursor: pointer;
+}
+.lo-edit-btn:hover { background: var(--surface2); }
+.lo-delete-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: #c0392b; padding: 3px 7px; border-radius: 3px;
+  font-size: 12px; cursor: pointer; line-height: 1;
+}
+.lo-delete-btn:hover { background: rgba(192,57,43,0.08); border-color: #c0392b; }
+
+/* Status badges */
+.lo-status {
+  display: inline-block;
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 6px; border-radius: 3px;
+  background: var(--surface2); color: var(--muted);
+  white-space: nowrap;
+}
+.lo-status-draft          { background: #ebe6dc; color: #7a7366; }
+.lo-status-submitted      { background: #d6e7f5; color: #2c5985; }
+.lo-status-offer-accepted { background: #d4ead4; color: #2d6e2d; }
+.lo-status-rejected       { background: #f3d7d4; color: #8b2a1f; }
+.lo-status-withdrawn      { background: #ebe6dc; color: #8a7a55; }
+
+.lo-form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-top: 8px;
+}
+.lo-form-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; color: var(--text); }
+.lo-form-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.lo-form-row .kb-field-wrap { flex: 1; }
+.lo-form-actions {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px;
+  padding-top: 8px; border-top: 1px solid var(--border);
+}
+.lo-help { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Validation section (Lease Enquiry deals)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.val-section .val-help {
+  font-size: 11px; color: var(--muted);
+  margin-top: 3px; margin-bottom: 6px;
+}
+.val-list {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.val-item {
+  display: flex; gap: 8px; align-items: center;
+  font-size: 13px; color: var(--text);
+  cursor: pointer;
+  padding: 3px 0;
+}
+.val-item:hover { color: var(--accent); }
+.val-item input[type="checkbox"] {
+  margin: 0; cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Lease Offers Received (Lease Listing deals)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.lor-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.lor-loading, .lor-empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
+
+.lor-row {
+  display: flex; gap: 10px; align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.lor-row:hover { background: var(--surface2); }
+.lor-row-main { flex: 1; min-width: 0; }
+.lor-row-headline {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  font-size: 13px;
+}
+.lor-enquirer { color: var(--text); }
+.lor-rent { font-weight: 600; color: var(--accent); }
+.lor-meta {
+  font-size: 11px; color: var(--muted); margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lor-status {
+  display: inline-block;
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 6px; border-radius: 3px;
+  background: var(--surface2); color: var(--muted);
+  white-space: nowrap;
+}
+.lor-status-draft          { background: #ebe6dc; color: #7a7366; }
+.lor-status-submitted      { background: #d6e7f5; color: #2c5985; }
+.lor-status-offer-accepted { background: #d4ead4; color: #2d6e2d; }
+.lor-status-rejected       { background: #f3d7d4; color: #8b2a1f; }
+.lor-status-withdrawn      { background: #ebe6dc; color: #8a7a55; }
+.lor-status-leased         { background: #c8e0c8; color: #1d5a1d; }
+.lor-status-validated      { background: #cee7ea; color: #266872; }
+.lor-status-evidence-submitted { background: #e6dcec; color: #533879; }
+
+.lor-open-btn {
+  background: transparent; border: 1px solid var(--accent);
+  color: var(--accent); padding: 3px 8px; border-radius: 3px;
+  font-size: 11px; cursor: pointer; flex-shrink: 0;
+  font-weight: 500;
+}
+.lor-open-btn:hover { background: var(--accent); color: #fff; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Note display: type & source badges (kanban deal modal)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.kb-note-type-badge,
+.kb-note-source-badge {
+  display: inline-block;
+  font-size: 10px; font-weight: 500;
+  padding: 1px 6px; border-radius: 3px;
+  margin-left: 6px;
+  vertical-align: baseline;
+}
+.kb-note-type-badge {
+  background: #e8e2d6; color: #6b5f44;
+}
+.kb-note-source-badge {
+  background: rgba(196,132,26,0.12); color: var(--accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Per-Enquiry context capture in "+ New Card" Step 2
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.knc-enquiry-context { /* Already styled via inline border-top — reserved class hook */ }

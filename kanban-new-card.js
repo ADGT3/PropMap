@@ -347,6 +347,25 @@
       </div>
       <div class="knc-results" data-role="contact-results"></div>
       <div class="knc-empty-msg" data-role="empty-msg" style="display:none;color:var(--muted);font-size:12px;padding:8px 0">No matches. Create the contact in CRM first, then come back.</div>
+
+      <!-- V77.1 — capture how the enquiry came in (interaction type + source) so the first inbound note is recorded with proper context -->
+      <div class="knc-enquiry-context" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+        <div class="kb-field-label" style="margin-bottom:6px">How did the enquirer reach you?</div>
+        <div style="display:flex;gap:8px">
+          <div class="kb-field-wrap" style="flex:1">
+            <label class="kb-field-label">Type</label>
+            <select class="kb-input knc-interaction-type">
+              <option value="">Loading types…</option>
+            </select>
+          </div>
+          <div class="kb-field-wrap" style="flex:1">
+            <label class="kb-field-label">Source</label>
+            <select class="kb-input knc-source">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+        </div>
+      </div>
     `;
     footer.innerHTML = `
       <button class="params-cancel-btn" data-role="close">Cancel</button>
@@ -356,24 +375,55 @@
     const results  = body.querySelector('[data-role="contact-results"]');
     const emptyMsg = body.querySelector('[data-role="empty-msg"]');
     const createBtn = footer.querySelector('[data-role="create"]');
+    const typeSel = body.querySelector('.knc-interaction-type');
+    const srcSel  = body.querySelector('.knc-source');
+
+    // V77.1 — populate type + source dropdowns. Defaults bias toward the
+    // common Enquiry case: phone_in (inbound) — and source dropdown is shown.
+    if (window.Lookups) {
+      Lookups.getInteractionTypes().then(types => {
+        // Filter to inbound-direction types (Enquiry first contact is inherently inbound)
+        const inbound = types.filter(t => t.direction === 'inbound' && t.active !== false);
+        if (!inbound.length) {
+          typeSel.innerHTML = '<option value="">(no inbound types)</option>';
+          return;
+        }
+        typeSel.innerHTML = inbound.map(t => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('');
+        // Default to phone_in if present, else first
+        if (inbound.find(t => t.id === 'phone_in')) typeSel.value = 'phone_in';
+      }).catch(() => {});
+      Lookups.getSourcesActive().then(sources => {
+        if (!sources.length) {
+          srcSel.innerHTML = '<option value="">(no sources)</option>';
+          return;
+        }
+        srcSel.innerHTML = '<option value="">— Select —</option>' + sources.map(s => `<option value="${esc(s.id)}">${esc(s.label)}</option>`).join('');
+      }).catch(() => {});
+    }
 
     body.querySelector('[data-role="back"]').addEventListener('click', () => {
       state.step = 1;
       state.contact = null;
+      state.interaction_type = null;
+      state.source = null;
       // Re-render — pick up listing flow
       const overlay = body.closest('.v77-modal-overlay');
       if (overlay) {
         const dlgBody   = overlay.querySelector('[data-role="body"]');
         const dlgFooter = overlay.querySelector('[data-role="footer"]');
-        // Determine board from where we came — closure captures it via openNewCardDialog scope
-        // The modal title still has it — extract once and use
         renderListingPicker(dlgBody, dlgFooter, state, state._enquiryBoardId, () => {
           state.step = 2;
           renderContactPicker(dlgBody, dlgFooter, state, onPicked);
         });
       }
     });
-    createBtn.addEventListener('click', () => { if (state.contact) onPicked(); });
+    createBtn.addEventListener('click', () => {
+      if (!state.contact) return;
+      // Snapshot the type+source choices into state before invoking
+      state.interaction_type = typeSel.value || null;
+      state.source           = srcSel.value  || null;
+      onPicked();
+    });
 
     footer.querySelector('[data-role="close"]')?.addEventListener('click', () => {
       const overlay = body.closest('.v77-modal-overlay');
@@ -466,6 +516,7 @@
       if (!dealId) throw new Error('No deal id returned');
 
       // For two-step (Enquiry boards), also create the entity_contacts link
+      // and the first inbound note recording how the enquirer reached us.
       if (cfg.mode === 'two_step' && state.contact) {
         await fetch('/api/contacts', {
           method: 'POST',
@@ -478,6 +529,30 @@
             role_id:     'enquirer',
           }),
         });
+
+        // V77.1 — first inbound note. Captures interaction_type + source so the
+        // Enquiry timeline shows where the enquiry came from. The note is
+        // attached to the deal AND tagged to the enquirer contact.
+        try {
+          const typeLabel = state.interaction_type ? state.interaction_type.replace(/_/g, ' ') : 'enquiry';
+          const noteText = `New ${typeLabel} enquiry from ${state.contact.label} for "${state.listing.label}".`;
+          const body = {
+            entity_type:       'deal',
+            entity_id:         String(dealId),
+            note_text:         noteText,
+            tagged_contact_id: state.contact.id,
+          };
+          if (state.interaction_type) body.interaction_type = state.interaction_type;
+          if (state.source)           body.source           = state.source;
+          await fetch('/api/notes', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(body),
+          });
+        } catch (noteErr) {
+          // Non-fatal — deal + link succeeded; just log
+          console.warn('[knc] first-inbound-note creation failed:', noteErr);
+        }
       }
 
       showToast(`${cfg.label} card created`, 'success');

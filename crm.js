@@ -407,10 +407,7 @@ async function renderNotesPanel(contactId, pipelineId) {
       .catch(() => []);
     panel.innerHTML = `
       <div class="crm-notes-title">Notes</div>
-      <div class="crm-notes-input-row">
-        <input class="kb-input crm-note-input" type="text" placeholder="Add a note…">
-        <button class="crm-note-add-btn">Add</button>
-      </div>
+      <div class="v77-note-form-mount-crm"></div>
       <div class="crm-notes-list"></div>`;
 
     const listEl = panel.querySelector('.crm-notes-list');
@@ -420,11 +417,12 @@ async function renderNotesPanel(contactId, pipelineId) {
       notes.forEach(n => {
         const entry = document.createElement('div');
         entry.className = 'crm-note-entry';
-        const src = n.source_label ? ` <span class="crm-note-prop">· ${n.source_label}</span>` : '';
+        const src     = n.source_label           ? ` <span class="crm-note-prop">· ${n.source_label}</span>` : '';
+        const typeBdg = n.interaction_type_label ? ` <span class="crm-note-prop">· ${n.interaction_type_label}</span>` : '';
         const author = n.author_name || 'Unknown';
         entry.innerHTML = `
           <div class="crm-note-meta">
-            <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}${src}</span>
+            <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}${typeBdg}${src}</span>
             <button class="crm-note-delete" data-id="${n.id}">✕</button>
           </div>
           <div class="crm-note-text">${n.note_text}</div>`;
@@ -436,27 +434,33 @@ async function renderNotesPanel(contactId, pipelineId) {
       });
     }
 
-    panel.querySelector('.crm-note-add-btn').addEventListener('click', async () => {
-      const input = panel.querySelector('.crm-note-input');
-      const text = input.value.trim();
-      if (!text) return;
-      // Panel is rendered from the agent-side CRM section of the pipeline
-      // modal. The note is attached to the deal (pipelineId) when present,
-      // otherwise to the contact.
-      const entity_type = pipelineId ? 'deal'        : 'contact';
-      const entity_id   = pipelineId ? String(pipelineId) : String(contactId);
-      const tagged_contact_id = pipelineId ? contactId : null;
-      await fetch('/api/notes', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entity_type, entity_id, note_text: text, tagged_contact_id }),
+    // V77.1 — Mount the NoteForm with type+source dropdowns
+    const noteMount = panel.querySelector('.v77-note-form-mount-crm');
+    if (window.NoteForm && noteMount) {
+      NoteForm.mount(noteMount, {
+        placeholder: 'Add a note…',
+        // No contact tagger needed here — the contact context is implicit (this is the contact's notes)
+        showContactTagger: false,
+        onAdd: async (vals) => {
+          const text = (vals.note_text || '').trim();
+          if (!text) return;
+          // Panel rendered from agent-side CRM section of pipeline modal.
+          // Note attaches to the deal when pipelineId is present, otherwise to the contact.
+          const entity_type = pipelineId ? 'deal'              : 'contact';
+          const entity_id   = pipelineId ? String(pipelineId)  : String(contactId);
+          const tagged_contact_id = pipelineId ? contactId : null;
+          const body = { entity_type, entity_id, note_text: text, tagged_contact_id };
+          if (vals.interaction_type) body.interaction_type = vals.interaction_type;
+          if (vals.source)           body.source           = vals.source;
+          await fetch('/api/notes', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(body),
+          });
+          loadNotes();
+        },
       });
-      input.value = '';
-      loadNotes();
-    });
-    panel.querySelector('.crm-note-input').addEventListener('keydown', e => {
-      if (e.key === 'Enter') panel.querySelector('.crm-note-add-btn').click();
-    });
+    }
   }
 
   await loadNotes();
@@ -1380,11 +1384,7 @@ function renderCRMView(container) {
             </div>
             <div class="crm-section-body">
               <div class="crm-modal-note-input" style="display:none;margin-bottom:10px">
-                <textarea class="kb-input crm-modal-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
-                <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
-                  <button class="crm-modal-note-save kb-add-offer-btn">Save Note</button>
-                  <button class="crm-modal-note-cancel crm-cancel-btn">Cancel</button>
-                </div>
+                <div class="v77-note-form-mount-contact-modal"></div>
               </div>
               <div class="crm-modal-notes-list">
                 ${notes.length ? notes.map(n => {
@@ -1515,26 +1515,39 @@ function renderCRMView(container) {
         });
       });
 
-      // Notes (V75.3 — /api/notes)
+      // V77.1 — Notes use the extended NoteForm (type+source dropdowns).
+      // Toggling visibility of the panel still uses the +Add Note button.
       const addNoteBtn = modal.querySelector(".crm-modal-add-note-btn");
       const noteInput  = modal.querySelector(".crm-modal-note-input");
-      addNoteBtn.addEventListener("click", () => { noteInput.style.display = ""; addNoteBtn.style.display = "none"; modal.querySelector(".crm-modal-note-text").focus(); });
-      modal.querySelector(".crm-modal-note-cancel").addEventListener("click", () => { noteInput.style.display = "none"; addNoteBtn.style.display = ""; });
-      modal.querySelector(".crm-modal-note-save").addEventListener("click", async () => {
-        const text = modal.querySelector(".crm-modal-note-text").value.trim();
-        if (!text) return;
-        await fetch('/api/notes', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            entity_type: 'contact',
-            entity_id:   String(contactId),
-            note_text:   text,
-            // tagged_contact_id intentionally null — notes written here are
-            // attached to THIS contact already; tagging would be redundant
-          }),
-        });
-        renderContactDetail(modal, contactId, onDone);
+      const noteMount  = modal.querySelector(".v77-note-form-mount-contact-modal");
+      let _crmNoteFormHandle = null;
+      addNoteBtn.addEventListener("click", () => {
+        noteInput.style.display = "";
+        addNoteBtn.style.display = "none";
+        if (window.NoteForm && noteMount && !_crmNoteFormHandle) {
+          _crmNoteFormHandle = NoteForm.mount(noteMount, {
+            placeholder: 'Add a note…',
+            showContactTagger: false,
+            onAdd: async (vals) => {
+              const text = (vals.note_text || '').trim();
+              if (!text) return;
+              const body = {
+                entity_type: 'contact',
+                entity_id:   String(contactId),
+                note_text:   text,
+              };
+              if (vals.interaction_type) body.interaction_type = vals.interaction_type;
+              if (vals.source)           body.source           = vals.source;
+              await fetch('/api/notes', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(body),
+              });
+              renderContactDetail(modal, contactId, onDone);
+            },
+          });
+        }
+        if (_crmNoteFormHandle?.focus) _crmNoteFormHandle.focus();
       });
       modal.querySelectorAll(".crm-note-delete").forEach(btn => {
         btn.addEventListener("click", async () => {
@@ -2356,11 +2369,7 @@ function renderCRMView(container) {
             </div>
             <div class="crm-section-body">
               <div class="crm-parcel-note-input" style="display:none;margin-bottom:10px">
-                <textarea class="kb-input crm-parcel-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
-                <div style="display:flex;gap:6px;margin-top:4px">
-                  <button class="crm-parcel-note-save kb-add-offer-btn">Save Note</button>
-                  <button class="crm-parcel-note-cancel crm-cancel-btn">Cancel</button>
-                </div>
+                <div class="v77-note-form-mount-parcel-modal"></div>
               </div>
               <div class="crm-parcel-notes-list">
                 ${parcelNotes.length ? parcelNotes.map(n => {
@@ -2525,20 +2534,39 @@ function renderCRMView(container) {
         });
       });
 
-      // Notes add / delete
+      // V77.1 — Notes use the extended NoteForm.
       const addNoteBtn = modal.querySelector('.crm-parcel-add-note-btn');
       const noteInput  = modal.querySelector('.crm-parcel-note-input');
-      addNoteBtn.addEventListener('click', () => { noteInput.style.display = ''; addNoteBtn.style.display = 'none'; modal.querySelector('.crm-parcel-note-text').focus(); });
-      modal.querySelector('.crm-parcel-note-cancel').addEventListener('click', () => { noteInput.style.display = 'none'; addNoteBtn.style.display = ''; });
-      modal.querySelector('.crm-parcel-note-save').addEventListener('click', async () => {
-        const text = modal.querySelector('.crm-parcel-note-text').value.trim();
-        if (!text) return;
-        await fetch('/api/notes', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entity_type: 'parcel', entity_id: parcel.id, note_text: text }),
-        });
-        renderParcelModal(modal, parcelId, onDone);
+      const noteMount  = modal.querySelector('.v77-note-form-mount-parcel-modal');
+      let _parcelNoteFormHandle = null;
+      addNoteBtn.addEventListener('click', () => {
+        noteInput.style.display = '';
+        addNoteBtn.style.display = 'none';
+        if (window.NoteForm && noteMount && !_parcelNoteFormHandle) {
+          _parcelNoteFormHandle = NoteForm.mount(noteMount, {
+            placeholder: 'Add a note…',
+            showContactTagger: true,
+            onAdd: async (vals) => {
+              const text = (vals.note_text || '').trim();
+              if (!text) return;
+              const body = {
+                entity_type: 'parcel',
+                entity_id:   parcel.id,
+                note_text:   text,
+              };
+              if (vals.tagged_contact_id) body.tagged_contact_id = vals.tagged_contact_id;
+              if (vals.interaction_type)  body.interaction_type  = vals.interaction_type;
+              if (vals.source)            body.source            = vals.source;
+              await fetch('/api/notes', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(body),
+              });
+              renderParcelModal(modal, parcelId, onDone);
+            },
+          });
+        }
+        if (_parcelNoteFormHandle?.focus) _parcelNoteFormHandle.focus();
       });
       modal.querySelectorAll('.crm-note-delete').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -2968,11 +2996,7 @@ function renderCRMView(container) {
             </div>
             <div class="crm-section-body">
               <div class="crm-prop-note-input" style="display:none;margin-bottom:10px">
-                <textarea class="kb-input crm-prop-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
-                <div style="display:flex;gap:6px;margin-top:4px">
-                  <button class="crm-prop-note-save kb-add-offer-btn">Save Note</button>
-                  <button class="crm-prop-note-cancel crm-cancel-btn">Cancel</button>
-                </div>
+                <div class="v77-note-form-mount-property-modal"></div>
               </div>
               <div class="crm-prop-notes-list">
                 ${propNotes.length ? propNotes.map(n => {
@@ -3295,30 +3319,39 @@ function renderCRMView(container) {
         });
       });
 
-      // Notes — add, save, cancel, delete
+      // V77.1 — Notes use the extended NoteForm.
       const addNoteBtn  = modal.querySelector('.crm-prop-add-note-btn');
       const noteInput   = modal.querySelector('.crm-prop-note-input');
-      const noteTextEl  = modal.querySelector('.crm-prop-note-text');
-      const noteSaveBtn = modal.querySelector('.crm-prop-note-save');
-      const noteCancelBtn = modal.querySelector('.crm-prop-note-cancel');
+      const noteMount   = modal.querySelector('.v77-note-form-mount-property-modal');
+      let _propNoteFormHandle = null;
       addNoteBtn?.addEventListener('click', (e) => {
         e.stopPropagation();
         noteInput.style.display = '';
-        noteTextEl.focus();
-      });
-      noteCancelBtn?.addEventListener('click', () => {
-        noteInput.style.display = 'none';
-        noteTextEl.value = '';
-      });
-      noteSaveBtn?.addEventListener('click', async () => {
-        const text = noteTextEl.value.trim();
-        if (!text) return;
-        await fetch('/api/notes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entity_type: 'property', entity_id: property.id, note_text: text }),
-        });
-        renderPropertyModal(modal, propertyId, onDone);
+        if (window.NoteForm && noteMount && !_propNoteFormHandle) {
+          _propNoteFormHandle = NoteForm.mount(noteMount, {
+            placeholder: 'Add a note…',
+            showContactTagger: true,
+            onAdd: async (vals) => {
+              const text = (vals.note_text || '').trim();
+              if (!text) return;
+              const body = {
+                entity_type: 'property',
+                entity_id:   property.id,
+                note_text:   text,
+              };
+              if (vals.tagged_contact_id) body.tagged_contact_id = vals.tagged_contact_id;
+              if (vals.interaction_type)  body.interaction_type  = vals.interaction_type;
+              if (vals.source)            body.source            = vals.source;
+              await fetch('/api/notes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(body),
+              });
+              renderPropertyModal(modal, propertyId, onDone);
+            },
+          });
+        }
+        if (_propNoteFormHandle?.focus) _propNoteFormHandle.focus();
       });
       modal.querySelectorAll('.crm-note-delete').forEach(btn => {
         btn.addEventListener('click', async () => {

@@ -1800,18 +1800,21 @@ async function fetchNotesForDeal(id) {
   }
 }
 
-async function addNote(id, text, taggedContactId = null) {
+async function addNote(id, text, taggedContactId = null, interactionType = null, source = null) {
   if (!text.trim()) return null;
   try {
+    const body = {
+      entity_type:       'deal',
+      entity_id:         String(id),
+      note_text:         text.trim(),
+      tagged_contact_id: taggedContactId || null,
+    };
+    if (interactionType) body.interaction_type = interactionType;
+    if (source)          body.source           = source;
     const r = await fetch(NOTES_API, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        entity_type:       'deal',
-        entity_id:         String(id),
-        note_text:         text.trim(),
-        tagged_contact_id: taggedContactId || null,
-      }),
+      body:    JSON.stringify(body),
     });
     if (!r.ok) throw new Error(r.status);
     _notesCache.delete(id);
@@ -3454,6 +3457,13 @@ ${rows.join('')}`;
         <!-- V77.1b — Listing Summary section (Enquiry boards only). -->
         <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
 
+        <!-- V77.1 — Lease Offer + Validation sections (Lease Enquiry only). -->
+        <div class="v77-lease-offer-mount" data-deal-id="${id}"></div>
+        <div class="v77-validation-mount" data-deal-id="${id}"></div>
+
+        <!-- V77.1 — Lease Offers Received cross-reference (Lease Listings only). -->
+        <div class="v77-lease-offers-received-mount" data-deal-id="${id}"></div>
+
         ${(() => {
           // V77.1: Due Diligence section is Acquisition-workflow only.
           // Listings (Sales/Lease) and Enquiry (Sales/Lease) boards don't have DD.
@@ -3489,15 +3499,8 @@ ${rows.join('')}`;
 
         <div class="kb-section-label" style="margin-top:16px">Notes</div>
         <div class="kb-notes-section">
-          <div class="kb-note-contact-row">
-            <input class="kb-input kb-note-contact-search" type="text" placeholder="Tag a contact (optional)…">
-            <div class="kb-note-contact-results"></div>
-            <div class="kb-note-contact-tag" style="display:none"></div>
-          </div>
-          <div class="kb-notes-input-row">
-            <textarea class="kb-input kb-note-input" placeholder="Add a note…" rows="2"></textarea>
-            <button class="kb-note-add-btn">Add</button>
-          </div>
+          <!-- V77.1: Extended note form (type + source + contact tagger + textarea) -->
+          <div class="v77-note-form-mount" data-deal-id="${id}"></div>
           <div class="kb-notes-list"></div>
         </div>
 
@@ -3536,6 +3539,26 @@ ${rows.join('')}`;
     if (mount) {
       const parentDealId = item.parent_deal_id || item._parentDealId || null;
       ListingSummarySection.render(mount, id, dealBoardForSections, parentDealId);
+    }
+  }
+
+  // V77.1: Lease Enquiry sections — Lease Offer + Validation (only on sys_lease_enquiry)
+  if (dealBoardForSections === 'sys_lease_enquiry') {
+    if (window.LeaseOfferSection) {
+      const mount = modal.querySelector('.v77-lease-offer-mount');
+      if (mount) LeaseOfferSection.mount(mount, id);
+    }
+    if (window.ValidationSection) {
+      const mount = modal.querySelector('.v77-validation-mount');
+      if (mount) ValidationSection.mount(mount, id);
+    }
+  }
+
+  // V77.1: Lease Offers Received cross-reference (only on sys_lease_listings)
+  if (dealBoardForSections === 'sys_lease_listings') {
+    if (window.LeaseOffersReceivedSection) {
+      const mount = modal.querySelector('.v77-lease-offers-received-mount');
+      if (mount) LeaseOffersReceivedSection.mount(mount, id);
     }
   }
 
@@ -3671,9 +3694,14 @@ ${rows.join('')}`;
       const taggedName = [n.tagged_first_name, n.tagged_last_name].filter(Boolean).join(' ').trim();
       const taggedBadge = taggedName ? `<span class="kb-note-contact-badge">@${taggedName}</span>` : '';
       const author = n.author_name || 'Unknown';
+      // V77.1 — type + source badges (server returns *_label fields if available)
+      const typeLabel = n.interaction_type_label || (n.interaction_type ? n.interaction_type.replace(/_/g, ' ') : '');
+      const srcLabel  = n.source_label || (n.source ? n.source.replace(/_/g, ' ') : '');
+      const typeBadge = typeLabel ? `<span class="kb-note-type-badge">${typeLabel}</span>` : '';
+      const srcBadge  = srcLabel  ? `<span class="kb-note-source-badge">${srcLabel}</span>`  : '';
       entry.innerHTML = `
         <div class="kb-note-meta">
-          <span class="kb-note-date">${formatNoteDate(n.created_at)} · by ${author}${taggedBadge}</span>
+          <span class="kb-note-date">${formatNoteDate(n.created_at)} · by ${author}${taggedBadge}${typeBadge}${srcBadge}</span>
           <button class="kb-note-delete" data-id="${n.id}" title="Delete note">✕</button>
         </div>
         <div class="kb-note-text">${String(n.note_text || '').split('\n').join('<br>')}</div>`;
@@ -3690,75 +3718,22 @@ ${rows.join('')}`;
   }
   renderNotesList();
 
-  // Contact tag for notes
-  let _noteContactId = null;
-  let _noteContactName = null;
-  const contactSearch = modal.querySelector('.kb-note-contact-search');
-  const contactResults = modal.querySelector('.kb-note-contact-results');
-  const contactTag = modal.querySelector('.kb-note-contact-tag');
-
-  function clearContactTag() {
-    _noteContactId = null;
-    _noteContactName = null;
-    contactTag.style.display = 'none';
-    contactTag.innerHTML = '';
-    contactSearch.style.display = '';
-    contactSearch.value = '';
-    contactResults.innerHTML = '';
+  // V77.1 — Mount the extended NoteForm (type + source + contact tagger + textarea)
+  // at .v77-note-form-mount. Replaces the legacy inline note input wiring.
+  if (window.NoteForm && modal.querySelector('.v77-note-form-mount')) {
+    const noteMount = modal.querySelector('.v77-note-form-mount');
+    NoteForm.mount(noteMount, {
+      placeholder: 'Add a note…',
+      showContactTagger: true,
+      onAdd: async (vals) => {
+        const text = (vals.note_text || '').trim();
+        if (!text) return;
+        await addNote(id, text, vals.tagged_contact_id || null, vals.interaction_type || null, vals.source || null);
+        renderNotesList();
+        refreshCardLive(id);
+      },
+    });
   }
-
-  let _contactSearchTimer;
-  contactSearch.addEventListener('input', () => {
-    clearTimeout(_contactSearchTimer);
-    const q = contactSearch.value.trim();
-    if (q.length < 2) { contactResults.innerHTML = ''; return; }
-    _contactSearchTimer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/contacts?entity_type=deal&entity_id=${encodeURIComponent(id)}`);
-        const linked = await res.json();
-        // Also search all contacts
-        const res2 = await fetch(`/api/contacts?search=${encodeURIComponent(q)}`);
-        const all = await res2.json();
-        // Merge, linked first
-        const seen = new Set();
-        const combined = [...linked, ...all].filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; })
-          .filter(c => {
-            const name = `${c.first_name} ${c.last_name}`.toLowerCase();
-            return name.includes(q.toLowerCase()) || (c.org_name||'').toLowerCase().includes(q.toLowerCase());
-          }).slice(0, 8);
-        contactResults.innerHTML = '';
-        combined.forEach(c => {
-          const item = document.createElement('div');
-          item.className = 'kb-note-contact-result';
-          item.innerHTML = `<strong>${c.first_name} ${c.last_name}</strong>${c.org_name ? ` · ${c.org_name}` : ''}`;
-          item.addEventListener('click', () => {
-            _noteContactId = c.id;
-            _noteContactName = `${c.first_name} ${c.last_name}`.trim();
-            contactResults.innerHTML = '';
-            contactSearch.style.display = 'none';
-            contactTag.style.display = 'flex';
-            contactTag.innerHTML = `<span>@${_noteContactName}</span><button class="kb-note-contact-clear">✕</button>`;
-            contactTag.querySelector('.kb-note-contact-clear').addEventListener('click', clearContactTag);
-          });
-          contactResults.appendChild(item);
-        });
-      } catch (e) { console.warn('[notes] contact search failed', e); }
-    }, 300);
-  });
-
-  const noteInput = modal.querySelector('.kb-note-input');
-  modal.querySelector('.kb-note-add-btn').addEventListener('click', async () => {
-    const text = noteInput.value.trim();
-    if (!text) return;
-    await addNote(id, text, _noteContactId);
-    noteInput.value = '';
-    clearContactTag();
-    renderNotesList();
-    refreshCardLive(id);
-  });
-  noteInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) modal.querySelector('.kb-note-add-btn').click();
-  });
 
   // Terms — V77.1: only wire if Vendor Terms section exists (Acquisition only)
   if (modal.querySelector('.kb-terms-price')) {
