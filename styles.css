@@ -4893,3 +4893,76 @@ body:not([data-route="mapping"]) .leaflet-control-container {
    ════════════════════════════════════════════════════════════════════════════ */
 
 .knc-enquiry-context { /* Already styled via inline border-top — reserved class hook */ }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Enquiry kanban card layout
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.kb-card-contact {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-card-interest {
+  margin: 6px 0 4px;
+}
+.kb-interest-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+.kb-interest-text { }
+.kb-interest-value {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 12px;
+}
+.kb-interest-slider {
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--surface2);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  margin: 0;
+}
+.kb-interest-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  cursor: grab;
+}
+.kb-interest-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+  cursor: grab;
+}
+
+/* Enquiry-specific badge variants (extend .kb-ind base styling) */
+.kb-ind-enq                  { background: var(--surface2); color: var(--text); }
+.kb-ind-offer-submitted      { background: #d6e7f5 !important; color: #2c5985 !important; }
+.kb-ind-evidence             { background: #e6dcec !important; color: #533879 !important; }
+.kb-ind-rent                 { background: #d4ead4 !important; color: #2d6e2d !important; font-weight: 600; }
+.kb-ind-inspected            { background: #cee7ea !important; color: #266872 !important; }
+.kb-ind-contract             { background: #f5e7d6 !important; color: #855e2c !important; }

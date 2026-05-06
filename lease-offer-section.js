@@ -140,7 +140,8 @@
 
       listEl.querySelectorAll('.lo-edit-btn').forEach(b => {
         b.addEventListener('click', () => {
-          editingId = parseInt(b.getAttribute('data-id'), 10);
+          editingId = b.getAttribute('data-id'); // keep as string; comparison is String-based
+          console.log('[LeaseOffer] editingId:', editingId, 'offers:', offers.map(o => ({id: o.id, idType: typeof o.id})));
           renderForm();
         });
       });
@@ -170,7 +171,7 @@
         preferred_start_date: '',
         terms: '',
         notes: '',
-      } : (offers.find(o => o.id === editingId) || {});
+      } : (offers.find(o => String(o.id) === String(editingId)) || {});
 
       const currentStatus = offer.status || 'draft';
       const statusAllowed = ALLOWED_FROM[currentStatus] || [currentStatus];
@@ -273,7 +274,7 @@
               throw new Error(err.error || `HTTP ${r.status}`);
             }
           } else {
-            payload.id = editingId;
+            payload.id = parseInt(editingId, 10);
             const r = await fetch(API, {
               method:  'PUT',
               headers: { 'Content-Type': 'application/json' },

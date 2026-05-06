@@ -505,6 +505,9 @@ function dealRowToInternal(row) {
     offers:  dealData.offers  || [],
     // V75.3: DD per-deal
     dd:      (typeof dealData.dd === 'object' && dealData.dd !== null) ? dealData.dd : {},
+    // V77.1: full data blob exposed so card renderers can read fields like
+    // data.interest_level (Enquiry boards) and data.validation (Lease Enquiry).
+    data:    dealData,
     property: propertyShape,
     // V75.4: expose the parcel id/name at the top level for kanban-side code
     _isParcel:     isParcel,
@@ -560,6 +563,8 @@ function internalToDealPayload(id, entry) {
   // in-memory entries still keyed only by .stage.
   const boardId  = entry._boardId  || currentBoardId;
   const columnId = entry._columnId || stageToColumnId(stage, boardId);
+  // V77.1: spread entry.data first so unknown/new fields (validation,
+  // interest_level, etc.) survive a save round-trip; explicit fields override.
   const payload = {
     id,
     workflow:    'acquisition',
@@ -568,14 +573,12 @@ function internalToDealPayload(id, entry) {
     board_id:    boardId,
     column_id:   columnId,
     data: {
+      ...(entry.data || {}),
       note:    entry.note    || '',
-      // V75.3: notes[] no longer stored inline — lives in `notes` table
       addedAt: entry.addedAt || Date.now(),
       terms:   entry.terms   || null,
       offers:  entry.offers  || [],
-      // V75.3: DD moved here from properties.dd
       dd:      entry.dd      || {},
-      // Stash listing-ish fields that aren't first-class on properties
       price:       p.price,
       type:        p.type,
       beds:        p.beds,
@@ -2129,6 +2132,190 @@ function updateAddButtons() {
 
 // ─── Board render ─────────────────────────────────────────────────────────────
 
+// V77.1 — Card renderers split by board type (renderBoard delegates).
+
+function renderStandardCard(card, id, item, p, stages) {
+  // Compact summary indicators
+  const terms    = getTerms(id);
+  const offers   = getOffers(id);
+  const dd       = getDd(id);
+  const ddCount  = DD_ITEMS.filter(i => dd[i.toLowerCase()]?.status).length;
+  const ddHigh   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
+  const ddPoss   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
+  const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
+  const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
+
+  const stageOptions = stages.map(s =>
+    `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
+  ).join('');
+
+  card.innerHTML = `
+    <div class="kb-card-top">
+      <span class="kb-card-type">${p.type || ''}</span>
+      <button class="kb-remove" title="Remove from pipeline">✕</button>
+    </div>
+    <div class="kb-card-price">${formatKbPrice(p.price, terms.price)}</div>
+    <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
+    <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
+    <select class="kb-stage-select">${stageOptions}</select>
+    <div class="kb-card-indicators">
+      ${hasTerms   ? `<span class="kb-ind kb-ind-terms" title="Vendor terms recorded">Terms</span>` : ''}
+      ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
+      ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
+      ${(Array.isArray(item.note) ? item.note.length : item.note) ? `<span class="kb-ind kb-ind-note" title="Has notes">Note</span>` : ''}
+      ${item._dueActionCount > 0 ? `<span class="kb-ind kb-ind-action-due" title="${item._dueActionCount} action${item._dueActionCount === 1 ? '' : 's'} due or reminder due">🔔 ${item._dueActionCount}</span>` : ''}
+    </div>
+  `;
+}
+
+function renderEnquiryCard(card, id, item, p, stages, boardId) {
+  // V77.1 — Enquiry card layout. No "type/price headline" gold writing — we
+  // show contact name instead. No Land/beds/baths badges. Interest level is
+  // a slider rendered up-front. Other badges (Offer, Evidenced, Latest Offer
+  // Price for Lease; Inspected, Contract Requested, Latest Offer Price for
+  // Sales) are populated from item._enquiryMeta (filled async after board
+  // render — see enrichEnquiryCardsAsync()).
+  const interestLevel = (item.data?.interest_level != null)
+    ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
+    : 0;
+
+  const meta = item._enquiryMeta || {};
+  const isLease = boardId === 'sys_lease_enquiry';
+  const contactName = meta.contact_name || '<span style="color:var(--muted);font-style:italic">Loading…</span>';
+
+  const stageOptions = stages.map(s =>
+    `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
+  ).join('');
+
+  // Build the per-board badge set
+  const badges = [];
+  if (isLease) {
+    if (meta.has_submitted_offer) badges.push(`<span class="kb-ind kb-ind-enq kb-ind-offer-submitted" title="Lease offer submitted">Offer</span>`);
+    if (meta.has_evidence)        badges.push(`<span class="kb-ind kb-ind-enq kb-ind-evidence" title="Evidence submitted">Evidenced</span>`);
+    if (meta.latest_rent != null) badges.push(`<span class="kb-ind kb-ind-enq kb-ind-rent" title="Latest offer price">$${Math.round(meta.latest_rent).toLocaleString('en-AU')}/wk</span>`);
+  } else {
+    // Sales Enquiry
+    if (meta.has_inspection_attended) badges.push(`<span class="kb-ind kb-ind-enq kb-ind-inspected" title="Inspection attended">Inspected</span>`);
+    if (meta.has_contract_requested)  badges.push(`<span class="kb-ind kb-ind-enq kb-ind-contract"  title="Contract requested">Contract</span>`);
+    if (meta.latest_rent != null)     badges.push(`<span class="kb-ind kb-ind-enq kb-ind-rent" title="Latest offer price">$${Math.round(meta.latest_rent).toLocaleString('en-AU')}</span>`);
+  }
+  // Common across both Enquiry types
+  if (item._dueActionCount > 0) {
+    badges.push(`<span class="kb-ind kb-ind-action-due" title="${item._dueActionCount} action${item._dueActionCount === 1 ? '' : 's'} due">🔔 ${item._dueActionCount}</span>`);
+  }
+
+  card.innerHTML = `
+    <div class="kb-card-top">
+      <span class="kb-card-contact">${contactName}</span>
+      <button class="kb-remove" title="Remove from pipeline">✕</button>
+    </div>
+    <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
+    <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
+    <div class="kb-card-interest" title="Interest level — drag to set">
+      <label class="kb-interest-label">
+        <span class="kb-interest-text">Interest</span>
+        <span class="kb-interest-value">${interestLevel}</span>
+      </label>
+      <input type="range" class="kb-interest-slider" min="0" max="100" step="5" value="${interestLevel}" data-deal-id="${id}">
+    </div>
+    <select class="kb-stage-select">${stageOptions}</select>
+    <div class="kb-card-indicators">${badges.join('')}</div>
+  `;
+
+  // Wire interest slider — debounced PUT to /api/deals data.interest_level
+  const slider = card.querySelector('.kb-interest-slider');
+  const valueEl = card.querySelector('.kb-interest-value');
+  let _interestSaveTimer = null;
+  slider.addEventListener('input', (e) => {
+    e.stopPropagation();
+    valueEl.textContent = slider.value;
+  });
+  slider.addEventListener('change', (e) => {
+    e.stopPropagation();
+    const newLevel = parseInt(slider.value, 10);
+    clearTimeout(_interestSaveTimer);
+    _interestSaveTimer = setTimeout(() => saveInterestLevel(id, newLevel), 200);
+  });
+  // Prevent drag from starting when grabbing slider
+  slider.addEventListener('mousedown', (e) => e.stopPropagation());
+}
+
+// Persist interest_level for an Enquiry deal — sets data.interest_level via /api/deals PUT.
+async function saveInterestLevel(dealId, level) {
+  if (!pipeline[dealId]) return;
+  if (!pipeline[dealId].data) pipeline[dealId].data = {};
+  pipeline[dealId].data.interest_level = level;
+  // Trigger the standard save pipeline
+  savePipeline(dealId);
+}
+
+// V77.1 — Enrich Enquiry cards with metadata fetched from server.
+// Called after renderBoard() completes for Sales/Lease Enquiry boards.
+async function enrichEnquiryCardsAsync() {
+  const boardForCheck = currentBoardId;
+  if (boardForCheck !== 'sys_sales_enquiry' && boardForCheck !== 'sys_lease_enquiry') return;
+  const dealIds = Object.keys(pipeline).filter(id => {
+    const item = pipeline[id];
+    return (item._boardId || currentBoardId) === boardForCheck;
+  });
+  if (!dealIds.length) return;
+
+  try {
+    const r = await fetch(`/api/enquiry-card-meta?deal_ids=${encodeURIComponent(dealIds.join(','))}`);
+    if (!r.ok) return;
+    const metaMap = await r.json();
+    Object.entries(metaMap).forEach(([dealId, meta]) => {
+      if (pipeline[dealId]) pipeline[dealId]._enquiryMeta = meta;
+    });
+    // Re-render only the cards that got enriched
+    Object.keys(metaMap).forEach(dealId => {
+      const cardEl = document.querySelector(`.kb-card[data-id="${CSS.escape(dealId)}"]`);
+      if (!cardEl) return;
+      const item = pipeline[dealId];
+      const p = item?.property;
+      if (!p) return;
+      const stages = resolveCurrentStages();
+      // Re-render in place, then re-attach handlers (they were attached after innerHTML last render)
+      renderEnquiryCard(cardEl, dealId, item, p, stages, item._boardId || currentBoardId);
+      // Re-attach handlers for the re-rendered card body. Drag handlers were attached on
+      // the card root (still valid). The buttons / dropdowns inside were replaced — re-wire.
+      _wireCardInnerHandlers(cardEl, dealId);
+    });
+  } catch (err) {
+    console.warn('[kanban] enrichEnquiryCardsAsync failed:', err);
+  }
+}
+
+// Helper to re-wire kb-card inner handlers after a rebuild of innerHTML.
+// Mirrors the wiring done in the main entries.forEach loop in renderBoard.
+function _wireCardInnerHandlers(card, id) {
+  const stageSel = card.querySelector('.kb-stage-select');
+  if (stageSel) {
+    stageSel.addEventListener('change', function (e) {
+      e.stopPropagation();
+      moveToColumn(id, this.value);
+      renderBoard();
+    });
+  }
+  const removeBtn = card.querySelector('.kb-remove');
+  if (removeBtn) {
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      openDeleteCardConfirm(id);
+    });
+  }
+  const addrLink = card.querySelector('.kb-card-address-link');
+  if (addrLink) {
+    addrLink.addEventListener('click', e => {
+      e.stopPropagation();
+      // Just open the deal modal for this card — clicking address on Enquiry
+      // doesn't navigate to map, since Enquiry's address is the listing's address.
+      // Use the standard deal-open path.
+      if (typeof window.openPipelineItem === 'function') window.openPipelineItem(id);
+    });
+  }
+}
+
 function renderBoard() {
   const board = document.getElementById('kanbanBoard');
   board.innerHTML = '';
@@ -2196,39 +2383,19 @@ function renderBoard() {
       card.draggable = true;
       card.dataset.id = id;
 
-      // Compact summary indicators
-      const terms    = getTerms(id);
-      const offers   = getOffers(id);
-      const dd       = getDd(id);
-      const ddCount  = DD_ITEMS.filter(i => dd[i.toLowerCase()]?.status).length;
-      const ddHigh   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
-      const ddPoss   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
-      const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
-      const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
+      // V77.1 — branch by board type:
+      //   - Enquiry boards (sys_sales_enquiry, sys_lease_enquiry): contact-name
+      //     headline, no Land/beds/baths badges, Enquiry-specific badges + Interest
+      //     Level. Meta enriched async via /api/enquiry-card-meta.
+      //   - All other boards: legacy card layout.
+      const boardForCard = item._boardId || currentBoardId;
+      const isEnquiryBoard = boardForCard === 'sys_sales_enquiry' || boardForCard === 'sys_lease_enquiry';
 
-      // V75.6: stage select dropdown lists all columns of CURRENT board.
-      // The value submitted is the column id (not the legacy stage slug).
-      const stageOptions = stages.map(s =>
-        `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
-      ).join('');
-
-      card.innerHTML = `
-        <div class="kb-card-top">
-          <span class="kb-card-type">${p.type}</span>
-          <button class="kb-remove" title="Remove from pipeline">✕</button>
-        </div>
-        <div class="kb-card-price">${formatKbPrice(p.price, terms.price)}</div>
-        <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address}</div>
-        <div class="kb-card-suburb">${p.suburb}${p.state ? ' ' + p.state : ''}</div>
-        <select class="kb-stage-select">${stageOptions}</select>
-        <div class="kb-card-indicators">
-          ${hasTerms   ? `<span class="kb-ind kb-ind-terms" title="Vendor terms recorded">Terms</span>` : ''}
-          ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
-          ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
-          ${(Array.isArray(item.note) ? item.note.length : item.note) ? `<span class="kb-ind kb-ind-note" title="Has notes">Note</span>` : ''}
-          ${item._dueActionCount > 0 ? `<span class="kb-ind kb-ind-action-due" title="${item._dueActionCount} action${item._dueActionCount === 1 ? '' : 's'} due or reminder due">🔔 ${item._dueActionCount}</span>` : ''}
-        </div>
-      `;
+      if (isEnquiryBoard) {
+        renderEnquiryCard(card, id, item, p, stages, boardForCard);
+      } else {
+        renderStandardCard(card, id, item, p, stages);
+      }
 
       // Drag
       card.addEventListener('dragstart', e => {
@@ -2388,6 +2555,11 @@ function renderBoard() {
 
     board.appendChild(col);
   });
+
+  // V77.1 — async enrichment for Enquiry boards (contact name + offer/inspection meta)
+  if (currentBoardId === 'sys_sales_enquiry' || currentBoardId === 'sys_lease_enquiry') {
+    enrichEnquiryCardsAsync();
+  }
 }
 
 // ─── V75.7: Actions module ────────────────────────────────────────────────────

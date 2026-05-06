@@ -380,25 +380,32 @@
 
     // V77.1 — populate type + source dropdowns. Defaults bias toward the
     // common Enquiry case: phone_in (inbound) — and source dropdown is shown.
-    if (window.Lookups) {
+    if (window.Lookups && typeof Lookups.getInteractionTypes === 'function') {
       Lookups.getInteractionTypes().then(types => {
+        if (!Array.isArray(types)) { typeSel.innerHTML = '<option value="">(none)</option>'; return; }
         // Filter to inbound-direction types (Enquiry first contact is inherently inbound)
         const inbound = types.filter(t => t.direction === 'inbound' && t.active !== false);
         if (!inbound.length) {
           typeSel.innerHTML = '<option value="">(no inbound types)</option>';
           return;
         }
-        typeSel.innerHTML = inbound.map(t => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('');
-        // Default to phone_in if present, else first
+        typeSel.innerHTML = '<option value="">— Select —</option>' + inbound.map(t => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('');
+        // Default to phone_in if present
         if (inbound.find(t => t.id === 'phone_in')) typeSel.value = 'phone_in';
-      }).catch(() => {});
+      }).catch(err => { console.warn('[knc] interaction types load failed:', err); typeSel.innerHTML = '<option value="">— Select —</option>'; });
+    } else {
+      typeSel.innerHTML = '<option value="">— Select —</option>';
+    }
+    if (window.Lookups && typeof Lookups.getSourcesActive === 'function') {
       Lookups.getSourcesActive().then(sources => {
-        if (!sources.length) {
+        if (!Array.isArray(sources) || !sources.length) {
           srcSel.innerHTML = '<option value="">(no sources)</option>';
           return;
         }
         srcSel.innerHTML = '<option value="">— Select —</option>' + sources.map(s => `<option value="${esc(s.id)}">${esc(s.label)}</option>`).join('');
-      }).catch(() => {});
+      }).catch(err => { console.warn('[knc] sources load failed:', err); srcSel.innerHTML = '<option value="">— Select —</option>'; });
+    } else {
+      srcSel.innerHTML = '<option value="">— Select —</option>';
     }
 
     body.querySelector('[data-role="back"]').addEventListener('click', () => {
