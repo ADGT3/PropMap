@@ -473,39 +473,25 @@ async function renderContactsSection(pipelineId, agentData) {
   const section = document.createElement('div');
   section.className = 'crm-section';
 
+  // V77.1 — Contacts is always expanded; header matches other static sections
+  // (kb-section-label) for visual consistency. The "+ Add" affordance lives on
+  // the right of the heading row.
   section.innerHTML = `
-    <div class="crm-header">
-      <button class="crm-toggle" aria-expanded="false">
-        <span class="crm-toggle-icon">▶</span>
-        <span class="kb-section-label" style="margin:0">Contacts</span>
-        <span class="crm-count"></span>
-      </button>
-      <button class="crm-add-btn" title="Add contact" style="display:none">+ Add</button>
+    <div class="crm-static-header">
+      <span class="kb-section-label" style="margin:0">Contacts <span class="crm-count"></span></span>
+      <button class="crm-add-btn" title="Add contact">+ Add</button>
     </div>
-    <div class="crm-body" style="display:none">
+    <div class="crm-body">
       <div class="crm-list"></div>
       <div class="crm-form" style="display:none"></div>
     </div>`;
 
-  const toggleBtn = section.querySelector('.crm-toggle');
-  const toggleIcon = section.querySelector('.crm-toggle-icon');
   const addBtn    = section.querySelector('.crm-add-btn');
-  const body      = section.querySelector('.crm-body');
   const listEl    = section.querySelector('.crm-list');
   const formEl    = section.querySelector('.crm-form');
   const countEl   = section.querySelector('.crm-count');
 
-  let expanded = false;
-
-  function setExpanded(val) {
-    expanded = val;
-    body.style.display    = expanded ? '' : 'none';
-    addBtn.style.display  = expanded ? '' : 'none';
-    toggleBtn.setAttribute('aria-expanded', expanded);
-    toggleIcon.textContent = expanded ? '▼' : '▶';
-  }
-
-  toggleBtn.addEventListener('click', () => setExpanded(!expanded));
+  // V77.1 — Always expanded; no toggle.
 
   async function reload() {
     listEl.innerHTML = '<div class="crm-loading">Loading…</div>';

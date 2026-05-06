@@ -5006,3 +5006,29 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   color: var(--accent) !important;
   font-weight: 600;
 }
+
+/* V77.1 — Contacts section: static header (always expanded). Heading matches
+   other section labels; "+ Add" sits on the right. */
+.crm-static-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  margin-bottom: 4px;
+  gap: 8px;
+}
+.crm-static-header .crm-add-btn {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 3px 10px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.crm-static-header .crm-add-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.crm-count { color: var(--muted); font-weight: 400; font-size: 11px; }
