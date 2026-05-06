@@ -51,71 +51,11 @@ function roleLabel(id) {
   return r ? r.label : id;
 }
 
-const SOURCES = [
-  'Our Website',
-  'Realestate.com.au',
-  'Domain.com.au',
-  'Instagram',
-  'Facebook',
-  'Letter Drop',
-  'Door Knocking',
-  'Walk-In',
-  'Signboard',
-  'Cold-Calling',
-  'Open House',
-  'Referral',
-  'Other',
-];
-
-// Resolve a raw source value into { dropdown, other }.
-// - If source matches one of SOURCES → dropdown=that, other=''
-// - Empty/null/undefined → dropdown='', other=''
-// - Anything else (legacy/custom) → dropdown='Other', other=<raw value>
-function resolveSource(raw) {
-  if (!raw) return { dropdown: '', other: '' };
-  const s = String(raw);
-  if (SOURCES.includes(s)) return { dropdown: s, other: '' };
-  return { dropdown: 'Other', other: s };
-}
-
-// Render the Source field HTML (dropdown + hidden Other input that reveals
-// when 'Other' is selected). Classes crm-source-sel and crm-source-other are
-// used for query selection by the save handlers.
-function renderSourceField(rawValue) {
-  const { dropdown, other } = resolveSource(rawValue);
-  const otherVisible = dropdown === 'Other';
-  return `
-    <select class="kb-input crm-source-sel">
-      <option value="">Select source…</option>
-      ${SOURCES.map(s => `<option value="${s}" ${s === dropdown ? 'selected' : ''}>${s}</option>`).join('')}
-    </select>
-    <input class="kb-input crm-source-other" type="text" placeholder="Describe source…"
-      value="${other.replace(/"/g, '&quot;')}"
-      style="margin-top:6px;${otherVisible ? '' : 'display:none'}">
-  `;
-}
-
-// Read the effective source from the form (drop value, or Other text when
-// 'Other' is selected). Returns empty string if nothing chosen.
-function readSourceField(container) {
-  const sel = container.querySelector('.crm-source-sel');
-  const oth = container.querySelector('.crm-source-other');
-  if (!sel) return '';
-  const val = sel.value;
-  if (val === 'Other') return (oth?.value || '').trim() || 'Other';
-  return val;
-}
-
-// Wire up the dropdown so 'Other' reveals the text input.
-function wireSourceField(container) {
-  const sel = container.querySelector('.crm-source-sel');
-  const oth = container.querySelector('.crm-source-other');
-  if (!sel || !oth) return;
-  sel.addEventListener('change', () => {
-    oth.style.display = sel.value === 'Other' ? '' : 'none';
-    if (sel.value === 'Other') oth.focus();
-  });
-}
+// V77.1c — SOURCES array, resolveSource(), renderSourceField(),
+// readSourceField(), wireSourceField() all REMOVED. Source is no longer a
+// contact-level attribute. Per-interaction source lives on notes.source and
+// is captured via NoteForm (note-form.js) when interaction_type direction is
+// 'inbound'.
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
@@ -543,13 +483,41 @@ async function renderContactsSection(pipelineId, agentData) {
             ? (await apiGet({ search: agentData.email }).catch(() => [])).filter(c => c.email === agentData.email)
             : [];
           let contactId;
+          let isNewContact = false;
           if (existing.length) {
             contactId = existing[0].id;
           } else {
-            const created = await apiPost({ first_name, last_name, mobile: agentData.phone || '', email: agentData.email || '', organisation_id: orgId, source: 'Domain.com.au', domain_id: String(pipelineId) });
+            const created = await apiPost({ first_name, last_name, mobile: agentData.phone || '', email: agentData.email || '', organisation_id: orgId, domain_id: String(pipelineId) });
             contactId = created.id;
+            isNewContact = true;
           }
           await apiPost({ action: 'link', contact_id: contactId, pipeline_id: pipelineId, role: 'agent' });
+
+          // V77.1c — auto-create contact-level note for new contacts only.
+          // Records that this contact came in via the Domain API as a first
+          // inbound interaction. Existing contacts being re-linked to another
+          // listing don't get a new note (that's a deal-level event, not a
+          // contact-origin event).
+          if (isNewContact) {
+            try {
+              const noteText = `Contact details imported from Domain.com.au (listing #${pipelineId}${agentData.agency ? `, agency: ${agentData.agency}` : ''}).`;
+              await fetch('/api/notes', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                  entity_type:      'contact',
+                  entity_id:        String(contactId),
+                  note_text:        noteText,
+                  interaction_type: 'domain_api',
+                  source:           'domain_com_au',
+                }),
+              });
+            } catch (noteErr) {
+              // Non-fatal — the contact + link succeeded; just log
+              console.warn('[CRM] auto-note for Domain agent failed:', noteErr);
+            }
+          }
+
           btn.textContent = '✓';
           setTimeout(() => reload(), 800);
         } catch (err) {
@@ -628,7 +596,6 @@ async function renderContactsSection(pipelineId, agentData) {
           <input class="kb-input crm-search" type="text" placeholder="Name, organisation, email…">
           <div class="crm-search-results"></div>
         </div>
-        <div class="crm-form-divider">— or create new —</div>
         <div class="crm-duplicate-warning-wrap"></div>` : ''}
 
         <div class="crm-form-row">
@@ -663,12 +630,6 @@ async function renderContactsSection(pipelineId, agentData) {
             </select>
           </div>
         </div>
-        <div class="crm-form-row">
-          <div class="kb-field-wrap" style="flex:1">
-            <label class="kb-field-label">Source</label>
-            ${renderSourceField(prefill.source)}
-          </div>
-        </div>
 
         <div class="crm-form-actions">
           <button class="crm-save-btn">${isEdit ? 'Save Changes' : 'Save & Link'}</button>
@@ -682,8 +643,7 @@ async function renderContactsSection(pipelineId, agentData) {
     const orgTA = buildOrgTypeahead(orgWrap, (id) => { selectedOrgId = id; });
     if (prefill.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
 
-    // Source field — reveal Other input when selected
-    wireSourceField(formEl);
+    // V77.1c: Source field removed — source now lives only on notes.source
 
     // Duplicate detection (new contacts only)
     if (!isEdit) {
@@ -735,8 +695,10 @@ async function renderContactsSection(pipelineId, agentData) {
             item.className = 'crm-search-item';
             item.innerHTML = `<strong>${displayName(ct)}</strong>${ct.org_name ? ` · ${ct.org_name}` : ''}${ct.mobile || ct.email ? ` · ${ct.mobile || ct.email}` : ''}`;
             item.addEventListener('click', async () => {
-              // Populate form fields with the chosen contact's data — do NOT save yet.
-              // User reviews/edits and clicks Save & Link to commit.
+              // V77.1: pick existing contact → fields go READ-ONLY (master-record
+              // edits go via CRM > Contact, not buried inside a deal modal). Only
+              // Role stays editable (per-deal). "Edit contact details →" button
+              // opens the contact's CRM modal as a sub-overlay.
               _pickedExistingId = ct.id;
               _pickedSnapshot = {
                 first_name: ct.first_name || '',
@@ -744,46 +706,79 @@ async function renderContactsSection(pipelineId, agentData) {
                 mobile:     ct.mobile     || '',
                 email:      ct.email      || '',
                 organisation_id: ct.organisation_id || null,
-                source:     ct.source     || '',
               };
-              formEl.querySelector('.crm-first').value  = _pickedSnapshot.first_name;
-              formEl.querySelector('.crm-last').value   = _pickedSnapshot.last_name;
-              formEl.querySelector('.crm-mobile').value = _pickedSnapshot.mobile;
-              formEl.querySelector('.crm-email').value  = _pickedSnapshot.email;
+              const setLocked = (selector, val) => {
+                const el = formEl.querySelector(selector);
+                if (!el) return;
+                el.value = val;
+                el.readOnly = true;
+                el.classList.add('kb-input-locked');
+              };
+              setLocked('.crm-first',  _pickedSnapshot.first_name);
+              setLocked('.crm-last',   _pickedSnapshot.last_name);
+              setLocked('.crm-mobile', _pickedSnapshot.mobile);
+              setLocked('.crm-email',  _pickedSnapshot.email);
               if (ct.organisation_id && ct.org_name) {
                 orgTA.setValue(ct.organisation_id, ct.org_name);
                 selectedOrgId = ct.organisation_id;
               }
-              // Seed role from their most recent role on any property (existing behaviour)
+              // Lock the org typeahead input, too
+              const orgInput = formEl.querySelector('.crm-org-wrap input');
+              if (orgInput) {
+                orgInput.readOnly = true;
+                orgInput.classList.add('kb-input-locked');
+              }
+              // V77.1c: source field removed entirely from contact form
+              // Seed role from their most recent role on any property (per-deal — stays editable)
               const lr = await apiGet({ last_role: '1', contact_id: ct.id }).catch(() => ({}));
               const roleSel = formEl.querySelector('.crm-role');
               if (lr?.role && roleSel) roleSel.value = lr.role;
-              // Source field is harder (custom/other) — set if simple match
-              const srcSel = formEl.querySelector('select[data-role="source"], .crm-source-select, .crm-source');
-              if (srcSel && ct.source) {
-                try { srcSel.value = ct.source; } catch (_) {}
-              }
-              // Clear search results & input — form fields now show the chosen contact
+              // Clear search input & results
               searchEl.value = '';
               resultsEl.innerHTML = '';
-              // Hint banner so user knows we're now in "linking existing" mode
+              // Banner with "Edit contact details" link
               const dupWrap = formEl.querySelector('.crm-duplicate-warning-wrap');
               if (dupWrap) {
-                dupWrap.innerHTML = `<div class="crm-pick-banner">Linking existing contact <strong>${displayName(ct)}</strong> — review fields and click <strong>Save &amp; Link</strong>. <button class="crm-pick-clear" type="button">clear selection</button></div>`;
+                dupWrap.innerHTML = `
+                  <div class="crm-pick-banner">
+                    Linking existing contact <strong>${displayName(ct)}</strong>. Identity fields are locked — only Role applies to this deal.
+                    <div class="crm-pick-banner-actions">
+                      <button class="crm-pick-edit-master" type="button" data-contact-id="${ct.id}">Edit contact details →</button>
+                      <button class="crm-pick-clear" type="button">clear selection</button>
+                    </div>
+                  </div>`;
                 dupWrap.querySelector('.crm-pick-clear').addEventListener('click', () => {
                   _pickedExistingId = null;
                   _pickedSnapshot = null;
-                  formEl.querySelector('.crm-first').value  = '';
-                  formEl.querySelector('.crm-last').value   = '';
-                  formEl.querySelector('.crm-mobile').value = '';
-                  formEl.querySelector('.crm-email').value  = '';
+                  // Unlock + clear all fields
+                  ['.crm-first','.crm-last','.crm-mobile','.crm-email'].forEach(sel => {
+                    const el = formEl.querySelector(sel);
+                    if (el) { el.value = ''; el.readOnly = false; el.classList.remove('kb-input-locked'); }
+                  });
+                  if (orgInput) { orgInput.readOnly = false; orgInput.classList.remove('kb-input-locked'); }
                   orgTA.setValue(null, '');
                   selectedOrgId = null;
                   dupWrap.innerHTML = '';
                 });
+                // Edit master contact — opens the CRM contact modal as a sub-overlay
+                dupWrap.querySelector('.crm-pick-edit-master').addEventListener('click', () => {
+                  // Ensure CRM view is rendered (so its overlay markup + modal helpers exist).
+                  // We don't need to make CRM visible — just have its DOM mounted so
+                  // window.openContactModal becomes callable.
+                  const crmContainer = document.getElementById('crmViewContent');
+                  if (crmContainer && !crmContainer.dataset.rendered && window.CRM?.renderCRMView) {
+                    crmContainer.dataset.rendered = '1';
+                    window.CRM.renderCRMView(crmContainer);
+                  }
+                  if (typeof window.openContactModal === 'function') {
+                    window.openContactModal(ct.id);
+                  } else {
+                    alert('Contact modal unavailable — please refresh the page.');
+                  }
+                });
               }
-              // First name field gets focus so user can immediately edit if needed
-              formEl.querySelector('.crm-first').focus();
+              // Role gets focus — that's the only thing user can change here
+              roleSel?.focus();
             });
             resultsEl.appendChild(item);
           });
@@ -794,14 +789,12 @@ async function renderContactsSection(pipelineId, agentData) {
     formEl.querySelector('.crm-save-btn').addEventListener('click', async () => {
       const first = formEl.querySelector('.crm-first').value.trim();
       if (!first) { formEl.querySelector('.crm-first').focus(); return; }
-      const sourceVal = readSourceField(formEl);
       const data = {
         first_name:      first,
         last_name:       formEl.querySelector('.crm-last').value.trim(),
         mobile:          formEl.querySelector('.crm-mobile').value.trim(),
         email:           formEl.querySelector('.crm-email').value.trim(),
         organisation_id: selectedOrgId,
-        source:          sourceVal || prefill.source || 'Other',
         domain_id:       prefill.domain_id || null,
       };
       const role = formEl.querySelector('.crm-role').value;
@@ -810,18 +803,9 @@ async function renderContactsSection(pipelineId, agentData) {
         await apiPut({ id: prefill.id, ...data });
         await apiPost({ action: 'link', contact_id: prefill.id, pipeline_id: pipelineId, role });
       } else if (_pickedExistingId) {
-        // V77.1: user picked an existing contact via search — only PUT if they
-        // actually edited any of the prefilled fields, then link with the role.
-        const edited = !_pickedSnapshot
-          || data.first_name      !== _pickedSnapshot.first_name
-          || data.last_name       !== _pickedSnapshot.last_name
-          || data.mobile          !== _pickedSnapshot.mobile
-          || data.email           !== _pickedSnapshot.email
-          || data.organisation_id !== _pickedSnapshot.organisation_id
-          || data.source          !== _pickedSnapshot.source;
-        if (edited) {
-          await apiPut({ id: _pickedExistingId, ...data });
-        }
+        // V77.1: user picked an existing contact via search. Identity fields are
+        // locked in this flow — master-record edits go via CRM > Contact, not
+        // here. We only create the entity_contacts link with the chosen role.
         await apiPost({ action: 'link', contact_id: _pickedExistingId, pipeline_id: pipelineId, role });
       } else {
         const created = await apiPost(data);
@@ -925,6 +909,13 @@ function renderCRMView(container) {
     container.querySelector('#crmModal').innerHTML = '';
   }
   window._crmCloseModal = closeModal;
+
+  // V77.1: expose openContactModal globally so deal-modal flows can open a
+  // contact's master-record CRM modal as a sub-overlay (e.g. "Edit contact
+  // details" from inside the Add Contact form on a deal modal).
+  window.openContactModal = function (contactId) {
+    openModal(modal => renderContactDetail(modal, contactId, () => closeModal()));
+  };
 
   // V75.5.2: Sync in-memory pipeline state + map pins + CRM caches after a
   // CRM modal deletes a Parcel or Property directly (bypassing Kanban's
@@ -1213,7 +1204,6 @@ function renderCRMView(container) {
               ${c.mobile   ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
               ${c.email    ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
               ${c.org_name ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
-              <div class="crm-detail-label">Source</div><div>${c.source || "manual"}</div>
             </div>
           </div>
 
@@ -1601,12 +1591,6 @@ function renderCRMView(container) {
               <div class="crm-org-wrap"></div>
             </div>
           </div>
-          <div class="crm-form-row">
-            <div class="kb-field-wrap" style="flex:1">
-              <label class="kb-field-label">Source</label>
-              ${renderSourceField(prefill?.source)}
-            </div>
-          </div>
           <div class="crm-duplicate-warning-wrap"></div>
           <div class="crm-form-actions">
             <button class="crm-save-btn kb-add-offer-btn">${isEdit ? 'Save Changes' : 'Create Contact'}</button>
@@ -1624,8 +1608,7 @@ function renderCRMView(container) {
     const orgTA = buildOrgTypeahead(modal.querySelector('.crm-org-wrap'), (id) => { selectedOrgId = id; });
     if (prefill?.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
 
-    // Source field — reveal Other input when selected
-    wireSourceField(modal);
+    // V77.1c: Source field removed — source now lives only on notes.source
 
     // Duplicate detection (new only)
     if (!isEdit) {
@@ -1654,14 +1637,12 @@ function renderCRMView(container) {
     modal.querySelector('.crm-save-btn').addEventListener('click', async () => {
       const first = modal.querySelector('.crm-first').value.trim();
       if (!first) { modal.querySelector('.crm-first').focus(); return; }
-      const sourceVal = readSourceField(modal);
       const data = {
         first_name:      first,
         last_name:       modal.querySelector('.crm-last').value.trim(),
         mobile:          modal.querySelector('.crm-mobile').value.trim(),
         email:           modal.querySelector('.crm-email').value.trim(),
         organisation_id: selectedOrgId,
-        source:          sourceVal || prefill?.source || 'Other',
       };
       if (isEdit) {
         await apiPut({ id: prefill.id, ...data });
