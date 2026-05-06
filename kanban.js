@@ -3500,11 +3500,13 @@ ${rows.join('')}`;
       </div>
       <div class="kb-modal-body">
 
-        <!-- V76.4: Status select — first field in every Modal body, matches the
-             pattern adopted across deal and action modals. Auto-saves on change
-             (deal modal convention: every field auto-persists on change/blur). -->
         ${(() => {
+          // V76.4 / V77.1: Status select position depends on board type.
+          //   - Enquiry boards (Sales/Lease): Status renders AFTER Interest Level,
+          //     via the v77-status-mount further down. Suppressed here.
+          //   - All other boards: Status stays at top of modal (legacy V76.4 layout).
           const dealBoardId = item._boardId || currentBoardId;
+          if (dealBoardId === 'sys_sales_enquiry' || dealBoardId === 'sys_lease_enquiry') return '';
           const dealBoard   = boards.find(b => b.id === dealBoardId);
           const cols        = (dealBoard?.columns || []).slice().sort((a,b) => a.sort_order - b.sort_order);
           if (!cols.length) return '';
@@ -3733,9 +3735,9 @@ ${rows.join('')}`;
     }
   }
 
-  // V77.1: Deal Status select — mirrors the kanban card's stage dropdown so
-  // agents can change stage without leaving the modal. Common to all boards.
-  {
+  // V77.1: Deal Status select — Enquiry boards only. On non-Enquiry boards, the
+  // legacy top-of-modal Status field handles this. Mirrors the kanban card's stage.
+  if (dealBoardForSections === 'sys_sales_enquiry' || dealBoardForSections === 'sys_lease_enquiry') {
     const statusMount = modal.querySelector('.v77-status-mount');
     if (statusMount) {
       const stagesForDeal = resolveCurrentStages(); // current board's columns
@@ -3750,7 +3752,6 @@ ${rows.join('')}`;
       const sel = statusMount.querySelector('.kb-modal-status-select');
       sel.addEventListener('change', () => {
         moveToColumn(id, sel.value);
-        // Keep modal open; just refresh the kanban card behind it
         refreshCardLive(id);
       });
     }
@@ -3809,14 +3810,14 @@ ${rows.join('')}`;
     openDeleteCardConfirm(id, () => overlay.remove());
   });
 
-  // V76.4: Status select — auto-save on change (deal-modal convention).
-  // moveToColumn updates entry.stage + entry._columnId and persists via
-  // savePipeline (cache + DB write). Re-render so the card moves columns.
+  // V76.4: legacy Status select (top-of-modal, non-Enquiry boards) — auto-save on change.
+  // Enquiry boards use the v77-status-mount block above instead.
   overlay.querySelector(`#kbModalStatus-${id}`)?.addEventListener('change', (e) => {
     const newColId = e.target.value;
     moveToColumn(id, newColId);
     renderBoard();
   });
+
   // Finance picker — delegate clicks on all .kb-fin-pick-btn rows
   function parsePickerPrice(s) {
     if (!s) return null;
