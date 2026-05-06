@@ -320,6 +320,80 @@ function renderDuplicateWarning(container, duplicates, onSelectExisting) {
   container.insertBefore(warn, container.firstChild);
 }
 
+// V77.1c — Modal dialog shown when the Domain "+ Add" flow finds possible
+// duplicates. Returns a Promise that resolves to one of:
+//   { action: 'use_existing', contactId: <id> }
+//   { action: 'create_new' }
+//   { action: 'cancel' }
+function openDomainDuplicateDialog({ agent, duplicates }) {
+  return new Promise((resolve) => {
+    const escHtml = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const fullName = [agent.first_name, agent.last_name].filter(Boolean).join(' ').trim() || '(no name)';
+    const meta = [agent.email, agent.phone, agent.agency].filter(Boolean).map(escHtml).join(' · ');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'v77-modal-overlay';
+    overlay.innerHTML = `
+      <div class="v77-modal" style="max-width:560px">
+        <div class="v77-modal-header">
+          <div class="v77-modal-title">Possible duplicate${duplicates.length > 1 ? 's' : ''} found</div>
+          <button class="v77-modal-close" data-role="cancel">✕</button>
+        </div>
+        <div class="v77-modal-body">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Domain agent details:</div>
+          <div style="background:var(--surface2);padding:8px 10px;border-radius:4px;margin-bottom:14px;font-size:13px">
+            <strong>${escHtml(fullName)}</strong>
+            ${meta ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">${meta}</div>` : ''}
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">${duplicates.length} matching contact${duplicates.length > 1 ? 's' : ''} in your system:</div>
+          <div class="dom-dup-list" data-role="dup-list"></div>
+        </div>
+        <div class="v77-modal-footer" style="justify-content:space-between">
+          <button class="params-cancel-btn" data-role="cancel">Cancel</button>
+          <button class="params-save-btn" data-role="create-new">Create new anyway</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+
+    const list = overlay.querySelector('[data-role="dup-list"]');
+    duplicates.forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'dom-dup-row';
+      const cName = displayName(c);
+      const cMeta = [c.org_name, c.email, c.mobile].filter(Boolean).map(escHtml).join(' · ');
+      row.innerHTML = `
+        <div class="dom-dup-row-main">
+          <strong>${escHtml(cName)}</strong>
+          ${cMeta ? `<div class="dom-dup-row-meta">${cMeta}</div>` : ''}
+        </div>
+        <button class="params-save-btn dom-dup-use" data-id="${c.id}">Use this contact</button>
+      `;
+      row.querySelector('.dom-dup-use').addEventListener('click', () => {
+        close();
+        resolve({ action: 'use_existing', contactId: c.id });
+      });
+      list.appendChild(row);
+    });
+
+    overlay.querySelectorAll('[data-role="cancel"]').forEach(b => b.addEventListener('click', () => {
+      close();
+      resolve({ action: 'cancel' });
+    }));
+    overlay.querySelector('[data-role="create-new"]').addEventListener('click', () => {
+      close();
+      resolve({ action: 'create_new' });
+    });
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) {
+        close();
+        resolve({ action: 'cancel' });
+      }
+    });
+  });
+}
+
 // ─── Contact notes panel ──────────────────────────────────────────────────────
 
 async function renderNotesPanel(contactId, pipelineId) {
@@ -479,18 +553,42 @@ async function renderContactsSection(pipelineId, agentData) {
             const org = await apiPost({ action: 'create_org', name: agentData.agency });
             orgId = org.id;
           }
-          const existing = agentData.email
-            ? (await apiGet({ search: agentData.email }).catch(() => [])).filter(c => c.email === agentData.email)
-            : [];
+
+          // V77.1c: smarter duplicate detection. Look for matches on first+last
+          // name, email, OR mobile (any combination). If found, ask the user
+          // whether to use an existing record or create new anyway.
+          const dups = await checkDuplicates(first_name, last_name, agentData.email || '', agentData.phone || '');
+
           let contactId;
           let isNewContact = false;
-          if (existing.length) {
-            contactId = existing[0].id;
-          } else {
+
+          if (dups.length === 0) {
+            // No matches → just create
             const created = await apiPost({ first_name, last_name, mobile: agentData.phone || '', email: agentData.email || '', organisation_id: orgId, domain_id: String(pipelineId) });
             contactId = created.id;
             isNewContact = true;
+          } else {
+            // Possible duplicates → ask the user
+            const choice = await openDomainDuplicateDialog({
+              agent: { first_name, last_name, email: agentData.email || '', phone: agentData.phone || '', agency: agentData.agency || '' },
+              duplicates: dups,
+            });
+            if (choice.action === 'cancel') {
+              // User backed out — restore button and stop
+              btn.disabled = false;
+              btn.textContent = '+';
+              return;
+            }
+            if (choice.action === 'use_existing') {
+              contactId = choice.contactId;
+              isNewContact = false;
+            } else if (choice.action === 'create_new') {
+              const created = await apiPost({ first_name, last_name, mobile: agentData.phone || '', email: agentData.email || '', organisation_id: orgId, domain_id: String(pipelineId) });
+              contactId = created.id;
+              isNewContact = true;
+            }
           }
+
           await apiPost({ action: 'link', contact_id: contactId, pipeline_id: pipelineId, role: 'agent' });
 
           // V77.1c — auto-create contact-level note for new contacts only.
