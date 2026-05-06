@@ -1908,6 +1908,19 @@ function formatKbPrice(price, termsPrice) {
   return 'Price Unavailable';
 }
 
+// V77.1 — Lease-aware rent formatter for Lease Listing cards/modals.
+// Reads from data.terms.rent_amount + terms.rent_period (set in Lease Terms section).
+// Returns "$650/wk" or "$2,800/month" or 'Rent not set' as the fallback.
+function formatKbRent(terms) {
+  const t = terms || {};
+  const amt = t.rent_amount;
+  if (amt == null || amt === '') return 'Rent not set';
+  const num = typeof amt === 'number' ? amt : parseFloat(String(amt).replace(/[^0-9.]/g, ''));
+  if (isNaN(num) || num <= 0) return 'Rent not set';
+  const period = t.rent_period === 'monthly' ? '/month' : '/wk';
+  return '$' + Math.round(num).toLocaleString('en-AU') + period;
+}
+
 // Formats a raw input price (from terms/offer fields) as whole dollars
 function formatInputPrice(val) {
   if (val === null || val === undefined || val === '') return '';
@@ -2134,7 +2147,7 @@ function updateAddButtons() {
 
 // V77.1 — Card renderers split by board type (renderBoard delegates).
 
-function renderStandardCard(card, id, item, p, stages) {
+function renderStandardCard(card, id, item, p, stages, boardId) {
   // Compact summary indicators
   const terms    = getTerms(id);
   const offers   = getOffers(id);
@@ -2149,12 +2162,18 @@ function renderStandardCard(card, id, item, p, stages) {
     `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
   ).join('');
 
+  // V77.1: Lease Listings show rent (per-week / per-month) in the headline,
+  // not "Price Unavailable" from the sales price field. Other boards keep
+  // the standard formatKbPrice behaviour.
+  const isLeaseListing = (boardId || item._boardId || currentBoardId) === 'sys_lease_listings';
+  const headline = isLeaseListing ? formatKbRent(terms) : formatKbPrice(p.price, terms.price);
+
   card.innerHTML = `
     <div class="kb-card-top">
       <span class="kb-card-type">${p.type || ''}</span>
       <button class="kb-remove" title="Remove from pipeline">✕</button>
     </div>
-    <div class="kb-card-price">${formatKbPrice(p.price, terms.price)}</div>
+    <div class="kb-card-price">${headline}</div>
     <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
     <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
     <select class="kb-stage-select">${stageOptions}</select>
@@ -2377,7 +2396,7 @@ function renderBoard() {
       if (isEnquiryBoard) {
         renderEnquiryCard(card, id, item, p, stages, boardForCard);
       } else {
-        renderStandardCard(card, id, item, p, stages);
+        renderStandardCard(card, id, item, p, stages, boardForCard);
       }
 
       // Drag
@@ -3495,6 +3514,11 @@ ${rows.join('')}`;
               const cached = item._enquiryMeta?.contact_name || '';
               return `<div class="kb-modal-price kb-modal-enquirer" data-deal-id="${id}">${cached || 'Loading…'}</div>`;
             }
+            // V77.1: Lease Listings show rent (per-week / per-month) — sales price field
+            // doesn't apply.
+            if (dealBoardForHeader === 'sys_lease_listings') {
+              return `<div class="kb-modal-price">${formatKbRent(terms)}</div>`;
+            }
             return `<div class="kb-modal-price">${formatKbPrice(p.price, terms.price)}</div>`;
           })()}
           <div class="kb-modal-address">📍 ${p.address}, ${p.suburb}${p.state ? ' ' + p.state : ''}</div>
@@ -4461,9 +4485,12 @@ function refreshCardIndicators(card, id) {
   const ddClass = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
   const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
 
-  // Update price (may now show terms price as fallback)
+  // Update price (Lease-aware — Lease Listings show rent, not "Price Unavailable").
   const priceEl = card.querySelector('.kb-card-price');
-  if (priceEl) priceEl.innerHTML = formatKbPrice(p.price, terms.price);
+  if (priceEl) {
+    const isLeaseListing = (item._boardId || currentBoardId) === 'sys_lease_listings';
+    priceEl.innerHTML = isLeaseListing ? formatKbRent(terms) : formatKbPrice(p.price, terms.price);
+  }
 
   const el = card.querySelector('.kb-card-indicators');
   if (!el) return;
