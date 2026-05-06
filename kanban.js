@@ -3360,12 +3360,16 @@ ${rows.join('')}`;
         <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
 
         ${(() => {
-          // V77.1: Vendor Terms + Finance Picker are Acquisition-only.
-          //   - Listings have Agency Agreements + their own market position
-          //   - Enquiry deals show their parent Listing's terms read-only above
+          // V77.1: Vendor Terms — visible on Acquisition AND Listings boards.
+          //   - Acquisition: purchase offer terms (the price we're offering)
+          //   - Listings:    listing/asking terms (the price we're asking)
+          //   - Enquiry:     hidden (read-only Listing Summary section above)
           //   - Deferred V78 'modal section visibility' will replace this hardcoded gate
           const dealBoardForTerms = item._boardId || currentBoardId;
-          if (dealBoardForTerms !== 'sys_acquisition') return '';
+          const showTerms = dealBoardForTerms === 'sys_acquisition'
+                         || dealBoardForTerms === 'sys_sales_listings'
+                         || dealBoardForTerms === 'sys_lease_listings';
+          if (!showTerms) return '';
           return `
         <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
         <div class="kb-terms">
@@ -3383,7 +3387,16 @@ ${rows.join('')}`;
           <div class="kb-deposits">${buildDepositsHtml(terms.deposits, parseDepositAmountKanban(terms.price, null) || 0)}</div>
           <button class="kb-add-deposit">+ Add tranche</button>
         </div>
+          `;
+        })()}
 
+        ${(() => {
+          // V77.1: Finance Picker (purchase offers) — Acquisition only. Listings
+          // don't receive offers in this section; offers come via Lease Offer
+          // (Lease Enquiry) or sales offer flow (future). Enquiry never has it.
+          const dealBoardForFinance = item._boardId || currentBoardId;
+          if (dealBoardForFinance !== 'sys_acquisition') return '';
+          return `
         <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
           `;
         })()}
