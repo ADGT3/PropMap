@@ -712,6 +712,12 @@ async function renderContactsSection(pipelineId, agentData) {
     }
 
     // Search existing
+    // V77.1: clicking a search result populates the form fields rather than
+    // auto-saving + closing. User reviews/edits the prefilled data, then
+    // clicks Save & Link. Tracked by `_pickedExistingId` — if non-null on save,
+    // we PUT to update + link rather than POST to create.
+    let _pickedExistingId = null;
+    let _pickedSnapshot = null;  // baseline values; lets us detect what user edited
     const searchEl = formEl.querySelector('.crm-search');
     if (searchEl) {
       let t;
@@ -729,15 +735,55 @@ async function renderContactsSection(pipelineId, agentData) {
             item.className = 'crm-search-item';
             item.innerHTML = `<strong>${displayName(ct)}</strong>${ct.org_name ? ` · ${ct.org_name}` : ''}${ct.mobile || ct.email ? ` · ${ct.mobile || ct.email}` : ''}`;
             item.addEventListener('click', async () => {
-              // Seed form role with their most recent role on any property,
-              // so user can accept the default or override before linking.
+              // Populate form fields with the chosen contact's data — do NOT save yet.
+              // User reviews/edits and clicks Save & Link to commit.
+              _pickedExistingId = ct.id;
+              _pickedSnapshot = {
+                first_name: ct.first_name || '',
+                last_name:  ct.last_name  || '',
+                mobile:     ct.mobile     || '',
+                email:      ct.email      || '',
+                organisation_id: ct.organisation_id || null,
+                source:     ct.source     || '',
+              };
+              formEl.querySelector('.crm-first').value  = _pickedSnapshot.first_name;
+              formEl.querySelector('.crm-last').value   = _pickedSnapshot.last_name;
+              formEl.querySelector('.crm-mobile').value = _pickedSnapshot.mobile;
+              formEl.querySelector('.crm-email').value  = _pickedSnapshot.email;
+              if (ct.organisation_id && ct.org_name) {
+                orgTA.setValue(ct.organisation_id, ct.org_name);
+                selectedOrgId = ct.organisation_id;
+              }
+              // Seed role from their most recent role on any property (existing behaviour)
               const lr = await apiGet({ last_role: '1', contact_id: ct.id }).catch(() => ({}));
               const roleSel = formEl.querySelector('.crm-role');
               if (lr?.role && roleSel) roleSel.value = lr.role;
-              const role = roleSel ? roleSel.value : 'vendor';
-              await apiPost({ action: 'link', contact_id: ct.id, pipeline_id: pipelineId, role });
-              hideForm();
-              reload();
+              // Source field is harder (custom/other) — set if simple match
+              const srcSel = formEl.querySelector('select[data-role="source"], .crm-source-select, .crm-source');
+              if (srcSel && ct.source) {
+                try { srcSel.value = ct.source; } catch (_) {}
+              }
+              // Clear search results & input — form fields now show the chosen contact
+              searchEl.value = '';
+              resultsEl.innerHTML = '';
+              // Hint banner so user knows we're now in "linking existing" mode
+              const dupWrap = formEl.querySelector('.crm-duplicate-warning-wrap');
+              if (dupWrap) {
+                dupWrap.innerHTML = `<div class="crm-pick-banner">Linking existing contact <strong>${displayName(ct)}</strong> — review fields and click <strong>Save &amp; Link</strong>. <button class="crm-pick-clear" type="button">clear selection</button></div>`;
+                dupWrap.querySelector('.crm-pick-clear').addEventListener('click', () => {
+                  _pickedExistingId = null;
+                  _pickedSnapshot = null;
+                  formEl.querySelector('.crm-first').value  = '';
+                  formEl.querySelector('.crm-last').value   = '';
+                  formEl.querySelector('.crm-mobile').value = '';
+                  formEl.querySelector('.crm-email').value  = '';
+                  orgTA.setValue(null, '');
+                  selectedOrgId = null;
+                  dupWrap.innerHTML = '';
+                });
+              }
+              // First name field gets focus so user can immediately edit if needed
+              formEl.querySelector('.crm-first').focus();
             });
             resultsEl.appendChild(item);
           });
@@ -763,6 +809,20 @@ async function renderContactsSection(pipelineId, agentData) {
         // Identity fields via PUT; role via link upsert (scoped to this property)
         await apiPut({ id: prefill.id, ...data });
         await apiPost({ action: 'link', contact_id: prefill.id, pipeline_id: pipelineId, role });
+      } else if (_pickedExistingId) {
+        // V77.1: user picked an existing contact via search — only PUT if they
+        // actually edited any of the prefilled fields, then link with the role.
+        const edited = !_pickedSnapshot
+          || data.first_name      !== _pickedSnapshot.first_name
+          || data.last_name       !== _pickedSnapshot.last_name
+          || data.mobile          !== _pickedSnapshot.mobile
+          || data.email           !== _pickedSnapshot.email
+          || data.organisation_id !== _pickedSnapshot.organisation_id
+          || data.source          !== _pickedSnapshot.source;
+        if (edited) {
+          await apiPut({ id: _pickedExistingId, ...data });
+        }
+        await apiPost({ action: 'link', contact_id: _pickedExistingId, pipeline_id: pipelineId, role });
       } else {
         const created = await apiPost(data);
         await apiPost({ action: 'link', contact_id: created.id, pipeline_id: pipelineId, role });

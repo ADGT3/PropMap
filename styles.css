@@ -4628,3 +4628,27 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   min-height: 50px;
   font-family: inherit;
 }
+
+/* V77.1 — Picked-existing-contact banner inside Add Contact form */
+.crm-pick-banner {
+  background: rgba(196,132,26,0.10);
+  border: 1px solid rgba(196,132,26,0.35);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.crm-pick-clear {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
