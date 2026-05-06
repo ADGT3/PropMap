@@ -420,14 +420,14 @@ export default async function handler(req, res) {
         }
 
         // ── Create contact
-        // V77.1 changes:
-        //   - default `source` changed from 'manual' (which now violates the FK
-        //     to contact_sources) to null. Caller can pass any contact_sources.id.
-        //   - dob, current_address (+ suburb/state/postcode), and consent fields
-        //     all accepted on create — same tri-state convention as PUT for consents.
+        // V77.1c: source removed — it now lives only on notes.source per the
+        //   build plan. Source is captured per-interaction (per-note) and not
+        //   denormalised onto the contact record.
+        // V77.1: dob, current_address (+ suburb/state/postcode), and consent fields
+        //   all accepted on create — same tri-state convention as PUT for consents.
         const {
           first_name, last_name = '', mobile = '', email = '', organisation_id = null,
-          source = null, domain_id = null,
+          domain_id = null,
           dob = null,
           current_address = null, current_address_suburb = null,
           current_address_state = null, current_address_postcode = null,
@@ -448,14 +448,14 @@ export default async function handler(req, res) {
         const rows = await sql`
           INSERT INTO contacts (
             first_name, last_name, mobile, email, organisation_id,
-            source, domain_id,
+            domain_id,
             dob, current_address, current_address_suburb,
             current_address_state, current_address_postcode,
             privacy_consent_at, marketing_email_consent_at,
             marketing_sms_consent_at, do_not_contact_at
           ) VALUES (
             ${first_name.trim()}, ${last_name.trim()}, ${mobile.trim()}, ${email.trim()}, ${organisation_id},
-            ${source}, ${domain_id},
+            ${domain_id},
             ${dob}, ${current_address}, ${current_address_suburb},
             ${current_address_state}, ${current_address_postcode},
             ${privacyAt}, ${emailMktAt}, ${smsMktAt}, ${doNotCtcAt}
@@ -467,7 +467,7 @@ export default async function handler(req, res) {
       // ══════════════════════════════════════════════════════════════════════
       case 'PUT': {
         const {
-          id, org_id, first_name, last_name, mobile, email, organisation_id, source, domain_id,
+          id, org_id, first_name, last_name, mobile, email, organisation_id, domain_id,
           name, phone, website,
           // V77.1 — new columns on contacts
           dob,
@@ -531,7 +531,6 @@ export default async function handler(req, res) {
             mobile                      = COALESCE(${mobile                  ?? null}, mobile),
             email                       = COALESCE(${email                   ?? null}, email),
             organisation_id             = COALESCE(${organisation_id         ?? null}, organisation_id),
-            source                      = COALESCE(${source                  ?? null}, source),
             domain_id                   = COALESCE(${domain_id               ?? null}, domain_id),
             dob                         = COALESCE(${dob                     ?? null}, dob),
             current_address             = COALESCE(${current_address         ?? null}, current_address),
