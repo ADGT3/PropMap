@@ -3814,8 +3814,8 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   gap: 28px;
 }
 .params-section {
-  background: var(--surface, #1f2937);
-  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 16px 18px;
 }
@@ -3827,18 +3827,19 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   margin: 0 0 6px;
   font-size: 16px;
   font-weight: 600;
+  color: var(--text);
 }
 .params-section-header .settings-section-sub {
   margin: 0 0 12px;
   font-size: 12px;
-  color: var(--text-secondary, #9ca3af);
+  color: var(--muted);
   line-height: 1.5;
 }
 .params-add-btn {
   position: absolute;
   top: 0;
   right: 0;
-  background: var(--accent, #3b82f6);
+  background: var(--accent);
   color: #fff;
   border: 0;
   padding: 6px 12px;
@@ -3848,14 +3849,14 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   cursor: pointer;
 }
 .params-add-btn:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.05);
 }
 .params-table-wrap {
   overflow-x: auto;
 }
 .params-loading {
   padding: 12px;
-  color: var(--text-secondary, #9ca3af);
+  color: var(--muted);
   font-size: 13px;
 }
 .params-table {
@@ -3866,10 +3867,10 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 .params-table .params-th {
   text-align: left;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
-  background: rgba(255,255,255,0.03);
+  border-bottom: 2px solid var(--border);
+  background: var(--surface2);
   font-weight: 600;
-  color: var(--text-primary, #e5e7eb);
+  color: var(--text);
   white-space: nowrap;
   user-select: none;
 }
@@ -3877,38 +3878,39 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   cursor: pointer;
 }
 .params-table .params-th-sortable:hover {
-  background: rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.04);
 }
 .params-table .params-tr:hover {
-  background: rgba(255,255,255,0.02);
+  background: var(--surface2);
 }
 .params-table .params-tr-edit {
-  background: rgba(59,130,246,0.06);
+  background: rgba(196,132,26,0.06);  /* tint of --accent */
 }
 .params-table .params-td {
   padding: 6px 10px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.05));
+  border-bottom: 1px solid var(--border);
   vertical-align: middle;
+  color: var(--text);
 }
 .params-table .params-td-mono {
   font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
   font-size: 11px;
-  color: var(--text-secondary, #9ca3af);
+  color: var(--muted);
 }
 .params-table .params-td-actions {
   white-space: nowrap;
   text-align: right;
 }
 .params-table .params-td-hint {
-  color: var(--text-secondary, #9ca3af);
+  color: var(--muted);
   font-style: italic;
   font-size: 11px;
 }
 .params-system-badge {
   display: inline-block;
   padding: 2px 6px;
-  background: rgba(99,102,241,0.15);
-  color: #a5b4fc;
+  background: rgba(0,0,0,0.06);
+  color: var(--muted);
   border-radius: 3px;
   font-size: 10px;
   font-weight: 500;
@@ -3917,9 +3919,9 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 }
 .params-edit-btn,
 .params-delete-btn {
-  background: transparent;
-  border: 1px solid var(--border, rgba(255,255,255,0.15));
-  color: var(--text-secondary, #9ca3af);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
   width: 24px;
   height: 24px;
   border-radius: 3px;
@@ -3930,18 +3932,18 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   line-height: 1;
 }
 .params-edit-btn:hover {
-  background: rgba(59,130,246,0.15);
-  color: #93c5fd;
-  border-color: #3b82f6;
+  background: rgba(196,132,26,0.10);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .params-delete-btn:hover {
-  background: rgba(239,68,68,0.15);
-  color: #fca5a5;
-  border-color: #ef4444;
+  background: rgba(192,57,43,0.10);
+  color: var(--red);
+  border-color: var(--red);
 }
 .params-save-btn,
 .params-cancel-btn {
-  background: var(--accent, #3b82f6);
+  background: var(--accent);
   color: #fff;
   border: 0;
   padding: 4px 10px;
@@ -3952,11 +3954,12 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   margin-left: 4px;
 }
 .params-cancel-btn {
-  background: rgba(255,255,255,0.08);
-  color: var(--text-primary, #e5e7eb);
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
-.params-save-btn:hover { filter: brightness(1.1); }
-.params-cancel-btn:hover { background: rgba(255,255,255,0.14); }
+.params-save-btn:hover { filter: brightness(1.05); }
+.params-cancel-btn:hover { background: var(--border); }
 
 /* ════════════════════════════════════════════════════════════════════════════
    V77.1 — Note form (extended Type+Source dropdowns)

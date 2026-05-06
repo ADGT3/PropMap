@@ -2172,10 +2172,7 @@ function renderCRMView(container) {
           <div class="crm-modal-section crm-section-collapsible" data-section="deals">
             <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${parcelDeals.length})</span></span>
-              ${activeDeal
-                ? `<button class="crm-parcel-open-deal-btn kb-add-offer-btn" data-deal-id="${activeDeal.id}">Open Active Deal</button>`
-                : (closedCount ? `<span class="crm-section-meta" style="font-size:11px;color:var(--text-secondary)">(history: ${closedCount} closed) — create new deals via the map "+ Pipeline" button</span>` : '')
-              }
+              ${closedCount ? `<span class="crm-section-meta" style="font-size:11px;color:var(--muted)">(history: ${closedCount} closed)</span>` : ''}
             </div>
             <div class="crm-section-body">
               ${parcelDeals.length ? parcelDeals.map(d => `
@@ -2786,10 +2783,7 @@ function renderCRMView(container) {
           <div class="crm-modal-section crm-section-collapsible" data-section="deals">
             <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${propertyDeals.length})</span></span>
-              ${activeDeal
-                ? `<button class="crm-prop-open-deal-btn kb-add-offer-btn" data-deal-id="${activeDeal.id}">Open Active Deal</button>`
-                : (inParcel ? '' : (closedCount ? `<span class="crm-section-meta" style="font-size:11px;color:var(--text-secondary)">(history: ${closedCount} closed) — create new deals via the map "+ Pipeline" button</span>` : ''))
-              }
+              ${closedCount ? `<span class="crm-section-meta" style="font-size:11px;color:var(--muted)">(history: ${closedCount} closed)</span>` : ''}
             </div>
             <div class="crm-section-body">
               ${inParcel && !propertyDeals.length ? '<div class="crm-empty" style="padding:10px 0;color:var(--text-secondary);font-size:12px">Deals for properties in a parcel are tracked at the parcel level.</div>' : ''}
