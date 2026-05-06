@@ -101,9 +101,11 @@
 
     // State for the multi-step flow
     const state = {
-      step: 1, // 1 = property pick, 2 = contact pick (only for two_step)
-      property: null,
-      contact:  null,
+      step: 1,
+      property: null,           // for Listings boards (single-step)
+      listing:  null,           // for Enquiry boards (carries property_id + label)
+      contact:  null,           // for Enquiry boards
+      _enquiryBoardId: boardId, // used by contact picker's back-button
     };
 
     const overlay = document.createElement('div');
@@ -130,20 +132,23 @@
     function renderStep() {
       const body   = overlay.querySelector('[data-role="body"]');
       const footer = overlay.querySelector('[data-role="footer"]');
-      if (state.step === 1) {
+      if (cfg.mode === 'single') {
+        // Single-step: just pick a property and create
         renderPropertyPicker(body, footer, state, () => {
-          if (cfg.mode === 'two_step') {
-            state.step = 2;
-            renderStep();
-          } else {
-            // Single-step flow — create the deal directly
-            createDeal(state, boardId, cfg, close, onDealCreated);
-          }
-        });
-      } else if (state.step === 2) {
-        renderContactPicker(body, footer, state, () => {
           createDeal(state, boardId, cfg, close, onDealCreated);
         });
+      } else {
+        // Two-step (Enquiry boards): listing-pick → contact-pick → create
+        if (state.step === 1) {
+          renderListingPicker(body, footer, state, boardId, () => {
+            state.step = 2;
+            renderStep();
+          });
+        } else if (state.step === 2) {
+          renderContactPicker(body, footer, state, () => {
+            createDeal(state, boardId, cfg, close, onDealCreated);
+          });
+        }
       }
     }
     renderStep();
@@ -221,12 +226,109 @@
     search.focus();
   }
 
+  // ── Listing picker (Enquiry boards step 1) ───────────────────────────────
+  // Searches active Listing deals (Sales Listings or Lease Listings — matched
+  // to the Enquiry board's siblings). Returns deal id + property snapshot
+  // (address + suburb + price from deal.data.terms.price).
+
+  function renderListingPicker(body, footer, state, enquiryBoardId, onPicked) {
+    const targetListingBoard = enquiryBoardId === 'sys_sales_enquiry'
+      ? 'sys_sales_listings'
+      : 'sys_lease_listings';
+    const targetLabel = enquiryBoardId === 'sys_sales_enquiry'
+      ? 'Sales Listing'
+      : 'Lease Listing';
+
+    body.innerHTML = `
+      <div class="kb-field-wrap">
+        <label class="kb-field-label">${esc(targetLabel)} — search by address</label>
+        <input class="kb-input knc-listing-search" type="text" placeholder="Type address or suburb…" autofocus>
+      </div>
+      <div class="knc-results" data-role="listing-results"></div>
+      <div class="knc-empty-msg" data-role="empty-msg" style="display:none;color:var(--muted);font-size:12px;padding:8px 0">No active ${esc(targetLabel)} found at that address.</div>
+    `;
+    footer.innerHTML = `
+      <button class="params-cancel-btn" data-role="close">Cancel</button>
+      <button class="params-save-btn" data-role="next" disabled>Next</button>
+    `;
+
+    const search    = body.querySelector('.knc-listing-search');
+    const results   = body.querySelector('[data-role="listing-results"]');
+    const emptyMsg  = body.querySelector('[data-role="empty-msg"]');
+    const nextBtn   = footer.querySelector('[data-role="next"]');
+    nextBtn.addEventListener('click', () => { if (state.listing) onPicked(); });
+
+    let _t = null;
+    search.addEventListener('input', () => {
+      clearTimeout(_t);
+      const q = search.value.trim();
+      results.innerHTML = '';
+      emptyMsg.style.display = 'none';
+      state.listing = null;
+      nextBtn.disabled = true;
+      if (!q) return;
+      _t = setTimeout(async () => {
+        try {
+          // Fetch all deals on the target listing board, filter client-side by address
+          const r = await fetch(`/api/deals?board_id=${encodeURIComponent(targetListingBoard)}&status=active`);
+          if (!r.ok) throw new Error(r.status);
+          const deals = await r.json();
+          const ql = q.toLowerCase();
+          const matches = deals.filter(d => {
+            const addr = (d.property_address || '').toLowerCase();
+            const sub  = (d.property_suburb  || '').toLowerCase();
+            return addr.includes(ql) || sub.includes(ql);
+          });
+          if (!matches.length) {
+            emptyMsg.style.display = '';
+            return;
+          }
+          results.innerHTML = matches.slice(0, 10).map(d => {
+            const addr = d.property_address || '—';
+            const sub  = d.property_suburb ? `, ${d.property_suburb}` : '';
+            const stage = d.stage ? `<span class="knc-listing-stage">${esc(d.stage)}</span>` : '';
+            const priceVal = d.data?.terms?.price;
+            const price = priceVal != null
+              ? `$${Number(priceVal).toLocaleString('en-AU')}`
+              : '<span style="color:var(--muted)">no price set</span>';
+            return `
+              <div class="knc-result" data-id="${esc(d.id)}" data-property-id="${esc(d.property_id || '')}" data-label="${esc(addr + sub)}">
+                <div class="knc-result-main">${esc(addr + sub)} ${stage}</div>
+                <div class="knc-result-sub">Listing: ${price}</div>
+              </div>
+            `;
+          }).join('');
+          results.querySelectorAll('.knc-result').forEach(item => {
+            item.addEventListener('click', () => {
+              results.querySelectorAll('.knc-result').forEach(x => x.classList.remove('knc-result-selected'));
+              item.classList.add('knc-result-selected');
+              state.listing = {
+                id:          item.getAttribute('data-id'),
+                property_id: item.getAttribute('data-property-id'),
+                label:       item.getAttribute('data-label'),
+              };
+              nextBtn.disabled = false;
+            });
+          });
+        } catch (err) {
+          console.warn('[knc] listing search failed', err);
+        }
+      }, 300);
+    });
+
+    footer.querySelector('[data-role="close"]')?.addEventListener('click', () => {
+      const overlay = body.closest('.v77-modal-overlay');
+      if (overlay) overlay.remove();
+    });
+    search.focus();
+  }
+
   // ── Contact picker (two-step only) ───────────────────────────────────────
 
   function renderContactPicker(body, footer, state, onPicked) {
     body.innerHTML = `
       <div class="knc-step-summary">
-        <span class="knc-step-label">Property:</span> ${esc(state.property.label)}
+        <span class="knc-step-label">Listing:</span> ${esc(state.listing.label)}
         <button class="knc-step-back" data-role="back">change</button>
       </div>
       <div class="kb-field-wrap" style="margin-top:10px">
@@ -248,13 +350,14 @@
     body.querySelector('[data-role="back"]').addEventListener('click', () => {
       state.step = 1;
       state.contact = null;
-      // Re-render
+      // Re-render — pick up listing flow
       const overlay = body.closest('.v77-modal-overlay');
       if (overlay) {
-        // Walk back up
         const dlgBody   = overlay.querySelector('[data-role="body"]');
         const dlgFooter = overlay.querySelector('[data-role="footer"]');
-        renderPropertyPicker(dlgBody, dlgFooter, state, () => {
+        // Determine board from where we came — closure captures it via openNewCardDialog scope
+        // The modal title still has it — extract once and use
+        renderListingPicker(dlgBody, dlgFooter, state, state._enquiryBoardId, () => {
           state.step = 2;
           renderContactPicker(dlgBody, dlgFooter, state, onPicked);
         });
@@ -314,19 +417,32 @@
   // ── Create the deal + entity link (for two-step) ─────────────────────────
 
   async function createDeal(state, boardId, cfg, close, onDealCreated) {
-    const propertyId = state.property.id;
-    const stage      = cfg.target_stage;
-    const workflow   = cfg.workflow;
+    // For Listings boards: state.property carries the chosen property
+    // For Enquiry boards: state.listing carries the parent listing deal info
+    //   - listing.id  → goes into parent_deal_id on the new Enquiry deal
+    //   - listing.property_id → also carried so the Enquiry deal has property_id
+    //     (transitively the same as the Listing's property)
+    let propertyId, parentDealId;
+    if (cfg.mode === 'single') {
+      propertyId   = state.property.id;
+      parentDealId = null;
+    } else {
+      propertyId   = state.listing.property_id;
+      parentDealId = state.listing.id;
+    }
+    const stage    = cfg.target_stage;
+    const workflow = cfg.workflow;
     try {
       // Create the deal
       const r = await fetch('/api/deals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          property_id: propertyId,
-          board_id:    boardId,
+          property_id:    propertyId,
+          board_id:       boardId,
           stage,
           workflow,
+          parent_deal_id: parentDealId,
           data: {},
         }),
       });

@@ -514,6 +514,8 @@ function dealRowToInternal(row) {
     // preserved above for backward compat during the transition.
     _boardId:      row.board_id    || null,
     _columnId:     row.column_id   || null,
+    // V77.1b: parent_deal_id (Enquiry → Listing relationship)
+    parent_deal_id: row.parent_deal_id || null,
     // V75.7: due-action flag, set server-side in api/deals.js fetchAndExpand
     // V76.4.2: due_action_count is the actual number; _hasDueAction kept for compat.
     // V76.4.3: _hasOverdueAction drives the red left-border attention bar
@@ -3352,6 +3354,19 @@ ${rows.join('')}`;
         <div class="v77-inspections-mount" data-deal-id="${id}"></div>
         <div class="v77-agreements-mount" data-deal-id="${id}"></div>
 
+        <!-- V77.1b — Listing Summary section (Enquiry boards only).
+             Read-only display of the parent Listing's address, agent and price.
+             Populated by ListingSummarySection module. -->
+        <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
+
+        ${(() => {
+          // V77.1: Vendor Terms + Finance Picker are Acquisition-only.
+          //   - Listings have Agency Agreements + their own market position
+          //   - Enquiry deals show their parent Listing's terms read-only above
+          //   - Deferred V78 'modal section visibility' will replace this hardcoded gate
+          const dealBoardForTerms = item._boardId || currentBoardId;
+          if (dealBoardForTerms !== 'sys_acquisition') return '';
+          return `
         <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
         <div class="kb-terms">
           <div class="kb-terms-row">
@@ -3370,6 +3385,8 @@ ${rows.join('')}`;
         </div>
 
         <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
+          `;
+        })()}
 
         ${(() => {
           // V77.1: Due Diligence section is Acquisition-workflow only.
@@ -3445,6 +3462,15 @@ ${rows.join('')}`;
   if (window.AgencyAgreementsSection) {
     const mount = modal.querySelector('.v77-agreements-mount');
     if (mount) AgencyAgreementsSection.render(mount, id, dealBoardForSections);
+  }
+  // V77.1b: Listing Summary section (Enquiry boards only — read-only display
+  // of parent Listing's terms). Replaces editable Vendor Terms on Enquiry deals.
+  if (window.ListingSummarySection) {
+    const mount = modal.querySelector('.v77-listing-summary-mount');
+    if (mount) {
+      const parentDealId = item.parent_deal_id || item._parentDealId || null;
+      ListingSummarySection.render(mount, id, dealBoardForSections, parentDealId);
+    }
   }
 
   // V75.7: load Actions for this deal into the Actions section
@@ -3666,23 +3692,24 @@ ${rows.join('')}`;
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) modal.querySelector('.kb-note-add-btn').click();
   });
 
-  // Terms
-  function syncTerms() {
-    const t = getTerms(id);
-    const rawPrice = modal.querySelector('.kb-terms-price').value;
-    const rawSettlement = modal.querySelector('.kb-terms-settlement').value;
-    const parsedPrice = parseDepositAmountKanban(rawPrice, null);
-    t.price      = parsedPrice || null;  // null not 0 — so falsy check works correctly
-    t.settlement = parseSettlementDays(rawSettlement) || null;
-    saveTerms(id, t);
-    refreshCardLive(id);
-  }
-  // Sync only on blur so price is fully typed before parsing
-  modal.querySelector('.kb-terms-price').addEventListener('blur', function() {
-    this.value = formatInputPrice(this.value);
-    syncTerms();
-  });
-  modal.querySelector('.kb-terms-settlement').addEventListener('blur', function() {
+  // Terms — V77.1: only wire if Vendor Terms section exists (Acquisition only)
+  if (modal.querySelector('.kb-terms-price')) {
+    function syncTerms() {
+      const t = getTerms(id);
+      const rawPrice = modal.querySelector('.kb-terms-price').value;
+      const rawSettlement = modal.querySelector('.kb-terms-settlement').value;
+      const parsedPrice = parseDepositAmountKanban(rawPrice, null);
+      t.price      = parsedPrice || null;  // null not 0 — so falsy check works correctly
+      t.settlement = parseSettlementDays(rawSettlement) || null;
+      saveTerms(id, t);
+      refreshCardLive(id);
+    }
+    // Sync only on blur so price is fully typed before parsing
+    modal.querySelector('.kb-terms-price').addEventListener('blur', function() {
+      this.value = formatInputPrice(this.value);
+      syncTerms();
+    });
+    modal.querySelector('.kb-terms-settlement').addEventListener('blur', function() {
     this.value = formatSettlement(this.value);
     syncTerms();
   });
@@ -3727,6 +3754,7 @@ ${rows.join('')}`;
     addDeposit(id);
     modal.querySelector('.kb-deposits').innerHTML = buildDepositsHtml(getTerms(id).deposits);
   });
+  } // end V77.1 Vendor Terms gate
 
   // Offer form — delegated on overlay so handlers survive picker HTML rebuilds
   overlay.addEventListener('blur', e => {
@@ -3806,14 +3834,16 @@ ${rows.join('')}`;
     showKanbanToast('Offer recorded');
   });
 
-  // Delete offer — handled in finance picker
-  modal.querySelector(`#kb-finance-picker-${id}`).addEventListener('click', e => {
-    const btn = e.target.closest('.kb-fin-pick-delete');
-    if (!btn) return;
-    deleteOffer(id, btn.dataset.offerId);
-    refreshFinancePicker();
-    refreshCardLive(id);
-  });
+  // Delete offer — handled in finance picker (V77.1: Acquisition only)
+  if (modal.querySelector(`#kb-finance-picker-${id}`)) {
+    modal.querySelector(`#kb-finance-picker-${id}`).addEventListener('click', e => {
+      const btn = e.target.closest('.kb-fin-pick-delete');
+      if (!btn) return;
+      deleteOffer(id, btn.dataset.offerId);
+      refreshFinancePicker();
+      refreshCardLive(id);
+    });
+  }
 
   // DD
   modal.querySelector('.kb-dd').addEventListener('change', e => {

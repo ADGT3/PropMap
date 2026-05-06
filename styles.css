@@ -4507,3 +4507,76 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 }
 .knc-result-main { font-size: 13px; font-weight: 500; }
 .knc-result-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1b — Listing Summary section (Enquiry deal modals)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.ls-summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+.ls-loading,
+.ls-empty,
+.ls-error {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface2);
+  border-radius: 6px;
+}
+.ls-error { color: var(--red); }
+.ls-row {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed var(--border);
+}
+.ls-row:last-child { border-bottom: 0; }
+.ls-label {
+  width: 130px;
+  color: var(--muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.ls-value {
+  flex: 1;
+  color: var(--text);
+}
+.ls-value-prom {
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 14px;
+}
+.ls-status-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: 6px;
+}
+.ls-status-active   { background: rgba(39,174,96,0.15);  color: var(--green); }
+.ls-status-won      { background: rgba(39,174,96,0.15);  color: var(--green); }
+.ls-status-lost     { background: rgba(192,57,43,0.15);  color: var(--red); }
+.ls-status-archived { background: rgba(0,0,0,0.06);       color: var(--muted); }
+.ls-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+.knc-listing-stage {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  background: var(--surface2);
+  border-radius: 3px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
