@@ -28,7 +28,7 @@ import { getDatabaseUrl } from '../../lib/db.js';
 import { validatePublicToken } from '../../lib/public-token-auth.js';
 import Email from '../../lib/email.js';
 import * as receivedTpl from '../../emails/lease-offer-received-agent-notification.js';
-import { upload as blobUpload } from '../../lib/blob.js';
+import { upload as blobUpload, remove as blobRemove } from '../../lib/blob.js';
 
 const sql = neon(getDatabaseUrl());
 
@@ -61,7 +61,8 @@ export default async function handler(req, res) {
     // These accept Step 2 tokens. Step 2 handlers do their own validation
     // with require_step: 2.
     if (action === 'step2-token-info' || action === 'step2-verify' || action === 'step2-load' ||
-        action === 'step2-save-draft' || action === 'step2-submit' || action === 'step2-upload') {
+        action === 'step2-save-draft' || action === 'step2-submit' || action === 'step2-upload' ||
+        action === 'step2-delete-evidence') {
       return await handleStep2(req, res, token, action);
     }
 
@@ -574,6 +575,13 @@ async function handleStep2(req, res, token, action) {
     }
     return await step2Upload(req, res, ctx);
   }
+  if (action === 'step2-delete-evidence') {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    return await step2DeleteEvidence(req, res, ctx);
+  }
 
   return res.status(404).json({ error: 'Unknown step2 action: ' + action });
 }
@@ -955,4 +963,33 @@ async function step2Upload(req, res, ctx) {
     RETURNING id, category, filename, mime_type, size_bytes, url, points_value, uploaded_at`;
 
   return res.status(200).json({ evidence: result[0] });
+}
+
+// Delete a single evidence file (applicant's Remove or Replace action)
+async function step2DeleteEvidence(req, res, ctx) {
+  const application_id = ctx.application.id;
+  const body = req.body || {};
+  const evidence_id = parseInt(body.evidence_id, 10);
+  if (!evidence_id) return res.status(400).json({ error: 'evidence_id required' });
+
+  if (ctx.application.status !== 'offer_accepted') {
+    return res.status(409).json({ error: 'Form is locked.' });
+  }
+
+  // Confirm the evidence belongs to this application
+  const rows = await sql`
+    SELECT id, url FROM application_evidence
+    WHERE id = ${evidence_id} AND application_id = ${application_id}
+    LIMIT 1`;
+  if (!rows.length) return res.status(404).json({ error: 'Evidence not found' });
+
+  // Delete from Blob storage (best-effort — DB row is authoritative)
+  try {
+    await blobRemove(rows[0].url);
+  } catch (err) {
+    console.warn('[step2-delete-evidence] blob remove failed:', err.message);
+  }
+
+  await sql`DELETE FROM application_evidence WHERE id = ${evidence_id}`;
+  return res.status(200).json({ deleted: true, id: evidence_id });
 }
