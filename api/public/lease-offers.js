@@ -57,7 +57,15 @@ export default async function handler(req, res) {
       return await verifyAction(req, res, token);
     }
 
-    // All other actions require email_verified=true (require_step=1)
+    // ── Step 2 actions (must be dispatched BEFORE Step 1 validation below) ─
+    // These accept Step 2 tokens. Step 2 handlers do their own validation
+    // with require_step: 2.
+    if (action === 'step2-token-info' || action === 'step2-verify' || action === 'step2-load' ||
+        action === 'step2-save-draft' || action === 'step2-submit' || action === 'step2-upload') {
+      return await handleStep2(req, res, token, action);
+    }
+
+    // All other (Step 1) actions require email_verified=true (require_step=1)
     const ctx = await validatePublicToken(token, { require_step: 1, require_verified: true });
     if (!ctx.ok) {
       return res.status(ctx.status).json({ error: ctx.message, code: ctx.code });
@@ -83,15 +91,6 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
       }
       return await submitAction(req, res, ctx);
-    }
-
-    // ── Step 2 actions ──────────────────────────────────────────────────
-    // These accept Step 2 tokens. Reusing token-info / verify which are step-1-specific
-    // wouldn't work — Step 2 has its own load / submit-draft / submit / upload-evidence.
-
-    if (action === 'step2-token-info' || action === 'step2-verify' || action === 'step2-load' ||
-        action === 'step2-save-draft' || action === 'step2-submit' || action === 'step2-upload') {
-      return await handleStep2(req, res, token, action);
     }
 
     return res.status(404).json({ error: 'Unknown action: ' + action });
