@@ -3655,9 +3655,9 @@ ${rows.join('')}`;
         <!-- V77.1b — Listing Summary section (Enquiry boards only). -->
         <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
 
-        <!-- V77.1 — Lease Offer + Validation sections (Lease Enquiry only). -->
+        <!-- V77.2d — Lease Offer section (Lease Enquiry only). -->
+        <!-- Validation checklist is now inside each offer's review block, no separate section. -->
         <div class="v77-lease-offer-mount" data-deal-id="${id}"></div>
-        <div class="v77-validation-mount" data-deal-id="${id}"></div>
 
         <!-- V77.1 — Lease Offers Received cross-reference (Lease Listings only). -->
         <div class="v77-lease-offers-received-mount" data-deal-id="${id}"></div>
@@ -3823,10 +3823,6 @@ ${rows.join('')}`;
     if (window.LeaseOfferSection) {
       const mount = modal.querySelector('.v77-lease-offer-mount');
       if (mount) LeaseOfferSection.mount(mount, id);
-    }
-    if (window.ValidationSection) {
-      const mount = modal.querySelector('.v77-validation-mount');
-      if (mount) ValidationSection.mount(mount, id);
     }
   }
 

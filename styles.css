@@ -5367,3 +5367,309 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 }
 .lo-reject-btn:hover    { background: rgba(185, 28, 28, 0.08); }
 .lo-reject-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2c — Retention Policy sub-page
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.notif-policy-box {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin-top: 8px;
+}
+.notif-policy-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.notif-policy-body {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.notif-policy-body code {
+  background: var(--surface);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.notif-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 14px;
+  background: var(--surface2);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.retention-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.retention-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
+.retention-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.retention-row-headline {
+  font-size: 13px;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.retention-row-property {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.retention-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.retention-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.retention-purge-btn {
+  font-size: 12px;
+  padding: 5px 12px;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2d — Application & Evidence review block (inside expanded offer row)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.lo-review-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lo-review-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--accent);
+}
+
+.lo-review-consents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lo-consent-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+}
+.lo-consent-yes { background: #d4ead4; color: #1d5a1d; }
+.lo-consent-no  { background: #f3d7d4; color: #8b2a1f; }
+
+.lo-review-section {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 10px 12px;
+}
+
+.lo-review-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.lo-review-applicant,
+.lo-review-entry {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.lo-review-applicant:last-child,
+.lo-review-entry:last-child { margin-bottom: 0; }
+
+.lo-review-applicant-head,
+.lo-review-entry-head {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.lo-review-entry-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.lo-review-points {
+  font-weight: 600;
+  color: #15803d;
+}
+.lo-review-points-low {
+  color: #b91c1c;
+}
+
+.lo-review-files {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.lo-review-files li {
+  font-size: 12px;
+  padding: 3px 0;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.lo-review-file-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.lo-review-view-link {
+  color: var(--accent);
+  font-size: 11px;
+  text-decoration: none;
+  font-weight: 600;
+  padding: 1px 7px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+}
+.lo-review-view-link:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.lo-review-empty {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.lo-review-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lo-review-check {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.lo-review-check input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+.lo-review-check input:disabled + * { cursor: default; }
+.lo-review-check input:disabled,
+.lo-review-check input:disabled ~ * {
+  opacity: 0.7;
+}
+
+.lo-review-notes-row {
+  margin-top: 6px;
+}
+
+.lo-review-notes {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+  box-sizing: border-box;
+}
+.lo-review-notes:disabled { opacity: 0.7; cursor: not-allowed; }
+
+.lo-review-meta {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.lo-review-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.lo-validate-btn {
+  background: #15803d;
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-validate-btn:hover:not(:disabled) { background: #166534; }
+.lo-validate-btn:disabled            { opacity: 0.5; cursor: not-allowed; }
+
+.lo-resubmit-btn {
+  background: transparent;
+  color: #c4841a;
+  border: 1px solid #c4841a;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lo-resubmit-btn:hover:not(:disabled) { background: rgba(196, 132, 26, 0.08); }
+.lo-resubmit-btn:disabled             { opacity: 0.5; cursor: not-allowed; }
+
+/* New status pill for resubmit_requested */
+.lo-status-evidence_resubmit_requested  { background: #fef3c7; color: #92400e; }

@@ -39,14 +39,15 @@
   }
   function fmtStatus(s) {
     return ({
-      draft:               'Draft',
-      submitted:           'Submitted',
-      offer_accepted:      'Accepted',
-      evidence_submitted:  'Evidence In',
-      validated:           'Validated',
-      leased:              'Leased',
-      rejected:            'Rejected',
-      withdrawn:           'Withdrawn',
+      draft:                       'Draft',
+      submitted:                   'Submitted',
+      offer_accepted:              'Accepted',
+      evidence_submitted:          'Evidence In',
+      evidence_resubmit_requested: 'Resubmit Requested',
+      validated:                   'Validated',
+      leased:                      'Leased',
+      rejected:                    'Rejected',
+      withdrawn:                   'Withdrawn',
     })[s] || s || 'Draft';
   }
   function statusClass(s) {
@@ -210,7 +211,6 @@
           <div class="lo-token-url-row">
             <input class="lo-token-url" type="text" readonly value="${esc(formUrl)}" data-url="${esc(formUrl)}">
             <button class="lo-token-action-btn lo-token-copy-btn"   type="button" data-token-id="${esc(token.id)}" title="Copy link to clipboard">Copy</button>
-            <button class="lo-token-action-btn lo-token-resend-btn"  type="button" data-token-id="${esc(token.id)}" title="Re-send the email to ${esc(token.applicant_email)}">Resend</button>
             <button class="lo-token-action-btn lo-token-reissue-btn" type="button" data-token-id="${esc(token.id)}" title="Generate a brand new link (invalidates the old one)">Reissue</button>
           </div>
           <div class="lo-token-meta">
@@ -275,6 +275,229 @@
       return html;
     }
 
+    // V77.2d — Review block for submitted Step 2 evidence.
+    // Renders consents, ID files (per applicant) with View links, housing/income
+    // history with files, and lease docs. Plus the validation checklist (moved
+    // from the per-deal Validation section into this per-offer block) and
+    // Approve/Resubmit buttons.
+    function renderReviewBlock(offer) {
+      const evidence = Array.isArray(offer.evidence) ? offer.evidence : [];
+      const housing  = Array.isArray(offer.housing_history) ? offer.housing_history : [];
+      const income   = Array.isArray(offer.income_history)  ? offer.income_history  : [];
+      const apps     = Array.isArray(offer.applicants_jsonb) ? offer.applicants_jsonb : [];
+      const validation = offer.validation_jsonb || {};
+      const status = offer.status || '';
+
+      const isLocked = ['validated', 'leased', 'rejected', 'withdrawn'].includes(status);
+
+      // Group evidence by category prefix
+      const evByCat = {
+        id: {},                          // applicant_contact_id → [files]
+        housing: {},                     // client_id → [files]
+        income: {},                      // client_id → [files]
+        leasedoc: { 'signed-contract': [], 'condition-report': [] },
+      };
+      evidence.forEach(e => {
+        const cat = e.category || '';
+        if (cat.startsWith('id-')) {
+          const k = e.applicant_contact_id || '_';
+          if (!evByCat.id[k]) evByCat.id[k] = [];
+          evByCat.id[k].push(e);
+        } else if (cat.startsWith('housing-evidence:')) {
+          const cid = cat.split(':')[1];
+          if (!evByCat.housing[cid]) evByCat.housing[cid] = [];
+          evByCat.housing[cid].push(e);
+        } else if (cat.startsWith('income-evidence:')) {
+          const cid = cat.split(':')[1];
+          if (!evByCat.income[cid]) evByCat.income[cid] = [];
+          evByCat.income[cid].push(e);
+        } else if (cat.startsWith('lease-doc:')) {
+          const slot = cat.split(':')[1];
+          if (!evByCat.leasedoc[slot]) evByCat.leasedoc[slot] = [];
+          evByCat.leasedoc[slot].push(e);
+        }
+      });
+
+      let html = '<div class="lo-review-block">';
+      html += '<div class="lo-review-title">Application & Evidence Review</div>';
+
+      // Consents bar
+      const consentBits = [];
+      consentBits.push(consentBadge('Reference', !!offer.reference_consent_at));
+      consentBits.push(consentBadge('Retention', !!offer.retention_consent_at));
+      consentBits.push(consentBadge('Credit check', !!offer.credit_check_consent_at));
+      consentBits.push(consentBadge('Tenancy DB', !!offer.tenancy_database_consent_at));
+      html += `<div class="lo-review-consents">${consentBits.join('')}</div>`;
+
+      // ID Documents per applicant
+      html += '<div class="lo-review-section">';
+      html += '<div class="lo-review-section-title">ID Documents</div>';
+      if (!apps.length) {
+        html += '<div class="lo-review-empty">No applicants on this offer.</div>';
+      } else {
+        apps.forEach(a => {
+          const name = [a.first_name, a.last_name].filter(Boolean).join(' ') || a.email || 'Applicant';
+          const files = evByCat.id[a.contact_id] || [];
+          const totalPoints = files.reduce((s, f) => s + (f.points_value || 0), 0);
+          html += `<div class="lo-review-applicant">`;
+          html += `  <div class="lo-review-applicant-head"><strong>${esc(name)}</strong> · <span class="lo-review-points ${totalPoints >= 100 ? '' : 'lo-review-points-low'}">${totalPoints} ID points</span></div>`;
+          if (files.length) {
+            html += '<ul class="lo-review-files">';
+            files.forEach(f => {
+              const docTypeLabel = (f.category || '').replace(/^id-/, '').replace(/-/g, ' ');
+              html += `<li>${esc(f.filename)} <span class="lo-review-file-meta">— ${esc(docTypeLabel)} (${f.points_value || 0} pts)</span> ${renderViewLink(f)}</li>`;
+            });
+            html += '</ul>';
+          } else {
+            html += '<div class="lo-review-empty">No ID files uploaded.</div>';
+          }
+          html += `</div>`;
+        });
+      }
+      html += '</div>';
+
+      // Housing history
+      html += '<div class="lo-review-section">';
+      html += '<div class="lo-review-section-title">Rental / Housing History</div>';
+      if (!housing.length) {
+        html += '<div class="lo-review-empty">No housing entries.</div>';
+      } else {
+        housing.forEach(h => {
+          // client_id was stashed in evidence_label as 'client_id:xxx'
+          const cid = (h.evidence_label || '').startsWith('client_id:')
+            ? h.evidence_label.slice(10) : null;
+          const files = (cid && evByCat.housing[cid]) || [];
+          const range = `${esc(fmtDate(h.term_start_date))} – ${h.term_end_date ? esc(fmtDate(h.term_end_date)) : 'present'}`;
+          const monthly = h.monthly_amount ? `${esc(fmtCurrency(h.monthly_amount))}/mo` : '—';
+          html += `<div class="lo-review-entry">`;
+          html += `  <div class="lo-review-entry-head"><strong>${esc(h.address || '—')}</strong> · ${esc(h.housing_type || '—')} · ${range} · ${monthly}</div>`;
+          if (h.landlord_lender_name || h.landlord_lender_contact) {
+            html += `<div class="lo-review-entry-meta">Landlord/Lender: ${esc(h.landlord_lender_name || '')}${h.landlord_lender_contact ? ' · ' + esc(h.landlord_lender_contact) : ''}</div>`;
+          }
+          if (files.length) {
+            html += '<ul class="lo-review-files">';
+            files.forEach(f => { html += `<li>${esc(f.filename)} ${renderViewLink(f)}</li>`; });
+            html += '</ul>';
+          } else {
+            html += '<div class="lo-review-empty">No supporting documents.</div>';
+          }
+          html += `</div>`;
+        });
+      }
+      html += '</div>';
+
+      // Income history
+      html += '<div class="lo-review-section">';
+      html += '<div class="lo-review-section-title">Income History</div>';
+      if (!income.length) {
+        html += '<div class="lo-review-empty">No income entries.</div>';
+      } else {
+        income.forEach(i => {
+          const cid = (i.evidence_label || '').startsWith('client_id:')
+            ? i.evidence_label.slice(10) : null;
+          const files = (cid && evByCat.income[cid]) || [];
+          const annual = i.annual_income ? esc(fmtCurrency(i.annual_income)) + '/yr' : '—';
+          const range = `${esc(fmtDate(i.term_start_date))} – ${i.term_end_date ? esc(fmtDate(i.term_end_date)) : 'present'}`;
+          html += `<div class="lo-review-entry">`;
+          html += `  <div class="lo-review-entry-head"><strong>${esc(i.income_source_name || '—')}</strong>${i.role ? ' · ' + esc(i.role) : ''} · ${esc(i.income_type || '')} · ${annual} · ${range}</div>`;
+          if (i.employer_contact_name || i.employer_contact_email || i.employer_contact_mobile) {
+            const parts = [i.employer_contact_name, i.employer_contact_email, i.employer_contact_mobile].filter(Boolean).map(esc);
+            html += `<div class="lo-review-entry-meta">Manager: ${parts.join(' · ')}</div>`;
+          }
+          if (files.length) {
+            html += '<ul class="lo-review-files">';
+            files.forEach(f => { html += `<li>${esc(f.filename)} ${renderViewLink(f)}</li>`; });
+            html += '</ul>';
+          } else {
+            html += '<div class="lo-review-empty">No supporting documents.</div>';
+          }
+          html += `</div>`;
+        });
+      }
+      html += '</div>';
+
+      // Lease documents
+      const sc = evByCat.leasedoc['signed-contract'] || [];
+      const cr = evByCat.leasedoc['condition-report'] || [];
+      if (sc.length || cr.length) {
+        html += '<div class="lo-review-section">';
+        html += '<div class="lo-review-section-title">Lease Documents</div>';
+        html += '<div class="lo-review-entry">';
+        html += '<div class="lo-review-entry-head"><strong>Signed Lease Agreement</strong></div>';
+        if (sc.length) {
+          html += '<ul class="lo-review-files">';
+          sc.forEach(f => { html += `<li>${esc(f.filename)} ${renderViewLink(f)}</li>`; });
+          html += '</ul>';
+        } else {
+          html += '<div class="lo-review-empty">Not yet uploaded.</div>';
+        }
+        html += '</div>';
+        html += '<div class="lo-review-entry">';
+        html += '<div class="lo-review-entry-head"><strong>Accepted Condition Report</strong></div>';
+        if (cr.length) {
+          html += '<ul class="lo-review-files">';
+          cr.forEach(f => { html += `<li>${esc(f.filename)} ${renderViewLink(f)}</li>`; });
+          html += '</ul>';
+        } else {
+          html += '<div class="lo-review-empty">Not yet uploaded.</div>';
+        }
+        html += '</div>';
+        html += '</div>';
+      }
+
+      // Validation checklist (moved from per-deal Validation section)
+      const checklist = [
+        { key: 'id_verified',                label: 'ID verified' },
+        { key: 'income_evidence_reviewed',   label: 'Income evidence reviewed' },
+        { key: 'references_checked',         label: 'References checked' },
+        { key: 'rental_history_clean',       label: 'Rental history clean' },
+        { key: 'affordability_confirmed',    label: 'Affordability confirmed' },
+        { key: 'condition_report_completed', label: 'Condition Report completed' },
+      ];
+      const allChecked = checklist.every(c => !!validation[c.key]);
+
+      html += '<div class="lo-review-section">';
+      html += '<div class="lo-review-section-title">Validation Checklist</div>';
+      html += `<div class="lo-review-checklist" data-application-id="${esc(offer.id)}">`;
+      checklist.forEach(c => {
+        const checked = validation[c.key] ? 'checked' : '';
+        const disabled = isLocked ? 'disabled' : '';
+        html += `<label class="lo-review-check"><input type="checkbox" data-vkey="${esc(c.key)}" ${checked} ${disabled}> ${esc(c.label)}</label>`;
+      });
+      html += `<div class="lo-review-notes-row"><textarea class="lo-review-notes" rows="2" placeholder="Validation notes…" ${isLocked ? 'disabled' : ''}>${esc(validation.notes || '')}</textarea></div>`;
+      if (validation.last_updated_at) {
+        html += `<div class="lo-review-meta">Last updated ${esc(fmtRelative(validation.last_updated_at))}</div>`;
+      }
+      html += '</div>';
+
+      // Action buttons
+      if (!isLocked) {
+        html += '<div class="lo-review-actions">';
+        if (status === 'evidence_submitted' || status === 'evidence_resubmit_requested') {
+          html += `<button type="button" class="lo-resubmit-btn" data-id="${esc(offer.id)}" title="Unlock the form for the applicant — they'll get an email asking to review and resubmit.">Request Resubmit</button>`;
+        }
+        if (status === 'evidence_submitted' && allChecked) {
+          html += `<button type="button" class="lo-validate-btn" data-id="${esc(offer.id)}" title="Mark this application as validated.">Approve & Validate</button>`;
+        } else if (status === 'evidence_submitted') {
+          html += `<button type="button" class="lo-validate-btn" data-id="${esc(offer.id)}" disabled title="Tick all 6 checklist items first.">Approve & Validate</button>`;
+        }
+        if (status === 'validated') {
+          html += `<button type="button" class="lo-validate-btn lo-mark-leased-btn" data-id="${esc(offer.id)}" title="Mark application as leased.">Mark as Leased</button>`;
+        }
+        html += '</div>';
+      }
+      html += '</div>'; // .lo-review-block
+      return html;
+    }
+
+    function consentBadge(label, ok) {
+      return `<span class="lo-consent-badge ${ok ? 'lo-consent-yes' : 'lo-consent-no'}">${esc(label)} ${ok ? '✓' : '✗'}</span>`;
+    }
+
+    function renderViewLink(f) {
+      return `<a class="lo-review-view-link" href="/api/applications/evidence/${esc(f.id)}/download" target="_blank" rel="noopener">View</a>`;
+    }
+
     function renderList() {
       if (!offers.length) {
         listEl.innerHTML = '<div class="lo-empty">No lease offers yet.</div>';
@@ -286,7 +509,8 @@
         const term  = o.lease_term_months ? `${o.lease_term_months} mo` : '—';
         const start = fmtDate(o.preferred_start_date);
         const status = o.status || 'draft';
-        const isSubmitted = ['submitted', 'offer_accepted', 'evidence_submitted', 'validated', 'leased'].includes(status);
+        const isSubmitted = ['submitted', 'offer_accepted', 'evidence_submitted', 'evidence_resubmit_requested', 'validated', 'leased'].includes(status);
+        const hasEvidence = ['evidence_submitted', 'evidence_resubmit_requested', 'validated', 'leased'].includes(status);
         const isExpanded = expandedIds.has(String(o.id));
         const canAccept = status === 'submitted';
         const canReject = status === 'submitted';
@@ -310,6 +534,7 @@
               <div class="lo-row-body">
                 ${isSubmitted ? renderSubmittedDetail(o) : ''}
                 ${renderTokenBlock(o)}
+                ${hasEvidence ? renderReviewBlock(o) : ''}
                 ${canAccept || canReject ? `
                   <div class="lo-decision-row">
                     ${canAccept ? `<button type="button" class="lo-accept-btn" data-id="${o.id}">Accept Offer</button>` : ''}
@@ -485,36 +710,6 @@
         });
       });
 
-      listEl.querySelectorAll('.lo-token-resend-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          const tokenId = btn.getAttribute('data-token-id');
-          if (!confirm('Resend the same link to the applicant\'s email?')) return;
-          btn.disabled = true;
-          const orig = btn.textContent;
-          btn.textContent = 'Sending…';
-          try {
-            const r = await fetch('/api/applicant-form-tokens', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'resend', token_id: parseInt(tokenId, 10) }),
-            });
-            if (!r.ok) {
-              const err = await r.json().catch(() => ({}));
-              throw new Error(err.error || r.status);
-            }
-            const result = await r.json();
-            btn.textContent = '✓ Sent';
-            console.log('[LeaseOffer] resent to:', result.sent_to);
-            setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1800);
-          } catch (err) {
-            alert('Resend failed: ' + err.message);
-            btn.textContent = orig;
-            btn.disabled = false;
-          }
-        });
-      });
-
       listEl.querySelectorAll('.lo-token-reissue-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -537,6 +732,127 @@
           } catch (err) {
             alert('Reissue failed: ' + err.message);
             btn.textContent = orig;
+            btn.disabled = false;
+          }
+        });
+      });
+
+      // V77.2d — Validation checklist autosave (debounced)
+      let _validationSaveTimer = null;
+      const _validationDirty = {};  // applicationId → patch object
+      function flushValidation(applicationId) {
+        const patch = _validationDirty[applicationId];
+        if (!patch) return;
+        delete _validationDirty[applicationId];
+        const offer = offers.find(o => String(o.id) === String(applicationId));
+        if (!offer) return;
+        const merged = Object.assign({}, offer.validation_jsonb || {}, patch, {
+          last_updated_at: new Date().toISOString(),
+        });
+        offer.validation_jsonb = merged;
+        // Re-render to reflect the all-checked state for the Approve button
+        renderList();
+        fetch(API, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: parseInt(applicationId, 10), validation_jsonb: merged }),
+        }).catch(err => console.warn('[LeaseOffer] validation save failed', err));
+      }
+      function scheduleValidationSave(applicationId, patch) {
+        _validationDirty[applicationId] = Object.assign({}, _validationDirty[applicationId] || {}, patch);
+        if (_validationSaveTimer) clearTimeout(_validationSaveTimer);
+        _validationSaveTimer = setTimeout(() => flushValidation(applicationId), 600);
+      }
+
+      listEl.querySelectorAll('.lo-review-checklist input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          const wrap = cb.closest('.lo-review-checklist');
+          const applicationId = wrap.getAttribute('data-application-id');
+          const key = cb.getAttribute('data-vkey');
+          scheduleValidationSave(applicationId, { [key]: cb.checked });
+        });
+      });
+      listEl.querySelectorAll('.lo-review-notes').forEach(ta => {
+        ta.addEventListener('input', () => {
+          const wrap = ta.closest('.lo-review-section')?.querySelector('.lo-review-checklist');
+          if (!wrap) return;
+          const applicationId = wrap.getAttribute('data-application-id');
+          scheduleValidationSave(applicationId, { notes: ta.value });
+        });
+      });
+
+      // V77.2d — Approve & Validate
+      listEl.querySelectorAll('.lo-validate-btn:not(.lo-mark-leased-btn)').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-id');
+          if (!confirm('Mark this application as Validated? The applicant will no longer be able to edit their evidence.')) return;
+          btn.disabled = true;
+          try {
+            // Flush any pending validation save first
+            if (_validationDirty[id]) flushValidation(id);
+            const r = await fetch(API, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: parseInt(id, 10), status: 'validated' }),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              throw new Error(err.error || r.status);
+            }
+            await load();
+          } catch (err) {
+            alert('Could not validate: ' + err.message);
+            btn.disabled = false;
+          }
+        });
+      });
+
+      // V77.2d — Mark as Leased (validated → leased)
+      listEl.querySelectorAll('.lo-mark-leased-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-id');
+          if (!confirm('Mark this application as Leased? This is a terminal status — no further changes can be made.')) return;
+          btn.disabled = true;
+          try {
+            const r = await fetch(API, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: parseInt(id, 10), status: 'leased' }),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              throw new Error(err.error || r.status);
+            }
+            await load();
+          } catch (err) {
+            alert('Could not mark as leased: ' + err.message);
+            btn.disabled = false;
+          }
+        });
+      });
+
+      // V77.2d — Request Resubmit
+      listEl.querySelectorAll('.lo-resubmit-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-id');
+          if (!confirm('Request the applicant to review and resubmit?\n\nThis will:\n• Unlock the form for them to edit\n• Send them a generic email asking them to log back in\n\nYou should follow up separately to explain what needs updating.')) return;
+          btn.disabled = true;
+          try {
+            const r = await fetch(API, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: parseInt(id, 10), status: 'evidence_resubmit_requested' }),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              throw new Error(err.error || r.status);
+            }
+            await load();
+          } catch (err) {
+            alert('Could not request resubmit: ' + err.message);
             btn.disabled = false;
           }
         });
