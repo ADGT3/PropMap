@@ -282,6 +282,18 @@ async function handleGet(req, res) {
       FROM applications a
       WHERE a.deal_id = ${deal_id}
       ORDER BY a.created_at DESC`;
+    // V77.2d — for offers in/past evidence_submitted, hydrate housing/income/evidence
+    // so the agent UI's review block has data to render. Skipped for draft/submitted/
+    // offer_accepted to keep the list response light when no review data exists yet.
+    const REVIEWABLE = new Set(['evidence_submitted', 'evidence_resubmit_requested', 'validated', 'leased']);
+    for (const r of rows) {
+      if (REVIEWABLE.has(r.status)) {
+        const children = await fetchChildren(r.id);
+        r.housing_history = children.housing_history;
+        r.income_history  = children.income_history;
+        r.evidence        = children.evidence;
+      }
+    }
     return res.status(200).json(rows);
   }
 
