@@ -62,7 +62,7 @@ export default async function handler(req, res) {
     // with require_step: 2.
     if (action === 'step2-token-info' || action === 'step2-verify' || action === 'step2-load' ||
         action === 'step2-save-draft' || action === 'step2-submit' || action === 'step2-upload' ||
-        action === 'step2-delete-evidence') {
+        action === 'step2-delete-evidence' || action === 'step2-update-evidence-meta') {
       return await handleStep2(req, res, token, action);
     }
 
@@ -582,6 +582,13 @@ async function handleStep2(req, res, token, action) {
     }
     return await step2DeleteEvidence(req, res, ctx);
   }
+  if (action === 'step2-update-evidence-meta') {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    return await step2UpdateEvidenceMeta(req, res, ctx);
+  }
 
   return res.status(404).json({ error: 'Unknown step2 action: ' + action });
 }
@@ -710,7 +717,7 @@ async function step2Load(req, res, ctx) {
 
   // Existing evidence files for this application
   const evidenceRows = await sql`
-    SELECT id, applicant_contact_id, category, filename, mime_type, size_bytes,
+    SELECT id, applicant_contact_id, category, doc_type, filename, mime_type, size_bytes,
            url, uploaded_at, points_value
     FROM application_evidence
     WHERE application_id = ${application_id}
@@ -1034,4 +1041,34 @@ async function step2DeleteEvidence(req, res, ctx) {
 
   await sql`DELETE FROM application_evidence WHERE id = ${evidence_id}`;
   return res.status(200).json({ deleted: true, id: evidence_id });
+}
+// Update doc_type + points_value for an existing ID evidence row.
+// Applicant uses the doc-type select after upload; we persist their choice
+// so the agent's review block sees the right values.
+async function step2UpdateEvidenceMeta(req, res, ctx) {
+  const application_id = ctx.application.id;
+  const body = req.body || {};
+  const evidence_id = parseInt(body.evidence_id, 10);
+  const doc_type = body.doc_type ? String(body.doc_type).slice(0, 50) : null;
+  const points_value = parseInt(body.points_value, 10) || 0;
+  if (!evidence_id) return res.status(400).json({ error: 'evidence_id required' });
+
+  if (ctx.application.status !== 'offer_accepted' && ctx.application.status !== 'evidence_resubmit_requested') {
+    return res.status(409).json({ error: 'Form is locked.' });
+  }
+
+  // Confirm the evidence belongs to this application
+  const rows = await sql`
+    SELECT id FROM application_evidence
+    WHERE id = ${evidence_id} AND application_id = ${application_id}
+    LIMIT 1`;
+  if (!rows.length) return res.status(404).json({ error: 'Evidence not found' });
+
+  // Persist doc_type and points_value
+  await sql`
+    UPDATE application_evidence
+       SET doc_type     = ${doc_type},
+           points_value = ${points_value}
+     WHERE id = ${evidence_id}`;
+  return res.status(200).json({ updated: true, id: evidence_id });
 }
