@@ -22,6 +22,12 @@ const sql = neon(getDatabaseUrl());
 
 const SCOPE_VALUES = new Set(['property', 'deal', 'organisation', 'listing']);
 
+// Known default_for purposes. Code-flow callers reference these exact strings:
+//   'enquiry_creation' — auto-assigned on new Enquiry deals
+//   'listing_agent'    — auto-assigned on new Listing deals
+// Adding a new purpose: add it here, then update the parameters UI dropdown.
+const DEFAULT_FOR_VALUES = new Set(['enquiry_creation', 'listing_agent']);
+
 function validateRoleBody(body, { requireId = false } = {}) {
   if (requireId && !body.id) return 'id required';
   if (body.scopes !== undefined) {
@@ -33,6 +39,9 @@ function validateRoleBody(body, { requireId = false } = {}) {
   if (body.default_scope !== undefined) {
     if (!SCOPE_VALUES.has(body.default_scope)) return `invalid default_scope '${body.default_scope}'`;
     if (body.scopes && !body.scopes.includes(body.default_scope)) return 'default_scope must be in scopes';
+  }
+  if (body.default_for !== undefined && body.default_for !== null && body.default_for !== '') {
+    if (!DEFAULT_FOR_VALUES.has(body.default_for)) return `invalid default_for '${body.default_for}'`;
   }
   return null;
 }
@@ -74,15 +83,19 @@ export default async function handler(req, res) {
         const err = validateRoleBody(body);
         if (err) return res.status(400).json({ error: err });
         const {
-          id, label, scopes, default_scope,
+          id, label, scopes, default_scope, default_for,
           sort_order = 100, active = true,
         } = body;
         if (!id || !label || !scopes || !default_scope) {
           return res.status(400).json({ error: 'id, label, scopes, default_scope required' });
         }
+        // Single-holder enforcement on default_for if supplied non-empty
+        if (default_for) {
+          await sql`UPDATE roles SET default_for = NULL WHERE default_for = ${default_for}`;
+        }
         const rows = await sql`
-          INSERT INTO roles (id, label, scopes, default_scope, sort_order, active, system)
-          VALUES (${id}, ${label}, ${scopes}, ${default_scope}, ${sort_order}, ${active}, false)
+          INSERT INTO roles (id, label, scopes, default_scope, default_for, sort_order, active, system)
+          VALUES (${id}, ${label}, ${scopes}, ${default_scope}, ${default_for || null}, ${sort_order}, ${active}, false)
           ON CONFLICT (id) DO NOTHING
           RETURNING *`;
         if (!rows.length) return res.status(409).json({ error: `Role id '${id}' already exists` });
@@ -94,17 +107,44 @@ export default async function handler(req, res) {
         const body = req.body || {};
         const err = validateRoleBody(body, { requireId: true });
         if (err) return res.status(400).json({ error: err });
-        const { id, label, scopes, default_scope, sort_order, active } = body;
-        const rows = await sql`
-          UPDATE roles SET
-            label         = COALESCE(${label         ?? null}, label),
-            scopes        = COALESCE(${scopes        ?? null}, scopes),
-            default_scope = COALESCE(${default_scope ?? null}, default_scope),
-            sort_order    = COALESCE(${sort_order    ?? null}, sort_order),
-            active        = COALESCE(${active        ?? null}, active),
-            updated_at    = now()
-          WHERE id = ${id}
-          RETURNING *`;
+        const { id, label, scopes, default_scope, sort_order, active, default_for } = body;
+
+        // V77.2f — single-holder enforcement for default_for. If the caller
+        // is setting a non-empty default_for, clear that value from any other
+        // role first. Empty string or null means "clear".
+        if (default_for !== undefined) {
+          if (default_for === null || default_for === '') {
+            // Just clear this role's default_for; others are untouched.
+          } else {
+            await sql`UPDATE roles SET default_for = NULL WHERE default_for = ${default_for} AND id <> ${id}`;
+          }
+        }
+
+        // The default_for COALESCE wrinkle: we DO want to write NULL when
+        // caller explicitly sends null/'' (to clear). COALESCE would skip it.
+        // Branch on whether default_for was supplied.
+        const rows = default_for !== undefined
+          ? await sql`
+              UPDATE roles SET
+                label         = COALESCE(${label         ?? null}, label),
+                scopes        = COALESCE(${scopes        ?? null}, scopes),
+                default_scope = COALESCE(${default_scope ?? null}, default_scope),
+                sort_order    = COALESCE(${sort_order    ?? null}, sort_order),
+                active        = COALESCE(${active        ?? null}, active),
+                default_for   = ${default_for === '' ? null : default_for},
+                updated_at    = now()
+              WHERE id = ${id}
+              RETURNING *`
+          : await sql`
+              UPDATE roles SET
+                label         = COALESCE(${label         ?? null}, label),
+                scopes        = COALESCE(${scopes        ?? null}, scopes),
+                default_scope = COALESCE(${default_scope ?? null}, default_scope),
+                sort_order    = COALESCE(${sort_order    ?? null}, sort_order),
+                active        = COALESCE(${active        ?? null}, active),
+                updated_at    = now()
+              WHERE id = ${id}
+              RETURNING *`;
         if (!rows.length) return res.status(404).json({ error: 'Not found' });
         return res.status(200).json(rows[0]);
       }
