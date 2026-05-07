@@ -520,6 +520,22 @@ async function onOfferAccepted(applicationId, mergedAppRow, dealId) {
     return;
   }
 
+  // V77.2: compute lease_end_estimate = preferred_start_date + lease_term_months.
+  // Used in V78 for retention purge scheduling.
+  if (mergedAppRow.preferred_start_date && mergedAppRow.lease_term_months) {
+    const start = new Date(mergedAppRow.preferred_start_date);
+    if (!isNaN(start.getTime())) {
+      const end = new Date(start);
+      end.setMonth(end.getMonth() + Number(mergedAppRow.lease_term_months));
+      const endIso = end.toISOString().slice(0, 10);
+      try {
+        await sql`UPDATE applications SET lease_end_estimate = ${endIso} WHERE id = ${applicationId}`;
+      } catch (err) {
+        console.warn('[applications.accept] could not set lease_end_estimate:', err.message);
+      }
+    }
+  }
+
   // Step 1: normalise each applicant → Contact
   // V77.2: applicant-wins. The applicant just verified their own email and
   // mobile, so the values they entered are treated as the source of truth.
