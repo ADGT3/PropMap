@@ -1066,14 +1066,21 @@ async function findExistingProperty(listing) {
     } catch (_) { /* fall through */ }
   }
 
-  // Lot/DP — split the listing's lot list into individual elements and probe
-  // each. The first match wins. Most properties have one lot/DP so this is
-  // typically a single fetch.
+  // Lot/DP + address — V77.2: a single lot/DP can host multiple addresses
+  // (strata units, duplexes, granny flats, dual-occupancy). Dedup uses the
+  // pair (lot_dp, address) so 45 Earl St and 45a Earl St on the same lot/DP
+  // are correctly treated as separate properties. If `address` is empty we
+  // fall back to lot/DP-only match (legacy behaviour) to avoid creating
+  // duplicates from incomplete listing data.
   const lotDpsStr = (listing._lotDPs || '').toString();
   const lotElements = lotDpsStr.split(',').map(s => s.trim()).filter(Boolean);
+  const addr = (listing.address || '').trim();
   for (const lot of lotElements) {
+    const url = addr
+      ? `/api/properties?by_lot_dp=${encodeURIComponent(lot)}&by_lot_dp_address=${encodeURIComponent(addr)}`
+      : `/api/properties?by_lot_dp=${encodeURIComponent(lot)}`;
     try {
-      const r = await fetch(`/api/properties?by_lot_dp=${encodeURIComponent(lot)}`);
+      const r = await fetch(url);
       if (r.ok) {
         const row = await r.json();
         if (row?.id) return row;
@@ -1087,18 +1094,43 @@ async function findExistingProperty(listing) {
 async function addPropertyOnly(listing) {
   // V76.7+ — Look up by Domain id OR lot/DP. If a match exists, route the
   // user to it instead of creating a duplicate.
+  // V77.2 — Lot/DP can host multiple addresses (strata units, duplexes,
+  // granny flats). When the existing record's address doesn't match, ask
+  // the user whether this is the same property (open existing) or a new one
+  // sharing the lot/DP (e.g. 45 vs 45a Earl St).
   const existingProperty = await findExistingProperty(listing);
 
   if (existingProperty?.id) {
-    // Already exists. Open the CRM Property modal so the user lands on the
-    // existing record. Refresh CRM cache so the row is current.
-    if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
-    _openPropertyInCrm(existingProperty.id);
-    showKanbanToast(`${existingProperty.address || 'Property'} already in CRM — opened`);
-    return { propertyId: existingProperty.id, isNew: false, existing: existingProperty };
+    const incomingAddr  = (listing.address  || '').trim().toLowerCase();
+    const existingAddr  = (existingProperty.address || '').trim().toLowerCase();
+    const addrsDiffer = incomingAddr && existingAddr && incomingAddr !== existingAddr;
+
+    if (!addrsDiffer) {
+      // Addresses match (or one is missing) — same property. Open existing.
+      if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+      _openPropertyInCrm(existingProperty.id);
+      showKanbanToast(`${existingProperty.address || 'Property'} already in CRM — opened`);
+      return { propertyId: existingProperty.id, isNew: false, existing: existingProperty };
+    }
+
+    // Different addresses on the same lot/DP — prompt the user.
+    const choice = await promptSharedLotDpChoice(existingProperty, listing);
+    if (choice === 'open') {
+      if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+      _openPropertyInCrm(existingProperty.id);
+      showKanbanToast(`${existingProperty.address || 'Property'} already in CRM — opened`);
+      return { propertyId: existingProperty.id, isNew: false, existing: existingProperty };
+    }
+    if (choice === 'cancel') {
+      return { propertyId: null, isNew: false, cancelled: true };
+    }
+    // choice === { create_with_address: 'X' } — fall through with overridden address
+    if (typeof choice === 'object' && choice.create_with_address) {
+      listing = { ...listing, address: choice.create_with_address };
+    }
   }
 
-  // No existing — create the property record.
+  // No existing match (or user chose to create a new one) — create the property.
   const propertyId = newPropertyId();
   const rawId = listing?.id != null ? String(listing.id) : '';
   const isDomainId = /^\d{6,}$/.test(rawId);
@@ -1157,6 +1189,60 @@ async function addPropertyOnly(listing) {
 
   showKanbanToast(`${listing.address || 'Property'} added to CRM`);
   return { propertyId, isNew: true };
+}
+
+// V77.2 — When the user is creating a property at a lot/DP that already has
+// a property with a different address, prompt to clarify whether this is the
+// same property (open existing) or a new one sharing the lot/DP (a strata unit,
+// granny flat etc.). Returns 'open' | 'cancel' | { create_with_address: 'X' }.
+function promptSharedLotDpChoice(existing, incoming) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'kb-modal-overlay';
+    overlay.style.zIndex = '20000';
+    const lotDp = (existing.lot_dps || '').split(',')[0]?.trim() || '—';
+    overlay.innerHTML = `
+      <div class="kb-modal" style="max-width:520px;background:var(--surface);border-radius:6px">
+        <div class="kb-modal-header" style="padding:14px 18px;border-bottom:1px solid var(--border)">
+          <div class="kb-modal-title" style="font-size:14px;font-weight:600">Property already exists at this Lot/DP</div>
+        </div>
+        <div class="kb-modal-body" style="padding:18px;font-size:13px;line-height:1.5">
+          <p>An existing property at <strong>${escapeHtml(lotDp)}</strong> has the address:</p>
+          <p style="background:var(--surface2);padding:8px 10px;border-radius:4px;font-weight:600">${escapeHtml(existing.address || '—')}${existing.suburb ? ', ' + escapeHtml(existing.suburb) : ''}</p>
+          <p style="margin-top:14px">You're trying to add a property here with the address:</p>
+          <p style="background:var(--surface2);padding:8px 10px;border-radius:4px;font-weight:600">${escapeHtml(incoming.address || '—')}${incoming.suburb ? ', ' + escapeHtml(incoming.suburb) : ''}</p>
+          <p style="margin-top:14px;color:var(--muted);font-size:12px">A single Lot/DP can have multiple addresses (strata units, duplexes, granny flats). Choose what to do:</p>
+          <div class="kb-field-wrap" style="margin-top:14px">
+            <label class="kb-field-label" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Address for the new property</label>
+            <input class="kb-input" data-role="new-address" type="text" value="${escapeHtml(incoming.address || '')}" placeholder="e.g. 45a Earl St">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">Edit if needed (e.g. add unit number).</div>
+          </div>
+        </div>
+        <div class="kb-modal-footer" style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
+          <button data-role="cancel" class="params-cancel-btn">Cancel</button>
+          <button data-role="open" class="params-cancel-btn">Open existing instead</button>
+          <button data-role="create" class="params-save-btn">Add as new property</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const close = (val) => { overlay.remove(); resolve(val); };
+
+    overlay.querySelector('[data-role="cancel"]').addEventListener('click', () => close('cancel'));
+    overlay.querySelector('[data-role="open"]').addEventListener('click', () => close('open'));
+    overlay.querySelector('[data-role="create"]').addEventListener('click', () => {
+      const v = overlay.querySelector('[data-role="new-address"]').value.trim();
+      if (!v) {
+        alert('Please enter an address for the new property.');
+        return;
+      }
+      close({ create_with_address: v });
+    });
+    overlay.addEventListener('click', e => { if (e.target === overlay) close('cancel'); });
+    // Focus the address input for quick edit
+    setTimeout(() => overlay.querySelector('[data-role="new-address"]')?.focus(), 50);
+  });
 }
 
 async function removeFromPipeline(id) {
