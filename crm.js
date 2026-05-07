@@ -936,7 +936,6 @@ function renderCRMView(container) {
           <button class="crm-tab"        data-tab="parcels">Parcels</button>
           <button class="crm-tab"        data-tab="organisations">Organisations</button>
         </div>
-        <button class="crm-view-add-btn" id="crmViewAddBtn">+ New Contact</button>
       </div>
       <div class="crm-view-body">
         <div class="crm-tab-pane active" id="crm-pane-contacts"></div>
@@ -949,26 +948,6 @@ function renderCRMView(container) {
       <div class="crm-modal" id="crmModal"></div>
     </div>`;
 
-  // Add-button label/handler per tab
-  function configureAddButton(tabName) {
-    const btn = container.querySelector('#crmViewAddBtn');
-    if (tabName === 'contacts') {
-      // V77.2g — Contacts add button moved to level-3 toolbar (alongside the
-      // Search field) per UI architecture rule. Hide the level-2 button.
-      btn.style.display = 'none';
-      btn.onclick = null;
-    } else if (tabName === 'organisations') {
-      btn.textContent = '+ New Organisation';
-      btn.style.display = '';
-      btn.onclick = () => openModal(modal => renderOrgModal(modal, null, () => { closeModal(); loadOrgsPane(); }));
-    } else {
-      // Properties and Parcels don't support direct create from the CRM in V75.4
-      // — they're created via map ⌘-click or by adding a pipeline deal.
-      btn.style.display = 'none';
-      btn.onclick = null;
-    }
-  }
-
   // Tab switching
   container.querySelectorAll('.crm-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -976,7 +955,6 @@ function renderCRMView(container) {
       container.querySelectorAll('.crm-tab-pane').forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       container.querySelector(`#crm-pane-${tab.dataset.tab}`).classList.add('active');
-      configureAddButton(tab.dataset.tab);
       if (tab.dataset.tab === 'contacts')      loadContactsPane();
       if (tab.dataset.tab === 'properties')    loadPropertiesPane();
       if (tab.dataset.tab === 'parcels')       loadParcelsPane();
@@ -1041,9 +1019,6 @@ function renderCRMView(container) {
     if (window.CRM?.invalidateParcelsCache)    window.CRM.invalidateParcelsCache();
     if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
   }
-
-  // + Add button wired by configureAddButton() based on active tab
-  configureAddButton('contacts');
 
   // ── Contacts pane ──────────────────────────────────────────────────────────
 
