@@ -355,6 +355,39 @@ export default async function handler(req, res) {
         const body = req.body || {};
         const { id, stage, status, data, board_id, column_id } = body;
         if (!id) return res.status(400).json({ error: 'id required' });
+
+        // V77.2g — Default Board Role invariant. Block save if the deal's
+        // board has roles flagged via role_boards AND the deal currently has
+        // zero contacts holding any of them. The check uses the new board_id
+        // if supplied (e.g. when moving the card to a different board), else
+        // the deal's existing board_id. Applies regardless of when the card
+        // was originally created.
+        const curRows = await sql`SELECT board_id FROM deals WHERE id = ${id} LIMIT 1`;
+        if (!curRows.length) return res.status(404).json({ error: 'Not found' });
+        const effectiveBoardId = board_id || curRows[0].board_id;
+        if (effectiveBoardId) {
+          const eligibleRoles = await sql`
+            SELECT r.id, r.label
+              FROM roles r
+              JOIN role_boards rb ON rb.role_id = r.id
+             WHERE rb.board_id = ${effectiveBoardId} AND r.active = true`;
+          if (eligibleRoles.length) {
+            const eligibleIds = eligibleRoles.map(r => r.id);
+            const have = await sql`
+              SELECT COUNT(*)::int AS c FROM entity_contacts
+               WHERE entity_type = 'deal'
+                 AND entity_id = ${id}
+                 AND role_id = ANY(${eligibleIds})`;
+            if ((have[0]?.c ?? 0) === 0) {
+              const labels = eligibleRoles.map(r => r.label).join(' or ');
+              return res.status(409).json({
+                error: `Cannot save — no contact has ${labels} role on this card. Add one in the Contacts section, then save.`,
+                code: 'missing_default_role_contact',
+              });
+            }
+          }
+        }
+
         const dataJson = data !== undefined ? JSON.stringify(data) : null;
         const rows = await sql`
           UPDATE deals SET
