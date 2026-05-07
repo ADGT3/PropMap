@@ -26,8 +26,6 @@ const SCOPE_VALUES = new Set(['property', 'deal', 'organisation', 'listing']);
 //   'enquiry_creation' — auto-assigned on new Enquiry deals
 //   'listing_agent'    — auto-assigned on new Listing deals
 // Adding a new purpose: add it here, then update the parameters UI dropdown.
-const DEFAULT_FOR_VALUES = new Set(['enquiry_creation', 'listing_agent']);
-
 function validateRoleBody(body, { requireId = false } = {}) {
   if (requireId && !body.id) return 'id required';
   if (body.scopes !== undefined) {
@@ -40,10 +38,26 @@ function validateRoleBody(body, { requireId = false } = {}) {
     if (!SCOPE_VALUES.has(body.default_scope)) return `invalid default_scope '${body.default_scope}'`;
     if (body.scopes && !body.scopes.includes(body.default_scope)) return 'default_scope must be in scopes';
   }
-  if (body.default_for !== undefined && body.default_for !== null && body.default_for !== '') {
-    if (!DEFAULT_FOR_VALUES.has(body.default_for)) return `invalid default_for '${body.default_for}'`;
+  if (body.board_ids !== undefined) {
+    if (!Array.isArray(body.board_ids)) return 'board_ids must be an array';
+    for (const b of body.board_ids) {
+      if (typeof b !== 'string' || !b) return 'board_ids must be strings';
+    }
   }
   return null;
+}
+
+// V77.2g — Sync role_boards rows to match the supplied array. Removes any
+// rows for this role not in `board_ids` and inserts any missing.
+async function syncRoleBoards(roleId, boardIds) {
+  // Wipe + re-insert is fine for small arrays (< 20 boards typical)
+  await sql`DELETE FROM role_boards WHERE role_id = ${roleId}`;
+  for (const bid of boardIds) {
+    await sql`
+      INSERT INTO role_boards (role_id, board_id)
+      VALUES (${roleId}, ${bid})
+      ON CONFLICT (role_id, board_id) DO NOTHING`;
+  }
 }
 
 export default async function handler(req, res) {
@@ -59,6 +73,9 @@ export default async function handler(req, res) {
           const rows = await sql`SELECT * FROM roles WHERE id = ${id}`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           const result = rows[0];
+          // V77.2g — attach board_ids array
+          const boardRows = await sql`SELECT board_id FROM role_boards WHERE role_id = ${id} ORDER BY board_id`;
+          result.board_ids = boardRows.map(b => b.board_id);
           // V77.1: ref_count for delete-with-warning UI in Parameters page
           if (ref_count) {
             const refs = await sql`SELECT COUNT(*)::int AS c FROM entity_contacts WHERE role_id = ${id}`;
@@ -69,11 +86,18 @@ export default async function handler(req, res) {
           }
           return res.status(200).json(result);
         }
-        if (active) {
-          const rows = await sql`SELECT * FROM roles WHERE active = true ORDER BY sort_order, label`;
-          return res.status(200).json(rows);
+        // List view — attach board_ids per role using a single secondary fetch.
+        const rows = active
+          ? await sql`SELECT * FROM roles WHERE active = true ORDER BY sort_order, label`
+          : await sql`SELECT * FROM roles ORDER BY sort_order, label`;
+        if (!rows.length) return res.status(200).json([]);
+        const allBoardRows = await sql`SELECT role_id, board_id FROM role_boards ORDER BY role_id, board_id`;
+        const byRole = {};
+        for (const b of allBoardRows) {
+          if (!byRole[b.role_id]) byRole[b.role_id] = [];
+          byRole[b.role_id].push(b.board_id);
         }
-        const rows = await sql`SELECT * FROM roles ORDER BY sort_order, label`;
+        for (const r of rows) r.board_ids = byRole[r.id] || [];
         return res.status(200).json(rows);
       }
 
@@ -83,22 +107,21 @@ export default async function handler(req, res) {
         const err = validateRoleBody(body);
         if (err) return res.status(400).json({ error: err });
         const {
-          id, label, scopes, default_scope, default_for,
+          id, label, scopes, default_scope, board_ids,
           sort_order = 100, active = true,
         } = body;
         if (!id || !label || !scopes || !default_scope) {
           return res.status(400).json({ error: 'id, label, scopes, default_scope required' });
         }
-        // Single-holder enforcement on default_for if supplied non-empty
-        if (default_for) {
-          await sql`UPDATE roles SET default_for = NULL WHERE default_for = ${default_for}`;
-        }
         const rows = await sql`
-          INSERT INTO roles (id, label, scopes, default_scope, default_for, sort_order, active, system)
-          VALUES (${id}, ${label}, ${scopes}, ${default_scope}, ${default_for || null}, ${sort_order}, ${active}, false)
+          INSERT INTO roles (id, label, scopes, default_scope, sort_order, active, system)
+          VALUES (${id}, ${label}, ${scopes}, ${default_scope}, ${sort_order}, ${active}, false)
           ON CONFLICT (id) DO NOTHING
           RETURNING *`;
         if (!rows.length) return res.status(409).json({ error: `Role id '${id}' already exists` });
+        // V77.2g — sync board_ids to role_boards
+        if (Array.isArray(board_ids)) await syncRoleBoards(id, board_ids);
+        rows[0].board_ids = Array.isArray(board_ids) ? board_ids : [];
         return res.status(201).json(rows[0]);
       }
 
@@ -107,45 +130,25 @@ export default async function handler(req, res) {
         const body = req.body || {};
         const err = validateRoleBody(body, { requireId: true });
         if (err) return res.status(400).json({ error: err });
-        const { id, label, scopes, default_scope, sort_order, active, default_for } = body;
+        const { id, label, scopes, default_scope, sort_order, active, board_ids } = body;
 
-        // V77.2f — single-holder enforcement for default_for. If the caller
-        // is setting a non-empty default_for, clear that value from any other
-        // role first. Empty string or null means "clear".
-        if (default_for !== undefined) {
-          if (default_for === null || default_for === '') {
-            // Just clear this role's default_for; others are untouched.
-          } else {
-            await sql`UPDATE roles SET default_for = NULL WHERE default_for = ${default_for} AND id <> ${id}`;
-          }
-        }
-
-        // The default_for COALESCE wrinkle: we DO want to write NULL when
-        // caller explicitly sends null/'' (to clear). COALESCE would skip it.
-        // Branch on whether default_for was supplied.
-        const rows = default_for !== undefined
-          ? await sql`
-              UPDATE roles SET
-                label         = COALESCE(${label         ?? null}, label),
-                scopes        = COALESCE(${scopes        ?? null}, scopes),
-                default_scope = COALESCE(${default_scope ?? null}, default_scope),
-                sort_order    = COALESCE(${sort_order    ?? null}, sort_order),
-                active        = COALESCE(${active        ?? null}, active),
-                default_for   = ${default_for === '' ? null : default_for},
-                updated_at    = now()
-              WHERE id = ${id}
-              RETURNING *`
-          : await sql`
-              UPDATE roles SET
-                label         = COALESCE(${label         ?? null}, label),
-                scopes        = COALESCE(${scopes        ?? null}, scopes),
-                default_scope = COALESCE(${default_scope ?? null}, default_scope),
-                sort_order    = COALESCE(${sort_order    ?? null}, sort_order),
-                active        = COALESCE(${active        ?? null}, active),
-                updated_at    = now()
-              WHERE id = ${id}
-              RETURNING *`;
+        const rows = await sql`
+          UPDATE roles SET
+            label         = COALESCE(${label         ?? null}, label),
+            scopes        = COALESCE(${scopes        ?? null}, scopes),
+            default_scope = COALESCE(${default_scope ?? null}, default_scope),
+            sort_order    = COALESCE(${sort_order    ?? null}, sort_order),
+            active        = COALESCE(${active        ?? null}, active),
+            updated_at    = now()
+          WHERE id = ${id}
+          RETURNING *`;
         if (!rows.length) return res.status(404).json({ error: 'Not found' });
+
+        // V77.2g — sync board_ids to role_boards if supplied
+        if (Array.isArray(board_ids)) await syncRoleBoards(id, board_ids);
+        // Always return the current board_ids
+        const boardRows = await sql`SELECT board_id FROM role_boards WHERE role_id = ${id} ORDER BY board_id`;
+        rows[0].board_ids = boardRows.map(b => b.board_id);
         return res.status(200).json(rows[0]);
       }
 
