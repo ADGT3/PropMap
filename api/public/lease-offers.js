@@ -875,11 +875,14 @@ async function step2Submit(req, res, ctx) {
   // Save final form payload first
   await step2SaveDraft(req, { ...res, status: () => ({ json: () => null }) }, ctx);
 
-  // Then flip status → evidence_submitted
+  // Then flip status → evidence_submitted. Reset validation_jsonb so the agent
+  // re-reviews from scratch (notes cleared too — they were context for the
+  // resubmit request, no longer relevant).
   await sql`
     UPDATE applications SET
       status                = 'evidence_submitted',
       evidence_submitted_at = now(),
+      validation_jsonb      = NULL,
       updated_at            = now()
     WHERE id = ${application_id}`;
 
