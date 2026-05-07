@@ -932,9 +932,9 @@ function renderCRMView(container) {
         <span class="crm-view-title"><svg class="module-header-icon"><use href="#icon-crm"/></svg> CRM</span>
         <div class="crm-view-tabs">
           <button class="crm-tab active" data-tab="contacts">Contacts</button>
+          <button class="crm-tab"        data-tab="organisations">Organisations</button>
           <button class="crm-tab"        data-tab="properties">Properties</button>
           <button class="crm-tab"        data-tab="parcels">Parcels</button>
-          <button class="crm-tab"        data-tab="organisations">Organisations</button>
         </div>
       </div>
       <div class="crm-view-body">

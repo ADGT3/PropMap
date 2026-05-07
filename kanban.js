@@ -679,14 +679,28 @@ async function dbSave(id, entry) {
       body:    JSON.stringify(dealPayload),
     });
     if (dealRes.status === 404) {
-      await fetch(DEALS_API, {
+      dealRes = await fetch(DEALS_API, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(dealPayload),
       });
     }
+    // V77.2g — surface any non-2xx response (e.g. 409 from the Default Board
+    // Role invariant). Silently swallowing it means the modal closes as if it
+    // saved while the change never hit the DB — which is exactly the bug the
+    // invariant was meant to prevent.
+    if (!dealRes.ok) {
+      let errorMsg = `Save failed (${dealRes.status})`;
+      try {
+        const errBody = await dealRes.json();
+        if (errBody?.error) errorMsg = errBody.error;
+      } catch (_) {}
+      showKanbanToast(errorMsg);
+      throw new Error(errorMsg);
+    }
   } catch (err) {
     console.warn('[kanban] dbSave failed:', err);
+    throw err;
   }
 }
 
