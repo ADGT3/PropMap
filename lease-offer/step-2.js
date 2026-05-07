@@ -112,7 +112,8 @@
         if (!ID_FILES[useIdx]) ID_FILES[useIdx] = [];
         ID_FILES[useIdx].push({
           id: e.id, filename: e.filename, mime_type: e.mime_type, size: e.size_bytes,
-          doc_type: e.category.replace(/^id-/, ''), points: e.points_value || 0,
+          doc_type: e.doc_type || '',
+          points: e.points_value || 0,
           url: e.url, status: 'uploaded',
         });
       } else if (e.category.startsWith('housing-evidence:')) {
@@ -361,17 +362,33 @@
 
     // Wire doc-type selects on each existing file row
     block.querySelectorAll('.s2-doctype-select').forEach(sel => {
-      sel.addEventListener('change', () => {
+      sel.addEventListener('change', async () => {
         const ai = parseInt(sel.getAttribute('data-applicant'), 10);
         const fi = parseInt(sel.getAttribute('data-file'), 10);
         const docType = sel.value;
         const def = ID_TYPES.find(t => t.id === docType);
         const points = def?.points || 0;
-        if (ID_FILES[ai] && ID_FILES[ai][fi]) {
-          ID_FILES[ai][fi].doc_type = docType;
-          ID_FILES[ai][fi].points = points;
+        const fileEntry = ID_FILES[ai] && ID_FILES[ai][fi];
+        if (fileEntry) {
+          fileEntry.doc_type = docType;
+          fileEntry.points = points;
+          // Persist to server so the agent's review block sees the right values
+          if (fileEntry.id) {
+            try {
+              await fetch(API_BASE + '/step2-update-evidence-meta', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  evidence_id: fileEntry.id,
+                  doc_type: docType,
+                  points_value: points,
+                }),
+              });
+            } catch (err) { console.warn('update-meta failed', err); }
+          }
         }
         renderIdSections();
+        scheduleAutosave();
       });
     });
 
