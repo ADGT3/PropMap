@@ -950,6 +950,7 @@
         <button class="settings-submenu-item active" data-section="api-dashboard">API Dashboard</button>
         <button class="settings-submenu-item" data-section="agency-agreements">Agency Agreements</button>
         <button class="settings-submenu-item" data-section="parameters">Parameters</button>
+        <button class="settings-submenu-item" data-section="notifications">Notifications</button>
       </div>
 
       <!-- API Dashboard section -->
@@ -1113,6 +1114,17 @@
         </div>
       </div>
 
+      <!-- Notifications section (V77.2) -->
+      <div class="settings-section" id="settingsSectionNotifications" style="display:none">
+        <div class="settings-section-header">
+          <h2>Notifications</h2>
+          <p class="settings-section-sub">Email infrastructure configuration. Subscriptions and per-event-type controls coming in next release.</p>
+        </div>
+        <div id="notificationsPageContainer">
+          <div class="params-loading">Click Notifications to load…</div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -1135,6 +1147,7 @@
   <script src="nsw-lookup-client.js"></script>
   <script src="lookups.js"></script>
   <script src="parameters-page.js"></script>
+  <script src="notifications-page.js"></script>
   <script src="note-form.js"></script>
   <script src="inspections-section.js"></script>
   <script src="agency-agreements-section.js"></script>
@@ -1277,6 +1290,7 @@
     // sections accordingly. Parameters page is rendered lazily on first visit.
     let _parametersRendered = false;
     let _aarRendered = false;
+    let _notificationsRendered = false;
     function showSettingsSection(sectionKey) {
       // Update active button
       document.querySelectorAll('.settings-submenu-item').forEach(btn => {
@@ -1288,6 +1302,8 @@
       if (aarSection) aarSection.style.display = sectionKey === 'agency-agreements' ? '' : 'none';
       const paramsSection = document.getElementById('settingsSectionParameters');
       if (paramsSection) paramsSection.style.display = sectionKey === 'parameters' ? '' : 'none';
+      const notifSection = document.getElementById('settingsSectionNotifications');
+      if (notifSection) notifSection.style.display = sectionKey === 'notifications' ? '' : 'none';
       // Lazy-render Parameters on first visit
       if (sectionKey === 'parameters' && !_parametersRendered && window.ParametersPage) {
         const container = document.getElementById('parametersPageContainer');
@@ -1302,6 +1318,14 @@
         if (container) {
           AgencyAgreementsReport.render(container);
           _aarRendered = true;
+        }
+      }
+      // V77.2 — Lazy-render Notifications on first visit
+      if (sectionKey === 'notifications' && !_notificationsRendered && window.NotificationsPage) {
+        const container = document.getElementById('notificationsPageContainer');
+        if (container) {
+          NotificationsPage.render(container);
+          _notificationsRendered = true;
         }
       }
     }

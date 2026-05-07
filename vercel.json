@@ -1,11 +1,20 @@
 {
   "functions": {
     "api/rebuild-parcel-by-lotdp.js": { "maxDuration": 30 },
-    "api/repair-v75-4c.js":           { "maxDuration": 60 }
+    "api/repair-v75-4c.js":           { "maxDuration": 60 },
+    "api/cleanup-tokens.js":          { "maxDuration": 30 }
   },
+  "crons": [
+    {
+      "path": "/api/cleanup-tokens",
+      "schedule": "0 15 * * *"
+    }
+  ],
   "rewrites": [
-    { "source": "/api/tiles/:path*", "destination": "/api/tiles" },
-    { "source": "/api/(.*)",         "destination": "/api/$1" },
-    { "source": "/((?!api/).*)",     "destination": "/index.html" }
+    { "source": "/api/tiles/:path*",                       "destination": "/api/tiles" },
+    { "source": "/lease-offer/:token",                     "destination": "/lease-offer/index.html" },
+    { "source": "/api/public/lease-offers/:token/:action", "destination": "/api/public/lease-offers" },
+    { "source": "/api/(.*)",                               "destination": "/api/$1" },
+    { "source": "/((?!api/|lease-offer/).*)",              "destination": "/index.html" }
   ]
 }
