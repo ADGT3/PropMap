@@ -243,3 +243,24 @@
 .s2-upload-zone-small .s2-upload-zone-help {
   font-size: 10px;
 }
+
+/* Lease Documents — two-up layout for the two slots */
+.s2-leasedoc-zones {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.s2-leasedoc {
+  background: var(--lof-surface2, #f3eee2);
+  border: 1px solid var(--lof-border);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.s2-leasedoc-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--lof-text);
+  margin-bottom: 8px;
+}

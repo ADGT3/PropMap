@@ -30,6 +30,10 @@
   let ID_FILES = {};       // { applicant_idx: [{ id, filename, doc_type, points, status, ... }] }
   let HOUSING_FILES = {};  // { client_id: [{ id, filename, status, ... }] }
   let INCOME_FILES = {};   // { client_id: [{ id, filename, status, ... }] }
+  let LEASEDOC_FILES = {   // two slots — keys are stable category suffixes
+    'signed-contract':  [],
+    'condition-report': [],
+  };
   let HOUSING = [];
   let INCOME = [];
   let SAVE_TIMER = null;
@@ -96,6 +100,7 @@
     // Group housing/income files by client_id (suffix of category)
     HOUSING_FILES = {};
     INCOME_FILES = {};
+    LEASEDOC_FILES = { 'signed-contract': [], 'condition-report': [] };
     HOUSING.forEach(h => { HOUSING_FILES[h.client_id] = []; });
     INCOME.forEach(i  => { INCOME_FILES[i.client_id]  = []; });
 
@@ -121,6 +126,13 @@
         const cid = e.category.split(':')[1];
         if (!INCOME_FILES[cid]) INCOME_FILES[cid] = [];
         INCOME_FILES[cid].push({
+          id: e.id, filename: e.filename, mime_type: e.mime_type, size: e.size_bytes,
+          url: e.url, status: 'uploaded',
+        });
+      } else if (e.category.startsWith('lease-doc:')) {
+        const slot = e.category.split(':')[1];  // 'signed-contract' or 'condition-report'
+        if (!LEASEDOC_FILES[slot]) LEASEDOC_FILES[slot] = [];
+        LEASEDOC_FILES[slot].push({
           id: e.id, filename: e.filename, mime_type: e.mime_type, size: e.size_bytes,
           url: e.url, status: 'uploaded',
         });
@@ -227,6 +239,7 @@
     renderIdSections();
     renderHousing();
     renderIncome();
+    renderLeaseDocs();
     wireFormEvents();
   }
 
@@ -514,6 +527,59 @@
     else                       delete INCOME_FILES[clientId];
   }
 
+  // Upload a lease-doc file into a specific slot ('signed-contract' / 'condition-report')
+  async function uploadLeaseDocFile(file, slot) {
+    if (file.size > 10 * 1024 * 1024) {
+      alert('File too large. Maximum 10 MB per file.');
+      return;
+    }
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];
+    if (file.type && !allowedTypes.includes(file.type.toLowerCase())) {
+      alert('Unsupported file type. Allowed: PDF, JPG, PNG, HEIC.');
+      return;
+    }
+    if (!LEASEDOC_FILES[slot]) LEASEDOC_FILES[slot] = [];
+    const fileEntry = {
+      filename: file.name, mime_type: file.type || 'application/octet-stream',
+      size: file.size, status: 'uploading',
+    };
+    LEASEDOC_FILES[slot].push(fileEntry);
+    renderLeaseDocs();
+
+    try {
+      const base64 = await fileToBase64(file);
+      const applicant = APPLICANTS[0] || {};
+      const r = await fetch(API_BASE + '/step2-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: file.name,
+          mime_type: file.type || 'application/octet-stream',
+          size: file.size,
+          applicant_contact_id: applicant.contact_id || null,
+          category: `lease-doc:${slot}`,
+          points_value: 0,
+          body_base64: base64,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        fileEntry.status = 'error';
+        fileEntry.error = err.error || 'Upload failed';
+      } else {
+        const data = await r.json();
+        fileEntry.id = data.evidence.id;
+        fileEntry.url = data.evidence.url;
+        fileEntry.status = 'uploaded';
+      }
+    } catch (err) {
+      fileEntry.status = 'error';
+      fileEntry.error = err.message;
+    }
+    renderLeaseDocs();
+    scheduleAutosave();
+  }
+
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -678,6 +744,55 @@
     `;
   }
 
+  // Lease docs section — two upload zones (Signed Contract + Accepted Condition Report).
+  // Same Remove-only pattern as housing/income evidence. Always visible, optional.
+  function renderLeaseDocs() {
+    const wrap = document.getElementById('s2LeaseDocZones');
+    if (!wrap) return;
+    const slots = [
+      { key: 'signed-contract',  label: 'Signed Lease Agreement',
+        help: 'Once your agent has provided the lease agreement and you\'ve signed it, upload the signed copy here.' },
+      { key: 'condition-report', label: 'Accepted Condition Report',
+        help: 'Once your agent has provided the property condition report and you\'ve accepted it, upload the accepted copy here.' },
+    ];
+    wrap.innerHTML = slots.map(s => renderLeaseDocZone(s.key, s.label, s.help)).join('');
+  }
+
+  function renderLeaseDocZone(slotKey, label, help) {
+    const files = LEASEDOC_FILES[slotKey] || [];
+    let filesHtml = '';
+    files.forEach((f, fi) => { filesHtml += renderLeaseDocFileRow(f, slotKey, fi); });
+    return `
+      <div class="s2-leasedoc">
+        <div class="s2-leasedoc-label">${esc(label)}</div>
+        <div class="s2-uploaded-files" data-leasedoc-slot="${esc(slotKey)}">${filesHtml}</div>
+        <div class="s2-upload-zone s2-upload-zone-small" data-leasedoc-slot="${esc(slotKey)}">
+          <div class="s2-upload-zone-prompt">+ Add file</div>
+          <div class="s2-upload-zone-help">${esc(help)} Drag &amp; drop or click. PDF/JPG/PNG/HEIC, max 10MB.</div>
+          <input type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" multiple>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderLeaseDocFileRow(f, slotKey, fileIdx) {
+    const sizeStr = f.size ? `(${(f.size / 1024).toFixed(0)} KB)` : '';
+    const isUploaded = f.status === 'uploaded';
+    const statusHtml =
+      f.status === 'uploading' ? '<span class="s2-file-status s2-file-uploading">Uploading…</span>' :
+      f.status === 'error'     ? `<span class="s2-file-status s2-file-error" title="${esc(f.error || '')}">Error</span>` :
+                                 '<span class="s2-file-status">✓ Uploaded</span>';
+    return `
+      <div class="s2-id-row" data-leasedoc-slot="${esc(slotKey)}" data-file="${fileIdx}">
+        <span class="s2-file-icon">📄</span>
+        <span class="s2-file-name" title="${esc(f.filename)}">${esc(f.filename)}</span>
+        <span class="s2-file-size">${sizeStr}</span>
+        ${statusHtml}
+        ${isUploaded ? `<button type="button" class="s2-file-action-btn s2-leasedoc-remove-btn" data-leasedoc-slot="${esc(slotKey)}" data-file="${fileIdx}" title="Delete this file">Remove</button>` : ''}
+      </div>
+    `;
+  }
+
   function wireFormEvents() {
     document.getElementById('s2AddHousingBtn').addEventListener('click', () => {
       HOUSING.push(blankHousingEntry());
@@ -759,6 +874,14 @@
         return;
       }
 
+      // Click on a lease-doc upload zone → open file picker
+      const leaseDocZone = e.target.closest('.s2-upload-zone[data-leasedoc-slot]');
+      if (leaseDocZone) {
+        const fi = leaseDocZone.querySelector('input[type="file"]');
+        if (fi) fi.click();
+        return;
+      }
+
       // Click on Remove button on an evidence file row
       const removeFileBtn = e.target.closest('.s2-evidence-remove-btn');
       if (removeFileBtn) {
@@ -781,32 +904,65 @@
         if (section === 'housing') renderHousing();
         else renderIncome();
         scheduleAutosave();
+        return;
+      }
+
+      // Click on Remove button on a lease-doc file row
+      const removeLeaseDocBtn = e.target.closest('.s2-leasedoc-remove-btn');
+      if (removeLeaseDocBtn) {
+        const slot = removeLeaseDocBtn.getAttribute('data-leasedoc-slot');
+        const fi   = parseInt(removeLeaseDocBtn.getAttribute('data-file'), 10);
+        const arr = LEASEDOC_FILES[slot];
+        if (!arr || !arr[fi]) return;
+        const f = arr[fi];
+        if (!confirm(`Remove "${f.filename}"?`)) return;
+        if (f.id) {
+          try {
+            await fetch(API_BASE + '/step2-delete-evidence', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ evidence_id: f.id }),
+            });
+          } catch (err) { console.warn('delete failed', err); }
+        }
+        arr.splice(fi, 1);
+        renderLeaseDocs();
+        scheduleAutosave();
       }
     });
 
     // Drag-drop on evidence zones
     formEl.addEventListener('dragover', e => {
-      const z = e.target.closest('.s2-upload-zone[data-evidence-section]');
+      const z = e.target.closest('.s2-upload-zone[data-evidence-section], .s2-upload-zone[data-leasedoc-slot]');
       if (!z) return;
       e.preventDefault();
       z.classList.add('s2-drag-over');
     });
     formEl.addEventListener('dragleave', e => {
-      const z = e.target.closest('.s2-upload-zone[data-evidence-section]');
+      const z = e.target.closest('.s2-upload-zone[data-evidence-section], .s2-upload-zone[data-leasedoc-slot]');
       if (!z) return;
       z.classList.remove('s2-drag-over');
     });
     formEl.addEventListener('drop', async e => {
-      const z = e.target.closest('.s2-upload-zone[data-evidence-section]');
-      if (!z) return;
-      e.preventDefault();
-      z.classList.remove('s2-drag-over');
-      const section = z.getAttribute('data-evidence-section');
-      const cid     = z.getAttribute('data-client-id');
-      const files = Array.from(e.dataTransfer.files || []);
-      for (const f of files) await uploadEvidenceFile(f, section, cid);
+      const evZ = e.target.closest('.s2-upload-zone[data-evidence-section]');
+      if (evZ) {
+        e.preventDefault();
+        evZ.classList.remove('s2-drag-over');
+        const section = evZ.getAttribute('data-evidence-section');
+        const cid     = evZ.getAttribute('data-client-id');
+        const files = Array.from(e.dataTransfer.files || []);
+        for (const f of files) await uploadEvidenceFile(f, section, cid);
+        return;
+      }
+      const ldZ = e.target.closest('.s2-upload-zone[data-leasedoc-slot]');
+      if (ldZ) {
+        e.preventDefault();
+        ldZ.classList.remove('s2-drag-over');
+        const slot = ldZ.getAttribute('data-leasedoc-slot');
+        const files = Array.from(e.dataTransfer.files || []);
+        for (const f of files) await uploadLeaseDocFile(f, slot);
+      }
     });
-    // File input change on evidence zones
+    // File input change on evidence + lease-doc zones
     formEl.addEventListener('change', async e => {
       const t = e.target;
       if (t.matches('.s2-upload-zone[data-evidence-section] input[type="file"]')) {
@@ -815,6 +971,14 @@
         const cid     = z.getAttribute('data-client-id');
         const files = Array.from(t.files || []);
         for (const f of files) await uploadEvidenceFile(f, section, cid);
+        t.value = '';
+        return;
+      }
+      if (t.matches('.s2-upload-zone[data-leasedoc-slot] input[type="file"]')) {
+        const z = t.closest('.s2-upload-zone[data-leasedoc-slot]');
+        const slot = z.getAttribute('data-leasedoc-slot');
+        const files = Array.from(t.files || []);
+        for (const f of files) await uploadLeaseDocFile(f, slot);
         t.value = '';
       }
     });
