@@ -187,7 +187,8 @@
 
     function renderTokenStateRow(offer, token, step) {
       const stepLabel = step === 1 ? 'Offer Form' : 'Evidence Upload Form';
-      const formUrl = `https://propmap.edanproperty.com.au/lease-offer/${token.token}`;
+      const stepPath = step === 2 ? 'step-2/' : '';
+      const formUrl = `https://propmap.edanproperty.com.au/lease-offer/${stepPath}${token.token}`;
       const status = offer.status || 'draft';
 
       let stateLine = '';
