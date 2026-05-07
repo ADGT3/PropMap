@@ -655,8 +655,10 @@ async function step2Load(req, res, ctx) {
   const app = rows[0];
   if (!app) return res.status(404).json({ error: 'Application not found' });
 
-  // Status check — Step 2 is meaningful only when offer_accepted (or already evidence_submitted, allows continuing)
-  if (!['offer_accepted', 'evidence_submitted'].includes(app.status)) {
+  // Status check — Step 2 is meaningful when offer_accepted, evidence_submitted
+  // (allows the applicant to revisit and view what they submitted), or
+  // evidence_resubmit_requested (agent has asked them to update + resubmit).
+  if (!['offer_accepted', 'evidence_submitted', 'evidence_resubmit_requested'].includes(app.status)) {
     return res.status(409).json({
       error: 'This form is not currently available. Please wait for your agent to accept your offer.',
       code: 'wrong_status',
