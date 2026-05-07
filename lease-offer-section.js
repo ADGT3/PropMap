@@ -501,7 +501,7 @@
     }
 
     function renderViewLink(f) {
-      return `<a class="lo-review-view-link" href="/api/applications/evidence/${esc(f.id)}/download" target="_blank" rel="noopener">View</a>`;
+      return `<a class="lo-review-view-link" href="/api/applications/evidence/${esc(f.id)}/view" target="_blank" rel="noopener">View</a>`;
     }
 
     function renderList() {
