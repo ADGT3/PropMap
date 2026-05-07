@@ -140,7 +140,7 @@ async function fetchChildren(applicationId) {
       WHERE application_id = ${applicationId}
       ORDER BY sort_order, id`,
     sql`
-      SELECT id, applicant_contact_id, category, filename, mime_type, size_bytes,
+      SELECT id, applicant_contact_id, category, doc_type, filename, mime_type, size_bytes,
              url, points_value, uploaded_at
       FROM application_evidence
       WHERE application_id = ${applicationId}
