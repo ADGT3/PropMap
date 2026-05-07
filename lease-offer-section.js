@@ -339,14 +339,6 @@
       let html = '<div class="lo-review-block">';
       html += '<div class="lo-review-title">Application & Evidence Review</div>';
 
-      // Consents bar
-      const consentBits = [];
-      consentBits.push(consentBadge('Reference', !!offer.reference_consent_at));
-      consentBits.push(consentBadge('Retention', !!offer.retention_consent_at));
-      consentBits.push(consentBadge('Credit check', !!offer.credit_check_consent_at));
-      consentBits.push(consentBadge('Tenancy DB', !!offer.tenancy_database_consent_at));
-      html += `<div class="lo-review-consents">${consentBits.join('')}</div>`;
-
       // ID Documents per applicant
       html += '<div class="lo-review-section">';
       html += '<div class="lo-review-section-title">ID Documents</div>';
@@ -506,10 +498,6 @@
       }
       html += '</div>'; // .lo-review-block
       return html;
-    }
-
-    function consentBadge(label, ok) {
-      return `<span class="lo-consent-badge ${ok ? 'lo-consent-yes' : 'lo-consent-no'}">${esc(label)} ${ok ? '✓' : '✗'}</span>`;
     }
 
     function renderViewLink(f) {
