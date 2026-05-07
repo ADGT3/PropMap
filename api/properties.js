@@ -37,7 +37,7 @@ export default async function handler(req, res) {
     switch (req.method) {
 
       case 'GET': {
-        const { id, dedup_lotdp, q, by_domain_listing, by_lot_dp, search } = req.query;
+        const { id, dedup_lotdp, q, by_domain_listing, by_lot_dp, by_lot_dp_address, search } = req.query;
 
         // Dedup lookup by Lot/DP
         if (dedup_lotdp) {
@@ -54,27 +54,50 @@ export default async function handler(req, res) {
         // Unlike `dedup_lotdp` (which uses substring ILIKE), this matches the
         // lot/DP as a discrete element of the comma-separated `lot_dps` field.
         // Avoids false positives like "1/123" matching "1/12345".
-        // Returns at most one row, with the same column set as `by_domain_listing`.
+        //
+        // V77.2 — accepts optional `by_lot_dp_address` to disambiguate when
+        // multiple addresses share the same lot/DP (strata units, granny flats,
+        // duplexes etc). Without the filter: returns at most one row (latest
+        // updated, legacy behaviour). With the filter: returns the row whose
+        // address matches exactly (case-insensitive), or 404 if none.
         if (by_lot_dp) {
           const needle = String(by_lot_dp).trim().toUpperCase();
           if (!needle) return res.status(400).json({ error: 'by_lot_dp value required' });
+          const addressFilter = by_lot_dp_address
+            ? String(by_lot_dp_address).trim().toUpperCase()
+            : null;
           // Match: lot_dps is exactly the value, or starts with it followed by ", ",
           // or ends with ", " then the value, or contains ", X, " in the middle.
           // Use UPPER() on the column so the match is case-insensitive, since
           // some legacy rows may not be uppercased.
-          const rows = await sql`
-            SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
-                   parcels, property_count, domain_listing_id, listing_url,
-                   agent,
-                   not_suitable_until::text AS not_suitable_until,
-                   not_suitable_reason,
-                   parcel_id, state_prop_id, created_at, updated_at
-              FROM properties
-              WHERE UPPER(lot_dps) = ${needle}
-                 OR UPPER(lot_dps) LIKE ${needle + ',%'}
-                 OR UPPER(lot_dps) LIKE ${'%, ' + needle}
-                 OR UPPER(lot_dps) LIKE ${'%, ' + needle + ',%'}
-            ORDER BY updated_at DESC LIMIT 1`;
+          const rows = addressFilter
+            ? await sql`
+                SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
+                       parcels, property_count, domain_listing_id, listing_url,
+                       agent,
+                       not_suitable_until::text AS not_suitable_until,
+                       not_suitable_reason,
+                       parcel_id, state_prop_id, created_at, updated_at
+                  FROM properties
+                  WHERE (UPPER(lot_dps) = ${needle}
+                     OR UPPER(lot_dps) LIKE ${needle + ',%'}
+                     OR UPPER(lot_dps) LIKE ${'%, ' + needle}
+                     OR UPPER(lot_dps) LIKE ${'%, ' + needle + ',%'})
+                    AND UPPER(address) = ${addressFilter}
+                ORDER BY updated_at DESC LIMIT 1`
+            : await sql`
+                SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
+                       parcels, property_count, domain_listing_id, listing_url,
+                       agent,
+                       not_suitable_until::text AS not_suitable_until,
+                       not_suitable_reason,
+                       parcel_id, state_prop_id, created_at, updated_at
+                  FROM properties
+                  WHERE UPPER(lot_dps) = ${needle}
+                     OR UPPER(lot_dps) LIKE ${needle + ',%'}
+                     OR UPPER(lot_dps) LIKE ${'%, ' + needle}
+                     OR UPPER(lot_dps) LIKE ${'%, ' + needle + ',%'}
+                ORDER BY updated_at DESC LIMIT 1`;
           if (!rows.length) return res.status(404).json({ error: 'Not found' });
           return res.status(200).json(rows[0]);
         }
