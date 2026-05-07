@@ -12,9 +12,9 @@
   ],
   "rewrites": [
     { "source": "/api/tiles/:path*",                       "destination": "/api/tiles" },
-    { "source": "/lease-offer/:token",                     "destination": "/lease-offer/index.html" },
     { "source": "/api/public/lease-offers/:token/:action", "destination": "/api/public/lease-offers" },
     { "source": "/api/(.*)",                               "destination": "/api/$1" },
+    { "source": "/lease-offer/:token([A-Za-z0-9]{16,64})", "destination": "/lease-offer/index.html" },
     { "source": "/((?!api/|lease-offer/).*)",              "destination": "/index.html" }
   ]
 }
