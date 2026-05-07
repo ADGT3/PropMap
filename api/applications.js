@@ -64,7 +64,8 @@ const sql = neon(getDatabaseUrl());
 // Status lifecycle — reachable transitions per build plan §4.4
 const VALID_STATUSES = new Set([
   'draft', 'submitted', 'offer_accepted', 'rejected',
-  'evidence_submitted', 'validated', 'leased', 'withdrawn',
+  'evidence_submitted', 'evidence_resubmit_requested',
+  'validated', 'leased', 'withdrawn',
 ]);
 
 const TERMINAL_STATUSES = new Set(['leased', 'withdrawn', 'rejected']);
@@ -74,7 +75,8 @@ const ALLOWED_TRANSITIONS = {
   submitted:           new Set(['offer_accepted', 'rejected', 'withdrawn']),
   offer_accepted:      new Set(['evidence_submitted', 'withdrawn']),
   rejected:            new Set([]),                                 // terminal
-  evidence_submitted:  new Set(['validated', 'withdrawn']),
+  evidence_submitted:  new Set(['validated', 'evidence_resubmit_requested', 'withdrawn']),
+  evidence_resubmit_requested: new Set(['evidence_submitted', 'withdrawn']),
   validated:           new Set(['leased', 'withdrawn']),
   leased:              new Set([]),                                 // terminal
   withdrawn:           new Set([]),                                 // terminal
@@ -128,7 +130,7 @@ function validateIncomeEntry(e, idx) {
 // ── Nested fetch helpers ───────────────────────────────────────────────────
 
 async function fetchChildren(applicationId) {
-  const [housing, income] = await Promise.all([
+  const [housing, income, evidence] = await Promise.all([
     sql`
       SELECT * FROM application_housing_history
       WHERE application_id = ${applicationId}
@@ -137,8 +139,14 @@ async function fetchChildren(applicationId) {
       SELECT * FROM application_income_history
       WHERE application_id = ${applicationId}
       ORDER BY sort_order, id`,
+    sql`
+      SELECT id, applicant_contact_id, category, filename, mime_type, size_bytes,
+             url, points_value, uploaded_at
+      FROM application_evidence
+      WHERE application_id = ${applicationId}
+      ORDER BY uploaded_at`,
   ]);
-  return { housing_history: housing, income_history: income };
+  return { housing_history: housing, income_history: income, evidence };
 }
 
 async function applicationWithChildren(applicationId) {
@@ -229,8 +237,9 @@ function timestampForStatus(status) {
   switch (status) {
     case 'submitted':           return { col: 'submitted_at',          val: 'now' };
     case 'offer_accepted':      return { col: 'accepted_at',           val: 'now' };
-    case 'evidence_submitted':  return { col: 'evidence_submitted_at', val: 'now' };
-    case 'validated':           return { col: 'validated_at',          val: 'now' };
+    case 'evidence_submitted':           return { col: 'evidence_submitted_at',  val: 'now' };
+    case 'evidence_resubmit_requested':  return { col: 'resubmit_requested_at',  val: 'now' };
+    case 'validated':                    return { col: 'validated_at',           val: 'now' };
     default: return null;
   }
 }
@@ -445,6 +454,7 @@ async function handlePut(req, res) {
     submitted_at:                 derivedTimestamp?.col === 'submitted_at'           ? new Date().toISOString() : cur.submitted_at,
     accepted_at:                  derivedTimestamp?.col === 'accepted_at'            ? new Date().toISOString() : cur.accepted_at,
     evidence_submitted_at:        derivedTimestamp?.col === 'evidence_submitted_at'  ? new Date().toISOString() : cur.evidence_submitted_at,
+    resubmit_requested_at:        derivedTimestamp?.col === 'resubmit_requested_at'  ? new Date().toISOString() : cur.resubmit_requested_at,
     validated_at:                 derivedTimestamp?.col === 'validated_at'           ? new Date().toISOString() : cur.validated_at,
     requested_rent:               body.requested_rent              ?? cur.requested_rent,
     bond_weeks:                   body.bond_weeks                  ?? cur.bond_weeks,
@@ -457,6 +467,7 @@ async function handlePut(req, res) {
     occupants:                    body.occupants !== undefined        ? body.occupants        : cur.occupants,
     pets:                         body.pets      !== undefined        ? body.pets             : cur.pets,
     applicants_jsonb:             body.applicants_jsonb !== undefined ? body.applicants_jsonb : cur.applicants_jsonb,
+    validation_jsonb:             body.validation_jsonb !== undefined ? body.validation_jsonb : cur.validation_jsonb,
     notes:                        body.notes                       ?? cur.notes,
   };
 
@@ -466,6 +477,7 @@ async function handlePut(req, res) {
       submitted_at                 = ${merged.submitted_at},
       accepted_at                  = ${merged.accepted_at},
       evidence_submitted_at        = ${merged.evidence_submitted_at},
+      resubmit_requested_at        = ${merged.resubmit_requested_at},
       validated_at                 = ${merged.validated_at},
       requested_rent               = ${merged.requested_rent},
       bond_weeks                   = ${merged.bond_weeks},
@@ -478,6 +490,7 @@ async function handlePut(req, res) {
       occupants                    = ${merged.occupants        ? JSON.stringify(merged.occupants)        : null}::jsonb,
       pets                         = ${merged.pets             ? JSON.stringify(merged.pets)             : null}::jsonb,
       applicants_jsonb             = ${merged.applicants_jsonb ? JSON.stringify(merged.applicants_jsonb) : null}::jsonb,
+      validation_jsonb             = ${merged.validation_jsonb ? JSON.stringify(merged.validation_jsonb) : null}::jsonb,
       notes                        = ${merged.notes},
       updated_at                   = now()
     WHERE id = ${applicationId}`;
@@ -501,6 +514,17 @@ async function handlePut(req, res) {
     } catch (err) {
       console.error('[applications/PUT] accept side-effects failed:', err);
       // Continue — agent can manually retry by clicking Send Step 2 link
+    }
+  }
+
+  // V77.2d — Side effect of evidence_submitted → evidence_resubmit_requested.
+  // Send applicant a generic "please review and resubmit" email. Agent will
+  // contact them separately with specifics.
+  if (cur.status === 'evidence_submitted' && nextStatus === 'evidence_resubmit_requested') {
+    try {
+      await onResubmitRequested(applicationId, cur.deal_id);
+    } catch (err) {
+      console.error('[applications/PUT] resubmit-requested side-effect failed:', err);
     }
   }
 
@@ -641,6 +665,59 @@ async function onOfferAccepted(applicationId, mergedAppRow, dealId) {
       agent_name:       'Your agent',
       agency_name:      'Edan Property',
       expires_in_days:  TTL_DAYS,
+    },
+    related_entity_type: 'application',
+    related_entity_id:   applicationId,
+  });
+}
+
+// V77.2d — Side effect of evidence_submitted → evidence_resubmit_requested.
+// Find the existing Step 2 token (don't issue a new one), build the same magic
+// link, and send the applicant a "please review and resubmit" email.
+async function onResubmitRequested(applicationId, dealId) {
+  const Email = (await import('../lib/email.js')).default;
+  const tpl = await import('../emails/lease-offer-resubmit-requested.js');
+
+  // Find the Step 2 token for this application (most recent if multiple)
+  const tokenRows = await sql`
+    SELECT t.token, t.applicant_email, t.contact_id, c.first_name, c.last_name
+    FROM applicant_form_tokens t
+    LEFT JOIN contacts c ON c.id = t.contact_id
+    WHERE t.application_id = ${applicationId} AND t.step = 2
+    ORDER BY t.id DESC
+    LIMIT 1`;
+  if (!tokenRows.length) {
+    console.warn('[applications.resubmit] no Step 2 token found; cannot notify applicant');
+    return;
+  }
+  const tk = tokenRows[0];
+  if (!tk.applicant_email) {
+    console.warn('[applications.resubmit] token has no applicant_email');
+    return;
+  }
+
+  // Property address for context in email
+  const dealRows = await sql`
+    SELECT d.property_id, p.address, p.suburb, p.state
+    FROM deals d
+    LEFT JOIN properties p ON p.id = d.property_id
+    WHERE d.id = ${dealId}`;
+  const deal = dealRows[0] || {};
+  const propertyAddress = [deal.address, deal.suburb, deal.state].filter(Boolean).join(', ');
+  const applicantName = [tk.first_name, tk.last_name].filter(Boolean).join(' ').trim() || tk.applicant_email;
+  const formUrl = await Email.leaseOfferUrl(tk.token, 2);
+
+  await Email.send({
+    to: tk.applicant_email,
+    channel: 'leasing',
+    template: tpl,
+    template_id: 'lease-offer-resubmit-requested',
+    vars: {
+      applicant_name:   applicantName,
+      property_address: propertyAddress,
+      form_url:         formUrl,
+      agent_name:       'Your agent',
+      agency_name:      'Edan Property',
     },
     related_entity_type: 'application',
     related_entity_id:   applicationId,
