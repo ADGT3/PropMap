@@ -19,6 +19,20 @@
 
   const API = '/api/applications';
 
+  // Mirror of the doc-type list in lease-offer/step-2.js. Used to render
+  // friendly labels in the agent's review block.
+  const ID_DOC_LABELS = {
+    passport:             'Passport (70 pts)',
+    birth_certificate:    'Birth certificate (70 pts)',
+    drivers_licence:      'Drivers licence — front (40 pts)',
+    drivers_licence_back: 'Drivers licence — back (0 pts)',
+    medicare:             'Medicare card (25 pts)',
+    bank_statement:       'Bank statement (25 pts)',
+    utility_bill:         'Utility bill (25 pts)',
+    rates_notice:         'Rates notice (25 pts)',
+    other:                'Other (10 pts)',
+  };
+
   function esc(s) {
     return String(s ?? '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -344,8 +358,8 @@
           if (files.length) {
             html += '<ul class="lo-review-files">';
             files.forEach(f => {
-              const docTypeLabel = (f.category || '').replace(/^id-/, '').replace(/-/g, ' ');
-              html += `<li>${esc(f.filename)} <span class="lo-review-file-meta">— ${esc(docTypeLabel)} (${f.points_value || 0} pts)</span> ${renderViewLink(f)}</li>`;
+              const docTypeLabel = ID_DOC_LABELS[f.doc_type] || f.doc_type || 'No type set';
+              html += `<li><span class="lo-review-file-text">${esc(f.filename)} <span class="lo-review-file-meta">— ${esc(docTypeLabel)}</span></span> ${renderViewLink(f)}</li>`;
             });
             html += '</ul>';
           } else {
@@ -376,7 +390,7 @@
           }
           if (files.length) {
             html += '<ul class="lo-review-files">';
-            files.forEach(f => { html += `<li>${esc(f.filename)} ${renderViewLink(f)}</li>`; });
+            files.forEach(f => { html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${renderViewLink(f)}</li>`; });
             html += '</ul>';
           } else {
             html += '<div class="lo-review-empty">No supporting documents.</div>';
@@ -406,7 +420,7 @@
           }
           if (files.length) {
             html += '<ul class="lo-review-files">';
-            files.forEach(f => { html += `<li>${esc(f.filename)} ${renderViewLink(f)}</li>`; });
+            files.forEach(f => { html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${renderViewLink(f)}</li>`; });
             html += '</ul>';
           } else {
             html += '<div class="lo-review-empty">No supporting documents.</div>';
@@ -426,7 +440,7 @@
         html += '<div class="lo-review-entry-head"><strong>Signed Lease Agreement</strong></div>';
         if (sc.length) {
           html += '<ul class="lo-review-files">';
-          sc.forEach(f => { html += `<li>${esc(f.filename)} ${renderViewLink(f)}</li>`; });
+          sc.forEach(f => { html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${renderViewLink(f)}</li>`; });
           html += '</ul>';
         } else {
           html += '<div class="lo-review-empty">Not yet uploaded.</div>';
@@ -436,7 +450,7 @@
         html += '<div class="lo-review-entry-head"><strong>Accepted Condition Report</strong></div>';
         if (cr.length) {
           html += '<ul class="lo-review-files">';
-          cr.forEach(f => { html += `<li>${esc(f.filename)} ${renderViewLink(f)}</li>`; });
+          cr.forEach(f => { html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${renderViewLink(f)}</li>`; });
           html += '</ul>';
         } else {
           html += '<div class="lo-review-empty">Not yet uploaded.</div>';

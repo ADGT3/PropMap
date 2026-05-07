@@ -5557,9 +5557,16 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   font-size: 12px;
   padding: 3px 0;
   display: flex;
-  gap: 6px;
-  align-items: baseline;
-  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.lo-review-file-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lo-review-file-meta {
@@ -5568,6 +5575,7 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 }
 
 .lo-review-view-link {
+  flex-shrink: 0;
   color: var(--accent);
   font-size: 11px;
   text-decoration: none;
