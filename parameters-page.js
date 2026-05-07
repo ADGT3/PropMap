@@ -171,6 +171,7 @@
       { key: 'label',        label: 'Label' },
       { key: 'scopes',       label: 'Scopes', sortable: false },
       { key: 'default_scope',label: 'Default Scope' },
+      { key: 'default_for',  label: 'Default For' },
       { key: 'sort_order',   label: 'Order' },
       { key: 'active',       label: 'Active' },
       { key: 'system',       label: 'System' },
@@ -198,12 +199,17 @@
         html += renderRoleEditRow(r);
       } else {
         const scopesStr = Array.isArray(r.scopes) ? r.scopes.join(', ') : '';
+        const defaultForLabel = ({
+          enquiry_creation: 'Enquiry creation',
+          listing_agent:    'Listing agent',
+        })[r.default_for] || '';
         html += `
           <tr class="params-tr">
             <td class="params-td params-td-mono">${esc(r.id)}</td>
             <td class="params-td">${esc(r.label)}</td>
             <td class="params-td">${esc(scopesStr)}</td>
             <td class="params-td">${esc(r.default_scope || '')}</td>
+            <td class="params-td">${esc(defaultForLabel)}</td>
             <td class="params-td">${r.sort_order ?? ''}</td>
             <td class="params-td">${r.active ? '✓' : '✕'}</td>
             <td class="params-td">${r.system ? '<span class="params-system-badge">system</span>' : ''}</td>
@@ -249,6 +255,7 @@
     const label         = isNew ? '' : (r.label || '');
     const scopesStr     = isNew ? '' : (Array.isArray(r.scopes) ? r.scopes.join(',') : '');
     const defaultScope  = isNew ? 'deal' : (r.default_scope || 'deal');
+    const defaultFor    = isNew ? '' : (r.default_for || '');
     const sortOrder     = isNew ? 100  : (r.sort_order ?? 100);
     const active        = isNew ? true : !!r.active;
     return `
@@ -262,6 +269,13 @@
             <option value="deal"         ${defaultScope === 'deal'         ? 'selected' : ''}>deal</option>
             <option value="organisation" ${defaultScope === 'organisation' ? 'selected' : ''}>organisation</option>
             <option value="listing"      ${defaultScope === 'listing'      ? 'selected' : ''}>listing</option>
+          </select>
+        </td>
+        <td class="params-td">
+          <select class="kb-input" data-field="default_for">
+            <option value=""                  ${defaultFor === ''                  ? 'selected' : ''}>—</option>
+            <option value="enquiry_creation"  ${defaultFor === 'enquiry_creation'  ? 'selected' : ''}>Enquiry creation</option>
+            <option value="listing_agent"     ${defaultFor === 'listing_agent'     ? 'selected' : ''}>Listing agent</option>
           </select>
         </td>
         <td class="params-td"><input class="kb-input" data-field="sort_order" type="number" value="${sortOrder}" style="width:80px"></td>
@@ -283,6 +297,7 @@
         const label        = tr.querySelector('[data-field="label"]').value.trim();
         const scopesStr    = tr.querySelector('[data-field="scopes"]').value.trim();
         const defaultScope = tr.querySelector('[data-field="default_scope"]').value;
+        const defaultFor   = tr.querySelector('[data-field="default_for"]').value;
         const sortOrder    = parseInt(tr.querySelector('[data-field="sort_order"]').value, 10) || 100;
         const active       = tr.querySelector('[data-field="active"]').checked;
         if (!id || !label) return alert('id and label required');
@@ -290,7 +305,6 @@
         if (!scopes.length) return alert('scopes required (comma-separated)');
         if (!scopes.includes(defaultScope)) return alert('default_scope must be in scopes');
 
-        const isNew = !tr.querySelector('[data-field="id"]').disabled === false ? false : (_state.roles.editingId === null);
         const editingExisting = _state.roles.editingId !== null;
 
         try {
@@ -299,7 +313,7 @@
             const r = await fetch('/api/roles', {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id, label, scopes, default_scope: defaultScope, sort_order: sortOrder, active }),
+              body: JSON.stringify({ id, label, scopes, default_scope: defaultScope, default_for: defaultFor || '', sort_order: sortOrder, active }),
             });
             if (!r.ok) throw new Error((await r.json()).error || r.status);
           } else {
@@ -307,7 +321,7 @@
             const r = await fetch('/api/roles', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id, label, scopes, default_scope: defaultScope, sort_order: sortOrder, active }),
+              body: JSON.stringify({ id, label, scopes, default_scope: defaultScope, default_for: defaultFor || null, sort_order: sortOrder, active }),
             });
             if (!r.ok) throw new Error((await r.json()).error || r.status);
           }

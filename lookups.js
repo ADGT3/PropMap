@@ -90,6 +90,17 @@
     return _rolesCache.filter(r => r.active && Array.isArray(r.scopes) && r.scopes.includes(scope));
   }
 
+  // V77.2f — Find the role flagged with default_for=<purpose>. Returns the
+  // role id (e.g. 'enquirer' for purpose 'enquiry_creation'), or null if no
+  // role currently holds that default. Async because it reads the same cached
+  // role list as everything else here.
+  async function getDefaultRoleId(purpose) {
+    const rows = await getRoles();
+    if (!Array.isArray(rows)) return null;
+    const match = rows.find(r => r.default_for === purpose && r.active);
+    return match ? match.id : null;
+  }
+
   function invalidateRoles() {
     _rolesCache    = null;
     _rolesPromise  = null;
@@ -175,7 +186,7 @@
   // ── Expose ────────────────────────────────────────────────────────────────
 
   window.Lookups = {
-    getRoles, getRolesActive, roleLabel, rolesForScope, invalidateRoles,
+    getRoles, getRolesActive, roleLabel, rolesForScope, getDefaultRoleId, invalidateRoles,
     getSources, getSourcesActive, sourceLabel, invalidateSources,
     getInteractionTypes, getInteractionTypesActive, interactionTypeLabel, interactionDirection, invalidateInteractionTypes,
     invalidate, preload,
