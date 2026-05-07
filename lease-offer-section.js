@@ -1,98 +1,98 @@
 /**
- * lease-offer-section.js — V77.1
+ * lease-offer-section.js — V77.1 / V77.2
  *
- * Multi-record list of Lease Offers (applications) on a Lease Enquiry deal.
- * Each offer carries: rent, bond, term, move-in date, special terms, status.
- * Forward-only state machine (per build plan §12 Q1(b)):
+ * Renders the Lease Offer section inside Lease Enquiry deal modals.
  *
- *   draft → submitted → (offer_accepted | rejected | withdrawn)
+ * V77.2 changes:
+ *   - "+ New Offer" auto-creates blank draft offer + shows magic-link UI
+ *     (no manual-entry form).
+ *   - Submitted offers expand inline to show full applicant + finance + household details.
+ *   - Accept / Reject buttons replace Edit / Delete on submitted offers.
+ *   - Accept transition triggers contact normalisation + Step 2 token + email
+ *     (server-side; see api/applications.js handlePut).
  *
- * Once an offer reaches a terminal state (offer_accepted/rejected/withdrawn),
- * its status is locked. The user can still edit other fields on accepted/rejected
- * offers (typo fixes etc.) but the status dropdown is disabled.
- *
- * Mounts via window.LeaseOfferSection.mount(containerEl, dealId).
- *
- * V77.1 ONLY renders for Lease Enquiry deals (board_id === 'sys_lease_enquiry').
- * Caller is expected to gate by board.
- *
- * Public API:
- *   LeaseOfferSection.mount(containerEl, dealId) → { destroy, refresh }
+ * Public API (attached to window.LeaseOfferSection):
+ *   LeaseOfferSection.mount(container, dealId)
  */
-
 (function () {
   'use strict';
 
   const API = '/api/applications';
 
-  // V77.1 agent-side only sees these statuses (V77.2 public flow adds the rest)
-  const STATUS_OPTIONS = [
-    { value: 'draft',          label: 'Draft' },
-    { value: 'submitted',      label: 'Submitted' },
-    { value: 'offer_accepted', label: 'Accepted' },
-    { value: 'rejected',       label: 'Rejected' },
-    { value: 'withdrawn',      label: 'Withdrawn' },
-  ];
-  const TERMINAL = new Set(['offer_accepted', 'rejected', 'withdrawn', 'leased']);
-
-  // What status values can the user transition TO from a given status?
-  const ALLOWED_FROM = {
-    draft:          ['draft', 'submitted', 'withdrawn'],
-    submitted:      ['submitted', 'offer_accepted', 'rejected', 'withdrawn'],
-    offer_accepted: ['offer_accepted'], // terminal — locked
-    rejected:       ['rejected'],       // terminal — locked
-    withdrawn:      ['withdrawn'],      // terminal — locked
-  };
-
-  // ── Format helpers ───────────────────────────────────────────────────────
-  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  function esc(s) {
+    return String(s ?? '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
 
   function fmtCurrency(n) {
-    if (n == null || n === '') return '—';
-    const num = parseFloat(n);
-    if (isNaN(num)) return '—';
+    if (n == null || n === '') return '';
+    const num = typeof n === 'number' ? n : parseFloat(String(n).replace(/[^0-9.]/g, ''));
+    if (isNaN(num) || num <= 0) return '';
     return '$' + Math.round(num).toLocaleString('en-AU');
   }
   function fmtDate(s) {
     if (!s) return '—';
     const d = new Date(s);
-    if (isNaN(d.getTime())) return s;
-    return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
   }
   function fmtStatus(s) {
-    const opt = STATUS_OPTIONS.find(o => o.value === s);
-    return opt ? opt.label : s;
+    return ({
+      draft:               'Draft',
+      submitted:           'Submitted',
+      offer_accepted:      'Accepted',
+      evidence_submitted:  'Evidence In',
+      validated:           'Validated',
+      leased:              'Leased',
+      rejected:            'Rejected',
+      withdrawn:           'Withdrawn',
+    })[s] || s || 'Draft';
   }
   function statusClass(s) {
-    return `lo-status-${(s || '').replace(/_/g, '-')}`;
+    return 'lo-status-' + (s || 'draft');
+  }
+  function fmtRelative(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const diffMs = Date.now() - d.getTime();
+    const diffMin = Math.round(diffMs / 60_000);
+    if (diffMin < 1) return 'just now';
+    if (diffMin < 60) return `${diffMin} min ago`;
+    const diffHr = Math.round(diffMin / 60);
+    if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? '' : 's'} ago`;
+    const diffDay = Math.round(diffHr / 24);
+    if (diffDay < 30) return `${diffDay} day${diffDay === 1 ? '' : 's'} ago`;
+    return fmtDate(iso);
+  }
+  function daysUntil(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    const ms = d.getTime() - Date.now();
+    return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
   }
 
-  // ── Mount ─────────────────────────────────────────────────────────────────
   function mount(containerEl, dealId) {
-    if (!containerEl || !dealId) return { destroy() {}, refresh() {} };
-
     let offers = [];
-    let editingId = null; // null = list view, 'new' = adding, otherwise application id
+    let expandedIds = new Set();
 
     containerEl.innerHTML = `
       <div class="lo-section">
-        <div class="kb-section-label" style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">
-          <span>Lease Offers</span>
-          <button class="kb-add-offer-btn lo-add-btn" type="button">+ New Offer</button>
+        <div class="lo-section-header">
+          <span class="kb-section-label">Lease Offers</span>
+          <button class="lo-add-btn" type="button">+ New Offer</button>
         </div>
-        <div class="lo-list" data-role="list"></div>
-        <div class="lo-form-wrap" data-role="form-wrap" style="display:none"></div>
+        <div class="lo-list"></div>
       </div>
     `;
 
-    const listEl    = containerEl.querySelector('[data-role="list"]');
-    const formWrap  = containerEl.querySelector('[data-role="form-wrap"]');
-    const addBtn    = containerEl.querySelector('.lo-add-btn');
+    const addBtn = containerEl.querySelector('.lo-add-btn');
+    const listEl = containerEl.querySelector('.lo-list');
 
-    addBtn.addEventListener('click', () => {
-      editingId = 'new';
-      renderForm();
-    });
+    addBtn.addEventListener('click', () => createBlankDraft());
+
+    load();
 
     async function load() {
       try {
@@ -104,7 +104,6 @@
         console.warn('[LeaseOffer] load failed:', err);
         return;
       }
-      // V77.2: fetch tokens for all offers in one go
       try {
         const tokenPromises = offers.map(o =>
           fetch(`/api/applicant-form-tokens?application_id=${encodeURIComponent(o.id)}`)
@@ -117,28 +116,31 @@
       renderList();
     }
 
-    function fmtRelative(iso) {
-      if (!iso) return '';
-      const d = new Date(iso);
-      if (isNaN(d.getTime())) return '';
-      const diffMs = Date.now() - d.getTime();
-      const diffMin = Math.round(diffMs / 60_000);
-      if (diffMin < 1) return 'just now';
-      if (diffMin < 60) return `${diffMin} min ago`;
-      const diffHr = Math.round(diffMin / 60);
-      if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? '' : 's'} ago`;
-      const diffDay = Math.round(diffHr / 24);
-      if (diffDay < 30) return `${diffDay} day${diffDay === 1 ? '' : 's'} ago`;
-      return fmtDate(iso);
-    }
-    function daysUntil(iso) {
-      if (!iso) return null;
-      const d = new Date(iso);
-      const ms = d.getTime() - Date.now();
-      return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+    async function createBlankDraft() {
+      addBtn.disabled = true;
+      const orig = addBtn.textContent;
+      addBtn.textContent = 'Creating…';
+      try {
+        const r = await fetch(API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deal_id: dealId, status: 'draft' }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.error || r.status);
+        }
+        const newOffer = await r.json();
+        expandedIds.add(String(newOffer.id));
+        await load();
+      } catch (err) {
+        alert('Failed to create offer: ' + err.message);
+      } finally {
+        addBtn.disabled = false;
+        addBtn.textContent = orig;
+      }
     }
 
-    // V77.2: build the magic-link UI block for a single offer
     function renderTokenBlock(offer) {
       const status = offer.status || 'draft';
       const tokens = offer._tokens || [];
@@ -146,27 +148,21 @@
       const tokenStep2 = tokens.find(t => t.step === 2);
       const allowStep2 = status === 'offer_accepted' || status === 'evidence_submitted';
 
-      // Step 1 UI
       let step1Html = '';
       if (status === 'draft') {
-        // Send Step 1 button (or token state)
         if (tokenStep1) {
           step1Html = renderTokenStateRow(offer, tokenStep1, 1);
         } else {
           step1Html = `
             <div class="lo-token-row lo-token-empty">
-              <div class="lo-token-label">Step 1 — Applicant offer form</div>
-              <button class="lo-issue-btn" type="button" data-application-id="${esc(offer.id)}" data-step="1">Send Step 1 link to applicant</button>
+              <div class="lo-token-label">Offer Form</div>
+              <button class="lo-issue-btn" type="button" data-application-id="${esc(offer.id)}" data-step="1">Send Offer Form link to applicant</button>
             </div>`;
         }
-      } else {
-        // Status has progressed — show Step 1 history
-        if (tokenStep1) {
-          step1Html = renderTokenStateRow(offer, tokenStep1, 1);
-        }
+      } else if (tokenStep1) {
+        step1Html = renderTokenStateRow(offer, tokenStep1, 1);
       }
 
-      // Step 2 UI (only meaningful once accepted)
       let step2Html = '';
       if (allowStep2) {
         if (tokenStep2) {
@@ -174,8 +170,8 @@
         } else {
           step2Html = `
             <div class="lo-token-row lo-token-empty">
-              <div class="lo-token-label">Step 2 — Evidence upload form</div>
-              <button class="lo-issue-btn" type="button" data-application-id="${esc(offer.id)}" data-step="2">Send Step 2 link to applicant</button>
+              <div class="lo-token-label">Evidence Upload Form</div>
+              <button class="lo-issue-btn" type="button" data-application-id="${esc(offer.id)}" data-step="2">Send Evidence Upload Form link to applicant</button>
             </div>`;
         }
       }
@@ -185,15 +181,14 @@
     }
 
     function renderTokenStateRow(offer, token, step) {
-      const stepLabel = step === 1 ? 'Step 1 — Applicant offer form' : 'Step 2 — Evidence upload form';
+      const stepLabel = step === 1 ? 'Offer Form' : 'Evidence Upload Form';
       const formUrl = `https://propmap.edanproperty.com.au/lease-offer/${token.token}`;
-
-      // Compute state line
-      let stateLine = '';
       const status = offer.status || 'draft';
-      if (step === 1 && (status === 'submitted' || status === 'offer_accepted' || status === 'evidence_submitted' || status === 'validated')) {
+
+      let stateLine = '';
+      if (step === 1 && (status === 'submitted' || status === 'offer_accepted' || status === 'evidence_submitted' || status === 'validated' || status === 'leased')) {
         stateLine = `<span class="lo-token-state lo-token-state-done">✓ Submitted ${esc(fmtRelative(token.last_accessed_at || token.created_at))}</span>`;
-      } else if (step === 2 && (status === 'evidence_submitted' || status === 'validated')) {
+      } else if (step === 2 && (status === 'evidence_submitted' || status === 'validated' || status === 'leased')) {
         stateLine = `<span class="lo-token-state lo-token-state-done">✓ Evidence submitted ${esc(fmtRelative(token.last_accessed_at || token.created_at))}</span>`;
       } else if (token.email_verified) {
         const days = daysUntil(token.expires_at);
@@ -208,8 +203,8 @@
           <div class="lo-token-label">${esc(stepLabel)}</div>
           <div class="lo-token-url-row">
             <input class="lo-token-url" type="text" readonly value="${esc(formUrl)}" data-url="${esc(formUrl)}">
-            <button class="lo-token-action-btn lo-token-copy-btn"  type="button" data-token-id="${esc(token.id)}" title="Copy link to clipboard">Copy</button>
-            <button class="lo-token-action-btn lo-token-resend-btn" type="button" data-token-id="${esc(token.id)}" title="Re-send the email to ${esc(token.applicant_email)}">Resend</button>
+            <button class="lo-token-action-btn lo-token-copy-btn"   type="button" data-token-id="${esc(token.id)}" title="Copy link to clipboard">Copy</button>
+            <button class="lo-token-action-btn lo-token-resend-btn"  type="button" data-token-id="${esc(token.id)}" title="Re-send the email to ${esc(token.applicant_email)}">Resend</button>
             <button class="lo-token-action-btn lo-token-reissue-btn" type="button" data-token-id="${esc(token.id)}" title="Generate a brand new link (invalidates the old one)">Reissue</button>
           </div>
           <div class="lo-token-meta">
@@ -223,47 +218,129 @@
       `;
     }
 
+    function renderSubmittedDetail(offer) {
+      const apps = Array.isArray(offer.applicants_jsonb) ? offer.applicants_jsonb : [];
+      const occ  = offer.occupants || {};
+      const pets = offer.pets || {};
+
+      let html = '<div class="lo-detail">';
+
+      html += '<div class="lo-detail-section">';
+      html += '<div class="lo-detail-section-title">Offer Terms</div>';
+      html += '<table class="lo-detail-table">';
+      html += `<tr><th>Rent offered</th><td>${esc(fmtCurrency(offer.requested_rent))}/wk</td></tr>`;
+      html += `<tr><th>Bond</th><td>${offer.bond_weeks || '—'} weeks</td></tr>`;
+      html += `<tr><th>Lease term</th><td>${offer.lease_term_months ? `${offer.lease_term_months} months` : '—'}</td></tr>`;
+      html += `<tr><th>Preferred start</th><td>${esc(fmtDate(offer.preferred_start_date))}</td></tr>`;
+      if (offer.terms) html += `<tr><th>Special terms</th><td>${esc(offer.terms)}</td></tr>`;
+      html += '</table></div>';
+
+      html += '<div class="lo-detail-section">';
+      html += '<div class="lo-detail-section-title">Household</div>';
+      html += '<table class="lo-detail-table">';
+      html += `<tr><th>Total occupants</th><td>${occ.total ?? '—'}</td></tr>`;
+      if (occ.details)  html += `<tr><th>Details</th><td>${esc(occ.details)}</td></tr>`;
+      html += `<tr><th>Pets</th><td>${pets.has_pets ? 'Yes' : 'No'}${pets.has_pets && pets.details ? ' — ' + esc(pets.details) : ''}</td></tr>`;
+      html += '</table></div>';
+
+      apps.forEach((a, i) => {
+        const name = [a.first_name, a.last_name].filter(Boolean).join(' ') || `Applicant ${i + 1}`;
+        const isPrimary = i === 0;
+        html += '<div class="lo-detail-section">';
+        html += `<div class="lo-detail-section-title">Applicant ${i + 1}: ${esc(name)}${isPrimary ? ' <span class="lo-primary-tag">Primary</span>' : ''}</div>`;
+        html += '<table class="lo-detail-table">';
+        html += `<tr><th>Email</th><td>${esc(a.email || '—')}</td></tr>`;
+        html += `<tr><th>Mobile</th><td>${esc(a.mobile || '—')}</td></tr>`;
+        if (a.dob)             html += `<tr><th>Date of birth</th><td>${esc(fmtDate(a.dob))}</td></tr>`;
+        if (a.current_address) html += `<tr><th>Current address</th><td>${esc(a.current_address)}</td></tr>`;
+        if (a.smoker !== null && a.smoker !== undefined) html += `<tr><th>Smoker</th><td>${a.smoker ? 'Yes' : 'No'}</td></tr>`;
+        if (a.employment_status || a.employer_name || a.gross_weekly_income) {
+          html += `<tr><th colspan="2" class="lo-subhead">Finance</th></tr>`;
+          if (a.employment_status)    html += `<tr><th>Employment</th><td>${esc(a.employment_status)}</td></tr>`;
+          if (a.employer_name)        html += `<tr><th>Employer</th><td>${esc(a.employer_name)}</td></tr>`;
+          if (a.position)             html += `<tr><th>Position</th><td>${esc(a.position)}</td></tr>`;
+          if (a.gross_weekly_income)  html += `<tr><th>Gross weekly income</th><td>${esc(fmtCurrency(a.gross_weekly_income))}</td></tr>`;
+          if (a.length_of_employment) html += `<tr><th>Length of employment</th><td>${esc(a.length_of_employment)}</td></tr>`;
+        }
+        html += '</table></div>';
+      });
+
+      html += '</div>';
+      return html;
+    }
+
     function renderList() {
-      formWrap.style.display = 'none';
-      formWrap.innerHTML = '';
-      addBtn.style.display = '';
       if (!offers.length) {
         listEl.innerHTML = '<div class="lo-empty">No lease offers yet.</div>';
         return;
       }
       listEl.innerHTML = offers.map(o => {
-        const rent = fmtCurrency(o.requested_rent) + (o.requested_rent ? '/wk' : '');
-        const bond = o.bond_weeks ? `${o.bond_weeks} wks` : '—';
-        const term = o.lease_term_months ? `${o.lease_term_months} mo` : '—';
+        const rent  = fmtCurrency(o.requested_rent);
+        const bond  = o.bond_weeks ? `${o.bond_weeks} wks` : '—';
+        const term  = o.lease_term_months ? `${o.lease_term_months} mo` : '—';
         const start = fmtDate(o.preferred_start_date);
+        const status = o.status || 'draft';
+        const isSubmitted = ['submitted', 'offer_accepted', 'evidence_submitted', 'validated', 'leased'].includes(status);
+        const isExpanded = expandedIds.has(String(o.id));
+        const canAccept = status === 'submitted';
+        const canReject = status === 'submitted';
+
+        const headlineRent = rent ? `${rent}/wk` : '—';
+
         return `
-          <div class="lo-row" data-id="${o.id}">
-            <div class="lo-row-main">
-              <div class="lo-row-headline">
-                <span class="lo-status ${statusClass(o.status)}">${esc(fmtStatus(o.status))}</span>
-                <span class="lo-rent">${esc(rent)}</span>
-                <span class="lo-meta">Bond ${esc(bond)} · Term ${esc(term)} · From ${esc(start)}</span>
-              </div>
-              ${o.terms ? `<div class="lo-row-terms">${esc(o.terms)}</div>` : ''}
-              ${renderTokenBlock(o)}
+          <div class="lo-row ${isExpanded ? 'lo-row-expanded' : ''}" data-id="${o.id}">
+            <div class="lo-row-summary">
+              <button type="button" class="lo-row-toggle" data-id="${o.id}" title="${isExpanded ? 'Collapse' : 'Expand'}">${isExpanded ? '▼' : '▶'}</button>
+              <span class="lo-status ${statusClass(status)}">${esc(fmtStatus(status))}</span>
+              <span class="lo-rent">${esc(headlineRent)}</span>
+              <span class="lo-meta">Bond ${esc(bond)} · Term ${esc(term)} · From ${esc(start)}</span>
+              ${status === 'draft' ? `
+                <span class="lo-row-actions-inline">
+                  <button class="lo-delete-btn" type="button" data-id="${o.id}" title="Delete this draft offer">✕</button>
+                </span>` : ''}
             </div>
-            <div class="lo-row-actions">
-              <button class="lo-edit-btn" type="button" data-id="${o.id}">Edit</button>
-              <button class="lo-delete-btn" type="button" data-id="${o.id}" title="Delete this offer">✕</button>
-            </div>
+
+            ${isExpanded ? `
+              <div class="lo-row-body">
+                ${isSubmitted ? renderSubmittedDetail(o) : ''}
+                ${renderTokenBlock(o)}
+                ${canAccept || canReject ? `
+                  <div class="lo-decision-row">
+                    ${canAccept ? `<button type="button" class="lo-accept-btn" data-id="${o.id}">Accept Offer</button>` : ''}
+                    ${canReject ? `<button type="button" class="lo-reject-btn" data-id="${o.id}">Reject</button>` : ''}
+                  </div>` : ''}
+              </div>` : ''}
           </div>
         `;
       }).join('');
 
-      listEl.querySelectorAll('.lo-edit-btn').forEach(b => {
-        b.addEventListener('click', () => {
-          editingId = b.getAttribute('data-id');
-          renderForm();
+      wireListEvents();
+    }
+
+    function wireListEvents() {
+      listEl.querySelectorAll('.lo-row-toggle').forEach(btn => {
+        btn.addEventListener('click', e => {
+          e.stopPropagation();
+          const id = String(btn.getAttribute('data-id'));
+          if (expandedIds.has(id)) expandedIds.delete(id);
+          else expandedIds.add(id);
+          renderList();
         });
       });
+      listEl.querySelectorAll('.lo-row-summary').forEach(row => {
+        row.addEventListener('click', e => {
+          if (e.target.closest('button') || e.target.closest('input')) return;
+          const id = String(row.parentElement.getAttribute('data-id'));
+          if (expandedIds.has(id)) expandedIds.delete(id);
+          else expandedIds.add(id);
+          renderList();
+        });
+      });
+
       listEl.querySelectorAll('.lo-delete-btn').forEach(b => {
-        b.addEventListener('click', async () => {
-          if (!confirm('Delete this lease offer? This cannot be undone.')) return;
+        b.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!confirm('Delete this draft offer? This cannot be undone.')) return;
           try {
             const r = await fetch(`${API}?id=${encodeURIComponent(b.getAttribute('data-id'))}`, { method: 'DELETE' });
             if (!r.ok) throw new Error(r.status);
@@ -274,13 +351,60 @@
         });
       });
 
-      // V77.2 — wire token-action handlers
+      listEl.querySelectorAll('.lo-accept-btn').forEach(b => {
+        b.addEventListener('click', async () => {
+          const id = b.getAttribute('data-id');
+          if (!confirm('Accept this offer? This will:\n\n• Convert each applicant into a Contact (linked to this deal as Applicant)\n• Send an Evidence Upload Form link to the primary applicant\n• Lock the offer terms\n\nProceed?')) return;
+          b.disabled = true;
+          b.textContent = 'Accepting…';
+          try {
+            const r = await fetch(API, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: parseInt(id, 10), status: 'offer_accepted' }),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              throw new Error(err.error || r.status);
+            }
+            await load();
+          } catch (err) {
+            alert('Accept failed: ' + err.message);
+            b.disabled = false;
+            b.textContent = 'Accept Offer';
+          }
+        });
+      });
+
+      listEl.querySelectorAll('.lo-reject-btn').forEach(b => {
+        b.addEventListener('click', async () => {
+          const id = b.getAttribute('data-id');
+          if (!confirm('Reject this offer? The applicant will not be notified by the system. This is a permanent decision.')) return;
+          b.disabled = true;
+          b.textContent = 'Rejecting…';
+          try {
+            const r = await fetch(API, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: parseInt(id, 10), status: 'rejected' }),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              throw new Error(err.error || r.status);
+            }
+            await load();
+          } catch (err) {
+            alert('Reject failed: ' + err.message);
+            b.disabled = false;
+            b.textContent = 'Reject';
+          }
+        });
+      });
+
       wireTokenActions();
     }
 
-    // Pick a Contact for token issuance — uses linked enquirer Contact by default
-    async function pickContactForToken(applicationId) {
-      // Find the deal's enquirer Contact via /api/contacts?pipeline_id=...
+    async function pickContactForToken() {
       try {
         const r = await fetch(`/api/contacts?pipeline_id=${encodeURIComponent(dealId)}`);
         if (!r.ok) throw new Error(r.status);
@@ -289,7 +413,6 @@
           alert('This Enquiry deal has no linked Contacts. Add an enquirer Contact first.');
           return null;
         }
-        // Prefer enquirer / applicant role; fallback to first
         const enquirer = linked.find(c => c.role === 'enquirer' || c.role === 'applicant');
         const c = enquirer || linked[0];
         if (!c.email || !/^\S+@\S+\.\S+$/.test(c.email)) {
@@ -304,14 +427,15 @@
     }
 
     function wireTokenActions() {
-      // Issue (Step 1 or Step 2)
       listEl.querySelectorAll('.lo-issue-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
           const applicationId = btn.getAttribute('data-application-id');
           const step = parseInt(btn.getAttribute('data-step'), 10);
-          const contact = await pickContactForToken(applicationId);
+          const formName = step === 1 ? 'Offer Form' : 'Evidence Upload Form';
+          const contact = await pickContactForToken();
           if (!contact) return;
-          if (!confirm(`Send Step ${step} link to ${contact.first_name || ''} ${contact.last_name || ''} <${contact.email}>?`)) return;
+          if (!confirm(`Send ${formName} link to ${contact.first_name || ''} ${contact.last_name || ''} <${contact.email}>?`)) return;
           btn.disabled = true;
           btn.textContent = 'Sending…';
           try {
@@ -328,14 +452,14 @@
           } catch (err) {
             alert('Failed to send link: ' + err.message);
             btn.disabled = false;
-            btn.textContent = `Send Step ${step} link to applicant`;
+            btn.textContent = `Send ${formName} link to applicant`;
           }
         });
       });
 
-      // Copy
       listEl.querySelectorAll('.lo-token-copy-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
           const row = btn.closest('.lo-token-row');
           const url = row?.querySelector('.lo-token-url')?.getAttribute('data-url') || '';
           if (!url) return;
@@ -345,7 +469,6 @@
             btn.textContent = '✓ Copied';
             setTimeout(() => { btn.textContent = orig; }, 1500);
           } catch (_) {
-            // Fallback
             const input = row.querySelector('.lo-token-url');
             input.select();
             document.execCommand('copy');
@@ -356,9 +479,9 @@
         });
       });
 
-      // Resend
       listEl.querySelectorAll('.lo-token-resend-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
           const tokenId = btn.getAttribute('data-token-id');
           if (!confirm('Resend the same link to the applicant\'s email?')) return;
           btn.disabled = true;
@@ -386,9 +509,9 @@
         });
       });
 
-      // Reissue
       listEl.querySelectorAll('.lo-token-reissue-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
           const tokenId = btn.getAttribute('data-token-id');
           if (!confirm('Reissue creates a brand new link, deactivating the old one. The current applicant Contact email will be used. Proceed?')) return;
           btn.disabled = true;
@@ -413,151 +536,7 @@
         });
       });
     }
-
-    function renderForm() {
-      addBtn.style.display = 'none';
-      formWrap.style.display = '';
-      const isNew = editingId === 'new';
-      const offer = isNew ? {
-        status: 'draft',
-        requested_rent: '',
-        bond_weeks: 4,
-        lease_term_months: 12,
-        preferred_start_date: '',
-        terms: '',
-        notes: '',
-      } : (offers.find(o => String(o.id) === String(editingId)) || {});
-
-      const currentStatus = offer.status || 'draft';
-      const statusAllowed = ALLOWED_FROM[currentStatus] || [currentStatus];
-      const statusOptionsHtml = STATUS_OPTIONS.map(o => {
-        const disabled = !statusAllowed.includes(o.value);
-        return `<option value="${o.value}" ${o.value === currentStatus ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${esc(o.label)}${disabled && o.value !== currentStatus ? ' (not allowed)' : ''}</option>`;
-      }).join('');
-      const statusLocked = TERMINAL.has(currentStatus);
-
-      const startDateVal = offer.preferred_start_date
-        ? (typeof offer.preferred_start_date === 'string' ? offer.preferred_start_date.slice(0, 10) : '')
-        : '';
-
-      formWrap.innerHTML = `
-        <div class="lo-form">
-          <div class="lo-form-title">${isNew ? 'New Lease Offer' : `Edit Lease Offer #${offer.id}`}</div>
-
-          <div class="lo-form-row">
-            <div class="kb-field-wrap" style="flex:1">
-              <label class="kb-field-label">Status</label>
-              <select class="kb-input lo-status-sel" ${statusLocked ? 'disabled' : ''}>
-                ${statusOptionsHtml}
-              </select>
-              ${statusLocked ? '<div class="lo-help">Status locked — terminal state.</div>' : ''}
-            </div>
-            <div class="kb-field-wrap" style="flex:1">
-              <label class="kb-field-label">Requested rent (per week)</label>
-              <input class="kb-input lo-rent" type="text" placeholder="e.g. 650" value="${esc(offer.requested_rent ?? '')}">
-            </div>
-          </div>
-
-          <div class="lo-form-row">
-            <div class="kb-field-wrap">
-              <label class="kb-field-label">Bond (weeks)</label>
-              <input class="kb-input lo-bond" type="number" min="0" max="12" value="${esc(offer.bond_weeks ?? '')}">
-            </div>
-            <div class="kb-field-wrap">
-              <label class="kb-field-label">Term (months)</label>
-              <input class="kb-input lo-term" type="number" min="1" max="60" value="${esc(offer.lease_term_months ?? '')}">
-            </div>
-            <div class="kb-field-wrap">
-              <label class="kb-field-label">Preferred move-in</label>
-              <input class="kb-input lo-start-date" type="date" value="${esc(startDateVal)}">
-            </div>
-          </div>
-
-          <div class="kb-field-wrap" style="margin-top:8px">
-            <label class="kb-field-label">Special terms / conditions</label>
-            <textarea class="kb-input lo-terms" rows="2" placeholder="e.g. Pet allowed, paint room, etc.">${esc(offer.terms ?? '')}</textarea>
-          </div>
-
-          <div class="kb-field-wrap" style="margin-top:8px">
-            <label class="kb-field-label">Internal notes (not shown to applicant)</label>
-            <textarea class="kb-input lo-notes" rows="2">${esc(offer.notes ?? '')}</textarea>
-          </div>
-
-          <div class="lo-form-actions">
-            <button class="params-cancel-btn lo-cancel-btn" type="button">Cancel</button>
-            <button class="params-save-btn lo-save-btn" type="button">${isNew ? 'Create Offer' : 'Save Changes'}</button>
-          </div>
-        </div>
-      `;
-
-      formWrap.querySelector('.lo-cancel-btn').addEventListener('click', () => {
-        editingId = null;
-        renderList();
-      });
-      formWrap.querySelector('.lo-save-btn').addEventListener('click', async () => {
-        const rentRaw = formWrap.querySelector('.lo-rent').value.trim();
-        const rent    = rentRaw ? parseFloat(rentRaw.replace(/[^0-9.]/g, '')) : null;
-        const bond    = parseInt(formWrap.querySelector('.lo-bond').value, 10);
-        const term    = parseInt(formWrap.querySelector('.lo-term').value, 10);
-        const startD  = formWrap.querySelector('.lo-start-date').value || null;
-        const terms   = formWrap.querySelector('.lo-terms').value.trim();
-        const notes   = formWrap.querySelector('.lo-notes').value.trim();
-        const status  = formWrap.querySelector('.lo-status-sel').value;
-
-        const payload = {
-          status,
-          requested_rent:        isNaN(rent) ? null : rent,
-          bond_weeks:            isNaN(bond) ? null : bond,
-          lease_term_months:     isNaN(term) ? null : term,
-          preferred_start_date:  startD,
-          terms:                 terms || null,
-          notes:                 notes || null,
-        };
-
-        try {
-          const btn = formWrap.querySelector('.lo-save-btn');
-          btn.disabled = true; btn.textContent = 'Saving…';
-          if (isNew) {
-            payload.deal_id = dealId;
-            const r = await fetch(API, {
-              method:  'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body:    JSON.stringify(payload),
-            });
-            if (!r.ok) {
-              const err = await r.json().catch(() => ({ error: r.status }));
-              throw new Error(err.error || `HTTP ${r.status}`);
-            }
-          } else {
-            payload.id = parseInt(editingId, 10);
-            const r = await fetch(API, {
-              method:  'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body:    JSON.stringify(payload),
-            });
-            if (!r.ok) {
-              const err = await r.json().catch(() => ({ error: r.status }));
-              throw new Error(err.error || `HTTP ${r.status}`);
-            }
-          }
-          editingId = null;
-          await load();
-        } catch (err) {
-          alert('Save failed: ' + err.message);
-          const btn = formWrap.querySelector('.lo-save-btn');
-          if (btn) { btn.disabled = false; btn.textContent = isNew ? 'Create Offer' : 'Save Changes'; }
-        }
-      });
-    }
-
-    load();
-
-    return {
-      destroy: () => { containerEl.innerHTML = ''; },
-      refresh: load,
-    };
   }
 
-  // Expose
   window.LeaseOfferSection = { mount };
 })();
