@@ -638,7 +638,7 @@ async function step2Load(req, res, ctx) {
   // Fetch application + property + applicants_jsonb (for per-applicant evidence sections)
   const rows = await sql`
     SELECT a.id, a.status, a.applicants_jsonb,
-           a.credit_check_consent_at, a.tenancy_database_consent_at,
+           a.credit_check_consent_at, a.tenancy_database_consent_at, a.retention_consent_at,
            d.id AS deal_id,
            p.address, p.suburb, p.state
     FROM applications a
@@ -661,12 +661,13 @@ async function step2Load(req, res, ctx) {
   const housingRowsRaw = await sql`
     SELECT id, applicant_contact_id, housing_type, address, monthly_amount,
            term_value, term_unit, term_start_date, term_end_date,
-           landlord_lender_name, landlord_lender_contact, notes
+           landlord_lender_name, landlord_lender_contact, notes, evidence_label
     FROM application_housing_history
     WHERE application_id = ${application_id}
     ORDER BY sort_order ASC, id ASC`;
   const housingRows = housingRowsRaw.map(r => ({
     id: r.id,
+    client_id: r.evidence_label?.startsWith('client_id:') ? r.evidence_label.slice(10) : null,
     applicant_contact_id: r.applicant_contact_id,
     housing_type: r.housing_type,
     address: r.address,
@@ -685,12 +686,13 @@ async function step2Load(req, res, ctx) {
   const incomeRowsRaw = await sql`
     SELECT id, applicant_contact_id, income_type, income_source_name, role,
            annual_income, term_value, term_unit, term_start_date, term_end_date,
-           employer_contact_name, employer_contact_email, employer_contact_mobile, notes
+           employer_contact_name, employer_contact_email, employer_contact_mobile, notes, evidence_label
     FROM application_income_history
     WHERE application_id = ${application_id}
     ORDER BY sort_order ASC, id ASC`;
   const incomeRows = incomeRowsRaw.map(r => ({
     id: r.id,
+    client_id: r.evidence_label?.startsWith('client_id:') ? r.evidence_label.slice(10) : null,
     applicant_contact_id: r.applicant_contact_id,
     income_type: r.income_type,
     income_source_name: r.income_source_name,
@@ -721,6 +723,7 @@ async function step2Load(req, res, ctx) {
       applicants: app.applicants_jsonb || [],
       credit_check_consent_at: app.credit_check_consent_at,
       tenancy_database_consent_at: app.tenancy_database_consent_at,
+      retention_consent_at: app.retention_consent_at,
     },
     property: {
       address: app.address || '',
@@ -744,29 +747,36 @@ async function step2SaveDraft(req, res, ctx) {
   // Persist consent flags + housing/income history (full-replace semantics)
   const ccConsent = body.credit_check_consent === true     ? new Date().toISOString() : null;
   const tdConsent = body.tenancy_database_consent === true ? new Date().toISOString() : null;
+  const rtConsent = body.retention_consent === true        ? new Date().toISOString() : null;
 
   await sql`
     UPDATE applications SET
       credit_check_consent_at     = COALESCE(credit_check_consent_at, ${ccConsent}),
       tenancy_database_consent_at = COALESCE(tenancy_database_consent_at, ${tdConsent}),
+      retention_consent_at        = COALESCE(retention_consent_at, ${rtConsent}),
       updated_at                  = now()
     WHERE id = ${application_id}`;
 
   // Housing history — full replace if provided
   if (Array.isArray(body.housing_history)) {
+    // Before deleting & re-inserting, save current client_id ↔ housing.id mapping (so
+    // we can update evidence rows whose category references client_ids that may
+    // change) — actually we don't change client_ids; client_ids are stable across
+    // form lifetime, so evidence rows just keep matching by client_id suffix.
     await sql`DELETE FROM application_housing_history WHERE application_id = ${application_id}`;
     let sortOrder = 0;
     for (const h of body.housing_history) {
-      // Combine separate landlord fields into the single contact text column
       const contactParts = [
         h.landlord_email ? h.landlord_email : '',
         h.landlord_phone ? h.landlord_phone : '',
       ].filter(Boolean).join(' · ');
+      // Stash client_id in evidence_label so we can round-trip it (evidence_url is left empty)
+      const clientIdMarker = h.client_id ? `client_id:${String(h.client_id).slice(0, 32)}` : null;
       await sql`
         INSERT INTO application_housing_history
           (application_id, applicant_contact_id, housing_type, address, monthly_amount,
            term_value, term_unit, term_start_date, term_end_date,
-           landlord_lender_name, landlord_lender_contact, notes, sort_order)
+           landlord_lender_name, landlord_lender_contact, notes, evidence_label, sort_order)
         VALUES
           (${application_id}, ${h.applicant_contact_id || null},
            ${toText(h.housing_type, 50) || 'rented'},
@@ -779,6 +789,7 @@ async function step2SaveDraft(req, res, ctx) {
            ${toText(h.landlord_name, 200)},
            ${toText(contactParts, 300) || null},
            ${toText(h.notes, 1000)},
+           ${clientIdMarker},
            ${sortOrder++})`;
     }
   }
@@ -788,13 +799,13 @@ async function step2SaveDraft(req, res, ctx) {
     await sql`DELETE FROM application_income_history WHERE application_id = ${application_id}`;
     let sortOrder = 0;
     for (const i of body.income_history) {
-      // Convert gross amount/period → annual_income
       const annual = grossToAnnual(toNumber(i.gross_amount), i.gross_period);
+      const clientIdMarker = i.client_id ? `client_id:${String(i.client_id).slice(0, 32)}` : null;
       await sql`
         INSERT INTO application_income_history
           (application_id, applicant_contact_id, income_type, income_source_name, role,
            annual_income, term_value, term_unit, term_start_date, term_end_date,
-           employer_contact_name, employer_contact_email, employer_contact_mobile, notes, sort_order)
+           employer_contact_name, employer_contact_email, employer_contact_mobile, notes, evidence_label, sort_order)
         VALUES
           (${application_id}, ${i.applicant_contact_id || null},
            ${toText(i.income_type, 50) || 'employment'},
@@ -809,6 +820,7 @@ async function step2SaveDraft(req, res, ctx) {
            ${toEmail(i.manager_email)},
            ${toText(i.manager_phone, 30)},
            ${toText(i.notes, 1000)},
+           ${clientIdMarker},
            ${sortOrder++})`;
     }
   }
@@ -818,13 +830,43 @@ async function step2SaveDraft(req, res, ctx) {
 
 async function step2Submit(req, res, ctx) {
   const application_id = ctx.application.id;
+  const body = req.body || {};
 
   if (ctx.application.status !== 'offer_accepted') {
     return res.status(409).json({ error: 'Form is locked — already submitted or not yet accepted.' });
   }
 
+  // Server-side validation
+  const errs = [];
+  if (body.reference_consent !== true) errs.push('Reference consent is required.');
+  if (body.retention_consent !== true) errs.push('Retention consent is required.');
+
+  // Each housing/income entry must have at least one uploaded evidence file
+  const evidenceRows = await sql`
+    SELECT category FROM application_evidence WHERE application_id = ${application_id}`;
+  const evidenceCats = evidenceRows.map(r => r.category || '');
+  const housingClientIds = (Array.isArray(body.housing_history) ? body.housing_history : [])
+    .map(h => h.client_id).filter(Boolean);
+  const incomeClientIds = (Array.isArray(body.income_history) ? body.income_history : [])
+    .map(i => i.client_id).filter(Boolean);
+  for (const cid of housingClientIds) {
+    if (!evidenceCats.some(c => c === `housing-evidence:${cid}`)) {
+      errs.push('All housing entries must have at least one supporting document.');
+      break;
+    }
+  }
+  for (const cid of incomeClientIds) {
+    if (!evidenceCats.some(c => c === `income-evidence:${cid}`)) {
+      errs.push('All income entries must have at least one supporting document.');
+      break;
+    }
+  }
+  if (errs.length) {
+    return res.status(400).json({ error: errs.join(' '), errors: errs });
+  }
+
   // Save final form payload first
-  const draftResult = await step2SaveDraft(req, { ...res, status: () => ({ json: () => null }) }, ctx);
+  await step2SaveDraft(req, { ...res, status: () => ({ json: () => null }) }, ctx);
 
   // Then flip status → evidence_submitted
   await sql`
