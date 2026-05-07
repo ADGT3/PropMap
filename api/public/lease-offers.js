@@ -478,6 +478,22 @@ function toIsoDate(v) {
   return s;
 }
 
+// Convert a gross income amount + period to an annualised value.
+// Used because the DB schema stores income as annual_income only.
+function grossToAnnual(amount, period) {
+  if (amount == null || isNaN(amount)) return null;
+  const p = String(period || 'weekly').toLowerCase();
+  switch (p) {
+    case 'weekly':       return Math.round(amount * 52);
+    case 'fortnightly':  return Math.round(amount * 26);
+    case 'monthly':      return Math.round(amount * 12);
+    case 'quarterly':    return Math.round(amount * 4);
+    case 'annually':     return Math.round(amount);
+    case 'yearly':       return Math.round(amount);
+    default:             return Math.round(amount * 52);
+  }
+}
+
 /**
  * Required-field validation on submit. Returns array of {field, error}.
  */
@@ -632,21 +648,55 @@ async function step2Load(req, res, ctx) {
     });
   }
 
-  // Existing housing + income history (so applicant sees what they previously saved)
-  const housingRows = await sql`
+  // Existing housing + income history (so applicant sees what they previously saved).
+  // Map DB column names back to the field names the form expects.
+  const housingRowsRaw = await sql`
     SELECT id, applicant_contact_id, housing_type, address, monthly_amount,
-           term_value, term_unit, started_at, ended_at, current_residence,
-           landlord_name, landlord_email, landlord_phone, notes
+           term_value, term_unit, term_start_date, term_end_date,
+           landlord_lender_name, landlord_lender_contact, notes
     FROM application_housing_history
     WHERE application_id = ${application_id}
-    ORDER BY id ASC`;
-  const incomeRows = await sql`
-    SELECT id, applicant_contact_id, income_type, income_source_name, position,
-           gross_amount, gross_period, started_at, ended_at, current_role,
-           manager_name, manager_email, manager_phone, notes
+    ORDER BY sort_order ASC, id ASC`;
+  const housingRows = housingRowsRaw.map(r => ({
+    id: r.id,
+    applicant_contact_id: r.applicant_contact_id,
+    housing_type: r.housing_type,
+    address: r.address,
+    monthly_amount: r.monthly_amount,
+    term_value: r.term_value,
+    term_unit: r.term_unit,
+    started_at: r.term_start_date,
+    ended_at: r.term_end_date,
+    current_residence: r.term_end_date == null,
+    landlord_name: r.landlord_lender_name,
+    landlord_email: '',  // not separately stored; was concatenated into contact
+    landlord_phone: r.landlord_lender_contact || '',
+    notes: r.notes,
+  }));
+
+  const incomeRowsRaw = await sql`
+    SELECT id, applicant_contact_id, income_type, income_source_name, role,
+           annual_income, term_value, term_unit, term_start_date, term_end_date,
+           employer_contact_name, employer_contact_email, employer_contact_mobile, notes
     FROM application_income_history
     WHERE application_id = ${application_id}
-    ORDER BY id ASC`;
+    ORDER BY sort_order ASC, id ASC`;
+  const incomeRows = incomeRowsRaw.map(r => ({
+    id: r.id,
+    applicant_contact_id: r.applicant_contact_id,
+    income_type: r.income_type,
+    income_source_name: r.income_source_name,
+    position: r.role,
+    gross_amount: r.annual_income != null ? Math.round(r.annual_income / 52) : null,
+    gross_period: 'weekly',
+    started_at: r.term_start_date,
+    ended_at: r.term_end_date,
+    current_role: r.term_end_date == null,
+    manager_name: r.employer_contact_name,
+    manager_email: r.employer_contact_email,
+    manager_phone: r.employer_contact_mobile,
+    notes: r.notes,
+  }));
 
   // Existing evidence files for this application
   const evidenceRows = await sql`
@@ -697,12 +747,18 @@ async function step2SaveDraft(req, res, ctx) {
   // Housing history — full replace if provided
   if (Array.isArray(body.housing_history)) {
     await sql`DELETE FROM application_housing_history WHERE application_id = ${application_id}`;
+    let sortOrder = 0;
     for (const h of body.housing_history) {
+      // Combine separate landlord fields into the single contact text column
+      const contactParts = [
+        h.landlord_email ? h.landlord_email : '',
+        h.landlord_phone ? h.landlord_phone : '',
+      ].filter(Boolean).join(' · ');
       await sql`
         INSERT INTO application_housing_history
           (application_id, applicant_contact_id, housing_type, address, monthly_amount,
-           term_value, term_unit, started_at, ended_at, current_residence,
-           landlord_name, landlord_email, landlord_phone, notes)
+           term_value, term_unit, term_start_date, term_end_date,
+           landlord_lender_name, landlord_lender_contact, notes, sort_order)
         VALUES
           (${application_id}, ${h.applicant_contact_id || null},
            ${toText(h.housing_type, 50) || 'rented'},
@@ -711,38 +767,41 @@ async function step2SaveDraft(req, res, ctx) {
            ${clampInt(h.term_value, 0, 1200, null)},
            ${toText(h.term_unit, 20)},
            ${toIsoDate(h.started_at)},
-           ${toIsoDate(h.ended_at)},
-           ${!!h.current_residence},
+           ${h.current_residence ? null : toIsoDate(h.ended_at)},
            ${toText(h.landlord_name, 200)},
-           ${toEmail(h.landlord_email)},
-           ${toText(h.landlord_phone, 30)},
-           ${toText(h.notes, 1000)})`;
+           ${toText(contactParts, 300) || null},
+           ${toText(h.notes, 1000)},
+           ${sortOrder++})`;
     }
   }
 
   // Income history — full replace if provided
   if (Array.isArray(body.income_history)) {
     await sql`DELETE FROM application_income_history WHERE application_id = ${application_id}`;
+    let sortOrder = 0;
     for (const i of body.income_history) {
+      // Convert gross amount/period → annual_income
+      const annual = grossToAnnual(toNumber(i.gross_amount), i.gross_period);
       await sql`
         INSERT INTO application_income_history
-          (application_id, applicant_contact_id, income_type, income_source_name, position,
-           gross_amount, gross_period, started_at, ended_at, current_role,
-           manager_name, manager_email, manager_phone, notes)
+          (application_id, applicant_contact_id, income_type, income_source_name, role,
+           annual_income, term_value, term_unit, term_start_date, term_end_date,
+           employer_contact_name, employer_contact_email, employer_contact_mobile, notes, sort_order)
         VALUES
           (${application_id}, ${i.applicant_contact_id || null},
            ${toText(i.income_type, 50) || 'employment'},
            ${toText(i.income_source_name, 200) || ''},
            ${toText(i.position, 200)},
-           ${toNumber(i.gross_amount)},
-           ${toText(i.gross_period, 20) || 'weekly'},
+           ${annual},
+           ${clampInt(i.term_value, 0, 1200, null)},
+           ${toText(i.term_unit, 20)},
            ${toIsoDate(i.started_at)},
-           ${toIsoDate(i.ended_at)},
-           ${!!i.current_role},
+           ${i.current_role ? null : toIsoDate(i.ended_at)},
            ${toText(i.manager_name, 200)},
            ${toEmail(i.manager_email)},
            ${toText(i.manager_phone, 30)},
-           ${toText(i.notes, 1000)})`;
+           ${toText(i.notes, 1000)},
+           ${sortOrder++})`;
     }
   }
 
