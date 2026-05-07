@@ -147,12 +147,12 @@ async function verifyAction(req, res, token) {
 
   // Look up the linked Contact's phone
   const rows = await sql`
-    SELECT c.phone
+    SELECT c.mobile
     FROM applicant_form_tokens t
     LEFT JOIN contacts c ON c.id = t.contact_id
     WHERE t.id = ${ctx.token_row.id}
     LIMIT 1`;
-  const contactPhone = rows[0]?.phone;
+  const contactPhone = rows[0]?.mobile;
 
   if (!contactPhone) {
     // Fallback — Contact was unlinked or has no phone. We can't verify.
@@ -204,7 +204,7 @@ async function loadAction(req, res, ctx) {
   // Look up the linked applicant Contact (created_by + token's contact_id)
   const tokenRows = await sql`
     SELECT t.contact_id, t.applicant_email,
-           c.first_name, c.last_name, c.email, c.phone
+           c.first_name, c.last_name, c.email, c.mobile
     FROM applicant_form_tokens t
     LEFT JOIN contacts c ON c.id = t.contact_id
     WHERE t.id = ${ctx.token_row.id}`;
@@ -215,7 +215,7 @@ async function loadAction(req, res, ctx) {
     first_name: tokenInfo.first_name || '',
     last_name:  tokenInfo.last_name  || '',
     email:      tokenInfo.email      || tokenInfo.applicant_email || '',
-    mobile:     tokenInfo.phone      || '',
+    mobile:     tokenInfo.mobile     || '',
     dob:        '',
     current_address: '',
     pets:       '', // comma-separated description, or 'none'
