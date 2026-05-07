@@ -12,6 +12,7 @@
   ],
   "rewrites": [
     { "source": "/api/tiles/:path*",                              "destination": "/api/tiles" },
+    { "source": "/api/applications/evidence/:id/download",        "destination": "/api/evidence-download?id=:id" },
     { "source": "/api/public/lease-offers/:token/:action",        "destination": "/api/public/lease-offers" },
     { "source": "/api/(.*)",                                      "destination": "/api/$1" },
     { "source": "/lease-offer/step-2/:token([A-Za-z0-9]{16,64})", "destination": "/lease-offer/step-2.html" },
