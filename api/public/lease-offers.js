@@ -28,6 +28,7 @@ import { getDatabaseUrl } from '../../lib/db.js';
 import { validatePublicToken } from '../../lib/public-token-auth.js';
 import Email from '../../lib/email.js';
 import * as receivedTpl from '../../emails/lease-offer-received-agent-notification.js';
+import { upload as blobUpload } from '../../lib/blob.js';
 
 const sql = neon(getDatabaseUrl());
 
@@ -82,6 +83,15 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: 'Method not allowed' });
       }
       return await submitAction(req, res, ctx);
+    }
+
+    // ── Step 2 actions ──────────────────────────────────────────────────
+    // These accept Step 2 tokens. Reusing token-info / verify which are step-1-specific
+    // wouldn't work — Step 2 has its own load / submit-draft / submit / upload-evidence.
+
+    if (action === 'step2-token-info' || action === 'step2-verify' || action === 'step2-load' ||
+        action === 'step2-save-draft' || action === 'step2-submit' || action === 'step2-upload') {
+      return await handleStep2(req, res, token, action);
     }
 
     return res.status(404).json({ error: 'Unknown action: ' + action });
@@ -491,4 +501,400 @@ function validateForSubmit(p) {
     errs.push({ field: 'occupants.total', error: 'Total occupants is required.' });
   }
   return errs;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// V77.2 — Step 2 (evidence upload) actions
+// ────────────────────────────────────────────────────────────────────────────
+
+
+async function handleStep2(req, res, token, action) {
+  if (action === 'step2-token-info') {
+    if (req.method !== 'GET') {
+      res.setHeader('Allow', 'GET');
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    return await step2TokenInfo(req, res, token);
+  }
+
+  if (action === 'step2-verify') {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    return await step2Verify(req, res, token);
+  }
+
+  // All other Step 2 actions require email_verified=true on a step-2 token.
+  const ctx = await validatePublicToken(token, { require_step: 2, require_verified: true });
+  if (!ctx.ok) {
+    return res.status(ctx.status).json({ error: ctx.message, code: ctx.code });
+  }
+
+  if (action === 'step2-load') {
+    if (req.method !== 'GET') {
+      res.setHeader('Allow', 'GET');
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    return await step2Load(req, res, ctx);
+  }
+  if (action === 'step2-save-draft') {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    return await step2SaveDraft(req, res, ctx);
+  }
+  if (action === 'step2-submit') {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    return await step2Submit(req, res, ctx);
+  }
+  if (action === 'step2-upload') {
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+    return await step2Upload(req, res, ctx);
+  }
+
+  return res.status(404).json({ error: 'Unknown step2 action: ' + action });
+}
+
+async function step2TokenInfo(req, res, token) {
+  const ctx = await validatePublicToken(token, { require_step: 2, require_verified: false, touch_access: false });
+  if (!ctx.ok) {
+    return res.status(ctx.status).json({ error: ctx.message, code: ctx.code });
+  }
+  return res.status(200).json({
+    verified: !!ctx.token_row.email_verified,
+    masked_email: maskEmail(ctx.token_row.applicant_email),
+  });
+}
+
+async function step2Verify(req, res, token) {
+  const body = req.body || {};
+  const submittedMobile = body.mobile;
+
+  const ctx = await validatePublicToken(token, { require_step: 2, require_verified: false });
+  if (!ctx.ok) {
+    return res.status(ctx.status).json({ error: ctx.message, code: ctx.code });
+  }
+  if (ctx.token_row.email_verified) {
+    return res.status(200).json({ verified: true, already: true });
+  }
+  if (!submittedMobile) {
+    return res.status(400).json({ error: 'Mobile number is required.' });
+  }
+
+  const rows = await sql`
+    SELECT c.mobile FROM applicant_form_tokens t
+    LEFT JOIN contacts c ON c.id = t.contact_id
+    WHERE t.id = ${ctx.token_row.id}`;
+  const contactMobile = rows[0]?.mobile;
+  if (!contactMobile) {
+    return res.status(409).json({ error: 'Cannot verify — please contact your agent.', code: 'no_contact_phone' });
+  }
+  if (!phonesMatch(submittedMobile, contactMobile)) {
+    return res.status(401).json({ error: 'That mobile number does not match our records. Please double-check and try again.', code: 'mobile_mismatch' });
+  }
+
+  const newExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  await sql`
+    UPDATE applicant_form_tokens
+       SET email_verified = true, verified_at = now(), expires_at = ${newExpires.toISOString()}
+     WHERE id = ${ctx.token_row.id}`;
+  return res.status(200).json({ verified: true, expires_at: newExpires.toISOString() });
+}
+
+async function step2Load(req, res, ctx) {
+  const application_id = ctx.application.id;
+
+  // Fetch application + property + applicants_jsonb (for per-applicant evidence sections)
+  const rows = await sql`
+    SELECT a.id, a.status, a.applicants_jsonb,
+           a.credit_check_consent_at, a.tenancy_database_consent_at,
+           d.id AS deal_id,
+           p.address, p.suburb, p.state
+    FROM applications a
+    JOIN deals d        ON d.id = a.deal_id
+    LEFT JOIN properties p ON p.id = d.property_id
+    WHERE a.id = ${application_id}`;
+  const app = rows[0];
+  if (!app) return res.status(404).json({ error: 'Application not found' });
+
+  // Status check — Step 2 is meaningful only when offer_accepted (or already evidence_submitted, allows continuing)
+  if (!['offer_accepted', 'evidence_submitted'].includes(app.status)) {
+    return res.status(409).json({
+      error: 'This form is not currently available. Please wait for your agent to accept your offer.',
+      code: 'wrong_status',
+    });
+  }
+
+  // Existing housing + income history (so applicant sees what they previously saved)
+  const housingRows = await sql`
+    SELECT id, applicant_contact_id, housing_type, address, monthly_amount,
+           term_value, term_unit, started_at, ended_at, current_residence,
+           landlord_name, landlord_email, landlord_phone, notes
+    FROM application_housing_history
+    WHERE application_id = ${application_id}
+    ORDER BY id ASC`;
+  const incomeRows = await sql`
+    SELECT id, applicant_contact_id, income_type, income_source_name, position,
+           gross_amount, gross_period, started_at, ended_at, current_role,
+           manager_name, manager_email, manager_phone, notes
+    FROM application_income_history
+    WHERE application_id = ${application_id}
+    ORDER BY id ASC`;
+
+  // Existing evidence files for this application
+  const evidenceRows = await sql`
+    SELECT id, applicant_contact_id, category, filename, mime_type, size_bytes,
+           url, uploaded_at, points_value
+    FROM application_evidence
+    WHERE application_id = ${application_id}
+    ORDER BY uploaded_at ASC`;
+
+  return res.status(200).json({
+    application: {
+      id: app.id,
+      status: app.status,
+      applicants: app.applicants_jsonb || [],
+      credit_check_consent_at: app.credit_check_consent_at,
+      tenancy_database_consent_at: app.tenancy_database_consent_at,
+    },
+    property: {
+      address: app.address || '',
+      suburb:  app.suburb  || '',
+      state:   app.state   || '',
+    },
+    housing_history: housingRows,
+    income_history:  incomeRows,
+    evidence:        evidenceRows,
+  });
+}
+
+async function step2SaveDraft(req, res, ctx) {
+  const body = req.body || {};
+  const application_id = ctx.application.id;
+
+  if (ctx.application.status !== 'offer_accepted') {
+    return res.status(409).json({ error: 'Form is locked — already submitted or not yet accepted.' });
+  }
+
+  // Persist consent flags + housing/income history (full-replace semantics)
+  const ccConsent = body.credit_check_consent === true     ? new Date().toISOString() : null;
+  const tdConsent = body.tenancy_database_consent === true ? new Date().toISOString() : null;
+
+  await sql`
+    UPDATE applications SET
+      credit_check_consent_at     = COALESCE(credit_check_consent_at, ${ccConsent}),
+      tenancy_database_consent_at = COALESCE(tenancy_database_consent_at, ${tdConsent}),
+      updated_at                  = now()
+    WHERE id = ${application_id}`;
+
+  // Housing history — full replace if provided
+  if (Array.isArray(body.housing_history)) {
+    await sql`DELETE FROM application_housing_history WHERE application_id = ${application_id}`;
+    for (const h of body.housing_history) {
+      await sql`
+        INSERT INTO application_housing_history
+          (application_id, applicant_contact_id, housing_type, address, monthly_amount,
+           term_value, term_unit, started_at, ended_at, current_residence,
+           landlord_name, landlord_email, landlord_phone, notes)
+        VALUES
+          (${application_id}, ${h.applicant_contact_id || null},
+           ${toText(h.housing_type, 50) || 'rented'},
+           ${toText(h.address, 300) || ''},
+           ${toNumber(h.monthly_amount)},
+           ${clampInt(h.term_value, 0, 1200, null)},
+           ${toText(h.term_unit, 20)},
+           ${toIsoDate(h.started_at)},
+           ${toIsoDate(h.ended_at)},
+           ${!!h.current_residence},
+           ${toText(h.landlord_name, 200)},
+           ${toEmail(h.landlord_email)},
+           ${toText(h.landlord_phone, 30)},
+           ${toText(h.notes, 1000)})`;
+    }
+  }
+
+  // Income history — full replace if provided
+  if (Array.isArray(body.income_history)) {
+    await sql`DELETE FROM application_income_history WHERE application_id = ${application_id}`;
+    for (const i of body.income_history) {
+      await sql`
+        INSERT INTO application_income_history
+          (application_id, applicant_contact_id, income_type, income_source_name, position,
+           gross_amount, gross_period, started_at, ended_at, current_role,
+           manager_name, manager_email, manager_phone, notes)
+        VALUES
+          (${application_id}, ${i.applicant_contact_id || null},
+           ${toText(i.income_type, 50) || 'employment'},
+           ${toText(i.income_source_name, 200) || ''},
+           ${toText(i.position, 200)},
+           ${toNumber(i.gross_amount)},
+           ${toText(i.gross_period, 20) || 'weekly'},
+           ${toIsoDate(i.started_at)},
+           ${toIsoDate(i.ended_at)},
+           ${!!i.current_role},
+           ${toText(i.manager_name, 200)},
+           ${toEmail(i.manager_email)},
+           ${toText(i.manager_phone, 30)},
+           ${toText(i.notes, 1000)})`;
+    }
+  }
+
+  return res.status(200).json({ saved: true, saved_at: new Date().toISOString() });
+}
+
+async function step2Submit(req, res, ctx) {
+  const application_id = ctx.application.id;
+
+  if (ctx.application.status !== 'offer_accepted') {
+    return res.status(409).json({ error: 'Form is locked — already submitted or not yet accepted.' });
+  }
+
+  // Save final form payload first
+  const draftResult = await step2SaveDraft(req, { ...res, status: () => ({ json: () => null }) }, ctx);
+
+  // Then flip status → evidence_submitted
+  await sql`
+    UPDATE applications SET
+      status                = 'evidence_submitted',
+      evidence_submitted_at = now(),
+      updated_at            = now()
+    WHERE id = ${application_id}`;
+
+  // Fire agent notification email
+  try {
+    await fireEvidenceNotification(ctx);
+  } catch (err) {
+    console.error('[step2-submit] agent notification failed:', err);
+  }
+
+  return res.status(200).json({ submitted: true, submitted_at: new Date().toISOString() });
+}
+
+async function fireEvidenceNotification(ctx) {
+  const application_id = ctx.application.id;
+  const deal_id = ctx.application.deal_id;
+
+  const rows = await sql`
+    SELECT d.created_by AS agent_contact_id,
+           p.address, p.suburb, p.state,
+           c.email AS agent_email, c.first_name AS agent_first, c.last_name AS agent_last,
+           a.applicants_jsonb
+    FROM deals d
+    LEFT JOIN properties p ON p.id = d.property_id
+    LEFT JOIN contacts c   ON c.id = d.created_by
+    LEFT JOIN applications a ON a.id = ${application_id}
+    WHERE d.id = ${deal_id}
+    LIMIT 1`;
+  const row = rows[0];
+  if (!row || !row.agent_email) return;
+
+  // ID points total
+  const pointsRows = await sql`
+    SELECT COALESCE(SUM(points_value), 0)::int AS total
+    FROM application_evidence
+    WHERE application_id = ${application_id} AND category LIKE 'id-100%'`;
+  const idPoints = pointsRows[0]?.total || 0;
+
+  // Counts for evidence summary
+  const countRows = await sql`
+    SELECT
+      (SELECT COUNT(*)::int FROM application_housing_history WHERE application_id = ${application_id}) AS housing_count,
+      (SELECT COUNT(*)::int FROM application_income_history  WHERE application_id = ${application_id}) AS income_count,
+      (SELECT COUNT(*)::int FROM application_evidence        WHERE application_id = ${application_id}) AS evidence_count`;
+  const counts = countRows[0] || {};
+
+  const agentName = [row.agent_first, row.agent_last].filter(Boolean).join(' ').trim() || 'Agent';
+  const propertyAddress = [row.address, row.suburb, row.state].filter(Boolean).join(', ');
+  const primary = (row.applicants_jsonb || [])[0] || {};
+  const applicantName = [primary.first_name, primary.last_name].filter(Boolean).join(' ').trim() || ctx.token_row.applicant_email;
+
+  const cfg = await Email.getConfig();
+  const dealUrl = `${cfg.app_public_url}/?deal=${encodeURIComponent(deal_id)}`;
+  const submittedAt = new Date().toLocaleString('en-AU', { timeZone: 'Australia/Sydney', dateStyle: 'medium', timeStyle: 'short' });
+  const evidenceSummary = `${counts.evidence_count || 0} files · ${counts.housing_count || 0} housing entries · ${counts.income_count || 0} income entries`;
+
+  const evidenceTpl = await import('../../emails/lease-offer-evidence-submitted-agent-notification.js');
+
+  await Email.send({
+    to: row.agent_email,
+    channel: 'leasing',
+    template: evidenceTpl,
+    template_id: 'lease-offer-evidence-submitted-agent-notification',
+    vars: {
+      agent_name:       agentName,
+      applicant_name:   applicantName,
+      property_address: propertyAddress,
+      deal_url:         dealUrl,
+      id_points_total:  idPoints,
+      evidence_summary: evidenceSummary,
+      submitted_at:     submittedAt,
+      agency_name:      'Edan Property',
+    },
+    related_entity_type: 'application',
+    related_entity_id:   application_id,
+  });
+}
+
+// ── Upload evidence file ───────────────────────────────────────────────────
+// Receives multipart/form-data: { file: <File>, applicant_contact_id?, category, points_value? }
+async function step2Upload(req, res, ctx) {
+  const application_id = ctx.application.id;
+  if (ctx.application.status !== 'offer_accepted') {
+    return res.status(409).json({ error: 'Form is locked — already submitted or not yet accepted.' });
+  }
+
+  // Vercel serverless functions get raw multipart bodies — easiest path is
+  // to receive base64 from the client. We define our own contract here:
+  // { filename, mime_type, size, applicant_contact_id, category, points_value, body_base64 }
+  const body = req.body || {};
+  const { filename, mime_type, size, applicant_contact_id, category, points_value, body_base64 } = body;
+
+  if (!filename || !mime_type || !body_base64) {
+    return res.status(400).json({ error: 'filename, mime_type, body_base64 required' });
+  }
+  if (!category) return res.status(400).json({ error: 'category required' });
+
+  // Decode base64 to Buffer
+  let buf;
+  try { buf = Buffer.from(body_base64, 'base64'); }
+  catch { return res.status(400).json({ error: 'Invalid base64 body' }); }
+
+  if (buf.length > 10 * 1024 * 1024) {
+    return res.status(413).json({ error: 'File too large (max 10 MB).' });
+  }
+
+  let uploadResult;
+  try {
+    uploadResult = await blobUpload({
+      application_id,
+      applicant_or_token: applicant_contact_id || ctx.token_row.token.slice(0, 8),
+      category,
+      filename,
+      mime_type,
+      body: buf,
+      size: buf.length,
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  // Persist evidence row
+  const result = await sql`
+    INSERT INTO application_evidence
+      (application_id, applicant_contact_id, category, filename, mime_type, size_bytes, url, points_value)
+    VALUES
+      (${application_id}, ${applicant_contact_id || null}, ${category},
+       ${filename}, ${mime_type}, ${buf.length},
+       ${uploadResult.url}, ${parseInt(points_value, 10) || 0})
+    RETURNING id, category, filename, mime_type, size_bytes, url, points_value, uploaded_at`;
+
+  return res.status(200).json({ evidence: result[0] });
 }
