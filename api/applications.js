@@ -521,13 +521,15 @@ async function onOfferAccepted(applicationId, mergedAppRow, dealId) {
   }
 
   // Step 1: normalise each applicant → Contact
+  // V77.2: applicant-wins. The applicant just verified their own email and
+  // mobile, so the values they entered are treated as the source of truth.
+  // Existing Contacts matched by email get name/mobile updated to the new values.
   const normalised = [];
   for (const ap of applicants) {
     if (!ap || !ap.email) {
       normalised.push({ ...ap, contact_id: null });
       continue;
     }
-    // Match by email (case-insensitive); if multiple, pick most recently updated
     const existing = await sql`
       SELECT id FROM contacts
       WHERE LOWER(email) = LOWER(${ap.email})
@@ -536,12 +538,14 @@ async function onOfferAccepted(applicationId, mergedAppRow, dealId) {
     let contactId;
     if (existing.length) {
       contactId = existing[0].id;
-      // Lightly upsert mobile/name if Contact has them empty
+      // Applicant wins — overwrite name + mobile with the values they submitted.
+      // Only updates if the applicant actually provided a value (so blanks don't
+      // wipe existing Contact data).
       await sql`
         UPDATE contacts
-           SET first_name = CASE WHEN COALESCE(first_name, '') = '' THEN ${ap.first_name || ''} ELSE first_name END,
-               last_name  = CASE WHEN COALESCE(last_name, '')  = '' THEN ${ap.last_name  || ''} ELSE last_name  END,
-               mobile     = CASE WHEN COALESCE(mobile, '')     = '' THEN ${ap.mobile     || ''} ELSE mobile     END,
+           SET first_name = CASE WHEN ${ap.first_name || ''} <> '' THEN ${ap.first_name || ''} ELSE first_name END,
+               last_name  = CASE WHEN ${ap.last_name  || ''} <> '' THEN ${ap.last_name  || ''} ELSE last_name  END,
+               mobile     = CASE WHEN ${ap.mobile     || ''} <> '' THEN ${ap.mobile     || ''} ELSE mobile     END,
                updated_at = now()
          WHERE id = ${contactId}`;
     } else {
