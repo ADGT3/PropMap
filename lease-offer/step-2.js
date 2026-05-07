@@ -232,7 +232,7 @@
 
   function renderUploadedFileRow(f, applicantIdx, fileIdx) {
     const sizeStr = f.size ? `(${(f.size / 1024).toFixed(0)} KB)` : '';
-    const docType = ID_TYPES.find(t => t.id === f.doc_type) || ID_TYPES[ID_TYPES.length - 1];
+    const isUploaded = f.status === 'uploaded';
     const statusHtml =
       f.status === 'uploading' ? '<span class="s2-file-status s2-file-uploading">Uploading…</span>' :
       f.status === 'error'     ? `<span class="s2-file-status s2-file-error" title="${esc(f.error || '')}">Error</span>` :
@@ -248,6 +248,10 @@
         <span class="s2-points">${f.points || 0} pts</span>
         <span class="s2-file-size">${sizeStr}</span>
         ${statusHtml}
+        ${isUploaded ? `
+          <button type="button" class="s2-file-action-btn s2-file-replace-btn" data-applicant="${applicantIdx}" data-file="${fileIdx}" title="Upload a different file in place of this one">Replace</button>
+          <button type="button" class="s2-file-action-btn s2-file-remove-btn"  data-applicant="${applicantIdx}" data-file="${fileIdx}" title="Delete this file">Remove</button>
+        ` : ''}
       </div>
     `;
   }
@@ -288,9 +292,56 @@
         renderIdSections();
       });
     });
+
+    // Wire Remove buttons
+    block.querySelectorAll('.s2-file-remove-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const ai = parseInt(btn.getAttribute('data-applicant'), 10);
+        const fi = parseInt(btn.getAttribute('data-file'), 10);
+        const fileEntry = ID_FILES[ai]?.[fi];
+        if (!fileEntry) return;
+        if (!confirm(`Remove "${fileEntry.filename}"?`)) return;
+        if (fileEntry.id) {
+          // Server-side delete
+          try {
+            await fetch(API_BASE + '/step2-delete-evidence', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ evidence_id: fileEntry.id }),
+            });
+          } catch (err) { console.warn('delete failed', err); }
+        }
+        ID_FILES[ai].splice(fi, 1);
+        renderIdSections();
+      });
+    });
+
+    // Wire Replace buttons — picks new file, uploads it, then deletes the old one on success
+    block.querySelectorAll('.s2-file-replace-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const ai = parseInt(btn.getAttribute('data-applicant'), 10);
+        const fi = parseInt(btn.getAttribute('data-file'), 10);
+        const oldEntry = ID_FILES[ai]?.[fi];
+        if (!oldEntry) return;
+        // Use an ad-hoc input element to pick a new file
+        const picker = document.createElement('input');
+        picker.type = 'file';
+        picker.accept = '.pdf,.jpg,.jpeg,.png,.heic,.heif';
+        picker.addEventListener('change', async () => {
+          const f = picker.files?.[0];
+          if (!f) return;
+          // Upload new file
+          await uploadIdFile(f, ai, { replaceIndex: fi, replaceOldId: oldEntry.id, replaceDocType: oldEntry.doc_type });
+        });
+        picker.click();
+      });
+    });
   }
 
-  async function uploadIdFile(file, applicantIdx) {
+  async function uploadIdFile(file, applicantIdx, opts = {}) {
+    const { replaceIndex, replaceOldId, replaceDocType } = opts;
+    const isReplace = typeof replaceIndex === 'number';
+
     if (file.size > 10 * 1024 * 1024) {
       alert('File too large. Maximum 10 MB per file.');
       return;
@@ -303,10 +354,20 @@
 
     const fileEntry = {
       filename: file.name, mime_type: file.type || 'application/octet-stream',
-      size: file.size, doc_type: '', points: 0, status: 'uploading',
+      size: file.size,
+      doc_type: replaceDocType || '',
+      points: replaceDocType ? (ID_TYPES.find(t => t.id === replaceDocType)?.points || 0) : 0,
+      status: 'uploading',
     };
     if (!ID_FILES[applicantIdx]) ID_FILES[applicantIdx] = [];
-    ID_FILES[applicantIdx].push(fileEntry);
+
+    if (isReplace) {
+      // Mark the old entry as uploading and overwrite in place; we'll swap in new
+      // metadata once the upload succeeds
+      ID_FILES[applicantIdx][replaceIndex] = { ...fileEntry, _replacing: true };
+    } else {
+      ID_FILES[applicantIdx].push(fileEntry);
+    }
     renderIdSections();
 
     try {
@@ -321,23 +382,43 @@
           size: file.size,
           applicant_contact_id: applicant.contact_id || null,
           category: 'id-100-points',
-          points_value: 0,
+          points_value: fileEntry.points || 0,
           body_base64: base64,
         }),
       });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
-        fileEntry.status = 'error';
-        fileEntry.error = err.error || 'Upload failed';
+        const target = isReplace ? ID_FILES[applicantIdx][replaceIndex] : fileEntry;
+        if (target) {
+          target.status = 'error';
+          target.error = err.error || 'Upload failed';
+        }
       } else {
         const data = await r.json();
-        fileEntry.id = data.evidence.id;
-        fileEntry.url = data.evidence.url;
-        fileEntry.status = 'uploaded';
+        const target = isReplace ? ID_FILES[applicantIdx][replaceIndex] : fileEntry;
+        if (target) {
+          target.id = data.evidence.id;
+          target.url = data.evidence.url;
+          target.status = 'uploaded';
+          delete target._replacing;
+        }
+        // On replace success: delete old evidence row from DB
+        if (isReplace && replaceOldId) {
+          try {
+            await fetch(API_BASE + '/step2-delete-evidence', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ evidence_id: replaceOldId }),
+            });
+          } catch (err) { console.warn('replace cleanup failed', err); }
+        }
       }
     } catch (err) {
-      fileEntry.status = 'error';
-      fileEntry.error = err.message;
+      const target = isReplace ? ID_FILES[applicantIdx][replaceIndex] : fileEntry;
+      if (target) {
+        target.status = 'error';
+        target.error = err.message;
+      }
     }
     renderIdSections();
     scheduleAutosave();

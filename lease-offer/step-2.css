@@ -191,3 +191,25 @@
   background: rgba(185, 28, 28, 0.08);
   color: var(--lof-error);
 }
+
+/* Replace / Remove buttons on uploaded file rows */
+.s2-file-action-btn {
+  background: transparent;
+  border: 1px solid var(--lof-border);
+  color: var(--lof-muted);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.s2-file-action-btn:hover {
+  background: var(--lof-input-bg-focus);
+  border-color: var(--lof-accent);
+  color: var(--lof-accent-d);
+}
+.s2-file-remove-btn:hover {
+  background: rgba(185, 28, 28, 0.08);
+  border-color: var(--lof-error);
+  color: var(--lof-error);
+}
