@@ -740,7 +740,7 @@ async function step2SaveDraft(req, res, ctx) {
   const body = req.body || {};
   const application_id = ctx.application.id;
 
-  if (ctx.application.status !== 'offer_accepted') {
+  if (ctx.application.status !== 'offer_accepted' && ctx.application.status !== 'evidence_resubmit_requested') {
     return res.status(409).json({ error: 'Form is locked — already submitted or not yet accepted.' });
   }
 
@@ -832,7 +832,7 @@ async function step2Submit(req, res, ctx) {
   const application_id = ctx.application.id;
   const body = req.body || {};
 
-  if (ctx.application.status !== 'offer_accepted') {
+  if (ctx.application.status !== 'offer_accepted' && ctx.application.status !== 'evidence_resubmit_requested') {
     return res.status(409).json({ error: 'Form is locked — already submitted or not yet accepted.' });
   }
 
@@ -955,7 +955,7 @@ async function fireEvidenceNotification(ctx) {
 // Receives multipart/form-data: { file: <File>, applicant_contact_id?, category, points_value? }
 async function step2Upload(req, res, ctx) {
   const application_id = ctx.application.id;
-  if (ctx.application.status !== 'offer_accepted') {
+  if (ctx.application.status !== 'offer_accepted' && ctx.application.status !== 'evidence_resubmit_requested') {
     return res.status(409).json({ error: 'Form is locked — already submitted or not yet accepted.' });
   }
 
@@ -1014,7 +1014,7 @@ async function step2DeleteEvidence(req, res, ctx) {
   const evidence_id = parseInt(body.evidence_id, 10);
   if (!evidence_id) return res.status(400).json({ error: 'evidence_id required' });
 
-  if (ctx.application.status !== 'offer_accepted') {
+  if (ctx.application.status !== 'offer_accepted' && ctx.application.status !== 'evidence_resubmit_requested') {
     return res.status(409).json({ error: 'Form is locked.' });
   }
 
