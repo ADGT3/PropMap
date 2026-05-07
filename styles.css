@@ -4294,18 +4294,17 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   padding: 4px 8px;
 }
 .insp-att-results {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
+  position: fixed;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 4px;
-  margin-top: 2px;
-  z-index: 10;
-  max-height: 180px;
+  z-index: 10000;
+  max-height: 240px;
   overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  display: none;
 }
+.insp-att-results.is-open { display: block; }
 .insp-att-result {
   padding: 6px 10px;
   cursor: pointer;

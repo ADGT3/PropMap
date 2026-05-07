@@ -387,10 +387,32 @@
       const searchEl   = containerEl.querySelector('[data-role="att-search"]');
       const resultsEl  = containerEl.querySelector('[data-role="att-results"]');
       let _searchTimer = null;
+
+      // Position the (fixed) results dropdown directly under the search input
+      const positionResults = () => {
+        const r = searchEl.getBoundingClientRect();
+        resultsEl.style.left  = r.left + 'px';
+        resultsEl.style.top   = (r.bottom + 2) + 'px';
+        resultsEl.style.width = r.width + 'px';
+      };
+      const openResults  = () => { positionResults(); resultsEl.classList.add('is-open'); };
+      const closeResults = () => { resultsEl.classList.remove('is-open'); resultsEl.innerHTML = ''; };
+
+      // Close when clicking outside or scrolling the modal
+      const onDocClick = (e) => {
+        if (!resultsEl.contains(e.target) && e.target !== searchEl) closeResults();
+      };
+      document.addEventListener('mousedown', onDocClick);
+      // Reposition on scroll/resize
+      const onReflow = () => { if (resultsEl.classList.contains('is-open')) positionResults(); };
+      window.addEventListener('resize', onReflow);
+      // Capture scroll on any ancestor (modal body scrolls)
+      document.addEventListener('scroll', onReflow, true);
+
       searchEl.addEventListener('input', () => {
         clearTimeout(_searchTimer);
         const q = searchEl.value.trim();
-        if (!q) { resultsEl.innerHTML = ''; return; }
+        if (!q) { closeResults(); return; }
         _searchTimer = setTimeout(async () => {
           try {
             const sr = await fetch(`/api/contacts?search=${encodeURIComponent(q)}`);
@@ -398,7 +420,7 @@
             const contacts = await sr.json();
             const taken = new Set(attendees.map(a => a.contact_id));
             const available = contacts.filter(c => !taken.has(c.id));
-            resultsEl.innerHTML = available.slice(0, 8).map(c => {
+            resultsEl.innerHTML = available.slice(0, 20).map(c => {
               const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || `Contact #${c.id}`;
               const detailParts = [c.email, c.mobile].filter(Boolean);
               const detailHtml = detailParts.length
@@ -406,6 +428,7 @@
                 : '';
               return `<div class="insp-att-result" data-contact-id="${c.id}" data-contact-name="${esc(name)}"><div class="insp-att-result-name">${esc(name)}</div>${detailHtml}</div>`;
             }).join('') || '<div class="insp-att-result-empty">No matches</div>';
+            openResults();
             resultsEl.querySelectorAll('.insp-att-result').forEach(item => {
               item.addEventListener('click', () => {
                 openCheckInDialog({
@@ -416,7 +439,7 @@
                   onDone: () => { renderAttendances(containerEl, inspection, dealId); },
                 });
                 searchEl.value = '';
-                resultsEl.innerHTML = '';
+                closeResults();
               });
             });
           } catch (e) {
