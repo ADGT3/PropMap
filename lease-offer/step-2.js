@@ -26,8 +26,10 @@
 
   // State
   let LOAD_DATA = null;
-  let APPLICANTS = [];     // server-side applicants (with contact_id) from accepted offer
-  let ID_FILES = {};       // { applicant_idx: [{ id (server), filename, mime_type, size, doc_type, points, url, status }] }
+  let APPLICANTS = [];
+  let ID_FILES = {};       // { applicant_idx: [{ id, filename, doc_type, points, status, ... }] }
+  let HOUSING_FILES = {};  // { client_id: [{ id, filename, status, ... }] }
+  let INCOME_FILES = {};   // { client_id: [{ id, filename, status, ... }] }
   let HOUSING = [];
   let INCOME = [];
   let SAVE_TIMER = null;
@@ -79,30 +81,62 @@
     APPLICANTS = LOAD_DATA.application.applicants || [];
     HOUSING    = Array.isArray(LOAD_DATA.housing_history) ? [...LOAD_DATA.housing_history] : [];
     INCOME     = Array.isArray(LOAD_DATA.income_history)  ? [...LOAD_DATA.income_history]  : [];
+    // Each loaded entry gets a stable client_id: re-use server-stored client_id from notes
+    // if available, else generate. (Server roundtrips client_id back via the "client_id" field
+    // in the JSON column — see API.)
+    HOUSING.forEach(h => { if (!h.client_id) h.client_id = genClientId(); });
+    INCOME.forEach(i => { if (!i.client_id) i.client_id = genClientId(); });
     if (!HOUSING.length) HOUSING.push(blankHousingEntry());
     if (!INCOME.length)  INCOME.push(blankIncomeEntry());
 
-    // Group existing evidence by applicant
+    // Group ID files by applicant
     ID_FILES = {};
     APPLICANTS.forEach((_, i) => { ID_FILES[i] = []; });
+
+    // Group housing/income files by client_id (suffix of category)
+    HOUSING_FILES = {};
+    INCOME_FILES = {};
+    HOUSING.forEach(h => { HOUSING_FILES[h.client_id] = []; });
+    INCOME.forEach(i  => { INCOME_FILES[i.client_id]  = []; });
+
     (LOAD_DATA.evidence || []).forEach(e => {
-      if (!e.category || !e.category.startsWith('id-')) return;
-      const idx = APPLICANTS.findIndex(a => a.contact_id === e.applicant_contact_id);
-      const useIdx = idx >= 0 ? idx : 0;
-      if (!ID_FILES[useIdx]) ID_FILES[useIdx] = [];
-      ID_FILES[useIdx].push({
-        id: e.id, filename: e.filename, mime_type: e.mime_type, size: e.size_bytes,
-        doc_type: e.category.replace(/^id-/, ''), points: e.points_value || 0,
-        url: e.url, status: 'uploaded'
-      });
+      if (!e.category) return;
+      if (e.category.startsWith('id-')) {
+        const idx = APPLICANTS.findIndex(a => a.contact_id === e.applicant_contact_id);
+        const useIdx = idx >= 0 ? idx : 0;
+        if (!ID_FILES[useIdx]) ID_FILES[useIdx] = [];
+        ID_FILES[useIdx].push({
+          id: e.id, filename: e.filename, mime_type: e.mime_type, size: e.size_bytes,
+          doc_type: e.category.replace(/^id-/, ''), points: e.points_value || 0,
+          url: e.url, status: 'uploaded',
+        });
+      } else if (e.category.startsWith('housing-evidence:')) {
+        const cid = e.category.split(':')[1];
+        if (!HOUSING_FILES[cid]) HOUSING_FILES[cid] = [];
+        HOUSING_FILES[cid].push({
+          id: e.id, filename: e.filename, mime_type: e.mime_type, size: e.size_bytes,
+          url: e.url, status: 'uploaded',
+        });
+      } else if (e.category.startsWith('income-evidence:')) {
+        const cid = e.category.split(':')[1];
+        if (!INCOME_FILES[cid]) INCOME_FILES[cid] = [];
+        INCOME_FILES[cid].push({
+          id: e.id, filename: e.filename, mime_type: e.mime_type, size: e.size_bytes,
+          url: e.url, status: 'uploaded',
+        });
+      }
     });
   }
 
+  function genClientId() {
+    return 'c' + Math.random().toString(36).slice(2, 12);
+  }
+
   function blankHousingEntry() {
-    return { housing_type: 'rented', address: '', monthly_amount: null, term_value: null, term_unit: 'months', started_at: '', ended_at: '', current_residence: false, landlord_name: '', landlord_email: '', landlord_phone: '', notes: '' };
+    return { client_id: genClientId(), housing_type: 'rented', address: '', monthly_amount: null, term_value: null, term_unit: 'months', started_at: '', ended_at: '', current_residence: false, landlord_name: '', landlord_email: '', landlord_phone: '', notes: '' };
   }
   function blankIncomeEntry() {
-    return { income_type: 'employment', income_source_name: '', position: '', gross_amount: null, gross_period: 'weekly', started_at: '', ended_at: '', current_role: false, manager_name: '', manager_email: '', manager_phone: '', notes: '' };
+    return { client_id: genClientId(), income_type: 'employment', income_source_name: '', position: '', gross_amount: null, gross_period: 'weekly', started_at: '', ended_at: '', current_role: false, manager_name: '', manager_email: '', manager_phone: '', notes: '' };
   }
 
   // ── Views ────────────────────────────────────────────────────────────
@@ -188,6 +222,7 @@
     // Pre-fill consent checkboxes from existing app row
     document.getElementById('s2CreditConsent').checked    = !!LOAD_DATA.application.credit_check_consent_at;
     document.getElementById('s2TenancyDbConsent').checked = !!LOAD_DATA.application.tenancy_database_consent_at;
+    document.getElementById('s2RetentionConsent').checked = !!LOAD_DATA.application.retention_consent_at;
 
     renderIdSections();
     renderHousing();
@@ -226,6 +261,43 @@
           <div class="s2-upload-zone-help">Drag &amp; drop or click to upload (PDF, JPG, PNG, HEIC · max 10MB)</div>
           <input type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" multiple>
         </div>
+      </div>
+    `;
+  }
+
+  // Reusable evidence drag-drop zone for housing/income entries
+  function renderEvidenceZone({ section, clientId, files, prompt, help }) {
+    let filesHtml = '';
+    files.forEach((f, fi) => {
+      filesHtml += renderEvidenceFileRow(f, section, clientId, fi);
+    });
+    return `
+      <div class="s2-entry-evidence">
+        <div class="s2-entry-evidence-label">${prompt}</div>
+        <div class="s2-uploaded-files" data-evidence-section="${section}" data-client-id="${esc(clientId)}">${filesHtml}</div>
+        <div class="s2-upload-zone s2-upload-zone-small" data-evidence-section="${section}" data-client-id="${esc(clientId)}">
+          <div class="s2-upload-zone-prompt">+ Add file</div>
+          <div class="s2-upload-zone-help">${esc(help)} Drag &amp; drop or click. PDF/JPG/PNG/HEIC, max 10MB.</div>
+          <input type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" multiple>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderEvidenceFileRow(f, section, clientId, fileIdx) {
+    const sizeStr = f.size ? `(${(f.size / 1024).toFixed(0)} KB)` : '';
+    const isUploaded = f.status === 'uploaded';
+    const statusHtml =
+      f.status === 'uploading' ? '<span class="s2-file-status s2-file-uploading">Uploading…</span>' :
+      f.status === 'error'     ? `<span class="s2-file-status s2-file-error" title="${esc(f.error || '')}">Error</span>` :
+                                 '<span class="s2-file-status">✓ Uploaded</span>';
+    return `
+      <div class="s2-id-row" data-evidence-section="${section}" data-client-id="${esc(clientId)}" data-file="${fileIdx}">
+        <span class="s2-file-icon">📄</span>
+        <span class="s2-file-name" title="${esc(f.filename)}">${esc(f.filename)}</span>
+        <span class="s2-file-size">${sizeStr}</span>
+        ${statusHtml}
+        ${isUploaded ? `<button type="button" class="s2-file-action-btn s2-evidence-remove-btn" data-evidence-section="${section}" data-client-id="${esc(clientId)}" data-file="${fileIdx}" title="Delete this file">Remove</button>` : ''}
       </div>
     `;
   }
@@ -424,6 +496,78 @@
     scheduleAutosave();
   }
 
+  // Upload housing/income evidence file (separate from ID — different category, different storage)
+  async function uploadEvidenceFile(file, section, clientId) {
+    if (file.size > 10 * 1024 * 1024) {
+      alert('File too large. Maximum 10 MB per file.');
+      return;
+    }
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];
+    if (file.type && !allowedTypes.includes(file.type.toLowerCase())) {
+      alert('Unsupported file type. Allowed: PDF, JPG, PNG, HEIC.');
+      return;
+    }
+    const arr = section === 'housing' ? HOUSING_FILES : INCOME_FILES;
+    if (!arr[clientId]) arr[clientId] = [];
+    const fileEntry = {
+      filename: file.name, mime_type: file.type || 'application/octet-stream',
+      size: file.size, status: 'uploading',
+    };
+    arr[clientId].push(fileEntry);
+    if (section === 'housing') renderHousing(); else renderIncome();
+
+    try {
+      const base64 = await fileToBase64(file);
+      const applicant = APPLICANTS[0] || {};
+      const r = await fetch(API_BASE + '/step2-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: file.name,
+          mime_type: file.type || 'application/octet-stream',
+          size: file.size,
+          applicant_contact_id: applicant.contact_id || null,
+          category: `${section}-evidence:${clientId}`,
+          points_value: 0,
+          body_base64: base64,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        fileEntry.status = 'error';
+        fileEntry.error = err.error || 'Upload failed';
+      } else {
+        const data = await r.json();
+        fileEntry.id = data.evidence.id;
+        fileEntry.url = data.evidence.url;
+        fileEntry.status = 'uploaded';
+      }
+    } catch (err) {
+      fileEntry.status = 'error';
+      fileEntry.error = err.message;
+    }
+    if (section === 'housing') renderHousing(); else renderIncome();
+    scheduleAutosave();
+  }
+
+  // When a housing/income entry is removed, delete all its evidence files server-side
+  async function deleteAllForClientId(section, clientId) {
+    const arr = section === 'housing' ? HOUSING_FILES[clientId] : INCOME_FILES[clientId];
+    if (!Array.isArray(arr)) return;
+    for (const f of arr) {
+      if (f.id) {
+        try {
+          await fetch(API_BASE + '/step2-delete-evidence', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ evidence_id: f.id }),
+          });
+        } catch (_) {/* ignore */}
+      }
+    }
+    if (section === 'housing') delete HOUSING_FILES[clientId];
+    else                       delete INCOME_FILES[clientId];
+  }
+
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -444,8 +588,10 @@
   }
 
   function renderHousingEntry(h, i) {
+    const cid = h.client_id;
+    const files = HOUSING_FILES[cid] || [];
     return `
-      <div class="s2-history-entry" data-idx="${i}">
+      <div class="s2-history-entry" data-idx="${i}" data-client-id="${esc(cid)}">
         ${HOUSING.length > 1 ? `<button type="button" class="s2-history-entry-remove" data-section="housing" data-idx="${i}">✕</button>` : ''}
         <div class="lof-row">
           <div class="lof-field">
@@ -491,6 +637,9 @@
             <input type="tel" data-section="housing" data-field="landlord_phone" data-idx="${i}" value="${esc(h.landlord_phone || '')}">
           </div>
         </div>
+        ${renderEvidenceZone({ section: 'housing', clientId: cid, files,
+          prompt: 'Last 3 months of statements <span class="lof-req">*</span>',
+          help: 'Rent receipts, mortgage statements, or rates notices proving you lived here.' })}
       </div>
     `;
   }
@@ -506,8 +655,10 @@
   }
 
   function renderIncomeEntry(inc, i) {
+    const cid = inc.client_id;
+    const files = INCOME_FILES[cid] || [];
     return `
-      <div class="s2-history-entry" data-idx="${i}" data-type="income">
+      <div class="s2-history-entry" data-idx="${i}" data-type="income" data-client-id="${esc(cid)}">
         ${INCOME.length > 1 ? `<button type="button" class="s2-history-entry-remove" data-section="income" data-idx="${i}">✕</button>` : ''}
         <div class="lof-row">
           <div class="lof-field" style="flex:0 0 160px">
@@ -574,6 +725,9 @@
             <input type="tel" data-section="income" data-field="manager_phone" data-idx="${i}" value="${esc(inc.manager_phone || '')}">
           </div>
         </div>
+        ${renderEvidenceZone({ section: 'income', clientId: cid, files,
+          prompt: 'Last 3 months of payslips or bank statements <span class="lof-req">*</span>',
+          help: 'Evidence to support your declared income (payslips, bank statements showing salary deposits).' })}
       </div>
     `;
   }
@@ -628,19 +782,93 @@
       }
       scheduleAutosave();
     });
-    formEl.addEventListener('click', e => {
-      const removeBtn = e.target.closest('.s2-history-entry-remove');
-      if (!removeBtn) return;
-      const section = removeBtn.getAttribute('data-section');
-      const idx     = parseInt(removeBtn.getAttribute('data-idx'), 10);
-      if (section === 'housing') {
-        HOUSING.splice(idx, 1);
-        renderHousing();
-      } else if (section === 'income') {
-        INCOME.splice(idx, 1);
-        renderIncome();
+    formEl.addEventListener('click', async e => {
+      const removeEntryBtn = e.target.closest('.s2-history-entry-remove');
+      if (removeEntryBtn) {
+        const section = removeEntryBtn.getAttribute('data-section');
+        const idx     = parseInt(removeEntryBtn.getAttribute('data-idx'), 10);
+        if (section === 'housing') {
+          // Also delete any uploaded evidence files for this entry
+          const cid = HOUSING[idx]?.client_id;
+          if (cid) await deleteAllForClientId('housing', cid);
+          HOUSING.splice(idx, 1);
+          renderHousing();
+        } else if (section === 'income') {
+          const cid = INCOME[idx]?.client_id;
+          if (cid) await deleteAllForClientId('income', cid);
+          INCOME.splice(idx, 1);
+          renderIncome();
+        }
+        scheduleAutosave();
+        return;
       }
-      scheduleAutosave();
+
+      // Click on an evidence upload zone → open file picker
+      const evidZone = e.target.closest('.s2-upload-zone[data-evidence-section]');
+      if (evidZone) {
+        const fi = evidZone.querySelector('input[type="file"]');
+        if (fi) fi.click();
+        return;
+      }
+
+      // Click on Remove button on an evidence file row
+      const removeFileBtn = e.target.closest('.s2-evidence-remove-btn');
+      if (removeFileBtn) {
+        const section = removeFileBtn.getAttribute('data-evidence-section');
+        const cid     = removeFileBtn.getAttribute('data-client-id');
+        const fi      = parseInt(removeFileBtn.getAttribute('data-file'), 10);
+        const arr = section === 'housing' ? HOUSING_FILES[cid] : INCOME_FILES[cid];
+        if (!arr || !arr[fi]) return;
+        const f = arr[fi];
+        if (!confirm(`Remove "${f.filename}"?`)) return;
+        if (f.id) {
+          try {
+            await fetch(API_BASE + '/step2-delete-evidence', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ evidence_id: f.id }),
+            });
+          } catch (err) { console.warn('delete failed', err); }
+        }
+        arr.splice(fi, 1);
+        if (section === 'housing') renderHousing();
+        else renderIncome();
+        scheduleAutosave();
+      }
+    });
+
+    // Drag-drop on evidence zones
+    formEl.addEventListener('dragover', e => {
+      const z = e.target.closest('.s2-upload-zone[data-evidence-section]');
+      if (!z) return;
+      e.preventDefault();
+      z.classList.add('s2-drag-over');
+    });
+    formEl.addEventListener('dragleave', e => {
+      const z = e.target.closest('.s2-upload-zone[data-evidence-section]');
+      if (!z) return;
+      z.classList.remove('s2-drag-over');
+    });
+    formEl.addEventListener('drop', async e => {
+      const z = e.target.closest('.s2-upload-zone[data-evidence-section]');
+      if (!z) return;
+      e.preventDefault();
+      z.classList.remove('s2-drag-over');
+      const section = z.getAttribute('data-evidence-section');
+      const cid     = z.getAttribute('data-client-id');
+      const files = Array.from(e.dataTransfer.files || []);
+      for (const f of files) await uploadEvidenceFile(f, section, cid);
+    });
+    // File input change on evidence zones
+    formEl.addEventListener('change', async e => {
+      const t = e.target;
+      if (t.matches('.s2-upload-zone[data-evidence-section] input[type="file"]')) {
+        const z = t.closest('.s2-upload-zone[data-evidence-section]');
+        const section = z.getAttribute('data-evidence-section');
+        const cid     = z.getAttribute('data-client-id');
+        const files = Array.from(t.files || []);
+        for (const f of files) await uploadEvidenceFile(f, section, cid);
+        t.value = '';
+      }
     });
 
     // Submit
@@ -726,6 +954,9 @@
     if (!document.getElementById('s2RefConsent').checked) {
       errs.push('You must agree to allow reference checks.');
     }
+    if (!document.getElementById('s2RetentionConsent').checked) {
+      errs.push('You must agree to the records retention policy.');
+    }
     // Check ID points
     APPLICANTS.forEach((a, i) => {
       const points = (ID_FILES[i] || []).reduce((s, f) => s + (f.points || 0), 0);
@@ -733,13 +964,28 @@
         const name = [a.first_name, a.last_name].filter(Boolean).join(' ') || `Applicant ${i + 1}`;
         errs.push(`${name}: only ${points} ID points uploaded — 100 needed.`);
       }
-      // Each file must have a doc_type assigned
-      (ID_FILES[i] || []).forEach((f, fi) => {
+      (ID_FILES[i] || []).forEach((f) => {
         if (!f.doc_type) {
           const name = [a.first_name, a.last_name].filter(Boolean).join(' ') || `Applicant ${i + 1}`;
           errs.push(`${name}: file "${f.filename}" needs a document type selected.`);
         }
       });
+    });
+    // Each housing entry needs at least 1 evidence file
+    HOUSING.forEach((h, i) => {
+      const files = (HOUSING_FILES[h.client_id] || []).filter(f => f.status === 'uploaded');
+      if (!files.length) {
+        const desc = h.address || `Housing entry ${i + 1}`;
+        errs.push(`Housing — "${desc}": at least one supporting document is required.`);
+      }
+    });
+    // Each income entry needs at least 1 evidence file
+    INCOME.forEach((inc, i) => {
+      const files = (INCOME_FILES[inc.client_id] || []).filter(f => f.status === 'uploaded');
+      if (!files.length) {
+        const desc = inc.income_source_name || `Income entry ${i + 1}`;
+        errs.push(`Income — "${desc}": at least one supporting document is required.`);
+      }
     });
     return errs;
   }
@@ -758,13 +1004,15 @@
 
   function collectPayload() {
     return {
+      reference_consent:           document.getElementById('s2RefConsent').checked,
+      retention_consent:           document.getElementById('s2RetentionConsent').checked,
       credit_check_consent:        document.getElementById('s2CreditConsent').checked,
       tenancy_database_consent:    document.getElementById('s2TenancyDbConsent').checked,
-      housing_history: HOUSING.map((h, i) => ({
+      housing_history: HOUSING.map((h) => ({
         applicant_contact_id: APPLICANTS[0]?.contact_id || null,
         ...h,
       })),
-      income_history: INCOME.map((inc, i) => ({
+      income_history: INCOME.map((inc) => ({
         applicant_contact_id: APPLICANTS[0]?.contact_id || null,
         ...inc,
       })),

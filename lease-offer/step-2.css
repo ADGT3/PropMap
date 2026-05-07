@@ -213,3 +213,29 @@
   border-color: var(--lof-error);
   color: var(--lof-error);
 }
+
+/* Per-entry evidence zone (housing & income) — smaller variant */
+.s2-entry-evidence {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--lof-border);
+}
+
+.s2-entry-evidence-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--lof-text);
+  margin-bottom: 6px;
+}
+
+.s2-upload-zone-small {
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.s2-upload-zone-small .s2-upload-zone-prompt {
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.s2-upload-zone-small .s2-upload-zone-help {
+  font-size: 10px;
+}
