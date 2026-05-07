@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Upload Evidence — Edan Property</title>
+  <link rel="stylesheet" href="/lease-offer/lease-offer-form.css">
+  <link rel="stylesheet" href="/lease-offer/step-2.css">
+</head>
+<body>
+
+<div class="lof-shell">
+  <header class="lof-header">
+    <div class="lof-brand">EDAN PROPERTY</div>
+  </header>
+
+  <main class="lof-main">
+    <section class="lof-view lof-view-loading" id="lofLoading">
+      <div class="lof-spinner"></div>
+      <p>Loading…</p>
+    </section>
+
+    <section class="lof-view" id="lofVerify" style="display:none">
+      <div class="lof-card">
+        <h1>Confirm it's you</h1>
+        <p>For security, please confirm your mobile number to access your evidence upload form.</p>
+        <p class="lof-verify-email" id="lofVerifyEmail"></p>
+        <form id="lofVerifyForm">
+          <div class="lof-field" style="text-align:left;margin-top:12px">
+            <label for="lofVerifyMobile">Your mobile number</label>
+            <input type="tel" id="lofVerifyMobile" inputmode="tel" autocomplete="tel" placeholder="e.g. 0412 345 678" required>
+            <p class="lof-field-error" id="lofVerifyError" style="display:none"></p>
+          </div>
+          <button type="submit" class="lof-btn-primary" id="lofVerifyBtn">Continue</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="lof-view" id="lofError" style="display:none">
+      <div class="lof-card">
+        <h1>This link is no longer valid</h1>
+        <p id="lofErrorMessage">The link you used has expired or been deactivated. Please contact your agent for a new one.</p>
+      </div>
+    </section>
+
+    <section class="lof-view" id="lofForm" style="display:none">
+      <div class="lof-form-header">
+        <h1>Upload Your Documents</h1>
+        <p class="lof-property" id="lofProperty"></p>
+        <p class="lof-step2-intro">Your offer has been accepted. Please upload supporting documents so your agent can finalise the application.</p>
+        <div class="lof-savestate" id="lofSaveState"></div>
+      </div>
+
+      <form id="lofFormEl" autocomplete="on" novalidate>
+        <!-- 100 Points ID per applicant -->
+        <fieldset class="lof-section">
+          <legend>100 Points ID</legend>
+          <p class="lof-section-help">Each applicant needs to upload identification adding up to 100 points. Examples: Passport (70 pts), Driver Licence (40 pts), Medicare card (25 pts), Bank statement (25 pts).</p>
+          <div id="s2IdSections"></div>
+        </fieldset>
+
+        <!-- Rental history -->
+        <fieldset class="lof-section">
+          <legend>Rental / Housing History</legend>
+          <p class="lof-section-help">Where you've lived in the last 3 years.</p>
+          <div id="s2HousingEntries"></div>
+          <button type="button" class="lof-btn-secondary" id="s2AddHousingBtn">+ Add another address</button>
+        </fieldset>
+
+        <!-- Income evidence -->
+        <fieldset class="lof-section">
+          <legend>Income Evidence</legend>
+          <p class="lof-section-help">Recent payslips, tax returns, or bank statements showing income.</p>
+          <div id="s2IncomeEntries"></div>
+          <button type="button" class="lof-btn-secondary" id="s2AddIncomeBtn">+ Add another income source</button>
+        </fieldset>
+
+        <!-- Reference check consent -->
+        <fieldset class="lof-section">
+          <legend>Consent</legend>
+          <div class="lof-field lof-field-checkbox">
+            <input type="checkbox" id="s2RefConsent">
+            <label for="s2RefConsent">I agree the agent may contact references and previous landlords to verify my application. <span class="lof-req">*</span></label>
+          </div>
+          <div class="lof-field lof-field-checkbox">
+            <input type="checkbox" id="s2CreditConsent">
+            <label for="s2CreditConsent">I consent to a credit check being run as part of the application process.</label>
+          </div>
+          <div class="lof-field lof-field-checkbox">
+            <input type="checkbox" id="s2TenancyDbConsent">
+            <label for="s2TenancyDbConsent">I consent to my details being checked against tenancy databases.</label>
+          </div>
+        </fieldset>
+
+        <div class="lof-submit-row">
+          <div class="lof-validation-summary" id="lofValidationSummary" style="display:none"></div>
+          <button type="submit" class="lof-btn-primary lof-submit-btn" id="lofSubmitBtn">Submit Evidence</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="lof-view" id="lofThanks" style="display:none">
+      <div class="lof-card lof-thanks-card">
+        <div class="lof-thanks-tick">✓</div>
+        <h1>Evidence submitted</h1>
+        <p>Thank you. Your agent has been notified and will review everything shortly.</p>
+        <p class="lof-thanks-next">If anything's missing or unclear, your agent will contact you. Otherwise, you'll hear back soon about the next steps.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="lof-footer">
+    <p>© Edan Property · This page is private to you.</p>
+  </footer>
+</div>
+
+<script src="/lease-offer/step-2.js"></script>
+</body>
+</html>
