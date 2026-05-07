@@ -477,7 +477,8 @@
       });
       html += `<div class="lo-review-notes-row"><textarea class="lo-review-notes" rows="2" placeholder="Validation notes…" ${isLocked ? 'disabled' : ''}>${esc(validation.notes || '')}</textarea></div>`;
       if (validation.last_updated_at) {
-        html += `<div class="lo-review-meta">Last updated ${esc(fmtRelative(validation.last_updated_at))}</div>`;
+        const byPart = validation.last_updated_name ? ` by ${esc(validation.last_updated_name)}` : '';
+        html += `<div class="lo-review-meta">Last updated ${esc(fmtRelative(validation.last_updated_at))}${byPart}</div>`;
       }
       html += '</div>';
 
@@ -747,23 +748,29 @@
       // V77.2d — Validation checklist autosave (debounced)
       let _validationSaveTimer = null;
       const _validationDirty = {};  // applicationId → patch object
-      function flushValidation(applicationId) {
+      async function flushValidation(applicationId) {
         const patch = _validationDirty[applicationId];
         if (!patch) return;
         delete _validationDirty[applicationId];
         const offer = offers.find(o => String(o.id) === String(applicationId));
         if (!offer) return;
-        const merged = Object.assign({}, offer.validation_jsonb || {}, patch, {
-          last_updated_at: new Date().toISOString(),
-        });
+        // Optimistic local merge (server will overwrite the timestamp + by-fields)
+        const merged = Object.assign({}, offer.validation_jsonb || {}, patch);
         offer.validation_jsonb = merged;
-        // Re-render to reflect the all-checked state for the Approve button
         renderList();
-        fetch(API, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: parseInt(applicationId, 10), validation_jsonb: merged }),
-        }).catch(err => console.warn('[LeaseOffer] validation save failed', err));
+        try {
+          const r = await fetch(API, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: parseInt(applicationId, 10), validation_jsonb: merged }),
+          });
+          if (r.ok) {
+            const updated = await r.json();
+            // Pick up the server-stamped last_updated_at / last_updated_by / last_updated_name
+            offer.validation_jsonb = updated.validation_jsonb || merged;
+            renderList();
+          }
+        } catch (err) { console.warn('[LeaseOffer] validation save failed', err); }
       }
       function scheduleValidationSave(applicationId, patch) {
         _validationDirty[applicationId] = Object.assign({}, _validationDirty[applicationId] || {}, patch);
