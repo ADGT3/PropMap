@@ -253,7 +253,7 @@ export default async function handler(req, res) {
   try {
     if (req.method === 'GET')    return await handleGet(req, res);
     if (req.method === 'POST')   return await handlePost(req, res, session);
-    if (req.method === 'PUT')    return await handlePut(req, res);
+    if (req.method === 'PUT')    return await handlePut(req, res, session);
     if (req.method === 'DELETE') return await handleDelete(req, res);
     res.setHeader('Allow', 'GET, POST, PUT, DELETE');
     return res.status(405).json({ error: 'Method not allowed' });
@@ -413,7 +413,7 @@ async function handlePost(req, res, session) {
   return res.status(201).json(result);
 }
 
-async function handlePut(req, res) {
+async function handlePut(req, res, session) {
   const body = req.body || {};
   const id = body.id;
   if (!id) return res.status(400).json({ error: 'id required' });
@@ -479,7 +479,14 @@ async function handlePut(req, res) {
     occupants:                    body.occupants !== undefined        ? body.occupants        : cur.occupants,
     pets:                         body.pets      !== undefined        ? body.pets             : cur.pets,
     applicants_jsonb:             body.applicants_jsonb !== undefined ? body.applicants_jsonb : cur.applicants_jsonb,
-    validation_jsonb:             body.validation_jsonb !== undefined ? body.validation_jsonb : cur.validation_jsonb,
+    // Server stamps the actor + timestamp on validation writes — clients only send checkbox keys.
+    validation_jsonb:             body.validation_jsonb !== undefined
+      ? Object.assign({}, body.validation_jsonb, {
+          last_updated_at:   new Date().toISOString(),
+          last_updated_by:   session?.sub  ?? null,
+          last_updated_name: session?.name ?? null,
+        })
+      : cur.validation_jsonb,
     notes:                        body.notes                       ?? cur.notes,
   };
 
