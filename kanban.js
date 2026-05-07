@@ -1101,19 +1101,20 @@ async function addPropertyOnly(listing) {
   const existingProperty = await findExistingProperty(listing);
 
   if (existingProperty?.id) {
-    const incomingAddr  = (listing.address  || '').trim().toLowerCase();
-    const existingAddr  = (existingProperty.address || '').trim().toLowerCase();
-    const addrsDiffer = incomingAddr && existingAddr && incomingAddr !== existingAddr;
+    // V77.2 — when an existing property is found, prompt the agent so they
+    // can confirm: same property → open existing, OR different property
+    // sharing the lot/DP (e.g. 45 vs 45a Earl St) → create new with edited
+    // address. Skipped only for Domain-driven flows where the listing's
+    // Domain ID precisely identifies the property.
+    const isDomainDriven = !!(listing?.id && /^\d{6,}$/.test(String(listing.id)));
 
-    if (!addrsDiffer) {
-      // Addresses match (or one is missing) — same property. Open existing.
+    if (isDomainDriven) {
       if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
       _openPropertyInCrm(existingProperty.id);
       showKanbanToast(`${existingProperty.address || 'Property'} already in CRM — opened`);
       return { propertyId: existingProperty.id, isNew: false, existing: existingProperty };
     }
 
-    // Different addresses on the same lot/DP — prompt the user.
     const choice = await promptSharedLotDpChoice(existingProperty, listing);
     if (choice === 'open') {
       if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
@@ -1201,17 +1202,26 @@ function promptSharedLotDpChoice(existing, incoming) {
     overlay.className = 'kb-modal-overlay';
     overlay.style.zIndex = '20000';
     const lotDp = (existing.lot_dps || '').split(',')[0]?.trim() || '—';
+    const sameAddr = (existing.address || '').trim().toLowerCase() === (incoming.address || '').trim().toLowerCase();
+    const headlineText = sameAddr
+      ? 'A property already exists here'
+      : 'Property already exists at this Lot/DP';
+    const bodyText = sameAddr
+      ? `<p>An existing property is already recorded at this location:</p>
+         <p style="background:var(--surface2);padding:8px 10px;border-radius:4px;font-weight:600">${escapeHtml(existing.address || '—')}${existing.suburb ? ', ' + escapeHtml(existing.suburb) : ''}</p>
+         <p style="margin-top:14px;color:var(--muted);font-size:12px">If you intended a different address (e.g. a strata unit, granny flat or letter suffix like 45a), edit the address below and click <strong>Add as new property</strong>. Otherwise click <strong>Open existing</strong>.</p>`
+      : `<p>An existing property at <strong>${escapeHtml(lotDp)}</strong> has the address:</p>
+         <p style="background:var(--surface2);padding:8px 10px;border-radius:4px;font-weight:600">${escapeHtml(existing.address || '—')}${existing.suburb ? ', ' + escapeHtml(existing.suburb) : ''}</p>
+         <p style="margin-top:14px">You're trying to add a property here with the address:</p>
+         <p style="background:var(--surface2);padding:8px 10px;border-radius:4px;font-weight:600">${escapeHtml(incoming.address || '—')}${incoming.suburb ? ', ' + escapeHtml(incoming.suburb) : ''}</p>
+         <p style="margin-top:14px;color:var(--muted);font-size:12px">A single Lot/DP can have multiple addresses (strata units, duplexes, granny flats). Choose what to do:</p>`;
     overlay.innerHTML = `
       <div class="kb-modal" style="max-width:520px;background:var(--surface);border-radius:6px">
         <div class="kb-modal-header" style="padding:14px 18px;border-bottom:1px solid var(--border)">
-          <div class="kb-modal-title" style="font-size:14px;font-weight:600">Property already exists at this Lot/DP</div>
+          <div class="kb-modal-title" style="font-size:14px;font-weight:600">${escapeHtml(headlineText)}</div>
         </div>
         <div class="kb-modal-body" style="padding:18px;font-size:13px;line-height:1.5">
-          <p>An existing property at <strong>${escapeHtml(lotDp)}</strong> has the address:</p>
-          <p style="background:var(--surface2);padding:8px 10px;border-radius:4px;font-weight:600">${escapeHtml(existing.address || '—')}${existing.suburb ? ', ' + escapeHtml(existing.suburb) : ''}</p>
-          <p style="margin-top:14px">You're trying to add a property here with the address:</p>
-          <p style="background:var(--surface2);padding:8px 10px;border-radius:4px;font-weight:600">${escapeHtml(incoming.address || '—')}${incoming.suburb ? ', ' + escapeHtml(incoming.suburb) : ''}</p>
-          <p style="margin-top:14px;color:var(--muted);font-size:12px">A single Lot/DP can have multiple addresses (strata units, duplexes, granny flats). Choose what to do:</p>
+          ${bodyText}
           <div class="kb-field-wrap" style="margin-top:14px">
             <label class="kb-field-label" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Address for the new property</label>
             <input class="kb-input" data-role="new-address" type="text" value="${escapeHtml(incoming.address || '')}" placeholder="e.g. 45a Earl St">
@@ -1237,10 +1247,15 @@ function promptSharedLotDpChoice(existing, incoming) {
         alert('Please enter an address for the new property.');
         return;
       }
+      // V77.2 — guard against the agent clicking "Add as new property" without
+      // actually changing the address. That would create an exact duplicate.
+      if (v.trim().toLowerCase() === (existing.address || '').trim().toLowerCase()) {
+        alert('Please edit the address (e.g. add a unit number) to differentiate from the existing property — or click "Open existing" instead.');
+        return;
+      }
       close({ create_with_address: v });
     });
     overlay.addEventListener('click', e => { if (e.target === overlay) close('cancel'); });
-    // Focus the address input for quick edit
     setTimeout(() => overlay.querySelector('[data-role="new-address"]')?.focus(), 50);
   });
 }
