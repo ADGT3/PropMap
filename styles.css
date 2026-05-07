@@ -4349,6 +4349,24 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   padding: 4px 0;
 }
 
+/* V77.2d — Editable Contact fields in the inspection check-in dialog */
+.insp-checkin-help {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 4px 0 8px;
+}
+.insp-checkin-contact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+.insp-checkin-contact-grid .kb-field-wrap {
+  margin: 0;
+}
+@media (max-width: 540px) {
+  .insp-checkin-contact-grid { grid-template-columns: 1fr; }
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    V77.1 — Agency Agreements section + report
    ════════════════════════════════════════════════════════════════════════════ */

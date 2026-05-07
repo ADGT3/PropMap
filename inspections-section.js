@@ -500,11 +500,32 @@
     overlay.innerHTML = `
       <div class="v77-modal" style="max-width:540px">
         <div class="v77-modal-header">
-          <div class="v77-modal-title">Register Attendance — ${esc(contactName)}</div>
+          <div class="v77-modal-title">Register Attendance — <span data-role="dialog-name">${esc(contactName)}</span></div>
           <button class="v77-modal-close" data-role="close">✕</button>
         </div>
         <div class="v77-modal-body">
-          <div class="kb-section-label">Action requests (assigned to Listing Agent)</div>
+          <div class="kb-section-label">Contact details</div>
+          <p class="insp-checkin-help">Update if needed — changes save to the contact's CRM record on Register.</p>
+          <div class="insp-checkin-contact-grid">
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">First name</label>
+              <input class="kb-input" data-contact-field="first_name" type="text" value="" disabled>
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Last name</label>
+              <input class="kb-input" data-contact-field="last_name" type="text" value="" disabled>
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Email</label>
+              <input class="kb-input" data-contact-field="email" type="email" value="" disabled>
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Mobile</label>
+              <input class="kb-input" data-contact-field="mobile" type="tel" value="" disabled>
+            </div>
+          </div>
+
+          <div class="kb-section-label" style="margin-top:14px">Action requests (assigned to Listing Agent)</div>
           <div class="insp-checkin-checks">
             <label><input type="checkbox" data-flag="trigger_followup"> Followup requested</label>
             <label><input type="checkbox" data-flag="trigger_offer_form"> Send offer form</label>
@@ -525,7 +546,7 @@
         </div>
         <div class="v77-modal-footer">
           <button class="params-cancel-btn" data-role="close">Cancel</button>
-          <button class="params-save-btn" data-role="save">Register</button>
+          <button class="params-save-btn" data-role="save" disabled>Register</button>
         </div>
       </div>
     `;
@@ -535,7 +556,92 @@
     overlay.querySelectorAll('[data-role="close"]').forEach(b => b.addEventListener('click', close));
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
+    // Track original snapshot so we can detect what's changed at Register time
+    let originalContact = null;
+
+    // Load the contact record so the four fields are populated and editable
+    (async () => {
+      try {
+        const r = await fetch(`/api/contacts?id=${contactId}`);
+        if (!r.ok) throw new Error(r.status);
+        const c = await r.json();
+        originalContact = {
+          first_name: c.first_name || '',
+          last_name:  c.last_name  || '',
+          email:      c.email      || '',
+          mobile:     c.mobile     || '',
+        };
+        overlay.querySelectorAll('[data-contact-field]').forEach(input => {
+          const k = input.getAttribute('data-contact-field');
+          input.value    = originalContact[k] || '';
+          input.disabled = false;
+        });
+        overlay.querySelector('[data-role="save"]').disabled = false;
+      } catch (err) {
+        console.warn('[insp checkin] could not load contact', err);
+        overlay.querySelectorAll('[data-contact-field]').forEach(input => {
+          input.placeholder = 'Could not load — type to set';
+          input.disabled = false;
+        });
+        overlay.querySelector('[data-role="save"]').disabled = false;
+      }
+    })();
+
     overlay.querySelector('[data-role="save"]').addEventListener('click', async () => {
+      const saveBtn = overlay.querySelector('[data-role="save"]');
+      saveBtn.disabled = true;
+      const origText = saveBtn.textContent;
+      saveBtn.textContent = 'Saving…';
+
+      // Step 1: collect Contact-edit patch (only changed fields)
+      const edited = {};
+      overlay.querySelectorAll('[data-contact-field]').forEach(input => {
+        const k = input.getAttribute('data-contact-field');
+        edited[k] = input.value.trim();
+      });
+
+      // Light email-format check (only if email is non-empty)
+      if (edited.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(edited.email)) {
+        alert('Please enter a valid email address (or leave blank).');
+        saveBtn.disabled = false;
+        saveBtn.textContent = origText;
+        return;
+      }
+
+      // Compute patch — only fields that actually changed
+      const contactPatch = {};
+      if (originalContact) {
+        for (const k of ['first_name', 'last_name', 'email', 'mobile']) {
+          if ((edited[k] || '') !== (originalContact[k] || '')) {
+            contactPatch[k] = edited[k] || null;
+          }
+        }
+      }
+
+      // Step 2: PATCH the Contact if anything changed
+      if (Object.keys(contactPatch).length) {
+        try {
+          const r = await fetch('/api/contacts', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: contactId, ...contactPatch }),
+          });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            alert('Could not save contact details: ' + (err.error || r.status));
+            saveBtn.disabled = false;
+            saveBtn.textContent = origText;
+            return;
+          }
+        } catch (err) {
+          alert('Could not save contact details: ' + err.message);
+          saveBtn.disabled = false;
+          saveBtn.textContent = origText;
+          return;
+        }
+      }
+
+      // Step 3: create the attendance row
       const body = {
         scheduled_inspection_id: inspection.id,
         contact_id:              contactId,
@@ -554,18 +660,26 @@
         if (!r.ok) {
           const err = await r.json();
           alert(err.error || 'Register failed');
+          saveBtn.disabled = false;
+          saveBtn.textContent = origText;
           return;
         }
         const data = await r.json();
         const actionsCount = (data.actions_created || []).length;
+        const finalName = [edited.first_name, edited.last_name].filter(Boolean).join(' ').trim() || contactName;
+        const contactUpdatedNote = Object.keys(contactPatch).length
+          ? ' Contact details updated.'
+          : '';
         const msg = actionsCount > 0
-          ? `${contactName} registered. ${actionsCount} Action${actionsCount === 1 ? '' : 's'} created on Listing Agent.`
-          : `${contactName} registered.`;
+          ? `${finalName} registered.${contactUpdatedNote} ${actionsCount} Action${actionsCount === 1 ? '' : 's'} created on Listing Agent.`
+          : `${finalName} registered.${contactUpdatedNote}`;
         showToast(msg, 'success');
         close();
         if (onDone) onDone();
       } catch (err) {
         alert('Register failed: ' + err.message);
+        saveBtn.disabled = false;
+        saveBtn.textContent = origText;
       }
     });
   }
