@@ -5704,3 +5704,80 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 
 /* New status pill for resubmit_requested */
 .lo-status-evidence_resubmit_requested  { background: #fef3c7; color: #92400e; }
+
+/* ────────────────────────────────────────────────────────────────────────────
+   V77.2g — Roles "Board Default" multi-select widget + chips
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.params-board-chip {
+  display: inline-block;
+  background: rgba(196, 132, 26, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(196, 132, 26, 0.3);
+  border-radius: 3px;
+  padding: 1px 7px;
+  font-size: 11px;
+  margin: 1px 3px 1px 0;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.params-empty-marker {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.params-multi-select {
+  position: relative;
+  min-width: 180px;
+}
+.params-multi-select-trigger {
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.params-multi-select-trigger:hover { border-color: var(--accent); }
+.params-multi-select-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.params-multi-select-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.16);
+  z-index: 100;
+  max-height: 240px;
+  overflow-y: auto;
+  min-width: 220px;
+}
+
+.params-board-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.params-board-opt:hover { background: var(--surface2); }
+.params-board-opt input { margin: 0; }

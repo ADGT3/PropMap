@@ -90,15 +90,17 @@
     return _rolesCache.filter(r => r.active && Array.isArray(r.scopes) && r.scopes.includes(scope));
   }
 
-  // V77.2f — Find the role flagged with default_for=<purpose>. Returns the
-  // role id (e.g. 'enquirer' for purpose 'enquiry_creation'), or null if no
-  // role currently holds that default. Async because it reads the same cached
-  // role list as everything else here.
-  async function getDefaultRoleId(purpose) {
+  // V77.2g — Find the roles flagged for a given board (e.g. 'sys_lease_listings').
+  // Returns an array of role objects (sorted by sort_order). Empty array if no
+  // roles claim that board. Card creation should:
+  //   - if list is empty → contact step optional, can be left blank
+  //   - if list has items → contact step required, role dropdown shows these
+  async function getDefaultRolesForBoard(boardId) {
     const rows = await getRoles();
-    if (!Array.isArray(rows)) return null;
-    const match = rows.find(r => r.default_for === purpose && r.active);
-    return match ? match.id : null;
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .filter(r => r.active && Array.isArray(r.board_ids) && r.board_ids.includes(boardId))
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   }
 
   function invalidateRoles() {
@@ -186,7 +188,7 @@
   // ── Expose ────────────────────────────────────────────────────────────────
 
   window.Lookups = {
-    getRoles, getRolesActive, roleLabel, rolesForScope, getDefaultRoleId, invalidateRoles,
+    getRoles, getRolesActive, roleLabel, rolesForScope, getDefaultRolesForBoard, invalidateRoles,
     getSources, getSourcesActive, sourceLabel, invalidateSources,
     getInteractionTypes, getInteractionTypesActive, interactionTypeLabel, interactionDirection, invalidateInteractionTypes,
     invalidate, preload,

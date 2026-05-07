@@ -91,6 +91,26 @@
     sources: makeSectionState(),
     types: makeSectionState(),
   };
+  // V77.2g — boards cache for the Roles "Board Default" multi-select.
+  // Single fetch, cached for the page lifetime. Refresh by reloading the page.
+  let _boardsCache = null;
+  async function getBoardsForUI() {
+    if (_boardsCache) return _boardsCache;
+    try {
+      const r = await fetch('/api/boards');
+      if (!r.ok) throw new Error('boards fetch failed');
+      _boardsCache = await r.json();
+    } catch (err) {
+      console.warn('[parameters] boards fetch failed', err);
+      _boardsCache = [];
+    }
+    return _boardsCache;
+  }
+  function boardLabel(boardId) {
+    if (!_boardsCache) return boardId;
+    const b = _boardsCache.find(x => x.id === boardId);
+    return b ? (b.name || b.id) : boardId;
+  }
 
   async function render(containerEl) {
     _container = containerEl;
@@ -163,7 +183,7 @@
     const wrap = _container.querySelector('[data-table-wrap="roles"]');
     if (!wrap) return;
     Lookups.invalidateRoles();
-    const rows = await Lookups.getRoles();
+    const [rows, boards] = await Promise.all([Lookups.getRoles(), getBoardsForUI()]);
     const sorted = sortRows(rows, _state.roles.sortKey, _state.roles.sortDir);
 
     const headers = [
@@ -171,7 +191,7 @@
       { key: 'label',        label: 'Label' },
       { key: 'scopes',       label: 'Scopes', sortable: false },
       { key: 'default_scope',label: 'Default Scope' },
-      { key: 'default_for',  label: 'Default For' },
+      { key: 'board_ids',    label: 'Board Default', sortable: false },
       { key: 'sort_order',   label: 'Order' },
       { key: 'active',       label: 'Active' },
       { key: 'system',       label: 'System' },
@@ -199,17 +219,17 @@
         html += renderRoleEditRow(r);
       } else {
         const scopesStr = Array.isArray(r.scopes) ? r.scopes.join(', ') : '';
-        const defaultForLabel = ({
-          enquiry_creation: 'Enquiry creation',
-          listing_agent:    'Listing agent',
-        })[r.default_for] || '';
+        const boardIds = Array.isArray(r.board_ids) ? r.board_ids : [];
+        const boardChips = boardIds.length
+          ? boardIds.map(bid => `<span class="params-board-chip">${esc(boardLabel(bid))}</span>`).join('')
+          : '<span class="params-empty-marker">—</span>';
         html += `
           <tr class="params-tr">
             <td class="params-td params-td-mono">${esc(r.id)}</td>
             <td class="params-td">${esc(r.label)}</td>
             <td class="params-td">${esc(scopesStr)}</td>
             <td class="params-td">${esc(r.default_scope || '')}</td>
-            <td class="params-td">${esc(defaultForLabel)}</td>
+            <td class="params-td">${boardChips}</td>
             <td class="params-td">${r.sort_order ?? ''}</td>
             <td class="params-td">${r.active ? '✓' : '✕'}</td>
             <td class="params-td">${r.system ? '<span class="params-system-badge">system</span>' : ''}</td>
@@ -255,9 +275,22 @@
     const label         = isNew ? '' : (r.label || '');
     const scopesStr     = isNew ? '' : (Array.isArray(r.scopes) ? r.scopes.join(',') : '');
     const defaultScope  = isNew ? 'deal' : (r.default_scope || 'deal');
-    const defaultFor    = isNew ? '' : (r.default_for || '');
+    const boardIds      = isNew ? [] : (Array.isArray(r.board_ids) ? r.board_ids : []);
     const sortOrder     = isNew ? 100  : (r.sort_order ?? 100);
     const active        = isNew ? true : !!r.active;
+    const allBoards     = _boardsCache || [];
+
+    // Render the checkbox dropdown for board selection. Closed state shows
+    // chips of selected board names (or "Select boards…" if none).
+    const selectedLabels = boardIds.length
+      ? boardIds.map(bid => esc(boardLabel(bid))).join(', ')
+      : '<span style="color:var(--muted)">Select boards…</span>';
+    const optionsHtml = allBoards.map(b => `
+      <label class="params-board-opt">
+        <input type="checkbox" data-field="board_id" value="${esc(b.id)}" ${boardIds.includes(b.id) ? 'checked' : ''}>
+        <span>${esc(b.name || b.id)}</span>
+      </label>`).join('');
+
     return `
       <tr class="params-tr params-tr-edit" data-role-edit-row>
         <td class="params-td"><input class="kb-input" data-field="id" value="${esc(id)}" ${isNew ? '' : 'disabled'} placeholder="slug_id"></td>
@@ -272,11 +305,15 @@
           </select>
         </td>
         <td class="params-td">
-          <select class="kb-input" data-field="default_for">
-            <option value=""                  ${defaultFor === ''                  ? 'selected' : ''}>—</option>
-            <option value="enquiry_creation"  ${defaultFor === 'enquiry_creation'  ? 'selected' : ''}>Enquiry creation</option>
-            <option value="listing_agent"     ${defaultFor === 'listing_agent'     ? 'selected' : ''}>Listing agent</option>
-          </select>
+          <div class="params-multi-select" data-field="board_ids">
+            <button type="button" class="params-multi-select-trigger" data-role="ms-trigger">
+              <span class="params-multi-select-label">${selectedLabels}</span>
+              <span style="margin-left:6px">▾</span>
+            </button>
+            <div class="params-multi-select-popover" data-role="ms-popover" style="display:none">
+              ${optionsHtml || '<div class="params-empty-marker" style="padding:8px">No boards available.</div>'}
+            </div>
+          </div>
         </td>
         <td class="params-td"><input class="kb-input" data-field="sort_order" type="number" value="${sortOrder}" style="width:80px"></td>
         <td class="params-td"><input type="checkbox" data-field="active" ${active ? 'checked' : ''}></td>
@@ -290,6 +327,44 @@
   }
 
   function wireRoleEditRowEvents(wrap) {
+    // V77.2g — toggle the boards multi-select popover and update the trigger
+    // label as checkboxes change. Outside-click closes the popover.
+    wrap.querySelectorAll('[data-role="ms-trigger"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const popover = btn.parentElement.querySelector('[data-role="ms-popover"]');
+        if (!popover) return;
+        const isOpen = popover.style.display !== 'none';
+        // Close any other open popovers in this wrap first
+        wrap.querySelectorAll('[data-role="ms-popover"]').forEach(p => { p.style.display = 'none'; });
+        popover.style.display = isOpen ? 'none' : 'block';
+      });
+    });
+    // Update label when checkboxes change
+    wrap.querySelectorAll('input[data-field="board_id"]').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const wrapper = cb.closest('.params-multi-select');
+        if (!wrapper) return;
+        const checked = Array.from(wrapper.querySelectorAll('input[data-field="board_id"]:checked'))
+          .map(c => boardLabel(c.value));
+        const labelEl = wrapper.querySelector('.params-multi-select-label');
+        if (labelEl) {
+          labelEl.innerHTML = checked.length
+            ? checked.map(esc).join(', ')
+            : '<span style="color:var(--muted)">Select boards…</span>';
+        }
+      });
+    });
+    // Close popovers when clicking outside the multi-select
+    if (!wrap._msOutsideHandlerInstalled) {
+      wrap._msOutsideHandlerInstalled = true;
+      document.addEventListener('mousedown', (e) => {
+        if (!e.target.closest('.params-multi-select')) {
+          wrap.querySelectorAll('[data-role="ms-popover"]').forEach(p => { p.style.display = 'none'; });
+        }
+      });
+    }
+
     wrap.querySelectorAll('[data-save-role]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const tr = btn.closest('tr');
@@ -297,13 +372,15 @@
         const label        = tr.querySelector('[data-field="label"]').value.trim();
         const scopesStr    = tr.querySelector('[data-field="scopes"]').value.trim();
         const defaultScope = tr.querySelector('[data-field="default_scope"]').value;
-        const defaultFor   = tr.querySelector('[data-field="default_for"]').value;
         const sortOrder    = parseInt(tr.querySelector('[data-field="sort_order"]').value, 10) || 100;
         const active       = tr.querySelector('[data-field="active"]').checked;
         if (!id || !label) return alert('id and label required');
         const scopes = scopesStr.split(/[,\s]+/).filter(Boolean);
         if (!scopes.length) return alert('scopes required (comma-separated)');
         if (!scopes.includes(defaultScope)) return alert('default_scope must be in scopes');
+        // V77.2g — gather checked boards from the multi-select
+        const boardIds = Array.from(tr.querySelectorAll('input[data-field="board_id"]:checked'))
+          .map(cb => cb.value);
 
         const editingExisting = _state.roles.editingId !== null;
 
@@ -313,7 +390,7 @@
             const r = await fetch('/api/roles', {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id, label, scopes, default_scope: defaultScope, default_for: defaultFor || '', sort_order: sortOrder, active }),
+              body: JSON.stringify({ id, label, scopes, default_scope: defaultScope, board_ids: boardIds, sort_order: sortOrder, active }),
             });
             if (!r.ok) throw new Error((await r.json()).error || r.status);
           } else {
@@ -321,7 +398,7 @@
             const r = await fetch('/api/roles', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id, label, scopes, default_scope: defaultScope, default_for: defaultFor || null, sort_order: sortOrder, active }),
+              body: JSON.stringify({ id, label, scopes, default_scope: defaultScope, board_ids: boardIds, sort_order: sortOrder, active }),
             });
             if (!r.ok) throw new Error((await r.json()).error || r.status);
           }
