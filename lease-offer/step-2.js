@@ -451,7 +451,7 @@
           </div>
           <div class="lof-field" style="flex:0 0 160px">
             <label>Gross amount ($)</label>
-            <input type="text" inputmode="decimal" data-section="income" data-field="gross_amount" data-idx="${i}" value="${inc.gross_amount != null ? inc.gross_amount : ''}">
+            <input type="number" min="0" step="1" inputmode="numeric" data-section="income" data-field="gross_amount" data-idx="${i}" value="${inc.gross_amount != null ? inc.gross_amount : ''}">
           </div>
           <div class="lof-field" style="flex:0 0 120px">
             <label>Period</label>
