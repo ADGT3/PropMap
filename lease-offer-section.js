@@ -463,6 +463,7 @@
         { key: 'rental_history_clean',       label: 'Rental history clean' },
         { key: 'affordability_confirmed',    label: 'Affordability confirmed' },
         { key: 'condition_report_completed', label: 'Condition Report completed' },
+        { key: 'agreement_fully_executed',   label: 'Agreement Fully Executed' },
       ];
       const allChecked = checklist.every(c => !!validation[c.key]);
 
