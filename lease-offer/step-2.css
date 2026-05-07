@@ -46,18 +46,21 @@
 
 .s2-id-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
   padding: 8px 10px;
   background: #fff;
   border: 1px solid var(--lof-border);
   border-radius: 4px;
   margin-bottom: 6px;
   font-size: 13px;
+  min-width: 0;
 }
 
 .s2-id-row select {
-  flex: 1;
+  flex: 1 1 200px;
+  min-width: 0;
   padding: 6px 8px;
   border: 1px solid var(--lof-border);
   border-radius: 4px;
@@ -128,7 +131,8 @@
 }
 
 .s2-file-name {
-  flex: 1;
+  flex: 1 1 120px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
