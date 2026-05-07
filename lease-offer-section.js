@@ -359,7 +359,7 @@
       listEl.querySelectorAll('.lo-accept-btn').forEach(b => {
         b.addEventListener('click', async () => {
           const id = b.getAttribute('data-id');
-          if (!confirm('Accept this offer? This will:\n\n• Convert each applicant into a Contact (linked to this deal as Applicant)\n• Send an Evidence Upload Form link to the primary applicant\n• Lock the offer terms\n\nProceed?')) return;
+          if (!confirm('Accept this offer? This will:\n\n• Match each applicant to an existing Contact (by email) or create a new one if none exists\n• Update name and mobile on matched Contacts with the applicant\'s submitted values\n• Link each Contact to this deal as Applicant\n• Send an Evidence Upload Form link to the primary applicant\n• Lock the offer terms\n\nProceed?')) return;
           b.disabled = true;
           b.textContent = 'Accepting…';
           try {
