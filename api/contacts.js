@@ -371,6 +371,48 @@ export default async function handler(req, res) {
               return res.status(400).json({ error: 'entity_type+entity_id or pipeline_id required' });
             }
           }
+          // V77.2g — Default Board Role invariant: the about-to-be-deleted
+          // "different roles" purge below could remove the last contact holding
+          // a Default Board Role. Block if so. Only applies to deals.
+          if (entity_type === 'deal') {
+            const dealRows = await sql`SELECT board_id FROM deals WHERE id = ${entity_id} LIMIT 1`;
+            const boardId = dealRows[0]?.board_id;
+            if (boardId) {
+              const eligibleRoles = await sql`
+                SELECT r.id, r.label
+                  FROM roles r
+                  JOIN role_boards rb ON rb.role_id = r.id
+                 WHERE rb.board_id = ${boardId} AND r.active = true`;
+              if (eligibleRoles.length) {
+                const eligibleIds = eligibleRoles.map(r => r.id);
+                // Roles for THIS contact on this deal that the upcoming purge would drop
+                const purgeable = await sql`
+                  SELECT role_id FROM entity_contacts
+                   WHERE contact_id = ${contact_id} AND entity_type = 'deal' AND entity_id = ${entity_id}
+                     AND role_id <> ${roleId}`;
+                const willDropEligible = purgeable.map(p => p.role_id).filter(rid => eligibleIds.includes(rid));
+                // If the new roleId is already an eligible role, nothing changes the
+                // count of contacts-with-eligible-role, so no need to block.
+                const newRoleIsEligible = eligibleIds.includes(roleId);
+                if (willDropEligible.length && !newRoleIsEligible) {
+                  // Count other contacts on this deal still holding any eligible role
+                  const remaining = await sql`
+                    SELECT COUNT(*)::int AS c FROM entity_contacts
+                     WHERE entity_type = 'deal'
+                       AND entity_id = ${entity_id}
+                       AND contact_id <> ${contact_id}
+                       AND role_id = ANY(${eligibleIds})`;
+                  if ((remaining[0]?.c ?? 0) === 0) {
+                    const labels = eligibleRoles.map(r => r.label).join(' or ');
+                    return res.status(409).json({
+                      error: `Cannot change this contact's role — they hold the only ${labels} role on this card. Add another contact with one of these roles first, then change this one.`,
+                      code: 'last_default_role_contact',
+                    });
+                  }
+                }
+              }
+            }
+          }
           // Remove any existing link for this (contact, entity) with a different role
           await sql`
             DELETE FROM entity_contacts
@@ -396,6 +438,54 @@ export default async function handler(req, res) {
               entity_id   = mapped.entity_id;
             } else {
               return res.status(400).json({ error: 'entity_type+entity_id or pipeline_id required' });
+            }
+          }
+          // V77.2g — Default Board Role invariant: a deal cannot end up with
+          // zero contacts holding any role flagged as a Default Board Role for
+          // its board. Block the unlink with a 409 if doing so would leave the
+          // deal in an invalid state. Only applies to deals (other entity
+          // types are unaffected).
+          if (entity_type === 'deal') {
+            const dealRows = await sql`SELECT board_id FROM deals WHERE id = ${entity_id} LIMIT 1`;
+            const boardId = dealRows[0]?.board_id;
+            if (boardId) {
+              // Resolve eligible roles for this board
+              const eligibleRoles = await sql`
+                SELECT r.id, r.label
+                  FROM roles r
+                  JOIN role_boards rb ON rb.role_id = r.id
+                 WHERE rb.board_id = ${boardId} AND r.active = true`;
+              if (eligibleRoles.length) {
+                const eligibleIds = eligibleRoles.map(r => r.id);
+                // Find which of those role-links the unlink will remove for THIS contact
+                let willRemoveEligibleRoles;
+                if (role_id) {
+                  willRemoveEligibleRoles = eligibleIds.includes(role_id) ? [role_id] : [];
+                } else {
+                  // Legacy "remove all roles for this contact on this deal"
+                  const cur = await sql`
+                    SELECT role_id FROM entity_contacts
+                     WHERE contact_id = ${contact_id} AND entity_type = 'deal' AND entity_id = ${entity_id}`;
+                  willRemoveEligibleRoles = cur.map(c => c.role_id).filter(rid => eligibleIds.includes(rid));
+                }
+                if (willRemoveEligibleRoles.length) {
+                  // Count how many other contacts on this deal currently hold
+                  // any eligible role (excluding the contact about to be unlinked).
+                  const remaining = await sql`
+                    SELECT COUNT(*)::int AS c FROM entity_contacts
+                     WHERE entity_type = 'deal'
+                       AND entity_id = ${entity_id}
+                       AND contact_id <> ${contact_id}
+                       AND role_id = ANY(${eligibleIds})`;
+                  if ((remaining[0]?.c ?? 0) === 0) {
+                    const labels = eligibleRoles.map(r => r.label).join(' or ');
+                    return res.status(409).json({
+                      error: `Cannot remove the last contact with ${labels} role. Add another contact with one of these roles first, then remove this one.`,
+                      code: 'last_default_role_contact',
+                    });
+                  }
+                }
+              }
             }
           }
           if (role_id) {

@@ -190,15 +190,36 @@ async function findOrCreateEnquiryDeal({
 //
 // Used to decide who an auto-created Action should be assigned to.
 // Returns: contact id (integer) or null if no listing agent on this deal.
-async function resolveListingAgent(listingDealId) {
+// V77.2g — Resolve all listing agents on a Listings deal.
+//
+// "Listing agent" means: any contact with a role flagged as a Default Board
+// Role for the Listings board (via role_boards). Multiple contacts can share
+// the role on a single deal (e.g. two listing agents collaborating); we
+// return them all so callers can fan out actions to each.
+//
+// Returns: array of contact_ids (possibly empty).
+async function resolveListingAgents(listingDealId) {
+  const dealRows = await sql`SELECT board_id FROM deals WHERE id = ${listingDealId} LIMIT 1`;
+  const boardId = dealRows[0]?.board_id;
+  if (!boardId) return [];
+  // Find all contacts on this deal whose role is flagged for this board.
   const rows = await sql`
-    SELECT contact_id FROM entity_contacts
-    WHERE entity_type = 'deal'
-      AND entity_id   = ${listingDealId}
-      AND role_id     = 'listing_agent'
-    ORDER BY linked_at ASC
-    LIMIT 1`;
-  return rows.length ? rows[0].contact_id : null;
+    SELECT DISTINCT ec.contact_id
+      FROM entity_contacts ec
+      JOIN role_boards rb ON rb.role_id = ec.role_id AND rb.board_id = ${boardId}
+      JOIN roles r        ON r.id       = ec.role_id AND r.active = true
+     WHERE ec.entity_type = 'deal'
+       AND ec.entity_id   = ${listingDealId}
+     ORDER BY ec.contact_id`;
+  return rows.map(r => r.contact_id);
+}
+
+// V76.x compat shim — returns the first listing agent id (or null) so older
+// call sites that expect a single value still work. New code should call
+// resolveListingAgents (plural).
+async function resolveListingAgent(listingDealId) {
+  const ids = await resolveListingAgents(listingDealId);
+  return ids.length ? ids[0] : null;
 }
 
 // ── Build Action description for each trigger type ────────────────────────
@@ -446,42 +467,29 @@ async function handlePost(req, res, session) {
     throw err;
   }
 
-  // 4. Auto-create Actions for any triggered tickboxes (assigned to Listing Agent)
-  const listingAgentId = await resolveListingAgent(c.listing_deal_id);
+  // 4. Auto-create Actions for any triggered tickboxes.
+  // V77.2g — assign to ALL contacts holding a Default Board Role for the
+  // listing deal's board (typically "listing_agent"). If multiple agents are
+  // listed on the deal, one Action per agent is created.
+  const listingAgentIds = await resolveListingAgents(c.listing_deal_id);
   const actionsCreated = [];
-  if (trigger_followup === true) {
-    const aid = await createAutoAction({
-      triggerType: 'followup',
-      enquiryDealId,
-      listingAgentId,
-      creatorId: createdBy,
-      contactName,
-      propertyAddress: propertyLabel,
-    });
-    if (aid) actionsCreated.push({ trigger: 'followup', action_id: aid });
-  }
-  if (trigger_offer_form === true) {
-    const aid = await createAutoAction({
-      triggerType: 'offer_form',
-      enquiryDealId,
-      listingAgentId,
-      creatorId: createdBy,
-      contactName,
-      propertyAddress: propertyLabel,
-    });
-    if (aid) actionsCreated.push({ trigger: 'offer_form', action_id: aid });
-  }
-  if (trigger_contract === true) {
-    const aid = await createAutoAction({
-      triggerType: 'contract',
-      enquiryDealId,
-      listingAgentId,
-      creatorId: createdBy,
-      contactName,
-      propertyAddress: propertyLabel,
-    });
-    if (aid) actionsCreated.push({ trigger: 'contract', action_id: aid });
-  }
+  // Helper to fan out a single trigger across all agents
+  const fanOut = async (triggerType) => {
+    for (const agentId of listingAgentIds) {
+      const aid = await createAutoAction({
+        triggerType,
+        enquiryDealId,
+        listingAgentId: agentId,
+        creatorId: createdBy,
+        contactName,
+        propertyAddress: propertyLabel,
+      });
+      if (aid) actionsCreated.push({ trigger: triggerType, action_id: aid, assignee_contact_id: agentId });
+    }
+  };
+  if (trigger_followup   === true) await fanOut('followup');
+  if (trigger_offer_form === true) await fanOut('offer_form');
+  if (trigger_contract   === true) await fanOut('contract');
 
   // 5. Apply contact preferences (independent of attendance)
   await applyContactPreferences(parseInt(contact_id, 10), {
@@ -493,7 +501,7 @@ async function handlePost(req, res, session) {
   return res.status(201).json({
     attendance:        attendanceRow,
     enquiry_deal_id:   enquiryDealId,
-    listing_agent_id:  listingAgentId,
+    listing_agent_ids: listingAgentIds,
     actions_created:   actionsCreated,
   });
 }
@@ -564,22 +572,25 @@ async function handlePut(req, res, session) {
   // Create Actions for any flags that just transitioned false→true
   let actionsCreated = [];
   if (willTriggerNew.length) {
-    const listingAgentId = await resolveListingAgent(cur.listing_deal_id);
+    const listingAgentIds = await resolveListingAgents(cur.listing_deal_id);
     const createdBy      = resolveCreator(session);
     const contactName    = [cur.first_name, cur.last_name].filter(Boolean).join(' ').trim() || `Contact #${cur.contact_id}`;
     const propertyLabel  = cur.property_address
       ? `${cur.property_address}${cur.property_suburb ? ', ' + cur.property_suburb : ''}`
       : (cur.parcel_name || 'the listing');
     for (const trig of willTriggerNew) {
-      const aid = await createAutoAction({
-        triggerType: trig,
-        enquiryDealId:   cur.enquiry_deal_id,
-        listingAgentId,
-        creatorId:       createdBy,
-        contactName,
-        propertyAddress: propertyLabel,
-      });
-      if (aid) actionsCreated.push({ trigger: trig, action_id: aid });
+      // V77.2g — fan out to ALL listing agents on the deal, one Action each
+      for (const agentId of listingAgentIds) {
+        const aid = await createAutoAction({
+          triggerType: trig,
+          enquiryDealId:   cur.enquiry_deal_id,
+          listingAgentId:  agentId,
+          creatorId:       createdBy,
+          contactName,
+          propertyAddress: propertyLabel,
+        });
+        if (aid) actionsCreated.push({ trigger: trig, action_id: aid, assignee_contact_id: agentId });
+      }
     }
   }
 
