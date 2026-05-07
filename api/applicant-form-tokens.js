@@ -149,7 +149,7 @@ async function issueToken(req, res, body, session) {
   const tokenRow = tokenRows[0];
 
   // Send invite email (V77.2 stub — logs to email_log)
-  const formUrl = await Email.leaseOfferUrl(token);
+  const formUrl = await Email.leaseOfferUrl(token, step);
   const tpl = step === 1 ? step1Tpl : step2Tpl;
   const tplId = step === 1 ? 'lease-offer-step-1-invite' : 'lease-offer-step-2-invite';
 
@@ -266,7 +266,7 @@ async function resendEmail(req, res, body, session) {
   const applicantName = [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || targetEmail;
   const propertyAddress = [row.address, row.suburb, row.state].filter(Boolean).join(', ');
 
-  const formUrl = await Email.leaseOfferUrl(row.token);
+  const formUrl = await Email.leaseOfferUrl(row.token, row.step);
   const tpl = row.step === 1 ? step1Tpl : step2Tpl;
   const tplId = row.step === 1 ? 'lease-offer-step-1-invite' : 'lease-offer-step-2-invite';
   const sessionName = session.name || session.email || 'Your agent';

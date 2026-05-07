@@ -492,8 +492,139 @@ async function handlePut(req, res) {
     if (body.income_history.length) await insertIncomeHistory(applicationId, body.income_history);
   }
 
+  // V77.2 — Side effects of accept transition (submitted → offer_accepted).
+  // Three steps, fail-soft: applicant normalisation, Step 2 token issue, applicant email.
+  // Side-effect failures are logged but do not roll back the status change.
+  if (cur.status === 'submitted' && nextStatus === 'offer_accepted') {
+    try {
+      await onOfferAccepted(applicationId, merged, cur.deal_id);
+    } catch (err) {
+      console.error('[applications/PUT] accept side-effects failed:', err);
+      // Continue — agent can manually retry by clicking Send Step 2 link
+    }
+  }
+
   const result = await applicationWithChildren(applicationId);
   return res.status(200).json(result);
+}
+
+// V77.2 — Compound side-effect when an offer is accepted.
+//   1. Normalise each applicant in applicants_jsonb to a Contact (match-by-email or create new).
+//   2. Link each Contact to the Lease Enquiry deal as role 'applicant'.
+//   3. Issue a Step 2 magic-link token for the primary applicant.
+//   4. Send the Step 2 invitation email.
+async function onOfferAccepted(applicationId, mergedAppRow, dealId) {
+  const applicants = Array.isArray(mergedAppRow.applicants_jsonb) ? mergedAppRow.applicants_jsonb : [];
+  if (!applicants.length) {
+    console.warn('[applications.accept] no applicants in jsonb — skipping normalisation');
+    return;
+  }
+
+  // Step 1: normalise each applicant → Contact
+  const normalised = [];
+  for (const ap of applicants) {
+    if (!ap || !ap.email) {
+      normalised.push({ ...ap, contact_id: null });
+      continue;
+    }
+    // Match by email (case-insensitive); if multiple, pick most recently updated
+    const existing = await sql`
+      SELECT id FROM contacts
+      WHERE LOWER(email) = LOWER(${ap.email})
+      ORDER BY updated_at DESC
+      LIMIT 1`;
+    let contactId;
+    if (existing.length) {
+      contactId = existing[0].id;
+      // Lightly upsert mobile/name if Contact has them empty
+      await sql`
+        UPDATE contacts
+           SET first_name = CASE WHEN COALESCE(first_name, '') = '' THEN ${ap.first_name || ''} ELSE first_name END,
+               last_name  = CASE WHEN COALESCE(last_name, '')  = '' THEN ${ap.last_name  || ''} ELSE last_name  END,
+               mobile     = CASE WHEN COALESCE(mobile, '')     = '' THEN ${ap.mobile     || ''} ELSE mobile     END,
+               updated_at = now()
+         WHERE id = ${contactId}`;
+    } else {
+      const inserted = await sql`
+        INSERT INTO contacts (first_name, last_name, mobile, email, source)
+        VALUES (${ap.first_name || ''}, ${ap.last_name || ''}, ${ap.mobile || ''}, ${ap.email}, 'applicant_normalisation')
+        RETURNING id`;
+      contactId = inserted[0].id;
+    }
+    normalised.push({ ...ap, contact_id: contactId });
+
+    // Link to deal as applicant role (idempotent — UNIQUE constraint on entity_contacts)
+    await sql`
+      INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id)
+      VALUES (${contactId}, 'deal', ${dealId}, 'applicant')
+      ON CONFLICT (contact_id, entity_type, entity_id, role_id) DO NOTHING`;
+  }
+
+  // Stash contact_ids back in applicants_jsonb so the agent UI can show them
+  await sql`
+    UPDATE applications
+       SET applicants_jsonb = ${JSON.stringify(normalised)}::jsonb,
+           updated_at       = now()
+     WHERE id = ${applicationId}`;
+
+  // Step 2: issue Step 2 token for primary applicant
+  const primary = normalised[0];
+  if (!primary || !primary.contact_id) {
+    console.warn('[applications.accept] primary applicant missing contact_id; skipping token issuance');
+    return;
+  }
+
+  // Generate a fresh token (delete any existing for this app+step first)
+  const { generateToken } = await import('../lib/public-token-auth.js');
+  const Email = (await import('../lib/email.js')).default;
+  const step2Tpl = await import('../emails/lease-offer-step-2-invite.js');
+
+  await sql`DELETE FROM applicant_form_tokens WHERE application_id = ${applicationId} AND step = 2`;
+
+  const token = generateToken(32);
+  const TTL_DAYS = 7;
+  const expiresAt = new Date(Date.now() + TTL_DAYS * 24 * 60 * 60 * 1000);
+
+  // Look up the Contact's current email (in case it changed since applicant submitted)
+  const contactRows = await sql`
+    SELECT email, first_name, last_name FROM contacts WHERE id = ${primary.contact_id}`;
+  const contact = contactRows[0];
+  if (!contact || !contact.email) {
+    console.warn('[applications.accept] primary applicant Contact missing email; cannot send Step 2');
+    return;
+  }
+
+  await sql`
+    INSERT INTO applicant_form_tokens (application_id, step, token, contact_id, applicant_email, expires_at)
+    VALUES (${applicationId}, 2, ${token}, ${primary.contact_id}, ${contact.email}, ${expiresAt.toISOString()})`;
+
+  // Step 3: fire Step 2 invitation email
+  const dealRows = await sql`
+    SELECT d.property_id, p.address, p.suburb, p.state
+    FROM deals d
+    LEFT JOIN properties p ON p.id = d.property_id
+    WHERE d.id = ${dealId}`;
+  const deal = dealRows[0] || {};
+  const propertyAddress = [deal.address, deal.suburb, deal.state].filter(Boolean).join(', ');
+  const applicantName = [contact.first_name, contact.last_name].filter(Boolean).join(' ').trim() || contact.email;
+  const formUrl = await Email.leaseOfferUrl(token, 2);
+
+  await Email.send({
+    to: contact.email,
+    channel: 'leasing',
+    template: step2Tpl,
+    template_id: 'lease-offer-step-2-invite',
+    vars: {
+      applicant_name:   applicantName,
+      property_address: propertyAddress,
+      form_url:         formUrl,
+      agent_name:       'Your agent',
+      agency_name:      'Edan Property',
+      expires_in_days:  TTL_DAYS,
+    },
+    related_entity_type: 'application',
+    related_entity_id:   applicationId,
+  });
 }
 
 async function handleDelete(req, res) {
