@@ -316,7 +316,7 @@
         <div class="lof-row">
           <div class="lof-field">
             <label>Gross weekly income ($)</label>
-            <input type="text" inputmode="decimal" data-field="gross_weekly_income" data-idx="${i}" value="${a.gross_weekly_income != null ? a.gross_weekly_income : ''}" placeholder="e.g. 1500">
+            <input type="number" min="0" step="1" inputmode="numeric" data-field="gross_weekly_income" data-idx="${i}" value="${a.gross_weekly_income != null ? a.gross_weekly_income : ''}" placeholder="e.g. 1500">
           </div>
         </div>
       </div>

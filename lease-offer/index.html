@@ -71,7 +71,7 @@
           <div class="lof-row">
             <div class="lof-field">
               <label for="lofRent">Rent offered ($/week) <span class="lof-req">*</span></label>
-              <input type="text" id="lofRent" inputmode="decimal" placeholder="e.g. 650">
+              <input type="number" id="lofRent" min="1" step="1" inputmode="numeric" placeholder="e.g. 650">
             </div>
             <div class="lof-field">
               <label for="lofBond">Bond (weeks) <span class="lof-req">*</span></label>
@@ -91,7 +91,7 @@
           </div>
           <div class="lof-field">
             <label for="lofTerms">Special terms / requests</label>
-            <textarea id="lofTerms" rows="3" maxlength="2000" placeholder="e.g. Pet-friendly, garden maintenance, etc."></textarea>
+            <textarea id="lofTerms" rows="3" maxlength="2000"></textarea>
           </div>
         </fieldset>
 
