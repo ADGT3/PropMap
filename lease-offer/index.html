@@ -24,11 +24,18 @@
     <!-- Verify email view (shown when token is unverified) -->
     <section class="lof-view" id="lofVerify" style="display:none">
       <div class="lof-card">
-        <h1>Verify your email</h1>
-        <p>To continue with your lease offer, please confirm this is the correct email address.</p>
+        <h1>Confirm it's you</h1>
+        <p>For security, please confirm the email address this link was sent to and enter your mobile number.</p>
         <p class="lof-verify-email" id="lofVerifyEmail"></p>
-        <button class="lof-btn-primary" id="lofVerifyBtn">Yes — this is me</button>
-        <p class="lof-help">By clicking, you confirm you wish to submit a lease offer for the property below. Your agent will be notified once you submit.</p>
+        <form id="lofVerifyForm">
+          <div class="lof-field" style="text-align:left;margin-top:12px">
+            <label for="lofVerifyMobile">Your mobile number</label>
+            <input type="tel" id="lofVerifyMobile" inputmode="tel" autocomplete="tel" placeholder="e.g. 0412 345 678" required>
+            <p class="lof-field-error" id="lofVerifyError" style="display:none"></p>
+          </div>
+          <button type="submit" class="lof-btn-primary" id="lofVerifyBtn">Continue</button>
+        </form>
+        <p class="lof-help">If you weren't expecting this link or the email address shown isn't yours, please ignore this message.</p>
       </div>
     </section>
 

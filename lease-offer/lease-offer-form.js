@@ -26,28 +26,21 @@
   bootstrap();
 
   async function bootstrap() {
-    // First, attempt to verify the token (idempotent — if already verified, returns immediately).
-    // Then load form data. The verify-email "Yes — this is me" gate is shown only on the very
-    // first visit (before token email_verified flips true).
+    // First, get token info to decide which view to show.
     try {
-      const verifyRes = await fetch(API_BASE + '/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      if (!verifyRes.ok) {
-        // Token issue (expired, not found, etc.) — show error. The verify endpoint accepts
-        // unverified tokens but rejects expired/missing ones.
-        const err = await verifyRes.json().catch(() => ({}));
+      const r = await fetch(API_BASE + '/token-info');
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
         showError(err.error || 'This link is no longer valid.');
         return;
       }
-      const verifyData = await verifyRes.json();
-      // verifyData.already === true means the token was already verified before this visit.
-      // Either way, proceed to show the gate first; user clicks "Yes" to dismiss it (and we re-verify
-      // for idempotency). If they refresh and come back already verified, the gate is skipped.
-      if (verifyData.already) {
-        // Already verified on a prior visit — go straight to form
+      const info = await r.json();
+      if (info.verified) {
+        // Already verified on a prior visit — load form directly
         await loadAndShowForm();
       } else {
-        // First-time visit just verified → still show the gate so the applicant explicitly confirms
-        showVerify();
+        // Show verify gate with masked email + mobile challenge
+        showVerify(info.masked_email);
       }
     } catch (err) {
       showError('Could not connect to the server. Please try again.');
@@ -111,26 +104,55 @@
     document.getElementById('lofError').style.display = '';
   }
 
-  function showVerify() {
+  function showVerify(maskedEmail) {
     document.getElementById('lofLoading').style.display = 'none';
-    // We don't have applicant_email exposed yet (verify endpoint doesn't return it for unverified tokens).
-    // Hit /load for the email after explicit confirm — but at this point, just display generic.
-    // To get a more personalised gate, we'd need to expose email from verify response — skipped for V77.2.
-    document.getElementById('lofVerifyEmail').textContent = '';
-    document.getElementById('lofVerifyEmail').style.display = 'none';
+    const emailEl = document.getElementById('lofVerifyEmail');
+    if (maskedEmail) {
+      emailEl.textContent = maskedEmail;
+      emailEl.style.display = '';
+    } else {
+      emailEl.style.display = 'none';
+    }
     document.getElementById('lofVerify').style.display = '';
-    document.getElementById('lofVerifyBtn').addEventListener('click', async () => {
+    document.getElementById('lofVerifyForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const mobile = document.getElementById('lofVerifyMobile').value.trim();
+      const errEl = document.getElementById('lofVerifyError');
       const btn = document.getElementById('lofVerifyBtn');
+      errEl.style.display = 'none';
+      errEl.textContent = '';
+
+      if (!mobile) {
+        errEl.textContent = 'Please enter your mobile number.';
+        errEl.style.display = '';
+        return;
+      }
+
       btn.disabled = true;
-      btn.textContent = 'Loading…';
-      // Re-verify (idempotent) then load
+      btn.textContent = 'Checking…';
       try {
-        await fetch(API_BASE + '/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const r = await fetch(API_BASE + '/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mobile }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          errEl.textContent = err.error || 'Verification failed.';
+          errEl.style.display = '';
+          btn.disabled = false;
+          btn.textContent = 'Continue';
+          return;
+        }
+        // Success — load and show the form
         await loadAndShowForm();
       } catch (err) {
-        showError('Could not load form: ' + err.message);
+        errEl.textContent = 'Network error. Please try again.';
+        errEl.style.display = '';
+        btn.disabled = false;
+        btn.textContent = 'Continue';
       }
-    }, { once: true });
+    }, { once: false });
   }
 
   function showForm() {
