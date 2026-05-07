@@ -647,6 +647,46 @@ async function dbLoad() {
   }
 }
 
+// V77.2g — Refetch a single deal from the server and overwrite the in-memory
+// pipeline entry + localStorage cache. Used to roll back optimistic updates
+// when the DB save was rejected (so the cache doesn't stay ahead of reality).
+// Also fires a repaint event so any open modal/board re-renders against the
+// truthful state.
+async function reloadPipelineEntryFromDb(id) {
+  try {
+    const r = await fetch(`/api/deals?id=${encodeURIComponent(id)}`);
+    if (!r.ok) {
+      if (r.status === 404) {
+        // Deal was deleted server-side — drop locally too
+        delete pipeline[id];
+        cacheSave(pipeline);
+        if (kanbanVisible) renderBoard();
+        return;
+      }
+      throw new Error(r.status);
+    }
+    const row = await r.json();
+    pipeline[id] = dealRowToInternal(row);
+    cacheSave(pipeline);
+    // Repaint: the open modal (if any) will close+reopen via re-render below
+    // for now we just repaint the board. A more polished fix would re-render
+    // the modal in place if it's the same deal id.
+    if (kanbanVisible) renderBoard();
+    // If the modal for this deal is open, re-render its body so the agent
+    // sees the rolled-back state.
+    const openModal = document.querySelector(`.kb-modal-overlay[data-property-id="${id}"]`);
+    if (openModal) {
+      openModal.remove();
+      // Reopen with fresh data — minor UX blip but keeps the user honest
+      try {
+        if (typeof window.openPipelineItem === 'function') window.openPipelineItem(id);
+      } catch (_) {}
+    }
+  } catch (err) {
+    console.warn('[kanban] reloadPipelineEntryFromDb failed for', id, err);
+  }
+}
+
 // Save an entry — writes property first (needed as FK target for the deal), then deal.
 // V75.4: parcel deals skip the property upsert (their properties are separate
 // records with their own parcel_id FK, managed via the Parcel modal).
@@ -725,7 +765,17 @@ async function dbDelete(id) {
 function savePipeline(changedId) {
   cacheSave(pipeline);
   let writePromise = Promise.resolve();
-  if (changedId && pipeline[changedId]) writePromise = dbSave(changedId, pipeline[changedId]);
+  if (changedId && pipeline[changedId]) {
+    writePromise = dbSave(changedId, pipeline[changedId]).catch(err => {
+      // V77.2g — DB rejected the save. Refetch the entry to overwrite our
+      // optimistic cache so what the user sees matches the truth. The toast
+      // already explained the rejection (showKanbanToast inside dbSave). We
+      // swallow the error here so existing fire-and-forget callers don't
+      // produce unhandled rejections; the toast + reload IS the user feedback.
+      console.warn('[savePipeline] DB rejected save for id', changedId, '— rolling back local cache');
+      return reloadPipelineEntryFromDb(changedId);
+    });
+  }
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
   return writePromise;
 }
@@ -3968,7 +4018,45 @@ ${rows.join('')}`;
   // transition and the delete-from-modal path do NOT use this helper —
   // Finance is leaving the view, and removeFromPipeline already calls
   // renderBoard itself.
-  const closeAndRefresh = () => {
+  // V77.2g — Close-time Default Board Role invariant.
+  // Before allowing the modal to close, verify the deal has at least one
+  // contact whose role is flagged via role_boards for this deal's board. If
+  // not, block the close and toast the agent to fix it. This is the primary
+  // user-facing enforcement of the invariant — server-side checks (in
+  // /api/contacts and /api/deals) are belt-and-braces for direct API access.
+  async function canCloseDealModal() {
+    const dealEntry = pipeline[id];
+    if (!dealEntry) return true;
+    const dealBoardId = dealEntry._boardId || currentBoardId;
+    if (!dealBoardId) return true;
+    let eligibleRoles = [];
+    try {
+      if (window.Lookups && typeof Lookups.getDefaultRolesForBoard === 'function') {
+        eligibleRoles = await Lookups.getDefaultRolesForBoard(dealBoardId);
+      }
+    } catch (err) { console.warn('[deal-modal close-check] roles lookup failed', err); }
+    if (!eligibleRoles.length) return true;
+    // Fetch live contact list for the deal — Modal Contacts section may have
+    // been mutated since opening; we need the truth, not stale state.
+    let contacts = [];
+    try {
+      const r = await fetch(`/api/contacts?entity_type=deal&entity_id=${encodeURIComponent(id)}`);
+      if (r.ok) contacts = await r.json();
+    } catch (err) {
+      console.warn('[deal-modal close-check] contacts fetch failed', err);
+      // Fail open — don't trap the user if we can't verify
+      return true;
+    }
+    const eligibleIds = new Set(eligibleRoles.map(r => r.id));
+    const hasOne = contacts.some(c => eligibleIds.has(c.role));
+    if (hasOne) return true;
+    const labels = eligibleRoles.map(r => r.label).join(' or ');
+    showKanbanToast(`Add a contact with ${labels} role before closing this card.`);
+    return false;
+  }
+
+  const closeAndRefresh = async () => {
+    if (!(await canCloseDealModal())) return;
     overlay.remove();
     if (kanbanVisible) renderBoard();
   };
@@ -4027,7 +4115,14 @@ ${rows.join('')}`;
   });
   overlay.addEventListener('click', e => { if (e.target === overlay) closeAndRefresh(); });
   document.addEventListener('keydown', function escClose(e) {
-    if (e.key === 'Escape') { closeAndRefresh(); document.removeEventListener('keydown', escClose); }
+    if (e.key === 'Escape') {
+      closeAndRefresh().then(() => {
+        // Only deregister if the modal actually closed
+        if (!document.body.contains(overlay)) {
+          document.removeEventListener('keydown', escClose);
+        }
+      });
+    }
   });
 
   // Re-run Auto DD — V77.1: only on Acquisition (DD section gated out elsewhere)
