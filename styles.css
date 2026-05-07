@@ -4741,77 +4741,6 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   font-size: 11px;
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
-   V77.1 — Lease Offer section (Lease Enquiry deals)
-   ════════════════════════════════════════════════════════════════════════════ */
-
-.lo-section .lo-add-btn { font-size: 11px; }
-.lo-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-.lo-empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
-
-.lo-row {
-  display: flex; gap: 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 8px 10px;
-  align-items: center;
-}
-.lo-row-main { flex: 1; min-width: 0; }
-.lo-row-headline {
-  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-  font-size: 13px;
-}
-.lo-row-terms {
-  font-size: 11px; color: var(--muted); margin-top: 3px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.lo-rent { font-weight: 600; color: var(--text); }
-.lo-meta { font-size: 11px; color: var(--muted); }
-.lo-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
-.lo-edit-btn {
-  background: transparent; border: 1px solid var(--border);
-  color: var(--text); padding: 3px 8px; border-radius: 3px;
-  font-size: 11px; cursor: pointer;
-}
-.lo-edit-btn:hover { background: var(--surface2); }
-.lo-delete-btn {
-  background: transparent; border: 1px solid var(--border);
-  color: #c0392b; padding: 3px 7px; border-radius: 3px;
-  font-size: 12px; cursor: pointer; line-height: 1;
-}
-.lo-delete-btn:hover { background: rgba(192,57,43,0.08); border-color: #c0392b; }
-
-/* Status badges */
-.lo-status {
-  display: inline-block;
-  font-size: 10px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.04em;
-  padding: 2px 6px; border-radius: 3px;
-  background: var(--surface2); color: var(--muted);
-  white-space: nowrap;
-}
-.lo-status-draft          { background: #ebe6dc; color: #7a7366; }
-.lo-status-submitted      { background: #d6e7f5; color: #2c5985; }
-.lo-status-offer-accepted { background: #d4ead4; color: #2d6e2d; }
-.lo-status-rejected       { background: #f3d7d4; color: #8b2a1f; }
-.lo-status-withdrawn      { background: #ebe6dc; color: #8a7a55; }
-
-.lo-form {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 10px 12px;
-  margin-top: 8px;
-}
-.lo-form-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; color: var(--text); }
-.lo-form-row { display: flex; gap: 8px; margin-bottom: 8px; }
-.lo-form-row .kb-field-wrap { flex: 1; }
-.lo-form-actions {
-  display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px;
-  padding-top: 8px; border-top: 1px solid var(--border);
-}
-.lo-help { font-size: 11px; color: var(--muted); margin-top: 3px; }
 
 /* ════════════════════════════════════════════════════════════════════════════
    V77.1 — Validation section (Lease Enquiry deals)
@@ -5122,109 +5051,36 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   V77.2 — Lease Offer magic-link UI (token state per offer)
-   ════════════════════════════════════════════════════════════════════════════ */
-
-.lo-token-block {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.lo-token-row {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.lo-token-row.lo-token-empty {
-  background: var(--surface);
-  border-style: dashed;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.lo-token-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.lo-token-url-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.lo-token-url {
-  flex: 1;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Mono', 'Monaco', monospace;
-  font-size: 11px;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 5px 8px;
-  color: var(--text);
-  min-width: 0;
-}
-.lo-token-action-btn {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 5px 12px;
-  font-size: 11px;
-  cursor: pointer;
-  white-space: nowrap;
-  color: var(--text);
-}
-.lo-token-action-btn:hover {
-  background: var(--surface2);
-  border-color: var(--accent);
-}
-.lo-token-action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.lo-token-meta {
-  font-size: 11px;
-  color: var(--muted);
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.lo-token-email { font-weight: 500; color: var(--text); }
-.lo-token-sep   { color: var(--border); }
-.lo-token-state-pending  { color: #c4841a; }
-.lo-token-state-verified { color: #15803d; }
-.lo-token-state-done     { color: #15803d; font-weight: 600; }
-
-.lo-issue-btn {
-  background: var(--accent);
-  color: #fff;
-  border: 0;
-  border-radius: 4px;
-  padding: 7px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-}
-.lo-issue-btn:hover { opacity: 0.9; }
-.lo-issue-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   V77.2 — Lease Offer review UI (expandable rows, accept/reject, detail tables)
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2 — Lease Offer section (Lease Enquiry deals)
+   Heading uses kb-fin-pick-header pattern (right-aligned action button).
+   Each offer row is block-level: summary on top, body expands DOWNWARD beneath.
    ════════════════════════════════════════════════════════════════════════════ */
+
+.lo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  margin-bottom: 12px;
+}
+
+.lo-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 0;
+}
+
+/* ── Row container (block-level, children stack vertically) ─────────── */
+.lo-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
 
 .lo-row-summary {
   display: flex;
@@ -5232,47 +5088,101 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   gap: 8px;
   padding: 8px 10px;
   cursor: pointer;
+  font-size: 13px;
 }
 .lo-row-summary:hover {
-  background: var(--surface);
+  background: var(--surface2);
 }
 
 .lo-row-toggle {
   background: transparent;
   border: 0;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
   padding: 0;
   width: 14px;
+  flex: 0 0 auto;
 }
+
+.lo-rent {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lo-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .lo-row-actions-inline {
   margin-left: auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
 }
 
+.lo-delete-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.lo-delete-btn:hover {
+  background: rgba(192,57,43,0.08);
+  border-color: #c0392b;
+  color: #c0392b;
+}
+
+/* Status pill */
+.lo-status {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+.lo-status-draft               { background: #ebe6dc; color: #7a7366; }
+.lo-status-submitted           { background: #d6e7f5; color: #2c5985; }
+.lo-status-offer_accepted      { background: #d4ead4; color: #2d6e2d; }
+.lo-status-evidence_submitted  { background: #cde2f0; color: #1d4ed8; }
+.lo-status-validated           { background: #cee7ea; color: #266872; }
+.lo-status-leased              { background: #c8e0c8; color: #1d5a1d; }
+.lo-status-rejected            { background: #f3d7d4; color: #8b2a1f; }
+.lo-status-withdrawn           { background: #ebe6dc; color: #8a7a55; }
+
+/* ── Expanded body (sits below summary, full width of row) ─────────── */
 .lo-row-body {
-  border-top: 1px dashed var(--border);
+  border-top: 1px solid var(--border);
   padding: 10px;
-  background: var(--surface);
+  background: var(--surface2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
+/* ── Submitted-offer detail tables ─────────────────────────────────── */
 .lo-detail {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  margin-bottom: 10px;
+  gap: 10px;
 }
 
 .lo-detail-section {
-  background: var(--surface2);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 12px;
+  border-radius: 3px;
+  padding: 8px 10px;
 }
 
 .lo-detail-section-title {
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--accent);
@@ -5283,7 +5193,7 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   background: var(--accent);
   color: #fff;
   font-size: 9px;
-  padding: 2px 6px;
+  padding: 1px 6px;
   border-radius: 3px;
   margin-left: 6px;
   font-weight: 600;
@@ -5298,64 +5208,162 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 }
 .lo-detail-table th {
   text-align: left;
-  padding: 4px 8px 4px 0;
+  padding: 3px 8px 3px 0;
   font-weight: 500;
   color: var(--muted);
-  width: 160px;
+  width: 150px;
   vertical-align: top;
 }
 .lo-detail-table td {
-  padding: 4px 0;
+  padding: 3px 0;
   color: var(--text);
+  word-break: break-word;
 }
 .lo-detail-table th.lo-subhead {
   text-transform: uppercase;
   font-size: 10px;
   letter-spacing: 0.06em;
   color: var(--accent);
-  padding-top: 8px;
+  padding-top: 6px;
   width: auto;
   border-top: 1px dashed var(--border);
 }
 
+/* ── Token block (Offer Form / Evidence Upload Form magic-link UI) ──── */
+.lo-token-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lo-token-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lo-token-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.lo-token-url-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.lo-token-url {
+  flex: 1;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Mono', 'Monaco', monospace;
+  font-size: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 6px;
+  color: var(--text);
+  min-width: 0;
+}
+
+.lo-token-action-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 9px;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 500;
+}
+.lo-token-action-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.lo-token-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lo-token-meta {
+  font-size: 10px;
+  color: var(--muted);
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.lo-token-email {
+  font-weight: 500;
+  color: var(--text);
+}
+.lo-token-sep {
+  color: var(--border);
+}
+.lo-token-state-pending  { color: #c4841a; }
+.lo-token-state-verified { color: #15803d; }
+.lo-token-state-done     { color: #15803d; font-weight: 600; }
+
+/* ── "Send link" empty-state row (same shape as a populated row) ───── */
+.lo-token-row-empty .lo-token-url-row {
+  /* Single-button row — let the button take available width but cap it */
+}
+.lo-token-row-empty .lo-issue-btn {
+  flex: 0 1 auto;
+}
+
+.lo-issue-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lo-issue-btn:hover    { opacity: 0.9; }
+.lo-issue-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Decision row (Accept / Reject) ──────────────────────────────────── */
 .lo-decision-row {
   display: flex;
-  gap: 10px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
 }
 
 .lo-accept-btn {
   background: #15803d;
   color: #fff;
   border: 0;
-  border-radius: 4px;
-  padding: 8px 18px;
-  font-size: 13px;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
-.lo-accept-btn:hover { background: #166534; }
+.lo-accept-btn:hover    { background: #166534; }
 .lo-accept-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .lo-reject-btn {
   background: transparent;
   color: #b91c1c;
   border: 1px solid #b91c1c;
-  border-radius: 4px;
-  padding: 8px 18px;
-  font-size: 13px;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
 }
-.lo-reject-btn:hover { background: #fef5f5; }
+.lo-reject-btn:hover    { background: rgba(185, 28, 28, 0.08); }
 .lo-reject-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-/* Status pill colours (extend existing) */
-.lo-status-offer_accepted     { background: #d4ead4 !important; color: #15803d !important; }
-.lo-status-evidence_submitted { background: #cde2f0 !important; color: #1d4ed8 !important; }
-.lo-status-validated          { background: #cde2f0 !important; color: #15803d !important; }
-.lo-status-leased             { background: #15803d !important; color: #fff !important;  }
-.lo-status-rejected           { background: #fef5f5 !important; color: #b91c1c !important; }
-.lo-status-withdrawn          { background: var(--surface2) !important; color: var(--muted) !important; }

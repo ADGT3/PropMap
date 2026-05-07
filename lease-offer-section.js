@@ -78,13 +78,11 @@
     let expandedIds = new Set();
 
     containerEl.innerHTML = `
-      <div class="lo-section">
-        <div class="lo-section-header">
-          <span class="kb-section-label">Lease Offers</span>
-          <button class="lo-add-btn" type="button">+ New Offer</button>
-        </div>
-        <div class="lo-list"></div>
+      <div class="kb-fin-pick-header" style="margin-top:16px">
+        <span>Lease Offers</span>
+        <button class="kb-add-offer-btn lo-add-btn" type="button">+ New Offer</button>
       </div>
+      <div class="lo-list"></div>
     `;
 
     const addBtn = containerEl.querySelector('.lo-add-btn');
@@ -153,11 +151,7 @@
         if (tokenStep1) {
           step1Html = renderTokenStateRow(offer, tokenStep1, 1);
         } else {
-          step1Html = `
-            <div class="lo-token-row lo-token-empty">
-              <div class="lo-token-label">Offer Form</div>
-              <button class="lo-issue-btn" type="button" data-application-id="${esc(offer.id)}" data-step="1">Send Offer Form link to applicant</button>
-            </div>`;
+          step1Html = renderEmptyTokenRow(offer, 1);
         }
       } else if (tokenStep1) {
         step1Html = renderTokenStateRow(offer, tokenStep1, 1);
@@ -168,16 +162,28 @@
         if (tokenStep2) {
           step2Html = renderTokenStateRow(offer, tokenStep2, 2);
         } else {
-          step2Html = `
-            <div class="lo-token-row lo-token-empty">
-              <div class="lo-token-label">Evidence Upload Form</div>
-              <button class="lo-issue-btn" type="button" data-application-id="${esc(offer.id)}" data-step="2">Send Evidence Upload Form link to applicant</button>
-            </div>`;
+          step2Html = renderEmptyTokenRow(offer, 2);
         }
       }
 
       if (!step1Html && !step2Html) return '';
       return `<div class="lo-token-block">${step1Html}${step2Html}</div>`;
+    }
+
+    function renderEmptyTokenRow(offer, step) {
+      const stepLabel = step === 1 ? 'Offer Form' : 'Evidence Upload Form';
+      const linkLabel = step === 1 ? 'Send Offer Form link to applicant' : 'Send Evidence Upload Form link to applicant';
+      return `
+        <div class="lo-token-row lo-token-row-empty">
+          <div class="lo-token-label">${esc(stepLabel)}</div>
+          <div class="lo-token-url-row">
+            <button class="lo-issue-btn" type="button" data-application-id="${esc(offer.id)}" data-step="${step}">+ ${esc(linkLabel)}</button>
+          </div>
+          <div class="lo-token-meta">
+            <span class="lo-token-state lo-token-state-pending">Not yet sent</span>
+          </div>
+        </div>
+      `;
     }
 
     function renderTokenStateRow(offer, token, step) {
