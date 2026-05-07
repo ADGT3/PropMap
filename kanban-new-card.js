@@ -102,10 +102,12 @@
     // State for the multi-step flow
     const state = {
       step: 1,
-      property: null,           // for Listings boards (single-step)
+      property: null,           // for Listings boards
       listing:  null,           // for Enquiry boards (carries property_id + label)
-      contact:  null,           // for Enquiry boards
-      _enquiryBoardId: boardId, // used by contact picker's back-button
+      contact:  null,           // for both — required if eligible roles defined
+      role_id:  null,           // V77.2g — the role chosen at creation
+      _enquiryBoardId: boardId,
+      _eligibleRoles:  [],      // V77.2g — populated from Lookups.getDefaultRolesForBoard
     };
 
     const overlay = document.createElement('div');
@@ -129,14 +131,42 @@
     overlay.querySelectorAll('[data-role="close"]').forEach(b => b.addEventListener('click', close));
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
 
+    // V77.2g — fetch eligible roles for this board, then render. If a role
+    // requires the board, the contact step is mandatory; if no eligible roles
+    // exist for the board, the contact step is skipped entirely.
+    (async () => {
+      try {
+        if (window.Lookups && typeof Lookups.getDefaultRolesForBoard === 'function') {
+          state._eligibleRoles = await Lookups.getDefaultRolesForBoard(boardId);
+        }
+      } catch (err) {
+        console.warn('[knc] getDefaultRolesForBoard failed', err);
+        state._eligibleRoles = [];
+      }
+      renderStep();
+    })();
+
     function renderStep() {
       const body   = overlay.querySelector('[data-role="body"]');
       const footer = overlay.querySelector('[data-role="footer"]');
+      const requireContact = (state._eligibleRoles || []).length > 0;
+
       if (cfg.mode === 'single') {
-        // Single-step: just pick a property and create
-        renderPropertyPicker(body, footer, state, () => {
-          createDeal(state, boardId, cfg, close, onDealCreated);
-        });
+        // Listings boards. Step 1: property; Step 2: contact (only if board has eligible roles)
+        if (state.step === 1) {
+          renderPropertyPicker(body, footer, state, () => {
+            if (requireContact) {
+              state.step = 2;
+              renderStep();
+            } else {
+              createDeal(state, boardId, cfg, close, onDealCreated);
+            }
+          });
+        } else if (state.step === 2) {
+          renderListingsContactPicker(body, footer, state, () => {
+            createDeal(state, boardId, cfg, close, onDealCreated);
+          });
+        }
       } else {
         // Two-step (Enquiry boards): listing-pick → contact-pick → create
         if (state.step === 1) {
@@ -151,7 +181,6 @@
         }
       }
     }
-    renderStep();
   }
 
   // ── Property picker ───────────────────────────────────────────────────────
@@ -336,17 +365,37 @@
   // ── Contact picker (two-step only) ───────────────────────────────────────
 
   function renderContactPicker(body, footer, state, onPicked) {
+    const eligibleRoles = state._eligibleRoles || [];
+    // V77.2g — role select. If only one eligible role, show it as read-only.
+    // If multiple, the agent picks. State.role_id is initialised to the first
+    // eligible role so a single-option case Just Works.
+    if (!state.role_id && eligibleRoles.length) {
+      state.role_id = eligibleRoles[0].id;
+    }
+    const roleSelectHtml = eligibleRoles.length > 1
+      ? `<select class="kb-input knc-role-select">
+          ${eligibleRoles.map(r => `<option value="${esc(r.id)}" ${r.id === state.role_id ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
+        </select>`
+      : eligibleRoles.length === 1
+        ? `<input class="kb-input" type="text" value="${esc(eligibleRoles[0].label)}" disabled>`
+        : '<div style="color:var(--muted);font-size:12px;font-style:italic;padding:6px 0">No role assigned (no Default Board Role configured for this board).</div>';
+
     body.innerHTML = `
       <div class="knc-step-summary">
         <span class="knc-step-label">Listing:</span> ${esc(state.listing.label)}
         <button class="knc-step-back" data-role="back">change</button>
       </div>
       <div class="kb-field-wrap" style="margin-top:10px">
-        <label class="kb-field-label">Enquirer — search contact</label>
+        <label class="kb-field-label">Contact — search</label>
         <input class="kb-input knc-contact-search" type="text" placeholder="Type name or email…" autofocus>
       </div>
       <div class="knc-results" data-role="contact-results"></div>
       <div class="knc-empty-msg" data-role="empty-msg" style="display:none;color:var(--muted);font-size:12px;padding:8px 0">No matches. Create the contact in CRM first, then come back.</div>
+
+      <div class="kb-field-wrap" style="margin-top:10px">
+        <label class="kb-field-label">Role on this card</label>
+        ${roleSelectHtml}
+      </div>
 
       <!-- V77.1 — capture how the enquiry came in (interaction type + source) so the first inbound note is recorded with proper context -->
       <div class="knc-enquiry-context" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
@@ -374,6 +423,11 @@
     const search   = body.querySelector('.knc-contact-search');
     const results  = body.querySelector('[data-role="contact-results"]');
     const emptyMsg = body.querySelector('[data-role="empty-msg"]');
+    // Wire role select if present
+    const roleSel = body.querySelector('.knc-role-select');
+    if (roleSel) {
+      roleSel.addEventListener('change', () => { state.role_id = roleSel.value || null; });
+    }
     const createBtn = footer.querySelector('[data-role="create"]');
     const typeSel = body.querySelector('.knc-interaction-type');
     const srcSel  = body.querySelector('.knc-source');
@@ -481,6 +535,134 @@
     search.focus();
   }
 
+  // ── Listings Contact picker (V77.2g) ─────────────────────────────────────
+  //
+  // Step 2 for Listings boards. Shows a contact search and a role select
+  // populated from the eligible roles for this board. Mirrors the Enquiry
+  // contact picker's UI but without the interaction_type/source fields
+  // (those are Enquiry-only — they record how the enquiry came in).
+
+  function renderListingsContactPicker(body, footer, state, onPicked) {
+    const eligibleRoles = state._eligibleRoles || [];
+    if (!state.role_id && eligibleRoles.length) {
+      state.role_id = eligibleRoles[0].id;
+    }
+    const roleSelectHtml = eligibleRoles.length > 1
+      ? `<select class="kb-input knc-role-select">
+          ${eligibleRoles.map(r => `<option value="${esc(r.id)}" ${r.id === state.role_id ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}
+        </select>`
+      : eligibleRoles.length === 1
+        ? `<input class="kb-input" type="text" value="${esc(eligibleRoles[0].label)}" disabled>`
+        : '<div style="color:var(--muted);font-size:12px;font-style:italic;padding:6px 0">No role assigned (no Default Board Role configured for this board).</div>';
+
+    const propertyLabel = state.property
+      ? [state.property.address, state.property.suburb].filter(Boolean).join(', ')
+      : '—';
+
+    body.innerHTML = `
+      <div class="knc-step-summary">
+        <span class="knc-step-label">Property:</span> ${esc(propertyLabel)}
+        <button class="knc-step-back" data-role="back">change</button>
+      </div>
+      <div class="kb-field-wrap" style="margin-top:10px">
+        <label class="kb-field-label">Contact — search</label>
+        <input class="kb-input knc-contact-search" type="text" placeholder="Type name or email…" autofocus>
+      </div>
+      <div class="knc-results" data-role="contact-results"></div>
+      <div class="knc-empty-msg" data-role="empty-msg" style="display:none;color:var(--muted);font-size:12px;padding:8px 0">No matches. Create the contact in CRM first, then come back.</div>
+
+      <div class="kb-field-wrap" style="margin-top:10px">
+        <label class="kb-field-label">Role on this card</label>
+        ${roleSelectHtml}
+      </div>
+    `;
+    footer.innerHTML = `
+      <button class="params-cancel-btn" data-role="close">Cancel</button>
+      <button class="params-save-btn" data-role="create" disabled>Create Card</button>
+    `;
+
+    const search    = body.querySelector('.knc-contact-search');
+    const results   = body.querySelector('[data-role="contact-results"]');
+    const emptyMsg  = body.querySelector('[data-role="empty-msg"]');
+    const createBtn = footer.querySelector('[data-role="create"]');
+
+    // Wire role select if present
+    const roleSel = body.querySelector('.knc-role-select');
+    if (roleSel) {
+      roleSel.addEventListener('change', () => { state.role_id = roleSel.value || null; });
+    }
+
+    // Back button — return to property picker
+    body.querySelector('[data-role="back"]').addEventListener('click', () => {
+      state.step = 1;
+      state.contact = null;
+      state.role_id = eligibleRoles.length ? eligibleRoles[0].id : null;
+      const overlay = body.closest('.v77-modal-overlay');
+      if (overlay) {
+        const dlgBody   = overlay.querySelector('[data-role="body"]');
+        const dlgFooter = overlay.querySelector('[data-role="footer"]');
+        renderPropertyPicker(dlgBody, dlgFooter, state, () => {
+          state.step = 2;
+          renderListingsContactPicker(dlgBody, dlgFooter, state, onPicked);
+        });
+      }
+    });
+
+    createBtn.addEventListener('click', () => {
+      if (!state.contact) return;
+      onPicked();
+    });
+
+    footer.querySelector('[data-role="close"]')?.addEventListener('click', () => {
+      const overlay = body.closest('.v77-modal-overlay');
+      if (overlay) overlay.remove();
+    });
+
+    // Contact search
+    let _t = null;
+    search.addEventListener('input', () => {
+      clearTimeout(_t);
+      const q = search.value.trim();
+      results.innerHTML = '';
+      emptyMsg.style.display = 'none';
+      state.contact = null;
+      createBtn.disabled = true;
+      if (!q) return;
+      _t = setTimeout(async () => {
+        try {
+          const r = await fetch(`/api/contacts?search=${encodeURIComponent(q)}`);
+          if (!r.ok) throw new Error(r.status);
+          const contacts = await r.json();
+          if (!contacts.length) {
+            emptyMsg.style.display = '';
+            return;
+          }
+          results.innerHTML = contacts.slice(0, 10).map(c => {
+            const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || `Contact #${c.id}`;
+            const meta = [c.email, c.mobile].filter(Boolean).join(' · ');
+            return `
+              <div class="knc-result" data-id="${c.id}" data-label="${esc(name)}">
+                <div class="knc-result-main">${esc(name)}</div>
+                ${meta ? `<div class="knc-result-sub">${esc(meta)}</div>` : ''}
+              </div>
+            `;
+          }).join('');
+          results.querySelectorAll('.knc-result').forEach(item => {
+            item.addEventListener('click', () => {
+              results.querySelectorAll('.knc-result').forEach(x => x.classList.remove('knc-result-selected'));
+              item.classList.add('knc-result-selected');
+              state.contact = { id: parseInt(item.getAttribute('data-id'), 10), label: item.getAttribute('data-label') };
+              createBtn.disabled = false;
+            });
+          });
+        } catch (err) {
+          console.warn('[knc] contact search failed', err);
+        }
+      }, 300);
+    });
+    search.focus();
+  }
+
   // ── Create the deal + entity link (for two-step) ─────────────────────────
 
   async function createDeal(state, boardId, cfg, close, onDealCreated) {
@@ -522,9 +704,11 @@
       const dealId = result.id || result.deal?.id;
       if (!dealId) throw new Error('No deal id returned');
 
-      // For two-step (Enquiry boards), also create the entity_contacts link
-      // and the first inbound note recording how the enquirer reached us.
-      if (cfg.mode === 'two_step' && state.contact) {
+      // V77.2g — link the chosen contact to the new deal with the chosen role.
+      // Applies to both Listings and Enquiry flows whenever a contact was
+      // selected. The role_id comes from the agent's pick (or auto-set when
+      // there was only one eligible role).
+      if (state.contact && state.role_id) {
         await fetch('/api/contacts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -533,10 +717,14 @@
             contact_id:  state.contact.id,
             entity_type: 'deal',
             entity_id:   dealId,
-            role_id:     'enquirer',
+            role_id:     state.role_id,
           }),
         });
+      }
 
+      // For two-step (Enquiry boards), also record the first inbound note
+      // capturing how the enquiry came in (interaction_type + source).
+      if (cfg.mode === 'two_step' && state.contact) {
         // V77.1 — first inbound note. Captures interaction_type + source so the
         // Enquiry timeline shows where the enquiry came from. The note is
         // attached to the deal AND tagged to the enquirer contact.
