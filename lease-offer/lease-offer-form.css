@@ -400,3 +400,16 @@ html, body {
 .lof-field input[type="number"] {
   -moz-appearance: textfield;
 }
+
+/* Disabled input fields — clearly greyed-out */
+.lof-field input:disabled,
+.lof-field select:disabled,
+.lof-field textarea:disabled {
+  background: var(--lof-surface2, #f3eee2);
+  color: var(--lof-muted, #9a8e76);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.lof-field input:disabled::placeholder {
+  color: var(--lof-muted, #9a8e76);
+}
