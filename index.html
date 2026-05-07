@@ -951,6 +951,7 @@
         <button class="settings-submenu-item" data-section="agency-agreements">Agency Agreements</button>
         <button class="settings-submenu-item" data-section="parameters">Parameters</button>
         <button class="settings-submenu-item" data-section="notifications">Notifications</button>
+        <button class="settings-submenu-item" data-section="retention-policy">Retention Policy</button>
       </div>
 
       <!-- API Dashboard section -->
@@ -1125,6 +1126,17 @@
         </div>
       </div>
 
+      <!-- Retention Policy section (V77.2c) -->
+      <div class="settings-section" id="settingsSectionRetentionPolicy" style="display:none">
+        <div class="settings-section-header">
+          <h2>Retention Policy</h2>
+          <p class="settings-section-sub">Document retention period configuration and pending purges. Records become eligible for purge 12 months after the lease period ends.</p>
+        </div>
+        <div id="retentionPolicyPageContainer">
+          <div class="params-loading">Click Retention Policy to load…</div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -1148,6 +1160,7 @@
   <script src="lookups.js"></script>
   <script src="parameters-page.js"></script>
   <script src="notifications-page.js"></script>
+  <script src="retention-policy-page.js"></script>
   <script src="note-form.js"></script>
   <script src="inspections-section.js"></script>
   <script src="agency-agreements-section.js"></script>
@@ -1291,6 +1304,7 @@
     let _parametersRendered = false;
     let _aarRendered = false;
     let _notificationsRendered = false;
+    let _retentionPolicyRendered = false;
     function showSettingsSection(sectionKey) {
       // Update active button
       document.querySelectorAll('.settings-submenu-item').forEach(btn => {
@@ -1304,6 +1318,8 @@
       if (paramsSection) paramsSection.style.display = sectionKey === 'parameters' ? '' : 'none';
       const notifSection = document.getElementById('settingsSectionNotifications');
       if (notifSection) notifSection.style.display = sectionKey === 'notifications' ? '' : 'none';
+      const retentionSection = document.getElementById('settingsSectionRetentionPolicy');
+      if (retentionSection) retentionSection.style.display = sectionKey === 'retention-policy' ? '' : 'none';
       // Lazy-render Parameters on first visit
       if (sectionKey === 'parameters' && !_parametersRendered && window.ParametersPage) {
         const container = document.getElementById('parametersPageContainer');
@@ -1326,6 +1342,14 @@
         if (container) {
           NotificationsPage.render(container);
           _notificationsRendered = true;
+        }
+      }
+      // V77.2c — Lazy-render Retention Policy on first visit
+      if (sectionKey === 'retention-policy' && !_retentionPolicyRendered && window.RetentionPolicyPage) {
+        const container = document.getElementById('retentionPolicyPageContainer');
+        if (container) {
+          RetentionPolicyPage.render(container);
+          _retentionPolicyRendered = true;
         }
       }
     }
