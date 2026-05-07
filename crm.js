@@ -953,9 +953,10 @@ function renderCRMView(container) {
   function configureAddButton(tabName) {
     const btn = container.querySelector('#crmViewAddBtn');
     if (tabName === 'contacts') {
-      btn.textContent = '+ New Contact';
-      btn.style.display = '';
-      btn.onclick = () => openModal(modal => renderContactModal(modal, null, () => { closeModal(); loadContactsPane(); }));
+      // V77.2g — Contacts add button moved to level-3 toolbar (alongside the
+      // Search field) per UI architecture rule. Hide the level-2 button.
+      btn.style.display = 'none';
+      btn.onclick = null;
     } else if (tabName === 'organisations') {
       btn.textContent = '+ New Organisation';
       btn.style.display = '';
@@ -1055,6 +1056,7 @@ function renderCRMView(container) {
     pane.innerHTML = `
       <div class="crm-pane-toolbar">
         <input class="kb-input crm-view-search" placeholder="Search contacts…" value="${contactSearch}">
+        <button class="crm-pane-add-btn" data-role="pane-add-contact">+ New Contact</button>
       </div>
       <div class="crm-contact-table-wrap">
         <table class="crm-contact-table">
@@ -1070,6 +1072,9 @@ function renderCRMView(container) {
       contactSearch = e.target.value;
       contactPage   = 0;
       fetchContacts();
+    });
+    pane.querySelector('[data-role="pane-add-contact"]').addEventListener('click', () => {
+      openModal(modal => renderContactModal(modal, null, () => { closeModal(); loadContactsPane(); }));
     });
 
     fetchContacts();
