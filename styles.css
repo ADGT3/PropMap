@@ -4312,6 +4312,12 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   font-size: 12px;
 }
 .insp-att-result:hover { background: var(--surface2); }
+.insp-att-result-name { font-weight: 600; }
+.insp-att-result-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+}
 .insp-att-result-empty {
   padding: 6px 10px;
   font-size: 11px;

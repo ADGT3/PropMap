@@ -400,7 +400,11 @@
             const available = contacts.filter(c => !taken.has(c.id));
             resultsEl.innerHTML = available.slice(0, 8).map(c => {
               const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || `Contact #${c.id}`;
-              return `<div class="insp-att-result" data-contact-id="${c.id}" data-contact-name="${esc(name)}">${esc(name)}</div>`;
+              const detailParts = [c.email, c.mobile].filter(Boolean);
+              const detailHtml = detailParts.length
+                ? `<div class="insp-att-result-meta">${esc(detailParts.join(' · '))}</div>`
+                : '';
+              return `<div class="insp-att-result" data-contact-id="${c.id}" data-contact-name="${esc(name)}"><div class="insp-att-result-name">${esc(name)}</div>${detailHtml}</div>`;
             }).join('') || '<div class="insp-att-result-empty">No matches</div>';
             resultsEl.querySelectorAll('.insp-att-result').forEach(item => {
               item.addEventListener('click', () => {
