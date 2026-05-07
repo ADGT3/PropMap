@@ -159,7 +159,9 @@
       const tokens = offer._tokens || [];
       const tokenStep1 = tokens.find(t => t.step === 1);
       const tokenStep2 = tokens.find(t => t.step === 2);
-      const allowStep2 = status === 'offer_accepted' || status === 'evidence_submitted';
+      const allowStep2 = status === 'offer_accepted' || status === 'evidence_submitted' ||
+                         status === 'evidence_resubmit_requested' || status === 'validated' ||
+                         status === 'leased';
 
       let step1Html = '';
       if (status === 'draft') {
@@ -207,8 +209,10 @@
       const status = offer.status || 'draft';
 
       let stateLine = '';
-      if (step === 1 && (status === 'submitted' || status === 'offer_accepted' || status === 'evidence_submitted' || status === 'validated' || status === 'leased')) {
+      if (step === 1 && (status === 'submitted' || status === 'offer_accepted' || status === 'evidence_submitted' || status === 'evidence_resubmit_requested' || status === 'validated' || status === 'leased')) {
         stateLine = `<span class="lo-token-state lo-token-state-done">✓ Submitted ${esc(fmtRelative(token.last_accessed_at || token.created_at))}</span>`;
+      } else if (step === 2 && status === 'evidence_resubmit_requested') {
+        stateLine = `<span class="lo-token-state lo-token-state-pending">↻ Resubmit requested — applicant can edit and resubmit</span>`;
       } else if (step === 2 && (status === 'evidence_submitted' || status === 'validated' || status === 'leased')) {
         stateLine = `<span class="lo-token-state lo-token-state-done">✓ Evidence submitted ${esc(fmtRelative(token.last_accessed_at || token.created_at))}</span>`;
       } else if (token.email_verified) {
