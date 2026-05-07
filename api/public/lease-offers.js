@@ -37,8 +37,18 @@ export default async function handler(req, res) {
   if (!action) return res.status(400).json({ error: 'action is required in URL path' });
 
   try {
+    if (action === 'token-info') {
+      // Public: returns minimal info needed to render the verify gate
+      // (masked email, no PII). Doesn't require email_verified.
+      if (req.method !== 'GET') {
+        res.setHeader('Allow', 'GET');
+        return res.status(405).json({ error: 'Method not allowed' });
+      }
+      return await tokenInfoAction(req, res, token);
+    }
+
     if (action === 'verify') {
-      // POST only
+      // POST only — requires mobile number challenge to flip email_verified=true
       if (req.method !== 'POST') {
         res.setHeader('Allow', 'POST');
         return res.status(405).json({ error: 'Method not allowed' });
@@ -81,9 +91,48 @@ export default async function handler(req, res) {
   }
 }
 
-// ── verify: flip email_verified=true (idempotent) ──────────────────────────
+// ── token-info: minimal public info for the verify gate ────────────────────
+async function tokenInfoAction(req, res, token) {
+  const ctx = await validatePublicToken(token, { require_step: 1, require_verified: false, touch_access: false });
+  if (!ctx.ok) {
+    return res.status(ctx.status).json({ error: ctx.message, code: ctx.code });
+  }
+  // Already verified? Caller still gets a response, with verified=true so the page
+  // can skip the gate.
+  return res.status(200).json({
+    verified: !!ctx.token_row.email_verified,
+    masked_email: maskEmail(ctx.token_row.applicant_email),
+  });
+}
+
+// j*****n@example.com → keeps first + last char of local part, rest masked
+function maskEmail(email) {
+  if (!email || !email.includes('@')) return '';
+  const [local, domain] = email.split('@');
+  if (local.length <= 2) return local[0] + '***@' + domain;
+  return local[0] + '*'.repeat(Math.max(3, local.length - 2)) + local[local.length - 1] + '@' + domain;
+}
+
+// Compare two phone numbers loosely — strip everything except digits.
+function digitsOnly(s) {
+  return String(s || '').replace(/\D/g, '');
+}
+function phonesMatch(a, b) {
+  const da = digitsOnly(a);
+  const db = digitsOnly(b);
+  if (!da || !db) return false;
+  // Allow trailing match (last 9 digits) so that "0412 345 678" matches "+61 412 345 678"
+  const tailA = da.slice(-9);
+  const tailB = db.slice(-9);
+  return tailA === tailB && tailA.length >= 8;
+}
+
+// ── verify: requires mobile number challenge ───────────────────────────────
 async function verifyAction(req, res, token) {
-  // Special: don't require email_verified to validate this one (we're flipping it)
+  const body = req.body || {};
+  const submittedMobile = body.mobile;
+
+  // Validate token (any state — we'll flip email_verified to true on success)
   const ctx = await validatePublicToken(token, { require_step: 1, require_verified: false });
   if (!ctx.ok) {
     return res.status(ctx.status).json({ error: ctx.message, code: ctx.code });
@@ -91,7 +140,31 @@ async function verifyAction(req, res, token) {
   if (ctx.token_row.email_verified) {
     return res.status(200).json({ verified: true, already: true });
   }
-  // Extend expiry to verified TTL (30 days)
+
+  if (!submittedMobile) {
+    return res.status(400).json({ error: 'Mobile number is required.' });
+  }
+
+  // Look up the linked Contact's phone
+  const rows = await sql`
+    SELECT c.phone
+    FROM applicant_form_tokens t
+    LEFT JOIN contacts c ON c.id = t.contact_id
+    WHERE t.id = ${ctx.token_row.id}
+    LIMIT 1`;
+  const contactPhone = rows[0]?.phone;
+
+  if (!contactPhone) {
+    // Fallback — Contact was unlinked or has no phone. We can't verify.
+    return res.status(409).json({ error: 'Cannot verify — please contact your agent.', code: 'no_contact_phone' });
+  }
+
+  if (!phonesMatch(submittedMobile, contactPhone)) {
+    // Don't reveal that the number was wrong vs. anything else; generic message
+    return res.status(401).json({ error: 'That mobile number does not match our records. Please double-check and try again.', code: 'mobile_mismatch' });
+  }
+
+  // Match! Flip email_verified=true, extend expiry to verified TTL (30 days)
   const newExpires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   await sql`
     UPDATE applicant_form_tokens
@@ -110,7 +183,7 @@ async function loadAction(req, res, ctx) {
     SELECT a.id, a.status, a.requested_rent, a.bond_weeks, a.lease_term_months,
            a.preferred_start_date, a.terms, a.occupants, a.pets, a.applicants_jsonb,
            d.id AS deal_id, d.data AS deal_data, d.parent_deal_id,
-           p.address, p.suburb, p.state, p.postcode
+           p.address, p.suburb, p.state
     FROM applications a
     JOIN deals d        ON d.id = a.deal_id
     LEFT JOIN properties p ON p.id = d.property_id
@@ -167,7 +240,6 @@ async function loadAction(req, res, ctx) {
       address:  row.address  || '',
       suburb:   row.suburb   || '',
       state:    row.state    || '',
-      postcode: row.postcode || '',
     },
     listing_terms: {
       rent_amount:    listingTerms.rent_amount || null,
