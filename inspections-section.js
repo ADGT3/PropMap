@@ -156,8 +156,12 @@
 
       // Wire row events
       listEl.querySelectorAll('[data-role="inspection-row"]').forEach(row => {
-        const inspectionId = parseInt(row.getAttribute('data-id'), 10);
-        const inspection = inspections.find(x => x.id === inspectionId);
+        const inspectionId = row.getAttribute('data-id');
+        const inspection = inspections.find(x => String(x.id) === String(inspectionId));
+        if (!inspection) {
+          console.warn('[inspections] could not find inspection for row id', inspectionId);
+          return;
+        }
 
         // Status select change
         row.querySelector('[data-role="status-select"]')?.addEventListener('change', async (e) => {
