@@ -414,6 +414,10 @@
             </select>
           </div>
         </div>
+        <div class="kb-field-wrap" style="margin-top:10px">
+          <label class="kb-field-label">Enquiry message <span style="color:var(--muted);font-weight:normal">(optional)</span></label>
+          <textarea class="kb-input knc-enquiry-message" rows="3" placeholder="What did they ask? e.g. 'Available for inspection Saturday?', 'Is the price negotiable?'"></textarea>
+        </div>
       </div>
     `;
     footer.innerHTML = `
@@ -483,6 +487,8 @@
       // Snapshot the type+source choices into state before invoking
       state.interaction_type = typeSel.value || null;
       state.source           = srcSel.value  || null;
+      const msgEl = body.querySelector('.knc-enquiry-message');
+      state.enquiry_message  = msgEl ? msgEl.value.trim() : '';
       onPicked();
     });
 
@@ -728,9 +734,13 @@
         // V77.1 — first inbound note. Captures interaction_type + source so the
         // Enquiry timeline shows where the enquiry came from. The note is
         // attached to the deal AND tagged to the enquirer contact.
+        // V77.3 — if the agent captured the enquirer's actual message in the
+        // optional textarea, append it below the auto-generated summary line.
         try {
           const typeLabel = state.interaction_type ? state.interaction_type.replace(/_/g, ' ') : 'enquiry';
-          const noteText = `New ${typeLabel} enquiry from ${state.contact.label} for "${state.listing.label}".`;
+          const summary = `New ${typeLabel} enquiry from ${state.contact.label} for "${state.listing.label}".`;
+          const msg = (state.enquiry_message || '').trim();
+          const noteText = msg ? `${summary}\n\n${msg}` : summary;
           const body = {
             entity_type:       'deal',
             entity_id:         String(dealId),
