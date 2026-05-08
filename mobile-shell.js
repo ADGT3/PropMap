@@ -11,21 +11,20 @@
  *      horizontal-scrolling columns with a dropdown selecting one column at
  *      a time. Selection persisted to localStorage per board.
  *
- *   3. A "Today's inspections" shortcut banner above the kanban board on
- *      mobile, with a tap-to-open full-screen panel listing today's
- *      inspections across all listings. Tapping a row jumps to the listing's
- *      deal modal with the Inspection Schedule section auto-expanded.
+ *   3. The "Upcoming Inspections" full-screen panel triggered by the
+ *      user-menu item. Lists listings with at least one upcoming inspection
+ *      (today or later), one card per listing sorted by earliest upcoming
+ *      time. Visible on every device size, not just mobile. Tapping a card
+ *      opens the listing's deal modal.
  *
- * Activates on viewport changes; no-op on desktop. All CSS for these
- * features lives in mobile.css.
+ * Activates on viewport changes; mobile-only features no-op on desktop.
+ * All CSS for these features lives in mobile.css.
  *
  * Public API (window.MobileShell):
- *   isMobile()                    → boolean
- *   applyKanbanMobileLayout()     → called by kanban.js renderBoard() to
- *                                    inject the column picker + active-col
- *   refreshTodayBanner()          → re-renders "Today's inspections" banner
- *                                    based on current data (called on board
- *                                    switch + after inspection edits)
+ *   isMobile()                          → boolean
+ *   applyKanbanMobileLayout()           → called by kanban.js renderBoard()
+ *   openUpcomingInspectionsPanel()      → manually open the panel
+ *   closeDrawer()                       → close the hamburger drawer
  */
 
 (function () {
@@ -213,128 +212,141 @@
     _mobileActiveCol[boardId] = cols[activeIdx]?.dataset.columnId || cols[activeIdx]?.dataset.stage;
   }
 
-  // ── Today's inspections banner ──────────────────────────────────────────
+  // ── Upcoming Inspections panel (triggered by user-menu item) ───────────
 
-  let _todayDataCache = null;
-  let _todayDataAt = 0;
-  const TODAY_CACHE_MS = 60_000; // 60s
+  let _upcomingDataCache = null;
+  let _upcomingDataAt = 0;
+  const UPCOMING_CACHE_MS = 60_000; // 60s
 
-  async function fetchTodayInspections() {
+  async function fetchUpcomingInspections() {
     const now = Date.now();
-    if (_todayDataCache && (now - _todayDataAt) < TODAY_CACHE_MS) {
-      return _todayDataCache;
+    if (_upcomingDataCache && (now - _upcomingDataAt) < UPCOMING_CACHE_MS) {
+      return _upcomingDataCache;
     }
     try {
-      const r = await fetch(`/api/scheduled-inspections?date=today`);
+      const r = await fetch(`/api/scheduled-inspections?date=upcoming`);
       if (!r.ok) {
-        // API may not yet support the date filter — degrade silently
-        _todayDataCache = [];
-        _todayDataAt = now;
+        _upcomingDataCache = [];
+        _upcomingDataAt = now;
         return [];
       }
       const data = await r.json();
-      _todayDataCache = Array.isArray(data) ? data : [];
-      _todayDataAt = now;
-      return _todayDataCache;
+      _upcomingDataCache = Array.isArray(data) ? data : [];
+      _upcomingDataAt = now;
+      return _upcomingDataCache;
     } catch (e) {
-      console.warn('[v78] today inspections fetch failed:', e);
-      _todayDataCache = [];
-      _todayDataAt = now;
+      console.warn('[v78] upcoming inspections fetch failed:', e);
+      _upcomingDataCache = [];
+      _upcomingDataAt = now;
       return [];
     }
   }
 
-  async function refreshTodayBanner() {
-    if (!isMobile()) {
-      const existing = document.querySelector('.v78-today-banner');
-      if (existing) existing.remove();
-      return;
-    }
-
-    const kanbanView = document.querySelector('.kanban-view.visible')
-                    || document.getElementById('kanbanView');
-    if (!kanbanView) return;
-    if (!kanbanView.classList.contains('visible')) {
-      const existing = document.querySelector('.v78-today-banner');
-      if (existing) existing.remove();
-      return;
-    }
-
-    const inspections = await fetchTodayInspections();
-    const count = inspections.length;
-
-    let banner = document.querySelector('.v78-today-banner');
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.className = 'v78-today-banner';
-      // Insert above kb-board (after kanban-header)
-      const header = kanbanView.querySelector('.kanban-header');
-      if (header && header.nextSibling) {
-        kanbanView.insertBefore(banner, header.nextSibling);
-      } else {
-        kanbanView.appendChild(banner);
+  // Group inspections by listing_deal_id, keep earliest per listing
+  function groupInspectionsByListing(inspections) {
+    const byListing = new Map();
+    for (const insp of inspections) {
+      const key = insp.listing_deal_id;
+      if (!byListing.has(key)) {
+        byListing.set(key, { listing_deal_id: key, inspections: [], earliest: insp });
       }
+      const entry = byListing.get(key);
+      entry.inspections.push(insp);
+      // Compare scheduled_date + start_time; earliest wins
+      const a = `${insp.scheduled_date} ${insp.start_time || '00:00'}`;
+      const b = `${entry.earliest.scheduled_date} ${entry.earliest.start_time || '00:00'}`;
+      if (a < b) entry.earliest = insp;
     }
-
-    if (count > 0) {
-      banner.classList.remove('v78-today-banner-empty');
-      banner.innerHTML = `
-        <span>📋 Today's inspections</span>
-        <span class="v78-today-banner-count">${count}</span>`;
-      banner.onclick = () => openTodayPanel(inspections);
-    } else {
-      banner.classList.add('v78-today-banner-empty');
-      banner.innerHTML = `<span>No inspections today</span>`;
-      banner.onclick = null;
-    }
+    // Convert to array sorted by earliest inspection time
+    const list = Array.from(byListing.values());
+    list.sort((a, b) => {
+      const ka = `${a.earliest.scheduled_date} ${a.earliest.start_time || '00:00'}`;
+      const kb = `${b.earliest.scheduled_date} ${b.earliest.start_time || '00:00'}`;
+      return ka.localeCompare(kb);
+    });
+    return list;
   }
 
-  function openTodayPanel(inspections) {
-    let panel = document.querySelector('.v78-today-panel');
-    if (panel) panel.remove();
+  function fmtDate(iso) {
+    if (!iso) return '';
+    // iso is YYYY-MM-DD; render as "Sat 11 May" or "Today" / "Tomorrow"
+    const d = new Date(iso + 'T00:00:00');
+    if (Number.isNaN(d.getTime())) return iso;
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const dayMs = 86400000;
+    const diff = Math.round((d - today) / dayMs);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Tomorrow';
+    const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`;
+  }
 
-    panel = document.createElement('div');
-    panel.className = 'v78-today-panel';
+  async function openUpcomingInspectionsPanel() {
+    // Close user menu if open
+    const userMenu = document.getElementById('userMenuDropdown');
+    if (userMenu) userMenu.classList.remove('open');
+
+    // Remove any existing panel
+    const existing = document.querySelector('.v78-upcoming-panel');
+    if (existing) existing.remove();
+
+    const panel = document.createElement('div');
+    panel.className = 'v78-upcoming-panel';
     panel.innerHTML = `
-      <div class="v78-today-panel-header">
-        <button class="v78-today-panel-back" aria-label="Back">←</button>
-        <div class="v78-today-panel-title">Today's inspections</div>
+      <div class="v78-upcoming-panel-header">
+        <button class="v78-upcoming-panel-back" aria-label="Back">←</button>
+        <div class="v78-upcoming-panel-title">Upcoming Inspections</div>
+        <button class="v78-upcoming-panel-close" aria-label="Close">✕</button>
       </div>
-      <div class="v78-today-panel-list"></div>`;
+      <div class="v78-upcoming-panel-list">
+        <div class="v78-upcoming-panel-loading">Loading…</div>
+      </div>`;
+    document.body.appendChild(panel);
 
-    // Sort by start_time
-    const sorted = [...inspections].sort((a, b) => {
-      return String(a.start_time || '').localeCompare(String(b.start_time || ''));
-    });
+    const close = () => panel.remove();
+    panel.querySelector('.v78-upcoming-panel-back').addEventListener('click', close);
+    panel.querySelector('.v78-upcoming-panel-close').addEventListener('click', close);
 
-    const listEl = panel.querySelector('.v78-today-panel-list');
-    if (!sorted.length) {
-      listEl.innerHTML = '<div class="v78-today-panel-empty">No inspections scheduled for today.</div>';
-    } else {
-      sorted.forEach(insp => {
-        const row = document.createElement('div');
-        row.className = 'v78-today-panel-row';
-        const time = `${fmtTime(insp.start_time)}${insp.end_time ? '–' + fmtTime(insp.end_time) : ''}`;
-        const addr = insp.property_address || insp.listing_address || insp.address || `Listing #${insp.listing_deal_id}`;
-        const typeLabel = (insp.inspection_type || '').replace(/_/g, ' ');
-        const status = insp.status || 'planned';
-        row.innerHTML = `
-          <div class="v78-today-panel-row-time">${time}${typeLabel ? ' · ' + typeLabel : ''}</div>
-          <div class="v78-today-panel-row-addr">${escapeHtml(addr)}</div>
-          <div class="v78-today-panel-row-meta">${insp.attendance_count ? insp.attendance_count + ' attendees' : 'No attendees yet'} · ${status}</div>`;
-        row.addEventListener('click', () => {
-          panel.remove();
-          jumpToListingDeal(insp.listing_deal_id, insp.id);
-        });
-        listEl.appendChild(row);
-      });
+    const inspections = await fetchUpcomingInspections();
+    const grouped = groupInspectionsByListing(inspections);
+
+    const listEl = panel.querySelector('.v78-upcoming-panel-list');
+    if (!grouped.length) {
+      listEl.innerHTML = '<div class="v78-upcoming-panel-empty">No upcoming inspections scheduled.</div>';
+      return;
     }
 
-    panel.querySelector('.v78-today-panel-back').addEventListener('click', () => {
-      panel.remove();
-    });
+    listEl.innerHTML = '';
+    grouped.forEach(group => {
+      const insp = group.earliest;
+      const card = document.createElement('div');
+      card.className = 'v78-upcoming-card';
+      const addr = insp.property_address || `Listing #${insp.listing_deal_id}`;
+      const suburb = insp.property_suburb ? ` · ${insp.property_suburb}` : '';
+      const time = `${fmtTime(insp.start_time)}${insp.end_time ? '–' + fmtTime(insp.end_time) : ''}`;
+      const dateLabel = fmtDate(insp.scheduled_date);
+      const typeLabel = (insp.inspection_type || '').replace(/_/g, ' ');
+      const moreCount = group.inspections.length - 1;
+      const moreBadge = moreCount > 0 ? `<span class="v78-upcoming-card-more">+${moreCount} more</span>` : '';
 
-    document.body.appendChild(panel);
+      card.innerHTML = `
+        <div class="v78-upcoming-card-when">
+          <span class="v78-upcoming-card-date">${escapeHtml(dateLabel)}</span>
+          <span class="v78-upcoming-card-time">${escapeHtml(time)}</span>
+          ${typeLabel ? `<span class="v78-upcoming-card-type">${escapeHtml(typeLabel)}</span>` : ''}
+          ${moreBadge}
+        </div>
+        <div class="v78-upcoming-card-addr">${escapeHtml(addr)}${escapeHtml(suburb)}</div>
+        <div class="v78-upcoming-card-meta">${insp.attendance_count ? insp.attendance_count + ' attendees registered' : 'No attendees yet'}</div>`;
+
+      card.addEventListener('click', () => {
+        close();
+        jumpToListingDeal(group.listing_deal_id, insp.id);
+      });
+      listEl.appendChild(card);
+    });
   }
 
   function jumpToListingDeal(dealId, inspectionId) {
@@ -352,7 +364,6 @@
         alert('Could not load deal — try navigating manually.');
         return;
       }
-      // Wrap into a pipeline-shaped entry
       if (window.pipeline) {
         window.pipeline[dealId] = window.pipeline[dealId] || deal;
       }
@@ -373,6 +384,21 @@
     })[c]);
   }
 
+  // Wire user-menu click handler to open the panel.
+  function initUpcomingMenuItem() {
+    const btn = document.getElementById('userMenuUpcomingInspections');
+    if (!btn) return;
+    if (btn.dataset.v78Wired === '1') return;
+    btn.dataset.v78Wired = '1';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Invalidate cache so the agent always sees fresh data when they open it
+      _upcomingDataCache = null;
+      _upcomingDataAt = 0;
+      openUpcomingInspectionsPanel();
+    });
+  }
+
   // ── Resize handling — re-render mobile layout when crossing breakpoint ─
 
   let _wasMobile = isMobile();
@@ -385,7 +411,6 @@
         try { window.renderBoard(); } catch (_) {}
       }
       applyKanbanMobileLayout();
-      refreshTodayBanner();
       if (!nowMobile) closeDrawer();
     } else if (nowMobile) {
       // Same-mobile resize — just tweak active column display
@@ -400,11 +425,9 @@
 
   function boot() {
     initHamburger();
-    // Run once kanban view is ready. The view exists in DOM at load; just
-    // refresh banner when a board is rendered.
+    initUpcomingMenuItem();
     setTimeout(() => {
       applyKanbanMobileLayout();
-      refreshTodayBanner();
     }, 600);
   }
 
@@ -419,8 +442,7 @@
   window.MobileShell = {
     isMobile,
     applyKanbanMobileLayout,
-    refreshTodayBanner,
-    openTodayPanel,
+    openUpcomingInspectionsPanel,
     closeDrawer,
   };
 })();

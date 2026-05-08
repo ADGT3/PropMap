@@ -5,6 +5,141 @@
    Scope: listing-agent inspection check-in workflow (per V78 build plan).
    ════════════════════════════════════════════════════════════════════════════ */
 
+/* ════════════════════════════════════════════════════════════════════════════
+   ─── Upcoming Inspections panel (desktop + mobile) ───────────────────────
+   Triggered from user-menu → Upcoming Inspections. Full-screen overlay,
+   listing cards sorted by earliest upcoming inspection time.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.v78-upcoming-panel {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 9500;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.v78-upcoming-panel-header {
+  display: flex;
+  align-items: center;
+  padding: 14px 18px;
+  padding-top: calc(env(safe-area-inset-top) + 14px);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  gap: 12px;
+}
+.v78-upcoming-panel-back {
+  background: none;
+  border: none;
+  font-size: 22px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 4px 10px;
+  margin-left: -10px;
+  min-width: 40px;
+  min-height: 40px;
+}
+.v78-upcoming-panel-title {
+  font-family: 'DM Serif Display', serif;
+  font-size: 19px;
+  flex: 1;
+  color: var(--text);
+}
+.v78-upcoming-panel-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px 10px;
+  min-width: 40px;
+  min-height: 40px;
+}
+.v78-upcoming-panel-close:hover { color: var(--text); }
+
+.v78-upcoming-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 16px);
+  max-width: 800px;
+  width: 100%;
+  margin: 0 auto;
+}
+.v78-upcoming-panel-loading,
+.v78-upcoming-panel-empty {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.v78-upcoming-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.v78-upcoming-card:hover {
+  background: var(--surface2);
+  border-color: var(--accent);
+}
+.v78-upcoming-card:active {
+  background: rgba(196,132,26,0.08);
+}
+.v78-upcoming-card-when {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.v78-upcoming-card-date {
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 11px;
+}
+.v78-upcoming-card-time {
+  color: var(--text);
+  font-weight: 500;
+}
+.v78-upcoming-card-type {
+  background: var(--surface2);
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.v78-upcoming-card-more {
+  background: rgba(196,132,26,0.12);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.v78-upcoming-card-addr {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+.v78-upcoming-card-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* ─── Foundation — applies at all sizes ──────────────────────────────────── */
 
 /* Use dynamic viewport height so iOS Safari URL bar collapse doesn't
@@ -177,108 +312,6 @@ header {
   }
   /* Hide secondary toolbar buttons on mobile to keep things tight */
   .kb-editcols-toggle { display: none !important; }
-
-  /* V78 — Today's inspections shortcut banner (injected via JS) */
-  .v78-today-banner {
-    background: var(--accent);
-    color: white;
-    padding: 12px 16px;
-    margin: 8px 12px 0;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 500;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-  }
-  .v78-today-banner:active { opacity: 0.9; }
-  .v78-today-banner-count {
-    background: rgba(255,255,255,0.25);
-    padding: 2px 10px;
-    border-radius: 10px;
-    font-weight: 600;
-    font-size: 13px;
-  }
-  .v78-today-banner-empty {
-    background: var(--surface2);
-    color: var(--muted);
-    box-shadow: none;
-    cursor: default;
-    font-style: italic;
-  }
-  .v78-today-banner-empty:active { opacity: 1; }
-
-  /* Today's inspections panel (full-screen list shown when banner tapped) */
-  .v78-today-panel {
-    position: fixed;
-    inset: calc(48px + env(safe-area-inset-top)) 0 0 0;
-    background: var(--bg);
-    z-index: 2000;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .v78-today-panel-header {
-    display: flex;
-    align-items: center;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    flex-shrink: 0;
-    gap: 10px;
-  }
-  .v78-today-panel-back {
-    background: none;
-    border: none;
-    font-size: 22px;
-    color: var(--accent);
-    cursor: pointer;
-    padding: 4px 8px;
-    margin-left: -8px;
-  }
-  .v78-today-panel-title {
-    font-size: 17px;
-    font-weight: 600;
-    flex: 1;
-  }
-  .v78-today-panel-list {
-    flex: 1;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  .v78-today-panel-row {
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--border);
-    cursor: pointer;
-    background: var(--surface);
-  }
-  .v78-today-panel-row:active { background: var(--surface2); }
-  .v78-today-panel-row-time {
-    font-size: 13px;
-    color: var(--accent);
-    font-weight: 600;
-    margin-bottom: 4px;
-  }
-  .v78-today-panel-row-addr {
-    font-size: 14px;
-    color: var(--text);
-    font-weight: 500;
-    line-height: 1.3;
-  }
-  .v78-today-panel-row-meta {
-    font-size: 12px;
-    color: var(--muted);
-    margin-top: 4px;
-  }
-  .v78-today-panel-empty {
-    padding: 40px 24px;
-    text-align: center;
-    color: var(--muted);
-    font-size: 14px;
-  }
 
   /* Column picker (replaces horizontal scrolling columns) — injected via JS */
   .v78-col-picker-wrap {
@@ -556,7 +589,7 @@ header {
   }
 
   /* Disable accidental text-selection on tap-target rows */
-  .kb-card, .insp-row, .insp-att-row, .v78-today-panel-row,
+  .kb-card, .insp-row, .insp-att-row, .v78-upcoming-card,
   .module-nav-btn, .kb-toolbar-btn {
     -webkit-tap-highlight-color: transparent;
   }

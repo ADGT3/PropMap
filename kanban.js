@@ -2741,9 +2741,6 @@ function renderBoard() {
     if (typeof window.MobileShell.applyKanbanMobileLayout === 'function') {
       window.MobileShell.applyKanbanMobileLayout();
     }
-    if (typeof window.MobileShell.refreshTodayBanner === 'function') {
-      window.MobileShell.refreshTodayBanner();
-    }
   }
 }
 

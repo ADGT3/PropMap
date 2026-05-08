@@ -139,6 +139,16 @@
         <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"
               d="M6 9 L12 15 L18 9"/>
       </symbol>
+
+      <!-- Calendar (upcoming inspections) -->
+      <symbol id="icon-calendar" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+          <rect x="3" y="5" width="18" height="16" rx="2"/>
+          <line x1="3" y1="10" x2="21" y2="10"/>
+          <line x1="8" y1="3" x2="8" y2="7"/>
+          <line x1="16" y1="3" x2="16" y2="7"/>
+        </g>
+      </symbol>
     </defs>
   </svg>
 
@@ -186,6 +196,7 @@
           <div class="user-menu-role" id="userMenuRole"></div>
         </div>
         <button class="tools-dropdown-item user-menu-settings" id="userMenuSettings" style="display:none"><svg class="menu-item-icon"><use href="#icon-settings"/></svg>System Settings</button>
+        <button class="tools-dropdown-item" id="userMenuUpcomingInspections"><svg class="menu-item-icon"><use href="#icon-calendar"/></svg>Upcoming Inspections</button>
         <button class="tools-dropdown-item" id="userMenuLogout">Sign out</button>
       </div>
     </div>
