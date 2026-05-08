@@ -70,7 +70,7 @@ export default async function handler(req, res) {
     switch (req.method) {
 
       case 'GET': {
-        const { id, listing_deal_id } = req.query;
+        const { id, listing_deal_id, date } = req.query;
         if (id) {
           const rows = await sql`
             SELECT si.*,
@@ -91,7 +91,36 @@ export default async function handler(req, res) {
             ORDER BY si.scheduled_date DESC, si.start_time DESC`;
           return res.status(200).json(rows);
         }
-        return res.status(400).json({ error: 'Specify id or listing_deal_id' });
+        // V78 — `?date=today` (or YYYY-MM-DD) returns inspections across all
+        // listings for that date. Joins property address through the deal's
+        // property/parcel relation so the mobile "Today's inspections" view
+        // can show what to check in for. Read-only convenience query.
+        if (date) {
+          // Resolve `today` server-side so client clock skew doesn't cause off-by-one
+          let dateClause;
+          if (date === 'today') {
+            dateClause = sql`si.scheduled_date = (now() AT TIME ZONE 'Australia/Sydney')::date`;
+          } else if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            dateClause = sql`si.scheduled_date = ${date}::date`;
+          } else {
+            return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD or "today".' });
+          }
+          const rows = await sql`
+            SELECT si.*,
+              (SELECT COUNT(*)::int FROM inspection_attendances a
+                WHERE a.scheduled_inspection_id = si.id) AS attendance_count,
+              COALESCE(p.address, par.name)              AS property_address,
+              p.suburb                                   AS property_suburb,
+              d.id                                       AS listing_deal_id_resolved
+            FROM scheduled_inspections si
+            JOIN deals d  ON d.id = si.listing_deal_id
+            LEFT JOIN properties p ON p.id  = d.property_id
+            LEFT JOIN parcels    par ON par.id = d.parcel_id
+            WHERE ${dateClause}
+            ORDER BY si.start_time ASC, si.id ASC`;
+          return res.status(200).json(rows);
+        }
+        return res.status(400).json({ error: 'Specify id or listing_deal_id or date' });
       }
 
       case 'POST': {
