@@ -395,6 +395,12 @@ function findPipelineByDomainId(domainId) {
 }
 window.findPipelineByDomainId = findPipelineByDomainId;
 
+// V78 — expose at module load so mobile-shell can open a deal modal from the
+// Upcoming Inspections panel even before the kanban view has been rendered.
+// All three are function declarations, so hoisted and safe to reference here.
+window.openCardModal              = openCardModal;
+window.reloadPipelineEntryFromDb  = reloadPipelineEntryFromDb;
+
 // ── localStorage helpers (cache / offline fallback) ──────────────────────────
 function cacheLoad() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (_) { return {}; }
@@ -2726,6 +2732,21 @@ function renderBoard() {
   // V77.1 — async enrichment for Enquiry boards (contact name + offer/inspection meta)
   if (currentBoardId === 'sys_sales_enquiry' || currentBoardId === 'sys_lease_enquiry') {
     enrichEnquiryCardsAsync();
+  }
+
+  // V78 — Mobile shell: switch to single-column picker on narrow viewports.
+  // The mobile-shell module re-applies the active-column class + injects the
+  // picker dropdown. No-op on desktop / tablet.
+  // Sync the small set of state mobile-shell needs onto window so it can read
+  // them without depending on module-internal scope.
+  window.currentBoardId = currentBoardId;
+  window.pipeline       = pipeline;
+  window.openCardModal  = openCardModal;
+  window.renderBoard    = renderBoard;
+  if (window.MobileShell) {
+    if (typeof window.MobileShell.applyKanbanMobileLayout === 'function') {
+      window.MobileShell.applyKanbanMobileLayout();
+    }
   }
 }
 

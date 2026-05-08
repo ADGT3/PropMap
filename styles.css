@@ -4324,6 +4324,24 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   font-style: italic;
 }
 
+/* V77.3 — "+ Create new contact" row at the bottom of the attendee
+   search results. Visually distinct from regular contact matches.
+   Sticky-bottom so it stays visible even when scrolling through many
+   matches inside the capped-height dropdown. */
+.insp-att-result-create {
+  background: var(--surface2);
+  border-top: 1px solid var(--border);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+.insp-att-result-create .insp-att-result-name {
+  color: var(--accent);
+}
+.insp-att-result-create:hover {
+  background: rgba(196,132,26,0.08);
+}
+
 .insp-add-row { padding: 10px 12px; border-top: 1px solid var(--border); }
 .insp-add-form { padding: 12px; background: var(--surface2); border-top: 1px solid var(--border); }
 .insp-form-row {
@@ -4556,10 +4574,14 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 .knc-result-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
 /* V77.3 — "+ Create new contact" row at the bottom of the results list.
-   Visually distinct from regular search-match rows. */
+   Visually distinct from regular search-match rows. Sticky-bottom so it
+   stays visible while scrolling through the capped-height dropdown. */
 .knc-result-create {
   background: var(--surface2);
   border-top: 1px solid var(--border);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
 }
 .knc-result-create .knc-result-main {
   color: var(--accent);
