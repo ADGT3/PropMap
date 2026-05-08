@@ -245,13 +245,16 @@ export default async function handler(req, res) {
         if (pipeline_id || (entity_type && entity_id)) {
           const eType = entity_type || 'deal';
           const eId   = entity_id   || pipeline_id;
+          // V77.2g — ordered by linked_at ASC so callers that rely on
+          // "the first linked contact is the enquirer/primary" (per Wave 2B's
+          // creation flow) get deterministic ordering.
           const rows = await sql`
-            SELECT c.*, o.name AS org_name, ec.role_id AS role, ec.entity_type, ec.entity_id
+            SELECT c.*, o.name AS org_name, ec.role_id AS role, ec.entity_type, ec.entity_id, ec.linked_at
             FROM entity_contacts ec
             JOIN contacts c ON c.id = ec.contact_id
             LEFT JOIN organisations o ON o.id = c.organisation_id
             WHERE ec.entity_type = ${eType} AND ec.entity_id = ${eId}
-            ORDER BY c.last_name, c.first_name`;
+            ORDER BY ec.linked_at ASC, c.last_name, c.first_name`;
           return res.status(200).json(rows);
         }
 
@@ -361,7 +364,13 @@ export default async function handler(req, res) {
         // old link is removed first so this acts as "upsert by (contact, entity)".
         if (body.action === 'link') {
           let { contact_id, role, role_id, entity_type, entity_id, pipeline_id } = body;
-          const roleId = role_id || role || 'vendor';
+          // V77.2g — no hardcoded fallback role. Caller MUST supply role or
+          // role_id; reject otherwise. Loud failure is preferable to silently
+          // assigning a wrong default that has to be fixed later.
+          const roleId = role_id || role;
+          if (!roleId) {
+            return res.status(400).json({ error: 'role_id (or role) required for link action' });
+          }
           if (!entity_type || !entity_id) {
             if (pipeline_id) {
               const mapped = legacyPipelineToEntity(pipeline_id);

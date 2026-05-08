@@ -39,8 +39,10 @@ export default async function handler(req, res) {
     // We do this in a few queries since neon's tagged template doesn't allow IN-list interpolation.
     // Using = ANY(${array}) pattern.
 
-    // 1. Enquirer contact name — first non-agent contact linked to the deal.
-    //    LEFT JOIN organisations to get org name (contacts.organisation_id is the FK).
+    // 1. V77.2g — Enquirer contact name. Wave 2B's Enquiry creation flow
+    // always links the enquirer FIRST (before any agent additions), so the
+    // first row by linked_at is the enquirer. No hardcoded role filter — the
+    // data flow guarantees ordering, and the call site picks the first row.
     const contactRows = await sql`
       SELECT ec.entity_id AS deal_id,
              c.first_name, c.last_name,
@@ -51,7 +53,6 @@ export default async function handler(req, res) {
       LEFT JOIN organisations o ON o.id = c.organisation_id
       WHERE ec.entity_type = 'deal'
         AND ec.entity_id = ANY(${dealIds})
-        AND ec.role_id <> 'agent'
       ORDER BY ec.linked_at ASC`;
 
     // 2. Lease offer summary per deal

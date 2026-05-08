@@ -113,7 +113,7 @@ export default async function handler(req, res) {
       CREATE TABLE IF NOT EXISTS contact_properties (
         contact_id  INTEGER     NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
         pipeline_id TEXT        NOT NULL,
-        role        TEXT        NOT NULL DEFAULT 'vendor',
+        role        TEXT        NOT NULL,
         linked_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
         PRIMARY KEY (contact_id, pipeline_id)
       )`);

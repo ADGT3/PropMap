@@ -177,11 +177,26 @@ async function findOrCreateEnquiryDeal({
       ${enquiryBoardId}, ${columnId}, ${listingDealId}
     )`;
 
-  // Link the contact as 'enquirer' on the new deal (entity_contacts upsert)
-  await sql`
-    INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id)
-    VALUES (${contactId}, 'deal', ${id}, 'enquirer')
-    ON CONFLICT (contact_id, entity_type, entity_id, role_id) DO NOTHING`;
+  // V77.2g — Link the contact to the new Enquiry deal using a role flagged
+  // as a Default Board Role for the Enquiry board (via role_boards). No
+  // hardcoded role IDs — the active configuration is the source of truth.
+  // If no role is configured for the board, log a warning and skip the link
+  // (the deal still exists; agent can link the contact manually).
+  const eligibleRoles = await sql`
+    SELECT r.id FROM roles r
+      JOIN role_boards rb ON rb.role_id = r.id
+     WHERE rb.board_id = ${enquiryBoardId} AND r.active = true
+     ORDER BY r.sort_order, r.id
+     LIMIT 1`;
+  if (eligibleRoles.length) {
+    const enquirerRoleId = eligibleRoles[0].id;
+    await sql`
+      INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id)
+      VALUES (${contactId}, 'deal', ${id}, ${enquirerRoleId})
+      ON CONFLICT (contact_id, entity_type, entity_id, role_id) DO NOTHING`;
+  } else {
+    console.warn(`[inspection-attendances] No role flagged for board ${enquiryBoardId} — Enquiry deal ${id} created without contact link`);
+  }
 
   return id;
 }
@@ -425,13 +440,27 @@ async function handlePost(req, res, session) {
     session,
   });
 
-  // 2. Ensure entity_contacts link (idempotent, in case the find branch ran on
-  // a deal where contact had a different role — they should also be 'enquirer'
-  // for this attendance link to make sense).
-  await sql`
-    INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id)
-    VALUES (${parseInt(contact_id, 10)}, 'deal', ${enquiryDealId}, 'enquirer')
-    ON CONFLICT (contact_id, entity_type, entity_id, role_id) DO NOTHING`;
+  // 2. V77.2g — Ensure entity_contacts link with role flagged for the enquiry
+  // deal's board. Idempotent (in case find-branch matched a deal where the
+  // contact had a different role). No hardcoded role IDs.
+  const enquiryDealRows = await sql`SELECT board_id FROM deals WHERE id = ${enquiryDealId} LIMIT 1`;
+  const enquiryBoardId2 = enquiryDealRows[0]?.board_id;
+  if (enquiryBoardId2) {
+    const enqRoles = await sql`
+      SELECT r.id FROM roles r
+        JOIN role_boards rb ON rb.role_id = r.id
+       WHERE rb.board_id = ${enquiryBoardId2} AND r.active = true
+       ORDER BY r.sort_order, r.id
+       LIMIT 1`;
+    if (enqRoles.length) {
+      await sql`
+        INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id)
+        VALUES (${parseInt(contact_id, 10)}, 'deal', ${enquiryDealId}, ${enqRoles[0].id})
+        ON CONFLICT (contact_id, entity_type, entity_id, role_id) DO NOTHING`;
+    } else {
+      console.warn(`[inspection-attendances] No role flagged for board ${enquiryBoardId2} — skipping contact link to deal ${enquiryDealId}`);
+    }
+  }
 
   // 3. Insert the attendance row with trigger timestamps (UNIQUE constraint
   // catches duplicate insertion of same contact at same inspection).
