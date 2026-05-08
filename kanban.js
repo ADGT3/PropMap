@@ -505,6 +505,9 @@ function dealRowToInternal(row) {
     offers:  dealData.offers  || [],
     // V75.3: DD per-deal
     dd:      (typeof dealData.dd === 'object' && dealData.dd !== null) ? dealData.dd : {},
+    // V77.1: full data blob exposed so card renderers can read fields like
+    // data.interest_level (Enquiry boards) and data.validation (Lease Enquiry).
+    data:    dealData,
     property: propertyShape,
     // V75.4: expose the parcel id/name at the top level for kanban-side code
     _isParcel:     isParcel,
@@ -514,6 +517,8 @@ function dealRowToInternal(row) {
     // preserved above for backward compat during the transition.
     _boardId:      row.board_id    || null,
     _columnId:     row.column_id   || null,
+    // V77.1b: parent_deal_id (Enquiry → Listing relationship)
+    parent_deal_id: row.parent_deal_id || null,
     // V75.7: due-action flag, set server-side in api/deals.js fetchAndExpand
     // V76.4.2: due_action_count is the actual number; _hasDueAction kept for compat.
     // V76.4.3: _hasOverdueAction drives the red left-border attention bar
@@ -558,6 +563,8 @@ function internalToDealPayload(id, entry) {
   // in-memory entries still keyed only by .stage.
   const boardId  = entry._boardId  || currentBoardId;
   const columnId = entry._columnId || stageToColumnId(stage, boardId);
+  // V77.1: spread entry.data first so unknown/new fields (validation,
+  // interest_level, etc.) survive a save round-trip; explicit fields override.
   const payload = {
     id,
     workflow:    'acquisition',
@@ -566,14 +573,12 @@ function internalToDealPayload(id, entry) {
     board_id:    boardId,
     column_id:   columnId,
     data: {
+      ...(entry.data || {}),
       note:    entry.note    || '',
-      // V75.3: notes[] no longer stored inline — lives in `notes` table
       addedAt: entry.addedAt || Date.now(),
       terms:   entry.terms   || null,
       offers:  entry.offers  || [],
-      // V75.3: DD moved here from properties.dd
       dd:      entry.dd      || {},
-      // Stash listing-ish fields that aren't first-class on properties
       price:       p.price,
       type:        p.type,
       beds:        p.beds,
@@ -642,6 +647,46 @@ async function dbLoad() {
   }
 }
 
+// V77.2g — Refetch a single deal from the server and overwrite the in-memory
+// pipeline entry + localStorage cache. Used to roll back optimistic updates
+// when the DB save was rejected (so the cache doesn't stay ahead of reality).
+// Also fires a repaint event so any open modal/board re-renders against the
+// truthful state.
+async function reloadPipelineEntryFromDb(id) {
+  try {
+    const r = await fetch(`/api/deals?id=${encodeURIComponent(id)}`);
+    if (!r.ok) {
+      if (r.status === 404) {
+        // Deal was deleted server-side — drop locally too
+        delete pipeline[id];
+        cacheSave(pipeline);
+        if (kanbanVisible) renderBoard();
+        return;
+      }
+      throw new Error(r.status);
+    }
+    const row = await r.json();
+    pipeline[id] = dealRowToInternal(row);
+    cacheSave(pipeline);
+    // Repaint: the open modal (if any) will close+reopen via re-render below
+    // for now we just repaint the board. A more polished fix would re-render
+    // the modal in place if it's the same deal id.
+    if (kanbanVisible) renderBoard();
+    // If the modal for this deal is open, re-render its body so the agent
+    // sees the rolled-back state.
+    const openModal = document.querySelector(`.kb-modal-overlay[data-property-id="${id}"]`);
+    if (openModal) {
+      openModal.remove();
+      // Reopen with fresh data — minor UX blip but keeps the user honest
+      try {
+        if (typeof window.openPipelineItem === 'function') window.openPipelineItem(id);
+      } catch (_) {}
+    }
+  } catch (err) {
+    console.warn('[kanban] reloadPipelineEntryFromDb failed for', id, err);
+  }
+}
+
 // Save an entry — writes property first (needed as FK target for the deal), then deal.
 // V75.4: parcel deals skip the property upsert (their properties are separate
 // records with their own parcel_id FK, managed via the Parcel modal).
@@ -674,14 +719,28 @@ async function dbSave(id, entry) {
       body:    JSON.stringify(dealPayload),
     });
     if (dealRes.status === 404) {
-      await fetch(DEALS_API, {
+      dealRes = await fetch(DEALS_API, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(dealPayload),
       });
     }
+    // V77.2g — surface any non-2xx response (e.g. 409 from the Default Board
+    // Role invariant). Silently swallowing it means the modal closes as if it
+    // saved while the change never hit the DB — which is exactly the bug the
+    // invariant was meant to prevent.
+    if (!dealRes.ok) {
+      let errorMsg = `Save failed (${dealRes.status})`;
+      try {
+        const errBody = await dealRes.json();
+        if (errBody?.error) errorMsg = errBody.error;
+      } catch (_) {}
+      showKanbanToast(errorMsg);
+      throw new Error(errorMsg);
+    }
   } catch (err) {
     console.warn('[kanban] dbSave failed:', err);
+    throw err;
   }
 }
 
@@ -706,7 +765,17 @@ async function dbDelete(id) {
 function savePipeline(changedId) {
   cacheSave(pipeline);
   let writePromise = Promise.resolve();
-  if (changedId && pipeline[changedId]) writePromise = dbSave(changedId, pipeline[changedId]);
+  if (changedId && pipeline[changedId]) {
+    writePromise = dbSave(changedId, pipeline[changedId]).catch(err => {
+      // V77.2g — DB rejected the save. Refetch the entry to overwrite our
+      // optimistic cache so what the user sees matches the truth. The toast
+      // already explained the rejection (showKanbanToast inside dbSave). We
+      // swallow the error here so existing fire-and-forget callers don't
+      // produce unhandled rejections; the toast + reload IS the user feedback.
+      console.warn('[savePipeline] DB rejected save for id', changedId, '— rolling back local cache');
+      return reloadPipelineEntryFromDb(changedId);
+    });
+  }
   if (typeof window.refreshPipelinePins === 'function') window.refreshPipelinePins();
   return writePromise;
 }
@@ -1061,14 +1130,21 @@ async function findExistingProperty(listing) {
     } catch (_) { /* fall through */ }
   }
 
-  // Lot/DP — split the listing's lot list into individual elements and probe
-  // each. The first match wins. Most properties have one lot/DP so this is
-  // typically a single fetch.
+  // Lot/DP + address — V77.2: a single lot/DP can host multiple addresses
+  // (strata units, duplexes, granny flats, dual-occupancy). Dedup uses the
+  // pair (lot_dp, address) so 45 Earl St and 45a Earl St on the same lot/DP
+  // are correctly treated as separate properties. If `address` is empty we
+  // fall back to lot/DP-only match (legacy behaviour) to avoid creating
+  // duplicates from incomplete listing data.
   const lotDpsStr = (listing._lotDPs || '').toString();
   const lotElements = lotDpsStr.split(',').map(s => s.trim()).filter(Boolean);
+  const addr = (listing.address || '').trim();
   for (const lot of lotElements) {
+    const url = addr
+      ? `/api/properties?by_lot_dp=${encodeURIComponent(lot)}&by_lot_dp_address=${encodeURIComponent(addr)}`
+      : `/api/properties?by_lot_dp=${encodeURIComponent(lot)}`;
     try {
-      const r = await fetch(`/api/properties?by_lot_dp=${encodeURIComponent(lot)}`);
+      const r = await fetch(url);
       if (r.ok) {
         const row = await r.json();
         if (row?.id) return row;
@@ -1082,18 +1158,44 @@ async function findExistingProperty(listing) {
 async function addPropertyOnly(listing) {
   // V76.7+ — Look up by Domain id OR lot/DP. If a match exists, route the
   // user to it instead of creating a duplicate.
+  // V77.2 — Lot/DP can host multiple addresses (strata units, duplexes,
+  // granny flats). When the existing record's address doesn't match, ask
+  // the user whether this is the same property (open existing) or a new one
+  // sharing the lot/DP (e.g. 45 vs 45a Earl St).
   const existingProperty = await findExistingProperty(listing);
 
   if (existingProperty?.id) {
-    // Already exists. Open the CRM Property modal so the user lands on the
-    // existing record. Refresh CRM cache so the row is current.
-    if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
-    _openPropertyInCrm(existingProperty.id);
-    showKanbanToast(`${existingProperty.address || 'Property'} already in CRM — opened`);
-    return { propertyId: existingProperty.id, isNew: false, existing: existingProperty };
+    // V77.2 — when an existing property is found, prompt the agent so they
+    // can confirm: same property → open existing, OR different property
+    // sharing the lot/DP (e.g. 45 vs 45a Earl St) → create new with edited
+    // address. Skipped only for Domain-driven flows where the listing's
+    // Domain ID precisely identifies the property.
+    const isDomainDriven = !!(listing?.id && /^\d{6,}$/.test(String(listing.id)));
+
+    if (isDomainDriven) {
+      if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+      _openPropertyInCrm(existingProperty.id);
+      showKanbanToast(`${existingProperty.address || 'Property'} already in CRM — opened`);
+      return { propertyId: existingProperty.id, isNew: false, existing: existingProperty };
+    }
+
+    const choice = await promptSharedLotDpChoice(existingProperty, listing);
+    if (choice === 'open') {
+      if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
+      _openPropertyInCrm(existingProperty.id);
+      showKanbanToast(`${existingProperty.address || 'Property'} already in CRM — opened`);
+      return { propertyId: existingProperty.id, isNew: false, existing: existingProperty };
+    }
+    if (choice === 'cancel') {
+      return { propertyId: null, isNew: false, cancelled: true };
+    }
+    // choice === { create_with_address: 'X' } — fall through with overridden address
+    if (typeof choice === 'object' && choice.create_with_address) {
+      listing = { ...listing, address: choice.create_with_address };
+    }
   }
 
-  // No existing — create the property record.
+  // No existing match (or user chose to create a new one) — create the property.
   const propertyId = newPropertyId();
   const rawId = listing?.id != null ? String(listing.id) : '';
   const isDomainId = /^\d{6,}$/.test(rawId);
@@ -1152,6 +1254,74 @@ async function addPropertyOnly(listing) {
 
   showKanbanToast(`${listing.address || 'Property'} added to CRM`);
   return { propertyId, isNew: true };
+}
+
+// V77.2 — When the user is creating a property at a lot/DP that already has
+// a property with a different address, prompt to clarify whether this is the
+// same property (open existing) or a new one sharing the lot/DP (a strata unit,
+// granny flat etc.). Returns 'open' | 'cancel' | { create_with_address: 'X' }.
+function promptSharedLotDpChoice(existing, incoming) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'kb-modal-overlay';
+    overlay.style.zIndex = '20000';
+    const lotDp = (existing.lot_dps || '').split(',')[0]?.trim() || '—';
+    const sameAddr = (existing.address || '').trim().toLowerCase() === (incoming.address || '').trim().toLowerCase();
+    const headlineText = sameAddr
+      ? 'A property already exists here'
+      : 'Property already exists at this Lot/DP';
+    const bodyText = sameAddr
+      ? `<p>An existing property is already recorded at this location:</p>
+         <p style="background:var(--surface2);padding:8px 10px;border-radius:4px;font-weight:600">${escapeHtml(existing.address || '—')}${existing.suburb ? ', ' + escapeHtml(existing.suburb) : ''}</p>
+         <p style="margin-top:14px;color:var(--muted);font-size:12px">If you intended a different address (e.g. a strata unit, granny flat or letter suffix like 45a), edit the address below and click <strong>Add as new property</strong>. Otherwise click <strong>Open existing</strong>.</p>`
+      : `<p>An existing property at <strong>${escapeHtml(lotDp)}</strong> has the address:</p>
+         <p style="background:var(--surface2);padding:8px 10px;border-radius:4px;font-weight:600">${escapeHtml(existing.address || '—')}${existing.suburb ? ', ' + escapeHtml(existing.suburb) : ''}</p>
+         <p style="margin-top:14px">You're trying to add a property here with the address:</p>
+         <p style="background:var(--surface2);padding:8px 10px;border-radius:4px;font-weight:600">${escapeHtml(incoming.address || '—')}${incoming.suburb ? ', ' + escapeHtml(incoming.suburb) : ''}</p>
+         <p style="margin-top:14px;color:var(--muted);font-size:12px">A single Lot/DP can have multiple addresses (strata units, duplexes, granny flats). Choose what to do:</p>`;
+    overlay.innerHTML = `
+      <div class="kb-modal" style="max-width:520px;background:var(--surface);border-radius:6px">
+        <div class="kb-modal-header" style="padding:14px 18px;border-bottom:1px solid var(--border)">
+          <div class="kb-modal-title" style="font-size:14px;font-weight:600">${escapeHtml(headlineText)}</div>
+        </div>
+        <div class="kb-modal-body" style="padding:18px;font-size:13px;line-height:1.5">
+          ${bodyText}
+          <div class="kb-field-wrap" style="margin-top:14px">
+            <label class="kb-field-label" style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Address for the new property</label>
+            <input class="kb-input" data-role="new-address" type="text" value="${escapeHtml(incoming.address || '')}" placeholder="e.g. 45a Earl St">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">Edit if needed (e.g. add unit number).</div>
+          </div>
+        </div>
+        <div class="kb-modal-footer" style="padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
+          <button data-role="cancel" class="params-cancel-btn">Cancel</button>
+          <button data-role="open" class="params-cancel-btn">Open existing instead</button>
+          <button data-role="create" class="params-save-btn">Add as new property</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const close = (val) => { overlay.remove(); resolve(val); };
+
+    overlay.querySelector('[data-role="cancel"]').addEventListener('click', () => close('cancel'));
+    overlay.querySelector('[data-role="open"]').addEventListener('click', () => close('open'));
+    overlay.querySelector('[data-role="create"]').addEventListener('click', () => {
+      const v = overlay.querySelector('[data-role="new-address"]').value.trim();
+      if (!v) {
+        alert('Please enter an address for the new property.');
+        return;
+      }
+      // V77.2 — guard against the agent clicking "Add as new property" without
+      // actually changing the address. That would create an exact duplicate.
+      if (v.trim().toLowerCase() === (existing.address || '').trim().toLowerCase()) {
+        alert('Please edit the address (e.g. add a unit number) to differentiate from the existing property — or click "Open existing" instead.');
+        return;
+      }
+      close({ create_with_address: v });
+    });
+    overlay.addEventListener('click', e => { if (e.target === overlay) close('cancel'); });
+    setTimeout(() => overlay.querySelector('[data-role="new-address"]')?.focus(), 50);
+  });
 }
 
 async function removeFromPipeline(id) {
@@ -1263,6 +1433,16 @@ function _renderBoardSelectorBar() {
       existing.innerHTML = expectedHtml;
       existing.value = currentBoardId;
     }
+    // V77.1: re-evaluate the "+ New Card" button visibility for this board
+    if (window.KanbanNewCard) {
+      KanbanNewCard.attachToToolbar(bar, currentBoardId, (newDealId) => {
+        pipeline = {};
+        renderBoard();
+        setTimeout(() => {
+          if (typeof openPipelineItem === 'function') openPipelineItem(newDealId);
+        }, 300);
+      });
+    }
     return;
   }
 
@@ -1344,6 +1524,19 @@ function _renderBoardSelectorBar() {
       renderBoard();
     }, 250);
   });
+
+  // V77.1: attach the "+ New Card" button (only visible on V77.1 system boards).
+  if (window.KanbanNewCard) {
+    KanbanNewCard.attachToToolbar(bar, currentBoardId, (newDealId) => {
+      // After a deal is created, refresh the board view so the new card shows
+      pipeline = {};
+      renderBoard();
+      // Open the new deal modal for immediate edit
+      setTimeout(() => {
+        if (typeof openPipelineItem === 'function') openPipelineItem(newDealId);
+      }, 300);
+    });
+  }
 }
 
 // V76.7+ — Shared confirmation modal for deleting a deal card.
@@ -1775,18 +1968,21 @@ async function fetchNotesForDeal(id) {
   }
 }
 
-async function addNote(id, text, taggedContactId = null) {
+async function addNote(id, text, taggedContactId = null, interactionType = null, source = null) {
   if (!text.trim()) return null;
   try {
+    const body = {
+      entity_type:       'deal',
+      entity_id:         String(id),
+      note_text:         text.trim(),
+      tagged_contact_id: taggedContactId || null,
+    };
+    if (interactionType) body.interaction_type = interactionType;
+    if (source)          body.source           = source;
     const r = await fetch(NOTES_API, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        entity_type:       'deal',
-        entity_id:         String(id),
-        note_text:         text.trim(),
-        tagged_contact_id: taggedContactId || null,
-      }),
+      body:    JSON.stringify(body),
     });
     if (!r.ok) throw new Error(r.status);
     _notesCache.delete(id);
@@ -1877,6 +2073,19 @@ function formatKbPrice(price, termsPrice) {
   return 'Price Unavailable';
 }
 
+// V77.1 — Lease-aware rent formatter for Lease Listing cards/modals.
+// Reads from data.terms.rent_amount + terms.rent_period (set in Lease Terms section).
+// Returns "$650/wk" or "$2,800/month" or 'Rent not set' as the fallback.
+function formatKbRent(terms) {
+  const t = terms || {};
+  const amt = t.rent_amount;
+  if (amt == null || amt === '') return 'Rent not set';
+  const num = typeof amt === 'number' ? amt : parseFloat(String(amt).replace(/[^0-9.]/g, ''));
+  if (isNaN(num) || num <= 0) return 'Rent not set';
+  const period = t.rent_period === 'monthly' ? '/month' : '/wk';
+  return '$' + Math.round(num).toLocaleString('en-AU') + period;
+}
+
 // Formats a raw input price (from terms/offer fields) as whole dollars
 function formatInputPrice(val) {
   if (val === null || val === undefined || val === '') return '';
@@ -1957,6 +2166,21 @@ function parseSettlementDays(val) {
 // Due = days since previous deposit (or since contract for first tranche)
 function formatDepositDue(val) {
   return formatSettlement(val); // reuse same logic — normalises to "X days"
+}
+
+// V77.1: Lease term parser — accepts "12 months", "1 year", "6m", "2y" etc.
+// Returns integer number of months, or null if unparseable / empty.
+function parseLeaseTermMonths(val) {
+  if (val == null || val === '') return null;
+  if (typeof val === 'number') return Math.round(val);
+  const s = String(val).trim().toLowerCase();
+  if (!s) return null;
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*(m|mo|month|months|y|yr|year|years)?/);
+  if (!m) return null;
+  const num  = parseFloat(m[1]);
+  const unit = m[2] || 'months';
+  if (/^y/.test(unit)) return Math.round(num * 12);
+  return Math.round(num);
 }
 
 function getTerms(id) {
@@ -2086,6 +2310,179 @@ function updateAddButtons() {
 
 // ─── Board render ─────────────────────────────────────────────────────────────
 
+// V77.1 — Card renderers split by board type (renderBoard delegates).
+
+function renderStandardCard(card, id, item, p, stages, boardId) {
+  // Compact summary indicators
+  const terms    = getTerms(id);
+  const offers   = getOffers(id);
+  const dd       = getDd(id);
+  const ddCount  = DD_ITEMS.filter(i => dd[i.toLowerCase()]?.status).length;
+  const ddHigh   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
+  const ddPoss   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
+  const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
+  const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
+
+  const stageOptions = stages.map(s =>
+    `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
+  ).join('');
+
+  // V77.1: Lease Listings show rent (per-week / per-month) in the headline,
+  // not "Price Unavailable" from the sales price field. Other boards keep
+  // the standard formatKbPrice behaviour.
+  const isLeaseListing = (boardId || item._boardId || currentBoardId) === 'sys_lease_listings';
+  const headline = isLeaseListing ? formatKbRent(terms) : formatKbPrice(p.price, terms.price);
+
+  card.innerHTML = `
+    <div class="kb-card-top">
+      <span class="kb-card-type">${p.type || ''}</span>
+      <button class="kb-remove" title="Remove from pipeline">✕</button>
+    </div>
+    <div class="kb-card-price">${headline}</div>
+    <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
+    <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
+    <select class="kb-stage-select">${stageOptions}</select>
+    <div class="kb-card-indicators">
+      ${hasTerms   ? `<span class="kb-ind kb-ind-terms" title="Vendor terms recorded">Terms</span>` : ''}
+      ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
+      ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
+      ${(Array.isArray(item.note) ? item.note.length : item.note) ? `<span class="kb-ind kb-ind-note" title="Has notes">Note</span>` : ''}
+      ${item._dueActionCount > 0 ? `<span class="kb-ind kb-ind-action-due" title="${item._dueActionCount} action${item._dueActionCount === 1 ? '' : 's'} due or reminder due">🔔 ${item._dueActionCount}</span>` : ''}
+    </div>
+  `;
+}
+
+function renderEnquiryCard(card, id, item, p, stages, boardId) {
+  // V77.1 — Enquiry card layout. No "type/price headline" gold writing — we
+  // show contact name instead. No Land/beds/baths badges. Interest level is
+  // shown as a small numeric badge (the slider lives in the deal modal,
+  // above Status). Other badges (Offer, Evidenced, Latest Offer Price for
+  // Lease; Inspected, Contract Requested, Latest Offer Price for Sales) come
+  // from item._enquiryMeta (filled async — see enrichEnquiryCardsAsync()).
+  const interestLevel = (item.data?.interest_level != null)
+    ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
+    : null;
+
+  const meta = item._enquiryMeta || {};
+  const isLease = boardId === 'sys_lease_enquiry';
+  const contactName = meta.contact_name || '<span style="color:var(--muted);font-style:italic">Loading…</span>';
+
+  const stageOptions = stages.map(s =>
+    `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
+  ).join('');
+
+  // Build the per-board badge set
+  const badges = [];
+  if (isLease) {
+    if (meta.has_submitted_offer) badges.push(`<span class="kb-ind kb-ind-enq kb-ind-offer-submitted" title="Lease offer submitted">Offer</span>`);
+    if (meta.has_evidence)        badges.push(`<span class="kb-ind kb-ind-enq kb-ind-evidence" title="Evidence submitted">Evidenced</span>`);
+    if (meta.latest_rent != null) badges.push(`<span class="kb-ind kb-ind-enq kb-ind-rent" title="Latest offer price">$${Math.round(meta.latest_rent).toLocaleString('en-AU')}/wk</span>`);
+  } else {
+    // Sales Enquiry
+    if (meta.has_inspection_attended) badges.push(`<span class="kb-ind kb-ind-enq kb-ind-inspected" title="Inspection attended">Inspected</span>`);
+    if (meta.has_contract_requested)  badges.push(`<span class="kb-ind kb-ind-enq kb-ind-contract"  title="Contract requested">Contract</span>`);
+    if (meta.latest_rent != null)     badges.push(`<span class="kb-ind kb-ind-enq kb-ind-rent" title="Latest offer price">$${Math.round(meta.latest_rent).toLocaleString('en-AU')}</span>`);
+  }
+  // Interest level badge — only when set (not null)
+  if (interestLevel != null) {
+    badges.push(`<span class="kb-ind kb-ind-enq kb-ind-interest" title="Interest level (0–100)">Interest ${interestLevel}</span>`);
+  }
+  // Common across both Enquiry types
+  if (item._dueActionCount > 0) {
+    badges.push(`<span class="kb-ind kb-ind-action-due" title="${item._dueActionCount} action${item._dueActionCount === 1 ? '' : 's'} due">🔔 ${item._dueActionCount}</span>`);
+  }
+
+  card.innerHTML = `
+    <div class="kb-card-top">
+      <span class="kb-card-type">${isLease ? 'Lease Enquiry' : 'Sales Enquiry'}</span>
+      <button class="kb-remove" title="Remove from pipeline">✕</button>
+    </div>
+    <div class="kb-card-price">${contactName}</div>
+    <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
+    <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
+    <select class="kb-stage-select">${stageOptions}</select>
+    <div class="kb-card-indicators">${badges.join('')}</div>
+  `;
+}
+
+// Persist interest_level for an Enquiry deal — sets data.interest_level via the
+// standard pipeline save. Called from the deal-modal slider.
+async function saveInterestLevel(dealId, level) {
+  if (!pipeline[dealId]) return;
+  if (!pipeline[dealId].data) pipeline[dealId].data = {};
+  pipeline[dealId].data.interest_level = level;
+  savePipeline(dealId);
+  // Refresh the kanban card badge in place if board is visible
+  refreshCardLive(dealId);
+}
+
+// V77.1 — Enrich Enquiry cards with metadata fetched from server.
+// Called after renderBoard() completes for Sales/Lease Enquiry boards.
+async function enrichEnquiryCardsAsync() {
+  const boardForCheck = currentBoardId;
+  if (boardForCheck !== 'sys_sales_enquiry' && boardForCheck !== 'sys_lease_enquiry') return;
+  const dealIds = Object.keys(pipeline).filter(id => {
+    const item = pipeline[id];
+    return (item._boardId || currentBoardId) === boardForCheck;
+  });
+  if (!dealIds.length) return;
+
+  try {
+    const r = await fetch(`/api/enquiry-card-meta?deal_ids=${encodeURIComponent(dealIds.join(','))}`);
+    if (!r.ok) return;
+    const metaMap = await r.json();
+    Object.entries(metaMap).forEach(([dealId, meta]) => {
+      if (pipeline[dealId]) pipeline[dealId]._enquiryMeta = meta;
+    });
+    // Re-render only the cards that got enriched
+    Object.keys(metaMap).forEach(dealId => {
+      const cardEl = document.querySelector(`.kb-card[data-id="${CSS.escape(dealId)}"]`);
+      if (!cardEl) return;
+      const item = pipeline[dealId];
+      const p = item?.property;
+      if (!p) return;
+      const stages = resolveCurrentStages();
+      // Re-render in place, then re-attach handlers (they were attached after innerHTML last render)
+      renderEnquiryCard(cardEl, dealId, item, p, stages, item._boardId || currentBoardId);
+      // Re-attach handlers for the re-rendered card body. Drag handlers were attached on
+      // the card root (still valid). The buttons / dropdowns inside were replaced — re-wire.
+      _wireCardInnerHandlers(cardEl, dealId);
+    });
+  } catch (err) {
+    console.warn('[kanban] enrichEnquiryCardsAsync failed:', err);
+  }
+}
+
+// Helper to re-wire kb-card inner handlers after a rebuild of innerHTML.
+// Mirrors the wiring done in the main entries.forEach loop in renderBoard.
+function _wireCardInnerHandlers(card, id) {
+  const stageSel = card.querySelector('.kb-stage-select');
+  if (stageSel) {
+    stageSel.addEventListener('change', function (e) {
+      e.stopPropagation();
+      moveToColumn(id, this.value);
+      renderBoard();
+    });
+  }
+  const removeBtn = card.querySelector('.kb-remove');
+  if (removeBtn) {
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      openDeleteCardConfirm(id);
+    });
+  }
+  const addrLink = card.querySelector('.kb-card-address-link');
+  if (addrLink) {
+    addrLink.addEventListener('click', e => {
+      e.stopPropagation();
+      // Just open the deal modal for this card — clicking address on Enquiry
+      // doesn't navigate to map, since Enquiry's address is the listing's address.
+      // Use the standard deal-open path.
+      if (typeof window.openPipelineItem === 'function') window.openPipelineItem(id);
+    });
+  }
+}
+
 function renderBoard() {
   const board = document.getElementById('kanbanBoard');
   board.innerHTML = '';
@@ -2153,39 +2550,19 @@ function renderBoard() {
       card.draggable = true;
       card.dataset.id = id;
 
-      // Compact summary indicators
-      const terms    = getTerms(id);
-      const offers   = getOffers(id);
-      const dd       = getDd(id);
-      const ddCount  = DD_ITEMS.filter(i => dd[i.toLowerCase()]?.status).length;
-      const ddHigh   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
-      const ddPoss   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
-      const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
-      const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
+      // V77.1 — branch by board type:
+      //   - Enquiry boards (sys_sales_enquiry, sys_lease_enquiry): contact-name
+      //     headline, no Land/beds/baths badges, Enquiry-specific badges + Interest
+      //     Level. Meta enriched async via /api/enquiry-card-meta.
+      //   - All other boards: legacy card layout.
+      const boardForCard = item._boardId || currentBoardId;
+      const isEnquiryBoard = boardForCard === 'sys_sales_enquiry' || boardForCard === 'sys_lease_enquiry';
 
-      // V75.6: stage select dropdown lists all columns of CURRENT board.
-      // The value submitted is the column id (not the legacy stage slug).
-      const stageOptions = stages.map(s =>
-        `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
-      ).join('');
-
-      card.innerHTML = `
-        <div class="kb-card-top">
-          <span class="kb-card-type">${p.type}</span>
-          <button class="kb-remove" title="Remove from pipeline">✕</button>
-        </div>
-        <div class="kb-card-price">${formatKbPrice(p.price, terms.price)}</div>
-        <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address}</div>
-        <div class="kb-card-suburb">${p.suburb}${p.state ? ' ' + p.state : ''}</div>
-        <select class="kb-stage-select">${stageOptions}</select>
-        <div class="kb-card-indicators">
-          ${hasTerms   ? `<span class="kb-ind kb-ind-terms" title="Vendor terms recorded">Terms</span>` : ''}
-          ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
-          ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
-          ${(Array.isArray(item.note) ? item.note.length : item.note) ? `<span class="kb-ind kb-ind-note" title="Has notes">Note</span>` : ''}
-          ${item._dueActionCount > 0 ? `<span class="kb-ind kb-ind-action-due" title="${item._dueActionCount} action${item._dueActionCount === 1 ? '' : 's'} due or reminder due">🔔 ${item._dueActionCount}</span>` : ''}
-        </div>
-      `;
+      if (isEnquiryBoard) {
+        renderEnquiryCard(card, id, item, p, stages, boardForCard);
+      } else {
+        renderStandardCard(card, id, item, p, stages, boardForCard);
+      }
 
       // Drag
       card.addEventListener('dragstart', e => {
@@ -2345,6 +2722,11 @@ function renderBoard() {
 
     board.appendChild(col);
   });
+
+  // V77.1 — async enrichment for Enquiry boards (contact name + offer/inspection meta)
+  if (currentBoardId === 'sys_sales_enquiry' || currentBoardId === 'sys_lease_enquiry') {
+    enrichEnquiryCardsAsync();
+  }
 }
 
 // ─── V75.7: Actions module ────────────────────────────────────────────────────
@@ -3288,7 +3670,22 @@ ${rows.join('')}`;
     <div class="kb-modal">
       <div class="kb-modal-header">
         <div style="flex:1;min-width:0">
-          <div class="kb-modal-price">${formatKbPrice(p.price, terms.price)}</div>
+          ${(() => {
+            const dealBoardForHeader = item._boardId || currentBoardId;
+            const isEnquiryBoard = dealBoardForHeader === 'sys_sales_enquiry' || dealBoardForHeader === 'sys_lease_enquiry';
+            if (isEnquiryBoard) {
+              // V77.1: Enquiry modal headline = enquirer contact name. Falls back
+              // to "Loading…" until populated by fetchEnquirerNameForModal() below.
+              const cached = item._enquiryMeta?.contact_name || '';
+              return `<div class="kb-modal-price kb-modal-enquirer" data-deal-id="${id}">${cached || 'Loading…'}</div>`;
+            }
+            // V77.1: Lease Listings show rent (per-week / per-month) — sales price field
+            // doesn't apply.
+            if (dealBoardForHeader === 'sys_lease_listings') {
+              return `<div class="kb-modal-price">${formatKbRent(terms)}</div>`;
+            }
+            return `<div class="kb-modal-price">${formatKbPrice(p.price, terms.price)}</div>`;
+          })()}
           <div class="kb-modal-address">📍 ${p.address}, ${p.suburb}${p.state ? ' ' + p.state : ''}</div>
           ${p._lotDPs
             ? `<div class="kb-modal-lotdp" style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${p._lotDPs}</div>`
@@ -3302,11 +3699,20 @@ ${rows.join('')}`;
       </div>
       <div class="kb-modal-body">
 
-        <!-- V76.4: Status select — first field in every Modal body, matches the
-             pattern adopted across deal and action modals. Auto-saves on change
-             (deal modal convention: every field auto-persists on change/blur). -->
+        <!-- V77.1 — Status select (Enquiry boards only — first section, above Contacts).
+             Non-Enquiry boards keep Status in the legacy IIFE just below. -->
+        <div class="v77-status-mount" data-deal-id="${id}"></div>
+
+        <!-- V77.1 — Interest level slider (Enquiry boards only — second section, above Contacts). -->
+        <div class="v77-interest-mount" data-deal-id="${id}"></div>
+
         ${(() => {
+          // V76.4 / V77.1: Status select position depends on board type.
+          //   - Enquiry boards (Sales/Lease): Status renders FIRST (above Contacts),
+          //     via the v77-status-mount above. Suppressed here.
+          //   - All other boards: Status stays at top of modal (legacy V76.4 layout).
           const dealBoardId = item._boardId || currentBoardId;
+          if (dealBoardId === 'sys_sales_enquiry' || dealBoardId === 'sys_lease_enquiry') return '';
           const dealBoard   = boards.find(b => b.id === dealBoardId);
           const cols        = (dealBoard?.columns || []).slice().sort((a,b) => a.sort_order - b.sort_order);
           if (!cols.length) return '';
@@ -3323,6 +3729,13 @@ ${rows.join('')}`;
 
         <div class="crm-section-placeholder"></div>
 
+        ${(() => {
+          // V77.1: Vendor Terms — Sales Listings + Acquisition (price/settlement/deposits)
+          const dealBoardForTerms = item._boardId || currentBoardId;
+          const showVendorTerms = dealBoardForTerms === 'sys_acquisition'
+                              || dealBoardForTerms === 'sys_sales_listings';
+          if (!showVendorTerms) return '';
+          return `
         <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
         <div class="kb-terms">
           <div class="kb-terms-row">
@@ -3339,9 +3752,87 @@ ${rows.join('')}`;
           <div class="kb-deposits">${buildDepositsHtml(terms.deposits, parseDepositAmountKanban(terms.price, null) || 0)}</div>
           <button class="kb-add-deposit">+ Add tranche</button>
         </div>
+          `;
+        })()}
 
+        ${(() => {
+          // V77.1: Finance Picker (purchase offers) — Acquisition only.
+          const dealBoardForFinance = item._boardId || currentBoardId;
+          if (dealBoardForFinance !== 'sys_acquisition') return '';
+          return `
         <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
+          `;
+        })()}
 
+        ${(() => {
+          // V77.1: Lease Terms — Lease Listings only
+          // Different shape from Sales: rent_amount, rent_period, bond, term_months, available_from, special_terms
+          const dealBoardForLease = item._boardId || currentBoardId;
+          if (dealBoardForLease !== 'sys_lease_listings') return '';
+          const lt = terms || {};
+          const rentAmt    = lt.rent_amount != null ? formatInputPrice(String(lt.rent_amount)) : '';
+          const rentPeriod = lt.rent_period || 'weekly';
+          const bond       = lt.bond != null ? formatInputPrice(String(lt.bond)) : '';
+          const termText   = lt.term_months != null ? `${lt.term_months} months` : '';
+          const availFrom  = lt.available_from || '';
+          const special    = lt.special_terms || '';
+          return `
+        <div class="kb-section-label" style="margin-top:12px">Lease Terms</div>
+        <div class="kb-lease-terms">
+          <div class="kb-lease-rent-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Rent</label>
+              <input class="kb-input kb-lease-rent-amount" type="text" placeholder="e.g. $650" value="${rentAmt}">
+            </div>
+            <div class="kb-lease-period-toggle" data-role="period-toggle">
+              <button class="kb-lease-period-btn ${rentPeriod === 'weekly' ? 'active' : ''}" data-period="weekly" type="button">Weekly</button>
+              <button class="kb-lease-period-btn ${rentPeriod === 'monthly' ? 'active' : ''}" data-period="monthly" type="button">Monthly</button>
+            </div>
+            <input type="hidden" class="kb-lease-rent-period" value="${rentPeriod}">
+          </div>
+          <div class="kb-terms-row">
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Bond</label>
+              <input class="kb-input kb-lease-bond" type="text" placeholder="e.g. $2,600" value="${bond}">
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Term</label>
+              <input class="kb-input kb-lease-term" type="text" placeholder="e.g. 12 months, 1 year, 6m" value="${termText}">
+            </div>
+            <div class="kb-field-wrap">
+              <label class="kb-field-label">Available from</label>
+              <input class="kb-input kb-lease-available" type="date" value="${availFrom}">
+            </div>
+          </div>
+          <div class="kb-field-wrap" style="margin-top:8px">
+            <label class="kb-field-label">Special Terms</label>
+            <textarea class="kb-input kb-lease-special" rows="2" placeholder="e.g. Garden maintenance included, Water included">${special}</textarea>
+          </div>
+        </div>
+          `;
+        })()}
+
+        <!-- V77.1 — Listings sections (Inspection Schedule + Agency Agreements).
+             Renderers no-op for non-Listings boards. -->
+        <div class="v77-inspections-mount" data-deal-id="${id}"></div>
+        <div class="v77-agreements-mount" data-deal-id="${id}"></div>
+
+        <!-- V77.1b — Listing Summary section (Enquiry boards only). -->
+        <div class="v77-listing-summary-mount" data-deal-id="${id}"></div>
+
+        <!-- V77.2d — Lease Offer section (Lease Enquiry only). -->
+        <!-- Validation checklist is now inside each offer's review block, no separate section. -->
+        <div class="v77-lease-offer-mount" data-deal-id="${id}"></div>
+
+        <!-- V77.1 — Lease Offers Received cross-reference (Lease Listings only). -->
+        <div class="v77-lease-offers-received-mount" data-deal-id="${id}"></div>
+
+        ${(() => {
+          // V77.1: Due Diligence section is Acquisition-workflow only.
+          // Listings (Sales/Lease) and Enquiry (Sales/Lease) boards don't have DD.
+          const dealBoardForDD = item._boardId || currentBoardId;
+          if (dealBoardForDD !== 'sys_acquisition') return '';
+          return `
         <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
         <div style="display:flex;justify-content:flex-end;margin-bottom:4px">
           <button class="kb-rerun-dd-btn kb-add-offer-btn" data-id="${id}" title="Re-run Auto DD">↻ Auto DD</button>
@@ -3361,6 +3852,8 @@ ${rows.join('')}`;
               </div>`;
           }).join('')}
         </div>
+          `;
+        })()}
 
         <div class="kb-section-label" style="margin-top:16px">Actions</div>
         <div class="kb-deal-actions-section" data-deal-actions="${id}">
@@ -3369,15 +3862,8 @@ ${rows.join('')}`;
 
         <div class="kb-section-label" style="margin-top:16px">Notes</div>
         <div class="kb-notes-section">
-          <div class="kb-note-contact-row">
-            <input class="kb-input kb-note-contact-search" type="text" placeholder="Tag a contact (optional)…">
-            <div class="kb-note-contact-results"></div>
-            <div class="kb-note-contact-tag" style="display:none"></div>
-          </div>
-          <div class="kb-notes-input-row">
-            <textarea class="kb-input kb-note-input" placeholder="Add a note…" rows="2"></textarea>
-            <button class="kb-note-add-btn">Add</button>
-          </div>
+          <!-- V77.1: Extended note form (type + source + contact tagger + textarea) -->
+          <div class="v77-note-form-mount" data-deal-id="${id}"></div>
           <div class="kb-notes-list"></div>
         </div>
 
@@ -3395,6 +3881,122 @@ ${rows.join('')}`;
       const placeholder = modal.querySelector('.crm-section-placeholder');
       if (placeholder) placeholder.replaceWith(crmEl);
     });
+  }
+
+  // V77.1: Async-populate the Enquiry headline (contact name in modal header).
+  // The kanban-card enrichment (enrichEnquiryCardsAsync) might not have run yet
+  // when modal opens via openPipelineItem from outside the board, so we hit the
+  // batch endpoint with this single deal id.
+  const _hdrBoard = item._boardId || currentBoardId;
+  if (_hdrBoard === 'sys_sales_enquiry' || _hdrBoard === 'sys_lease_enquiry') {
+    const headlineEl = modal.querySelector('.kb-modal-enquirer');
+    if (headlineEl) {
+      const cached = item._enquiryMeta?.contact_name;
+      if (!cached) {
+        fetch(`/api/enquiry-card-meta?deal_ids=${encodeURIComponent(id)}`)
+          .then(r => r.ok ? r.json() : null)
+          .then(metaMap => {
+            const meta = metaMap?.[id];
+            if (!meta) return;
+            if (pipeline[id]) pipeline[id]._enquiryMeta = meta;
+            const name = meta.contact_name || '(no contact linked)';
+            // Re-resolve the headline element in case the modal HTML was rebuilt
+            const stillThere = document.querySelector(`.kb-modal-enquirer[data-deal-id="${CSS.escape(String(id))}"]`);
+            if (stillThere) stillThere.textContent = name;
+          })
+          .catch(() => { /* leave Loading… visible */ });
+      }
+    }
+  }
+
+  // V77.1: Mount Listings sections (Inspection Schedule + Agency Agreements).
+  // These are only populated for sys_sales_listings / sys_lease_listings deals;
+  // the renderer functions are no-ops for other boards.
+  const dealBoardForSections = item._boardId || currentBoardId;
+  if (window.InspectionsSection) {
+    const mount = modal.querySelector('.v77-inspections-mount');
+    if (mount) InspectionsSection.render(mount, id, dealBoardForSections);
+  }
+  if (window.AgencyAgreementsSection) {
+    const mount = modal.querySelector('.v77-agreements-mount');
+    if (mount) AgencyAgreementsSection.render(mount, id, dealBoardForSections);
+  }
+  // V77.1b: Listing Summary section (Enquiry boards only — read-only display
+  // of parent Listing's terms). Replaces editable Vendor Terms on Enquiry deals.
+  if (window.ListingSummarySection) {
+    const mount = modal.querySelector('.v77-listing-summary-mount');
+    if (mount) {
+      const parentDealId = item.parent_deal_id || item._parentDealId || null;
+      ListingSummarySection.render(mount, id, dealBoardForSections, parentDealId);
+    }
+  }
+
+  // V77.1: Interest level slider — Enquiry boards only. Appears between Listing
+  // Summary and the deal Status. Persists data.interest_level via savePipeline().
+  if (dealBoardForSections === 'sys_sales_enquiry' || dealBoardForSections === 'sys_lease_enquiry') {
+    const interestMount = modal.querySelector('.v77-interest-mount');
+    if (interestMount) {
+      const initialLevel = (item.data?.interest_level != null)
+        ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
+        : 0;
+      interestMount.innerHTML = `
+        <div class="kb-section-label" style="margin-top:12px">Interest Level</div>
+        <div class="kb-modal-interest">
+          <div class="kb-interest-row">
+            <input type="range" class="kb-modal-interest-slider" min="0" max="100" step="5" value="${initialLevel}">
+            <span class="kb-modal-interest-value">${initialLevel}</span>
+          </div>
+          <div class="kb-modal-interest-help">0 — low interest    ·    100 — very strong interest</div>
+        </div>
+      `;
+      const slider = interestMount.querySelector('.kb-modal-interest-slider');
+      const valEl  = interestMount.querySelector('.kb-modal-interest-value');
+      let _saveT = null;
+      slider.addEventListener('input', () => { valEl.textContent = slider.value; });
+      slider.addEventListener('change', () => {
+        const newLevel = parseInt(slider.value, 10);
+        clearTimeout(_saveT);
+        _saveT = setTimeout(() => saveInterestLevel(id, newLevel), 200);
+      });
+    }
+  }
+
+  // V77.1: Deal Status select — Enquiry boards only. On non-Enquiry boards, the
+  // legacy top-of-modal Status field handles this. Mirrors the kanban card's stage.
+  if (dealBoardForSections === 'sys_sales_enquiry' || dealBoardForSections === 'sys_lease_enquiry') {
+    const statusMount = modal.querySelector('.v77-status-mount');
+    if (statusMount) {
+      const stagesForDeal = resolveCurrentStages(); // current board's columns
+      const currentColId = item._columnId || stageToColumnId(item.stage, item._boardId || currentBoardId);
+      const statusOptions = stagesForDeal.map(s =>
+        `<option value="${s.id}" ${s.id === currentColId ? 'selected' : ''}>${s.label}</option>`
+      ).join('');
+      statusMount.innerHTML = `
+        <div class="kb-section-label" style="margin-top:0">Status</div>
+        <select class="kb-input kb-modal-status-select">${statusOptions}</select>
+      `;
+      const sel = statusMount.querySelector('.kb-modal-status-select');
+      sel.addEventListener('change', () => {
+        moveToColumn(id, sel.value);
+        refreshCardLive(id);
+      });
+    }
+  }
+
+  // V77.1: Lease Enquiry sections — Lease Offer + Validation (only on sys_lease_enquiry)
+  if (dealBoardForSections === 'sys_lease_enquiry') {
+    if (window.LeaseOfferSection) {
+      const mount = modal.querySelector('.v77-lease-offer-mount');
+      if (mount) LeaseOfferSection.mount(mount, id);
+    }
+  }
+
+  // V77.1: Lease Offers Received cross-reference (only on sys_lease_listings)
+  if (dealBoardForSections === 'sys_lease_listings') {
+    if (window.LeaseOffersReceivedSection) {
+      const mount = modal.querySelector('.v77-lease-offers-received-mount');
+      if (mount) LeaseOffersReceivedSection.mount(mount, id);
+    }
   }
 
   // V75.7: load Actions for this deal into the Actions section
@@ -3416,7 +4018,45 @@ ${rows.join('')}`;
   // transition and the delete-from-modal path do NOT use this helper —
   // Finance is leaving the view, and removeFromPipeline already calls
   // renderBoard itself.
-  const closeAndRefresh = () => {
+  // V77.2g — Close-time Default Board Role invariant.
+  // Before allowing the modal to close, verify the deal has at least one
+  // contact whose role is flagged via role_boards for this deal's board. If
+  // not, block the close and toast the agent to fix it. This is the primary
+  // user-facing enforcement of the invariant — server-side checks (in
+  // /api/contacts and /api/deals) are belt-and-braces for direct API access.
+  async function canCloseDealModal() {
+    const dealEntry = pipeline[id];
+    if (!dealEntry) return true;
+    const dealBoardId = dealEntry._boardId || currentBoardId;
+    if (!dealBoardId) return true;
+    let eligibleRoles = [];
+    try {
+      if (window.Lookups && typeof Lookups.getDefaultRolesForBoard === 'function') {
+        eligibleRoles = await Lookups.getDefaultRolesForBoard(dealBoardId);
+      }
+    } catch (err) { console.warn('[deal-modal close-check] roles lookup failed', err); }
+    if (!eligibleRoles.length) return true;
+    // Fetch live contact list for the deal — Modal Contacts section may have
+    // been mutated since opening; we need the truth, not stale state.
+    let contacts = [];
+    try {
+      const r = await fetch(`/api/contacts?entity_type=deal&entity_id=${encodeURIComponent(id)}`);
+      if (r.ok) contacts = await r.json();
+    } catch (err) {
+      console.warn('[deal-modal close-check] contacts fetch failed', err);
+      // Fail open — don't trap the user if we can't verify
+      return true;
+    }
+    const eligibleIds = new Set(eligibleRoles.map(r => r.id));
+    const hasOne = contacts.some(c => eligibleIds.has(c.role));
+    if (hasOne) return true;
+    const labels = eligibleRoles.map(r => r.label).join(' or ');
+    showKanbanToast(`Add a contact with ${labels} role before closing this card.`);
+    return false;
+  }
+
+  const closeAndRefresh = async () => {
+    if (!(await canCloseDealModal())) return;
     overlay.remove();
     if (kanbanVisible) renderBoard();
   };
@@ -3430,14 +4070,14 @@ ${rows.join('')}`;
     openDeleteCardConfirm(id, () => overlay.remove());
   });
 
-  // V76.4: Status select — auto-save on change (deal-modal convention).
-  // moveToColumn updates entry.stage + entry._columnId and persists via
-  // savePipeline (cache + DB write). Re-render so the card moves columns.
+  // V76.4: legacy Status select (top-of-modal, non-Enquiry boards) — auto-save on change.
+  // Enquiry boards use the v77-status-mount block above instead.
   overlay.querySelector(`#kbModalStatus-${id}`)?.addEventListener('change', (e) => {
     const newColId = e.target.value;
     moveToColumn(id, newColId);
     renderBoard();
   });
+
   // Finance picker — delegate clicks on all .kb-fin-pick-btn rows
   function parsePickerPrice(s) {
     if (!s) return null;
@@ -3475,25 +4115,33 @@ ${rows.join('')}`;
   });
   overlay.addEventListener('click', e => { if (e.target === overlay) closeAndRefresh(); });
   document.addEventListener('keydown', function escClose(e) {
-    if (e.key === 'Escape') { closeAndRefresh(); document.removeEventListener('keydown', escClose); }
+    if (e.key === 'Escape') {
+      closeAndRefresh().then(() => {
+        // Only deregister if the modal actually closed
+        if (!document.body.contains(overlay)) {
+          document.removeEventListener('keydown', escClose);
+        }
+      });
+    }
   });
 
-  // Re-run Auto DD
-  modal.querySelector('.kb-rerun-dd-btn').addEventListener('click', () => {
-    const p       = pipeline[id]?.property;
-    const parcels = p?._parcels || [];
-    const lat     = p?.lat ?? parcels[0]?.lat ?? null;
-    const lng     = p?.lng ?? parcels[0]?.lng ?? null;
-    if (!lat || !lng || !window.queryDDRisks) {
-      console.warn('[DD] Re-run skipped — no coordinates or queryDDRisks unavailable');
-      return;
-    }
-    const btn = modal.querySelector('.kb-rerun-dd-btn');
-    btn.textContent = '↻ Running…';
-    btn.disabled = true;
-    queryDDRisks(lat, lng).then(dd => {
-      if (!pipeline[id]) return;
-      Object.entries(dd).forEach(([key, val]) => {
+  // Re-run Auto DD — V77.1: only on Acquisition (DD section gated out elsewhere)
+  if (modal.querySelector('.kb-rerun-dd-btn')) {
+    modal.querySelector('.kb-rerun-dd-btn').addEventListener('click', () => {
+      const p       = pipeline[id]?.property;
+      const parcels = p?._parcels || [];
+      const lat     = p?.lat ?? parcels[0]?.lat ?? null;
+      const lng     = p?.lng ?? parcels[0]?.lng ?? null;
+      if (!lat || !lng || !window.queryDDRisks) {
+        console.warn('[DD] Re-run skipped — no coordinates or queryDDRisks unavailable');
+        return;
+      }
+      const btn = modal.querySelector('.kb-rerun-dd-btn');
+      btn.textContent = '↻ Running…';
+      btn.disabled = true;
+      queryDDRisks(lat, lng).then(dd => {
+        if (!pipeline[id]) return;
+        Object.entries(dd).forEach(([key, val]) => {
         pipeline[id].dd[key] = val;
       });
       savePipeline(id);
@@ -3505,7 +4153,8 @@ ${rows.join('')}`;
       btn.textContent = '↻ Auto DD';
       btn.disabled = false;
     });
-  });
+    });
+  } // end V77.1 DD button gate
 
   // Notes (V75.3 — async, backed by /api/notes)
   function formatNoteDate(ts) {
@@ -3527,9 +4176,14 @@ ${rows.join('')}`;
       const taggedName = [n.tagged_first_name, n.tagged_last_name].filter(Boolean).join(' ').trim();
       const taggedBadge = taggedName ? `<span class="kb-note-contact-badge">@${taggedName}</span>` : '';
       const author = n.author_name || 'Unknown';
+      // V77.1 — type + source badges (server returns *_label fields if available)
+      const typeLabel = n.interaction_type_label || (n.interaction_type ? n.interaction_type.replace(/_/g, ' ') : '');
+      const srcLabel  = n.source_label || (n.source ? n.source.replace(/_/g, ' ') : '');
+      const typeBadge = typeLabel ? `<span class="kb-note-type-badge">${typeLabel}</span>` : '';
+      const srcBadge  = srcLabel  ? `<span class="kb-note-source-badge">${srcLabel}</span>`  : '';
       entry.innerHTML = `
         <div class="kb-note-meta">
-          <span class="kb-note-date">${formatNoteDate(n.created_at)} · by ${author}${taggedBadge}</span>
+          <span class="kb-note-date">${formatNoteDate(n.created_at)} · by ${author}${taggedBadge}${typeBadge}${srcBadge}</span>
           <button class="kb-note-delete" data-id="${n.id}" title="Delete note">✕</button>
         </div>
         <div class="kb-note-text">${String(n.note_text || '').split('\n').join('<br>')}</div>`;
@@ -3546,93 +4200,43 @@ ${rows.join('')}`;
   }
   renderNotesList();
 
-  // Contact tag for notes
-  let _noteContactId = null;
-  let _noteContactName = null;
-  const contactSearch = modal.querySelector('.kb-note-contact-search');
-  const contactResults = modal.querySelector('.kb-note-contact-results');
-  const contactTag = modal.querySelector('.kb-note-contact-tag');
-
-  function clearContactTag() {
-    _noteContactId = null;
-    _noteContactName = null;
-    contactTag.style.display = 'none';
-    contactTag.innerHTML = '';
-    contactSearch.style.display = '';
-    contactSearch.value = '';
-    contactResults.innerHTML = '';
+  // V77.1 — Mount the extended NoteForm (type + source + contact tagger + textarea)
+  // at .v77-note-form-mount. Replaces the legacy inline note input wiring.
+  if (window.NoteForm && modal.querySelector('.v77-note-form-mount')) {
+    const noteMount = modal.querySelector('.v77-note-form-mount');
+    let _kbNoteFormHandle = null;
+    _kbNoteFormHandle = NoteForm.mount(noteMount, {
+      placeholder: 'Add a note…',
+      showContactTagger: true,
+      onAdd: async (vals) => {
+        const text = (vals.note_text || '').trim();
+        if (!text) return;
+        await addNote(id, text, vals.tagged_contact_id || null, vals.interaction_type || null, vals.source || null);
+        if (_kbNoteFormHandle?.reset) _kbNoteFormHandle.reset();
+        renderNotesList();
+        refreshCardLive(id);
+      },
+    });
   }
 
-  let _contactSearchTimer;
-  contactSearch.addEventListener('input', () => {
-    clearTimeout(_contactSearchTimer);
-    const q = contactSearch.value.trim();
-    if (q.length < 2) { contactResults.innerHTML = ''; return; }
-    _contactSearchTimer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/contacts?entity_type=deal&entity_id=${encodeURIComponent(id)}`);
-        const linked = await res.json();
-        // Also search all contacts
-        const res2 = await fetch(`/api/contacts?search=${encodeURIComponent(q)}`);
-        const all = await res2.json();
-        // Merge, linked first
-        const seen = new Set();
-        const combined = [...linked, ...all].filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; })
-          .filter(c => {
-            const name = `${c.first_name} ${c.last_name}`.toLowerCase();
-            return name.includes(q.toLowerCase()) || (c.org_name||'').toLowerCase().includes(q.toLowerCase());
-          }).slice(0, 8);
-        contactResults.innerHTML = '';
-        combined.forEach(c => {
-          const item = document.createElement('div');
-          item.className = 'kb-note-contact-result';
-          item.innerHTML = `<strong>${c.first_name} ${c.last_name}</strong>${c.org_name ? ` · ${c.org_name}` : ''}`;
-          item.addEventListener('click', () => {
-            _noteContactId = c.id;
-            _noteContactName = `${c.first_name} ${c.last_name}`.trim();
-            contactResults.innerHTML = '';
-            contactSearch.style.display = 'none';
-            contactTag.style.display = 'flex';
-            contactTag.innerHTML = `<span>@${_noteContactName}</span><button class="kb-note-contact-clear">✕</button>`;
-            contactTag.querySelector('.kb-note-contact-clear').addEventListener('click', clearContactTag);
-          });
-          contactResults.appendChild(item);
-        });
-      } catch (e) { console.warn('[notes] contact search failed', e); }
-    }, 300);
-  });
-
-  const noteInput = modal.querySelector('.kb-note-input');
-  modal.querySelector('.kb-note-add-btn').addEventListener('click', async () => {
-    const text = noteInput.value.trim();
-    if (!text) return;
-    await addNote(id, text, _noteContactId);
-    noteInput.value = '';
-    clearContactTag();
-    renderNotesList();
-    refreshCardLive(id);
-  });
-  noteInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) modal.querySelector('.kb-note-add-btn').click();
-  });
-
-  // Terms
-  function syncTerms() {
-    const t = getTerms(id);
-    const rawPrice = modal.querySelector('.kb-terms-price').value;
-    const rawSettlement = modal.querySelector('.kb-terms-settlement').value;
-    const parsedPrice = parseDepositAmountKanban(rawPrice, null);
-    t.price      = parsedPrice || null;  // null not 0 — so falsy check works correctly
-    t.settlement = parseSettlementDays(rawSettlement) || null;
-    saveTerms(id, t);
-    refreshCardLive(id);
-  }
-  // Sync only on blur so price is fully typed before parsing
-  modal.querySelector('.kb-terms-price').addEventListener('blur', function() {
-    this.value = formatInputPrice(this.value);
-    syncTerms();
-  });
-  modal.querySelector('.kb-terms-settlement').addEventListener('blur', function() {
+  // Terms — V77.1: only wire if Vendor Terms section exists (Acquisition only)
+  if (modal.querySelector('.kb-terms-price')) {
+    function syncTerms() {
+      const t = getTerms(id);
+      const rawPrice = modal.querySelector('.kb-terms-price').value;
+      const rawSettlement = modal.querySelector('.kb-terms-settlement').value;
+      const parsedPrice = parseDepositAmountKanban(rawPrice, null);
+      t.price      = parsedPrice || null;  // null not 0 — so falsy check works correctly
+      t.settlement = parseSettlementDays(rawSettlement) || null;
+      saveTerms(id, t);
+      refreshCardLive(id);
+    }
+    // Sync only on blur so price is fully typed before parsing
+    modal.querySelector('.kb-terms-price').addEventListener('blur', function() {
+      this.value = formatInputPrice(this.value);
+      syncTerms();
+    });
+    modal.querySelector('.kb-terms-settlement').addEventListener('blur', function() {
     this.value = formatSettlement(this.value);
     syncTerms();
   });
@@ -3677,6 +4281,57 @@ ${rows.join('')}`;
     addDeposit(id);
     modal.querySelector('.kb-deposits').innerHTML = buildDepositsHtml(getTerms(id).deposits);
   });
+  } // end V77.1 Vendor Terms gate
+
+  // V77.1: Lease Terms — wires only if section is rendered (Lease Listings only)
+  if (modal.querySelector('.kb-lease-rent-amount')) {
+    function syncLeaseTerms() {
+      const t = getTerms(id);
+      const rentAmtRaw   = modal.querySelector('.kb-lease-rent-amount').value;
+      const rentPeriod   = modal.querySelector('.kb-lease-rent-period').value || 'weekly';
+      const bondRaw      = modal.querySelector('.kb-lease-bond').value;
+      const termRaw      = modal.querySelector('.kb-lease-term').value;
+      const availFromRaw = modal.querySelector('.kb-lease-available').value;
+      const specialRaw   = modal.querySelector('.kb-lease-special').value;
+
+      t.rent_amount = parseDepositAmountKanban(rentAmtRaw, null) || null;
+      t.rent_period = rentPeriod;
+      t.bond        = parseDepositAmountKanban(bondRaw, null) || null;
+      // term — parse "12 months", "1 year", "6m" → integer months
+      t.term_months = parseLeaseTermMonths(termRaw);
+      t.available_from = availFromRaw || null;
+      t.special_terms  = specialRaw.trim() || null;
+      saveTerms(id, t);
+      refreshCardLive(id);
+    }
+
+    modal.querySelector('.kb-lease-rent-amount').addEventListener('blur', function() {
+      this.value = this.value.trim() ? formatInputPrice(this.value) : '';
+      syncLeaseTerms();
+    });
+    modal.querySelector('.kb-lease-bond').addEventListener('blur', function() {
+      this.value = this.value.trim() ? formatInputPrice(this.value) : '';
+      syncLeaseTerms();
+    });
+    modal.querySelector('.kb-lease-term').addEventListener('blur', function() {
+      const months = parseLeaseTermMonths(this.value);
+      this.value = months != null ? `${months} months` : '';
+      syncLeaseTerms();
+    });
+    modal.querySelector('.kb-lease-available').addEventListener('change', syncLeaseTerms);
+    modal.querySelector('.kb-lease-special').addEventListener('blur', syncLeaseTerms);
+
+    // Period toggle (Weekly / Monthly)
+    const toggle = modal.querySelector('[data-role="period-toggle"]');
+    toggle.addEventListener('click', e => {
+      const btn = e.target.closest('.kb-lease-period-btn');
+      if (!btn) return;
+      const period = btn.getAttribute('data-period');
+      toggle.querySelectorAll('.kb-lease-period-btn').forEach(b => b.classList.toggle('active', b === btn));
+      modal.querySelector('.kb-lease-rent-period').value = period;
+      syncLeaseTerms();
+    });
+  }
 
   // Offer form — delegated on overlay so handlers survive picker HTML rebuilds
   overlay.addEventListener('blur', e => {
@@ -3756,36 +4411,40 @@ ${rows.join('')}`;
     showKanbanToast('Offer recorded');
   });
 
-  // Delete offer — handled in finance picker
-  modal.querySelector(`#kb-finance-picker-${id}`).addEventListener('click', e => {
-    const btn = e.target.closest('.kb-fin-pick-delete');
-    if (!btn) return;
-    deleteOffer(id, btn.dataset.offerId);
-    refreshFinancePicker();
-    refreshCardLive(id);
-  });
+  // Delete offer — handled in finance picker (V77.1: Acquisition only)
+  if (modal.querySelector(`#kb-finance-picker-${id}`)) {
+    modal.querySelector(`#kb-finance-picker-${id}`).addEventListener('click', e => {
+      const btn = e.target.closest('.kb-fin-pick-delete');
+      if (!btn) return;
+      deleteOffer(id, btn.dataset.offerId);
+      refreshFinancePicker();
+      refreshCardLive(id);
+    });
+  }
 
-  // DD
-  modal.querySelector('.kb-dd').addEventListener('change', e => {
-    const sel = e.target.closest('.kb-dd-select');
-    if (!sel) return;
-    const key = sel.dataset.key;
-    const val = sel.value;
-    const dd  = getDd(id);
-    if (!dd[key]) dd[key] = { status: '', note: '' };
-    dd[key].status = val;
-    saveDd(id, dd);
-    sel.className = `kb-dd-select dd-risk-${val || 'none'}`;
-    refreshCardLive(id);
-  });
-  modal.querySelector('.kb-dd').addEventListener('input', e => {
-    if (!e.target.matches('.kb-dd-note')) return;
-    const key = e.target.dataset.key;
-    const dd  = getDd(id);
-    if (!dd[key]) dd[key] = { status: '', note: '' };
-    dd[key].note = e.target.value;
-    saveDd(id, dd);
-  });
+  // DD — V77.1: Acquisition only
+  if (modal.querySelector('.kb-dd')) {
+    modal.querySelector('.kb-dd').addEventListener('change', e => {
+      const sel = e.target.closest('.kb-dd-select');
+      if (!sel) return;
+      const key = sel.dataset.key;
+      const val = sel.value;
+      const dd  = getDd(id);
+      if (!dd[key]) dd[key] = { status: '', note: '' };
+      dd[key].status = val;
+      saveDd(id, dd);
+      sel.className = `kb-dd-select dd-risk-${val || 'none'}`;
+      refreshCardLive(id);
+    });
+    modal.querySelector('.kb-dd').addEventListener('input', e => {
+      if (!e.target.matches('.kb-dd-note')) return;
+      const key = e.target.dataset.key;
+      const dd  = getDd(id);
+      if (!dd[key]) dd[key] = { status: '', note: '' };
+      dd[key].note = e.target.value;
+      saveDd(id, dd);
+    });
+  }
 }
 
 // V76.9: ─── Board sync framework ─────────────────────────────────────────────
@@ -4032,9 +4691,12 @@ function refreshCardIndicators(card, id) {
   const ddClass = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
   const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
 
-  // Update price (may now show terms price as fallback)
+  // Update price (Lease-aware — Lease Listings show rent, not "Price Unavailable").
   const priceEl = card.querySelector('.kb-card-price');
-  if (priceEl) priceEl.innerHTML = formatKbPrice(p.price, terms.price);
+  if (priceEl) {
+    const isLeaseListing = (item._boardId || currentBoardId) === 'sys_lease_listings';
+    priceEl.innerHTML = isLeaseListing ? formatKbRent(terms) : formatKbPrice(p.price, terms.price);
+  }
 
   const el = card.querySelector('.kb-card-indicators');
   if (!el) return;

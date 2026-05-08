@@ -245,13 +245,16 @@ export default async function handler(req, res) {
         if (pipeline_id || (entity_type && entity_id)) {
           const eType = entity_type || 'deal';
           const eId   = entity_id   || pipeline_id;
+          // V77.2g — ordered by linked_at ASC so callers that rely on
+          // "the first linked contact is the enquirer/primary" (per Wave 2B's
+          // creation flow) get deterministic ordering.
           const rows = await sql`
-            SELECT c.*, o.name AS org_name, ec.role_id AS role, ec.entity_type, ec.entity_id
+            SELECT c.*, o.name AS org_name, ec.role_id AS role, ec.entity_type, ec.entity_id, ec.linked_at
             FROM entity_contacts ec
             JOIN contacts c ON c.id = ec.contact_id
             LEFT JOIN organisations o ON o.id = c.organisation_id
             WHERE ec.entity_type = ${eType} AND ec.entity_id = ${eId}
-            ORDER BY c.last_name, c.first_name`;
+            ORDER BY ec.linked_at ASC, c.last_name, c.first_name`;
           return res.status(200).json(rows);
         }
 
@@ -361,7 +364,13 @@ export default async function handler(req, res) {
         // old link is removed first so this acts as "upsert by (contact, entity)".
         if (body.action === 'link') {
           let { contact_id, role, role_id, entity_type, entity_id, pipeline_id } = body;
-          const roleId = role_id || role || 'vendor';
+          // V77.2g — no hardcoded fallback role. Caller MUST supply role or
+          // role_id; reject otherwise. Loud failure is preferable to silently
+          // assigning a wrong default that has to be fixed later.
+          const roleId = role_id || role;
+          if (!roleId) {
+            return res.status(400).json({ error: 'role_id (or role) required for link action' });
+          }
           if (!entity_type || !entity_id) {
             if (pipeline_id) {
               const mapped = legacyPipelineToEntity(pipeline_id);
@@ -369,6 +378,48 @@ export default async function handler(req, res) {
               entity_id   = mapped.entity_id;
             } else {
               return res.status(400).json({ error: 'entity_type+entity_id or pipeline_id required' });
+            }
+          }
+          // V77.2g — Default Board Role invariant: the about-to-be-deleted
+          // "different roles" purge below could remove the last contact holding
+          // a Default Board Role. Block if so. Only applies to deals.
+          if (entity_type === 'deal') {
+            const dealRows = await sql`SELECT board_id FROM deals WHERE id = ${entity_id} LIMIT 1`;
+            const boardId = dealRows[0]?.board_id;
+            if (boardId) {
+              const eligibleRoles = await sql`
+                SELECT r.id, r.label
+                  FROM roles r
+                  JOIN role_boards rb ON rb.role_id = r.id
+                 WHERE rb.board_id = ${boardId} AND r.active = true`;
+              if (eligibleRoles.length) {
+                const eligibleIds = eligibleRoles.map(r => r.id);
+                // Roles for THIS contact on this deal that the upcoming purge would drop
+                const purgeable = await sql`
+                  SELECT role_id FROM entity_contacts
+                   WHERE contact_id = ${contact_id} AND entity_type = 'deal' AND entity_id = ${entity_id}
+                     AND role_id <> ${roleId}`;
+                const willDropEligible = purgeable.map(p => p.role_id).filter(rid => eligibleIds.includes(rid));
+                // If the new roleId is already an eligible role, nothing changes the
+                // count of contacts-with-eligible-role, so no need to block.
+                const newRoleIsEligible = eligibleIds.includes(roleId);
+                if (willDropEligible.length && !newRoleIsEligible) {
+                  // Count other contacts on this deal still holding any eligible role
+                  const remaining = await sql`
+                    SELECT COUNT(*)::int AS c FROM entity_contacts
+                     WHERE entity_type = 'deal'
+                       AND entity_id = ${entity_id}
+                       AND contact_id <> ${contact_id}
+                       AND role_id = ANY(${eligibleIds})`;
+                  if ((remaining[0]?.c ?? 0) === 0) {
+                    const labels = eligibleRoles.map(r => r.label).join(' or ');
+                    return res.status(409).json({
+                      error: `Cannot change this contact's role — they hold the only ${labels} role on this card. Add another contact with one of these roles first, then change this one.`,
+                      code: 'last_default_role_contact',
+                    });
+                  }
+                }
+              }
             }
           }
           // Remove any existing link for this (contact, entity) with a different role
@@ -398,6 +449,54 @@ export default async function handler(req, res) {
               return res.status(400).json({ error: 'entity_type+entity_id or pipeline_id required' });
             }
           }
+          // V77.2g — Default Board Role invariant: a deal cannot end up with
+          // zero contacts holding any role flagged as a Default Board Role for
+          // its board. Block the unlink with a 409 if doing so would leave the
+          // deal in an invalid state. Only applies to deals (other entity
+          // types are unaffected).
+          if (entity_type === 'deal') {
+            const dealRows = await sql`SELECT board_id FROM deals WHERE id = ${entity_id} LIMIT 1`;
+            const boardId = dealRows[0]?.board_id;
+            if (boardId) {
+              // Resolve eligible roles for this board
+              const eligibleRoles = await sql`
+                SELECT r.id, r.label
+                  FROM roles r
+                  JOIN role_boards rb ON rb.role_id = r.id
+                 WHERE rb.board_id = ${boardId} AND r.active = true`;
+              if (eligibleRoles.length) {
+                const eligibleIds = eligibleRoles.map(r => r.id);
+                // Find which of those role-links the unlink will remove for THIS contact
+                let willRemoveEligibleRoles;
+                if (role_id) {
+                  willRemoveEligibleRoles = eligibleIds.includes(role_id) ? [role_id] : [];
+                } else {
+                  // Legacy "remove all roles for this contact on this deal"
+                  const cur = await sql`
+                    SELECT role_id FROM entity_contacts
+                     WHERE contact_id = ${contact_id} AND entity_type = 'deal' AND entity_id = ${entity_id}`;
+                  willRemoveEligibleRoles = cur.map(c => c.role_id).filter(rid => eligibleIds.includes(rid));
+                }
+                if (willRemoveEligibleRoles.length) {
+                  // Count how many other contacts on this deal currently hold
+                  // any eligible role (excluding the contact about to be unlinked).
+                  const remaining = await sql`
+                    SELECT COUNT(*)::int AS c FROM entity_contacts
+                     WHERE entity_type = 'deal'
+                       AND entity_id = ${entity_id}
+                       AND contact_id <> ${contact_id}
+                       AND role_id = ANY(${eligibleIds})`;
+                  if ((remaining[0]?.c ?? 0) === 0) {
+                    const labels = eligibleRoles.map(r => r.label).join(' or ');
+                    return res.status(409).json({
+                      error: `Cannot remove the last contact with ${labels} role. Add another contact with one of these roles first, then remove this one.`,
+                      code: 'last_default_role_contact',
+                    });
+                  }
+                }
+              }
+            }
+          }
           if (role_id) {
             await sql`
               DELETE FROM entity_contacts
@@ -420,18 +519,65 @@ export default async function handler(req, res) {
         }
 
         // ── Create contact
-        const { first_name, last_name = '', mobile = '', email = '', organisation_id = null, source = 'manual', domain_id = null } = body;
+        // V77.1c: source removed — it now lives only on notes.source per the
+        //   build plan. Source is captured per-interaction (per-note) and not
+        //   denormalised onto the contact record.
+        // V77.1: dob, current_address (+ suburb/state/postcode), and consent fields
+        //   all accepted on create — same tri-state convention as PUT for consents.
+        const {
+          first_name, last_name = '', mobile = '', email = '', organisation_id = null,
+          domain_id = null,
+          dob = null,
+          current_address = null, current_address_suburb = null,
+          current_address_state = null, current_address_postcode = null,
+          privacy_consent, marketing_email_consent, marketing_sms_consent, do_not_contact,
+        } = body;
         if (!first_name?.trim()) return res.status(400).json({ error: 'first_name required' });
+
+        const consentField = (input) => {
+          if (input === undefined) return null;
+          if (input === true) return new Date().toISOString();
+          return null; // false/'revoke'/null/anything else → no timestamp
+        };
+        const privacyAt   = consentField(privacy_consent);
+        const emailMktAt  = consentField(marketing_email_consent);
+        const smsMktAt    = consentField(marketing_sms_consent);
+        const doNotCtcAt  = consentField(do_not_contact);
+
         const rows = await sql`
-          INSERT INTO contacts (first_name, last_name, mobile, email, organisation_id, source, domain_id)
-          VALUES (${first_name.trim()}, ${last_name.trim()}, ${mobile.trim()}, ${email.trim()}, ${organisation_id}, ${source}, ${domain_id})
+          INSERT INTO contacts (
+            first_name, last_name, mobile, email, organisation_id,
+            domain_id,
+            dob, current_address, current_address_suburb,
+            current_address_state, current_address_postcode,
+            privacy_consent_at, marketing_email_consent_at,
+            marketing_sms_consent_at, do_not_contact_at
+          ) VALUES (
+            ${first_name.trim()}, ${last_name.trim()}, ${mobile.trim()}, ${email.trim()}, ${organisation_id},
+            ${domain_id},
+            ${dob}, ${current_address}, ${current_address_suburb},
+            ${current_address_state}, ${current_address_postcode},
+            ${privacyAt}, ${emailMktAt}, ${smsMktAt}, ${doNotCtcAt}
+          )
           RETURNING *`;
         return res.status(201).json(rows[0]);
       }
 
       // ══════════════════════════════════════════════════════════════════════
       case 'PUT': {
-        const { id, org_id, first_name, last_name, mobile, email, organisation_id, source, domain_id, name, phone, website } = req.body;
+        const {
+          id, org_id, first_name, last_name, mobile, email, organisation_id, domain_id,
+          name, phone, website,
+          // V77.1 — new columns on contacts
+          dob,
+          current_address, current_address_suburb, current_address_state, current_address_postcode,
+          // Consent fields use a tri-state convention:
+          //   true        → stamp now() (user ticked the consent box)
+          //   false / 'revoke' → set to NULL (user un-ticked / revoked)
+          //   undefined   → leave column untouched
+          // Frontend sends the boolean; backend converts to timestamp.
+          privacy_consent, marketing_email_consent, marketing_sms_consent, do_not_contact,
+        } = req.body;
 
         // Update organisation
         if (org_id) {
@@ -449,16 +595,52 @@ export default async function handler(req, res) {
         }
 
         if (!id) return res.status(400).json({ error: 'id required' });
+
+        // V77.1 consent helper — translate tri-state boolean to timestamp value
+        // for SQL. Returns:
+        //   { touch: false, value: null }  if undefined (leave column alone)
+        //   { touch: true,  value: ISO    } if true  (stamp now)
+        //   { touch: true,  value: null   } if false/'revoke' (clear)
+        const consentField = (input) => {
+          if (input === undefined) return { touch: false, value: null };
+          if (input === true) return { touch: true, value: new Date().toISOString() };
+          if (input === false || input === 'revoke' || input === null) return { touch: true, value: null };
+          return { touch: false, value: null };
+        };
+        const cPrivacy   = consentField(privacy_consent);
+        const cEmailMkt  = consentField(marketing_email_consent);
+        const cSmsMkt    = consentField(marketing_sms_consent);
+        const cDoNotCtc  = consentField(do_not_contact);
+
+        // First: fetch current row so we can preserve untouched consent timestamps
+        const cur = await sql`SELECT * FROM contacts WHERE id = ${parseInt(id)}`;
+        if (!cur.length) return res.status(404).json({ error: 'Not found' });
+        const c = cur[0];
+
+        // Final consent values to write — touch ones get new value, untouched keep current
+        const nextPrivacy  = cPrivacy.touch  ? cPrivacy.value  : c.privacy_consent_at;
+        const nextEmailMkt = cEmailMkt.touch ? cEmailMkt.value : c.marketing_email_consent_at;
+        const nextSmsMkt   = cSmsMkt.touch   ? cSmsMkt.value   : c.marketing_sms_consent_at;
+        const nextDoNotCtc = cDoNotCtc.touch ? cDoNotCtc.value : c.do_not_contact_at;
+
         const rows = await sql`
           UPDATE contacts SET
-            first_name      = COALESCE(${first_name      ?? null}, first_name),
-            last_name       = COALESCE(${last_name       ?? null}, last_name),
-            mobile          = COALESCE(${mobile          ?? null}, mobile),
-            email           = COALESCE(${email           ?? null}, email),
-            organisation_id = COALESCE(${organisation_id ?? null}, organisation_id),
-            source          = COALESCE(${source          ?? null}, source),
-            domain_id       = COALESCE(${domain_id       ?? null}, domain_id),
-            updated_at      = now()
+            first_name                  = COALESCE(${first_name              ?? null}, first_name),
+            last_name                   = COALESCE(${last_name               ?? null}, last_name),
+            mobile                      = COALESCE(${mobile                  ?? null}, mobile),
+            email                       = COALESCE(${email                   ?? null}, email),
+            organisation_id             = COALESCE(${organisation_id         ?? null}, organisation_id),
+            domain_id                   = COALESCE(${domain_id               ?? null}, domain_id),
+            dob                         = COALESCE(${dob                     ?? null}, dob),
+            current_address             = COALESCE(${current_address         ?? null}, current_address),
+            current_address_suburb      = COALESCE(${current_address_suburb  ?? null}, current_address_suburb),
+            current_address_state       = COALESCE(${current_address_state   ?? null}, current_address_state),
+            current_address_postcode    = COALESCE(${current_address_postcode?? null}, current_address_postcode),
+            privacy_consent_at          = ${nextPrivacy},
+            marketing_email_consent_at  = ${nextEmailMkt},
+            marketing_sms_consent_at    = ${nextSmsMkt},
+            do_not_contact_at           = ${nextDoNotCtc},
+            updated_at                  = now()
           WHERE id = ${parseInt(id)}
           RETURNING *`;
         if (!rows.length) return res.status(404).json({ error: 'Not found' });

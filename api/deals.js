@@ -253,6 +253,7 @@ export default async function handler(req, res) {
             stage        = 'shortlisted',
             board_id,                  // optional — derived from workflow if absent
             column_id,                 // optional — derived from board_id+stage if absent
+            parent_deal_id = null,     // V77.1b — for Enquiry deals: the Listing deal they're enquiring about
             data         = {},
             seed_financials_from, // optional deal_id to seed from
           } = body;
@@ -278,9 +279,9 @@ export default async function handler(req, res) {
           const dataJson = JSON.stringify({ addedAt: Date.now(), ...data });
 
           const dealRows = await sql`
-            INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id)
+            INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id, parent_deal_id)
             VALUES (${id}, ${property_id}, ${parcel_id}, ${workflow}, ${stage}, 'active', ${dataJson}::jsonb,
-                    ${boardIdFinal}, ${columnIdFinal})
+                    ${boardIdFinal}, ${columnIdFinal}, ${parent_deal_id})
             RETURNING *`;
 
           // Seed financials — find most recent prior deal's financial record if not specified
@@ -328,6 +329,7 @@ export default async function handler(req, res) {
           status   = 'active',
           board_id,
           column_id,
+          parent_deal_id = null,    // V77.1b — for Enquiry deals
           data     = {},
         } = body;
         if (!property_id && !parcel_id) return res.status(400).json({ error: 'property_id or parcel_id required' });
@@ -337,9 +339,9 @@ export default async function handler(req, res) {
         const boardIdFinal2  = board_id  || `sys_${workflow}`;
         const columnIdFinal2 = column_id || `${boardIdFinal2}_${stage}`;
         const rows = await sql`
-          INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id)
+          INSERT INTO deals (id, property_id, parcel_id, workflow, stage, status, data, board_id, column_id, parent_deal_id)
           VALUES (${id}, ${property_id}, ${parcel_id}, ${workflow}, ${stage}, ${status}, ${dataJson}::jsonb,
-                  ${boardIdFinal2}, ${columnIdFinal2})
+                  ${boardIdFinal2}, ${columnIdFinal2}, ${parent_deal_id})
           ON CONFLICT (id) DO NOTHING
           RETURNING *`;
         if (!rows.length) {
@@ -353,6 +355,39 @@ export default async function handler(req, res) {
         const body = req.body || {};
         const { id, stage, status, data, board_id, column_id } = body;
         if (!id) return res.status(400).json({ error: 'id required' });
+
+        // V77.2g — Default Board Role invariant. Block save if the deal's
+        // board has roles flagged via role_boards AND the deal currently has
+        // zero contacts holding any of them. The check uses the new board_id
+        // if supplied (e.g. when moving the card to a different board), else
+        // the deal's existing board_id. Applies regardless of when the card
+        // was originally created.
+        const curRows = await sql`SELECT board_id FROM deals WHERE id = ${id} LIMIT 1`;
+        if (!curRows.length) return res.status(404).json({ error: 'Not found' });
+        const effectiveBoardId = board_id || curRows[0].board_id;
+        if (effectiveBoardId) {
+          const eligibleRoles = await sql`
+            SELECT r.id, r.label
+              FROM roles r
+              JOIN role_boards rb ON rb.role_id = r.id
+             WHERE rb.board_id = ${effectiveBoardId} AND r.active = true`;
+          if (eligibleRoles.length) {
+            const eligibleIds = eligibleRoles.map(r => r.id);
+            const have = await sql`
+              SELECT COUNT(*)::int AS c FROM entity_contacts
+               WHERE entity_type = 'deal'
+                 AND entity_id = ${id}
+                 AND role_id = ANY(${eligibleIds})`;
+            if ((have[0]?.c ?? 0) === 0) {
+              const labels = eligibleRoles.map(r => r.label).join(' or ');
+              return res.status(409).json({
+                error: `Cannot save — no contact has ${labels} role on this card. Add one in the Contacts section, then save.`,
+                code: 'missing_default_role_contact',
+              });
+            }
+          }
+        }
+
         const dataJson = data !== undefined ? JSON.stringify(data) : null;
         const rows = await sql`
           UPDATE deals SET

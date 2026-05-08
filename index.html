@@ -948,6 +948,10 @@
       <!-- Sub-menu navigation (admin-only sections) -->
       <div class="settings-submenu" id="settingsSubmenu">
         <button class="settings-submenu-item active" data-section="api-dashboard">API Dashboard</button>
+        <button class="settings-submenu-item" data-section="agency-agreements">Agency Agreements</button>
+        <button class="settings-submenu-item" data-section="parameters">Parameters</button>
+        <button class="settings-submenu-item" data-section="notifications">Notifications</button>
+        <button class="settings-submenu-item" data-section="retention-policy">Retention Policy</button>
       </div>
 
       <!-- API Dashboard section -->
@@ -1088,6 +1092,51 @@
           </div>
         </div>
       </div>
+
+      <!-- Agency Agreements report (V77.1) -->
+      <div class="settings-section" id="settingsSectionAgencyAgreements" style="display:none">
+        <div class="settings-section-header">
+          <h2>Agency Agreements</h2>
+          <p class="settings-section-sub">All agency agreements across every deal. Click any column header to sort. Click ↗ to jump to a deal.</p>
+        </div>
+        <div id="agencyAgreementsReportContainer">
+          <div class="aar-loading">Click Agency Agreements to load…</div>
+        </div>
+      </div>
+
+      <!-- Parameters section (V77.1) -->
+      <div class="settings-section" id="settingsSectionParameters" style="display:none">
+        <div class="settings-section-header">
+          <h2>Parameters</h2>
+          <p class="settings-section-sub">Lookup tables that drive contact roles, lead sources, and note interaction types. System rows are protected — they cannot be deleted, only deactivated. Custom rows can be deleted; references will have their assignment set to NULL.</p>
+        </div>
+        <div id="parametersPageContainer">
+          <div class="params-loading">Click Parameters to load…</div>
+        </div>
+      </div>
+
+      <!-- Notifications section (V77.2) -->
+      <div class="settings-section" id="settingsSectionNotifications" style="display:none">
+        <div class="settings-section-header">
+          <h2>Notifications</h2>
+          <p class="settings-section-sub">Email infrastructure configuration. Subscriptions and per-event-type controls coming in next release.</p>
+        </div>
+        <div id="notificationsPageContainer">
+          <div class="params-loading">Click Notifications to load…</div>
+        </div>
+      </div>
+
+      <!-- Retention Policy section (V77.2c) -->
+      <div class="settings-section" id="settingsSectionRetentionPolicy" style="display:none">
+        <div class="settings-section-header">
+          <h2>Retention Policy</h2>
+          <p class="settings-section-sub">Document retention period configuration and pending purges. Records become eligible for purge 12 months after the lease period ends.</p>
+        </div>
+        <div id="retentionPolicyPageContainer">
+          <div class="params-loading">Click Retention Policy to load…</div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -1108,6 +1157,18 @@
   <script src="dd-risks.js"></script>
   <script src="lib/parcel-format.js"></script>
   <script src="nsw-lookup-client.js"></script>
+  <script src="lookups.js"></script>
+  <script src="parameters-page.js"></script>
+  <script src="notifications-page.js"></script>
+  <script src="retention-policy-page.js"></script>
+  <script src="note-form.js"></script>
+  <script src="inspections-section.js"></script>
+  <script src="agency-agreements-section.js"></script>
+  <script src="agency-agreements-report.js"></script>
+  <script src="listing-summary-section.js"></script>
+  <script src="lease-offer-section.js"></script>
+  <script src="lease-offers-received-section.js"></script>
+  <script src="kanban-new-card.js"></script>
   <script src="crm.js"></script>
   <script src="map.js"></script>
   <script src="kanban.js"></script>
@@ -1235,6 +1296,64 @@
     document.getElementById('settingsClose')?.addEventListener('click', () => {
       if (window.Router) Router.navigate('/mapping');
       else toggleSettings(false);
+    });
+
+    // V77.1 — Settings sub-menu navigation. Stores active section and shows/hides
+    // sections accordingly. Parameters page is rendered lazily on first visit.
+    let _parametersRendered = false;
+    let _aarRendered = false;
+    let _notificationsRendered = false;
+    let _retentionPolicyRendered = false;
+    function showSettingsSection(sectionKey) {
+      // Update active button
+      document.querySelectorAll('.settings-submenu-item').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-section') === sectionKey);
+      });
+      // Show/hide section divs
+      document.getElementById('settingsSectionApiDashboard').style.display = sectionKey === 'api-dashboard' ? '' : 'none';
+      const aarSection = document.getElementById('settingsSectionAgencyAgreements');
+      if (aarSection) aarSection.style.display = sectionKey === 'agency-agreements' ? '' : 'none';
+      const paramsSection = document.getElementById('settingsSectionParameters');
+      if (paramsSection) paramsSection.style.display = sectionKey === 'parameters' ? '' : 'none';
+      const notifSection = document.getElementById('settingsSectionNotifications');
+      if (notifSection) notifSection.style.display = sectionKey === 'notifications' ? '' : 'none';
+      const retentionSection = document.getElementById('settingsSectionRetentionPolicy');
+      if (retentionSection) retentionSection.style.display = sectionKey === 'retention-policy' ? '' : 'none';
+      // Lazy-render Parameters on first visit
+      if (sectionKey === 'parameters' && !_parametersRendered && window.ParametersPage) {
+        const container = document.getElementById('parametersPageContainer');
+        if (container) {
+          ParametersPage.render(container);
+          _parametersRendered = true;
+        }
+      }
+      // Lazy-render Agency Agreements on first visit
+      if (sectionKey === 'agency-agreements' && !_aarRendered && window.AgencyAgreementsReport) {
+        const container = document.getElementById('agencyAgreementsReportContainer');
+        if (container) {
+          AgencyAgreementsReport.render(container);
+          _aarRendered = true;
+        }
+      }
+      // V77.2 — Lazy-render Notifications on first visit
+      if (sectionKey === 'notifications' && !_notificationsRendered && window.NotificationsPage) {
+        const container = document.getElementById('notificationsPageContainer');
+        if (container) {
+          NotificationsPage.render(container);
+          _notificationsRendered = true;
+        }
+      }
+      // V77.2c — Lazy-render Retention Policy on first visit
+      if (sectionKey === 'retention-policy' && !_retentionPolicyRendered && window.RetentionPolicyPage) {
+        const container = document.getElementById('retentionPolicyPageContainer');
+        if (container) {
+          RetentionPolicyPage.render(container);
+          _retentionPolicyRendered = true;
+        }
+      }
+    }
+    document.querySelectorAll('.settings-submenu-item').forEach(btn => {
+      btn.addEventListener('click', () => showSettingsSection(btn.getAttribute('data-section')));
     });
 
     // ── API Dashboard (V75.7) ──────────────────────────────────────────────

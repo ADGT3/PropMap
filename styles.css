@@ -3803,3 +3803,1981 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   color: var(--muted);
   font-weight: 400;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Parameters page (System Settings → Parameters)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.params-page {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.params-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+}
+.params-section-header {
+  margin-bottom: 12px;
+  position: relative;
+}
+.params-section-header h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.params-section-header .settings-section-sub {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.params-add-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.params-add-btn:hover {
+  filter: brightness(1.05);
+}
+.params-table-wrap {
+  overflow-x: auto;
+}
+.params-loading {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.params-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.params-table .params-th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--border);
+  background: var(--surface2);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  user-select: none;
+}
+.params-table .params-th-sortable {
+  cursor: pointer;
+}
+.params-table .params-th-sortable:hover {
+  background: rgba(0,0,0,0.04);
+}
+.params-table .params-tr:hover {
+  background: var(--surface2);
+}
+.params-table .params-tr-edit {
+  background: rgba(196,132,26,0.06);  /* tint of --accent */
+}
+.params-table .params-td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text);
+}
+.params-table .params-td-mono {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.params-table .params-td-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+.params-table .params-td-hint {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 11px;
+}
+.params-system-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  background: rgba(0,0,0,0.06);
+  color: var(--muted);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.params-edit-btn,
+.params-delete-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  margin-left: 4px;
+  padding: 0;
+  line-height: 1;
+}
+.params-edit-btn:hover {
+  background: rgba(196,132,26,0.10);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.params-delete-btn:hover {
+  background: rgba(192,57,43,0.10);
+  color: var(--red);
+  border-color: var(--red);
+}
+.params-save-btn,
+.params-cancel-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-left: 4px;
+}
+.params-cancel-btn {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.params-save-btn:hover { filter: brightness(1.05); }
+.params-cancel-btn:hover { background: var(--border); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Note form (extended Type+Source dropdowns)
+   Added now even though note-form.js ships in 3.2 — having styles ready means
+   the form integrates cleanly without a CSS-deploy sequencing problem.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* V77.1 — Note form: Type select + Tag-a-contact share one row.
+   Both fields/chip locked to the same height (28px) so the row aligns. */
+.nf-top-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+  align-items: stretch;
+}
+.nf-type-select {
+  flex: 0 0 140px;
+  font-size: 12px;
+  height: 28px;
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+.nf-contact-wrap {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  height: 28px;
+}
+.nf-contact-search {
+  width: 100%;
+  height: 28px;
+  font-size: 12px;
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+.nf-contact-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #d4cdb8);
+  border-radius: 4px;
+  margin-top: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.nf-contact-result {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+}
+.nf-contact-result:hover {
+  background: var(--surface2);
+}
+/* When picked, the chip replaces the input — same dimensions, same row */
+.nf-contact-tag {
+  background: rgba(196,132,26,0.10);
+  border: 1px solid rgba(196,132,26,0.40);
+  color: var(--accent);
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.nf-contact-tag-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.nf-contact-clear {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.nf-contact-clear:hover {
+  color: var(--text);
+}
+.nf-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.nf-text-input {
+  flex: 1;
+}
+.nf-add-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  align-self: stretch;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Toast notification (used by InspectionsSection, AgencyAgreementsSection,
+   KanbanNewCard for action confirmations)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.v77-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--text);
+  color: var(--surface);
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  z-index: 10000;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+  max-width: 380px;
+}
+.v77-toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.v77-toast-success { background: var(--green); }
+.v77-toast-error   { background: var(--red); }
+.v77-toast-info    { background: var(--blue); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Generic modal overlay (used by Inspection check-in, KanbanNewCard, etc.)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.v77-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.v77-modal {
+  background: var(--surface);
+  border-radius: 8px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  overflow: hidden;
+}
+.v77-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.v77-modal-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+.v77-modal-close {
+  background: transparent;
+  border: 0;
+  font-size: 18px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+}
+.v77-modal-close:hover { color: var(--text); }
+.v77-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+.v77-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface2);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Inspection Schedule + Attendances section
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.insp-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.insp-list { padding: 0; }
+.insp-loading,
+.insp-empty,
+.insp-error {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.insp-error { color: var(--red); }
+
+.insp-row {
+  border-bottom: 1px solid var(--border);
+}
+.insp-row:last-child { border-bottom: 0; }
+.insp-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.insp-row-header:hover { background: var(--surface2); }
+.insp-row-main {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  flex: 1;
+}
+.insp-row-date { font-weight: 600; font-size: 12px; }
+.insp-row-time { font-size: 12px; color: var(--text); }
+.insp-row-type {
+  font-size: 11px;
+  background: var(--surface2);
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--muted);
+}
+.insp-row-count { font-size: 11px; color: var(--muted); }
+.insp-row-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.insp-row-controls .insp-status-select {
+  font-size: 11px;
+  padding: 2px 6px;
+  width: auto;
+}
+.insp-row-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  line-height: 1;
+}
+.insp-row-btn:hover { background: var(--surface2); color: var(--text); }
+.insp-row-chev {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 4px;
+  transition: transform 0.15s;
+}
+.insp-row-expanded .insp-row-chev { transform: rotate(180deg); }
+
+.insp-attendances {
+  display: none;
+  background: var(--surface2);
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.insp-row-expanded .insp-attendances { display: block; }
+.insp-att-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+.insp-att-header {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.insp-att-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.insp-att-row:last-child { border-bottom: 0; }
+.insp-att-row-name { font-weight: 500; }
+.insp-att-row-checks {
+  display: flex;
+  gap: 8px;
+}
+.insp-att-row-checks label {
+  font-size: 11px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+.insp-att-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  padding-right: 6px;
+}
+.insp-att-row-actions { white-space: nowrap; }
+
+.insp-att-add { margin-top: 8px; position: relative; }
+.insp-att-search {
+  width: 100%;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.insp-att-results {
+  position: fixed;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  z-index: 10000;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  display: none;
+}
+.insp-att-results.is-open { display: block; }
+.insp-att-result {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.insp-att-result:hover { background: var(--surface2); }
+.insp-att-result-name { font-weight: 600; }
+.insp-att-result-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+.insp-att-result-empty {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.insp-add-row { padding: 10px 12px; border-top: 1px solid var(--border); }
+.insp-add-form { padding: 12px; background: var(--surface2); border-top: 1px solid var(--border); }
+.insp-form-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.insp-form-row input,
+.insp-form-row select { font-size: 12px; padding: 4px 8px; }
+.insp-form-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.insp-checkin-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.insp-checkin-checks label {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+/* V77.2d — Editable Contact fields in the inspection check-in dialog */
+.insp-checkin-help {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 4px 0 8px;
+}
+.insp-checkin-contact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+.insp-checkin-contact-grid .kb-field-wrap {
+  margin: 0;
+}
+@media (max-width: 540px) {
+  .insp-checkin-contact-grid { grid-template-columns: 1fr; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Agency Agreements section + report
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.aa-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.aa-loading,
+.aa-empty,
+.aa-error {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.aa-error { color: var(--red); }
+.aa-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.aa-row:last-child { border-bottom: 0; }
+.aa-row-main { flex: 1; }
+.aa-row-line1 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.aa-row-line2 {
+  display: flex;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.aa-row-sep { opacity: 0.5; }
+.aa-row-notes {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+.aa-row-actions { display: flex; gap: 4px; }
+
+.aa-type-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.aa-type-sale  { background: rgba(41,128,185,0.15); color: #2980b9; }
+.aa-type-lease { background: rgba(142,68,173,0.15); color: #8e44ad; }
+
+.aa-status-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+}
+.aa-status-pending    { background: rgba(196,132,26,0.15); color: var(--accent); }
+.aa-status-active     { background: rgba(39,174,96,0.15);  color: var(--green); }
+.aa-status-expired    { background: rgba(0,0,0,0.06);       color: var(--muted); }
+.aa-status-terminated { background: rgba(192,57,43,0.15);  color: var(--red); }
+
+.aa-row-company { font-weight: 500; }
+
+.aa-add-row { padding: 10px 12px; border-top: 1px solid var(--border); }
+.aa-add-form { padding: 12px; background: var(--surface2); border-top: 1px solid var(--border); }
+.aa-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.aa-form-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.aa-org-results {
+  position: absolute;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  z-index: 10;
+  max-height: 180px;
+  overflow-y: auto;
+  max-width: 100%;
+}
+.aa-org-result {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.aa-org-result:hover { background: var(--surface2); }
+.aa-org-result-empty {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Settings → Agency Agreements report table */
+.aar-table { font-size: 12px; }
+.aar-empty,
+.aar-loading,
+.aar-error {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.aar-error { color: var(--red); }
+.aar-open-btn:hover {
+  background: rgba(196,132,26,0.10);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Kanban "+ New Card" button + flow dialog
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.knc-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  font-weight: 500;
+}
+.knc-btn:hover { filter: brightness(1.05); }
+
+.knc-loading {
+  padding: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.knc-step-summary {
+  background: var(--surface2);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.knc-step-label { color: var(--muted); margin-right: 4px; }
+.knc-step-back {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0 4px;
+}
+.knc-results {
+  margin-top: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.knc-results:empty { display: none; }
+.knc-result {
+  padding: 8px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.knc-result:last-child { border-bottom: 0; }
+.knc-result:hover { background: var(--surface2); }
+.knc-result-selected {
+  background: rgba(196,132,26,0.10);
+  border-left: 3px solid var(--accent);
+  padding-left: 7px;
+}
+.knc-result-main { font-size: 13px; font-weight: 500; }
+.knc-result-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1b — Listing Summary section (Enquiry deal modals)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.ls-summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+.ls-loading,
+.ls-empty,
+.ls-error {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface2);
+  border-radius: 6px;
+}
+.ls-error { color: var(--red); }
+.ls-row {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed var(--border);
+}
+.ls-row:last-child { border-bottom: 0; }
+.ls-label {
+  width: 130px;
+  color: var(--muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.ls-value {
+  flex: 1;
+  color: var(--text);
+}
+.ls-value-prom {
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 14px;
+}
+.ls-status-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: 6px;
+}
+.ls-status-active   { background: rgba(39,174,96,0.15);  color: var(--green); }
+.ls-status-won      { background: rgba(39,174,96,0.15);  color: var(--green); }
+.ls-status-lost     { background: rgba(192,57,43,0.15);  color: var(--red); }
+.ls-status-archived { background: rgba(0,0,0,0.06);       color: var(--muted); }
+.ls-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+.knc-listing-stage {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  background: var(--surface2);
+  border-radius: 3px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Lease Terms section (Lease Listings only)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.kb-lease-terms {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.kb-lease-rent-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.kb-lease-period-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface2);
+  align-self: flex-end;
+  margin-bottom: 0;
+}
+.kb-lease-period-btn {
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 500;
+}
+.kb-lease-period-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.kb-lease-period-btn:not(.active):hover {
+  background: rgba(0,0,0,0.04);
+  color: var(--text);
+}
+.kb-lease-special {
+  resize: vertical;
+  min-height: 50px;
+  font-family: inherit;
+}
+
+/* V77.1 — Picked-existing-contact banner inside Add Contact form */
+.crm-pick-banner {
+  background: rgba(196,132,26,0.10);
+  border: 1px solid rgba(196,132,26,0.35);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.crm-pick-clear {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+/* V77.1 — Locked field appearance (when picking existing contact) */
+.kb-input-locked {
+  background: var(--surface2) !important;
+  color: var(--muted) !important;
+  cursor: not-allowed !important;
+}
+.kb-input-locked:focus {
+  outline: none !important;
+}
+
+/* V77.1 — Pick banner buttons */
+.crm-pick-banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.crm-pick-edit-master {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.crm-pick-edit-master:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* V77.1c — Domain duplicate dialog */
+.dom-dup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.dom-dup-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+}
+.dom-dup-row:hover { background: var(--surface2); }
+.dom-dup-row-main { flex: 1; min-width: 0; }
+.dom-dup-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dom-dup-use {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Validation section (Lease Enquiry deals)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.val-section .val-help {
+  font-size: 11px; color: var(--muted);
+  margin-top: 3px; margin-bottom: 6px;
+}
+.val-list {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.val-item {
+  display: flex; gap: 8px; align-items: center;
+  font-size: 13px; color: var(--text);
+  cursor: pointer;
+  padding: 3px 0;
+}
+.val-item:hover { color: var(--accent); }
+.val-item input[type="checkbox"] {
+  margin: 0; cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Lease Offers Received (Lease Listing deals)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.lor-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.lor-loading, .lor-empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
+
+.lor-row {
+  display: flex; gap: 10px; align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.lor-row:hover { background: var(--surface2); }
+.lor-row-main { flex: 1; min-width: 0; }
+.lor-row-headline {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  font-size: 13px;
+}
+.lor-enquirer { color: var(--text); }
+.lor-rent { font-weight: 600; color: var(--accent); }
+.lor-meta {
+  font-size: 11px; color: var(--muted); margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lor-status {
+  display: inline-block;
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 6px; border-radius: 3px;
+  background: var(--surface2); color: var(--muted);
+  white-space: nowrap;
+}
+.lor-status-draft          { background: #ebe6dc; color: #7a7366; }
+.lor-status-submitted      { background: #d6e7f5; color: #2c5985; }
+.lor-status-offer-accepted { background: #d4ead4; color: #2d6e2d; }
+.lor-status-rejected       { background: #f3d7d4; color: #8b2a1f; }
+.lor-status-withdrawn      { background: #ebe6dc; color: #8a7a55; }
+.lor-status-leased         { background: #c8e0c8; color: #1d5a1d; }
+.lor-status-validated      { background: #cee7ea; color: #266872; }
+.lor-status-evidence-submitted { background: #e6dcec; color: #533879; }
+
+.lor-open-btn {
+  background: transparent; border: 1px solid var(--accent);
+  color: var(--accent); padding: 3px 8px; border-radius: 3px;
+  font-size: 11px; cursor: pointer; flex-shrink: 0;
+  font-weight: 500;
+}
+.lor-open-btn:hover { background: var(--accent); color: #fff; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Note display: type & source badges (kanban deal modal)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.kb-note-type-badge,
+.kb-note-source-badge {
+  display: inline-block;
+  font-size: 10px; font-weight: 500;
+  padding: 1px 6px; border-radius: 3px;
+  margin-left: 6px;
+  vertical-align: baseline;
+}
+.kb-note-type-badge {
+  background: #e8e2d6; color: #6b5f44;
+}
+.kb-note-source-badge {
+  background: rgba(196,132,26,0.12); color: var(--accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Per-Enquiry context capture in "+ New Card" Step 2
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.knc-enquiry-context { /* Already styled via inline border-top — reserved class hook */ }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Enquiry kanban card layout
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* V77.1 — Enquiry cards reuse .kb-card-type (small label, top) and .kb-card-price (big gold headline)
+   for visual consistency with Listing cards. The "price" slot displays the contact name on Enquiry boards. */
+
+/* V77.1 — Card-level interest slider replaced by a number badge (.kb-ind-interest) and the slider in the deal modal. */
+
+/* Enquiry-specific badge variants (extend .kb-ind base styling) */
+.kb-ind-enq                  { background: var(--surface2); color: var(--text); }
+.kb-ind-offer-submitted      { background: #d6e7f5 !important; color: #2c5985 !important; }
+.kb-ind-evidence             { background: #e6dcec !important; color: #533879 !important; }
+.kb-ind-rent                 { background: #d4ead4 !important; color: #2d6e2d !important; font-weight: 600; }
+.kb-ind-inspected            { background: #cee7ea !important; color: #266872 !important; }
+.kb-ind-contract             { background: #f5e7d6 !important; color: #855e2c !important; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Interest slider + Status select inside deal modal
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.kb-modal-interest {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.kb-interest-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.kb-modal-interest-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: var(--surface2);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  margin: 0;
+}
+.kb-modal-interest-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  cursor: grab;
+}
+.kb-modal-interest-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  cursor: grab;
+}
+.kb-modal-interest-value {
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--accent);
+  min-width: 32px;
+  text-align: right;
+}
+.kb-modal-interest-help {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+  text-align: center;
+}
+
+.kb-modal-status-select {
+  width: 100%;
+  font-size: 13px;
+}
+
+/* Interest badge on kanban card */
+.kb-ind-interest {
+  background: rgba(196,132,26,0.15) !important;
+  color: var(--accent) !important;
+  font-weight: 600;
+}
+
+/* V77.1 — Contacts section: static header (always expanded). Heading matches
+   other section labels; "+ Add" sits on the right. */
+.crm-static-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  margin-bottom: 4px;
+  gap: 8px;
+}
+.crm-static-header .crm-add-btn {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 3px 10px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.crm-static-header .crm-add-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.crm-count { color: var(--muted); font-weight: 400; font-size: 11px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2 — Notifications settings page
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.notif-page {
+  max-width: 720px;
+}
+
+.notif-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 22px;
+  margin-bottom: 18px;
+}
+
+.notif-section-placeholder {
+  background: var(--surface2);
+  border-style: dashed;
+  opacity: 0.75;
+}
+
+.notif-section-header h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.notif-section-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+
+.notif-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.notif-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notif-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.notif-input {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
+  font-size: 13px;
+}
+
+.notif-desc {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.notif-row-error {
+  color: #b91c1c;
+  font-size: 12px;
+  background: #fee2e2;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-top: 4px;
+}
+
+.notif-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.notif-save-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+
+/* ════════════════════════════════════════════════════════════════════════════
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2 — Lease Offer section (Lease Enquiry deals)
+   Heading uses kb-fin-pick-header pattern (right-aligned action button).
+   Each offer row is block-level: summary on top, body expands DOWNWARD beneath.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.lo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  margin-bottom: 12px;
+}
+
+.lo-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 0;
+}
+
+/* ── Row container (block-level, children stack vertically) ─────────── */
+.lo-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.lo-row-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.lo-row-summary:hover {
+  background: var(--surface2);
+}
+
+.lo-row-toggle {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--muted);
+  padding: 0;
+  width: 14px;
+  flex: 0 0 auto;
+}
+
+.lo-rent {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lo-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.lo-row-actions-inline {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.lo-delete-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.lo-delete-btn:hover {
+  background: rgba(192,57,43,0.08);
+  border-color: #c0392b;
+  color: #c0392b;
+}
+
+/* Status pill */
+.lo-status {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+.lo-status-draft               { background: #ebe6dc; color: #7a7366; }
+.lo-status-submitted           { background: #d6e7f5; color: #2c5985; }
+.lo-status-offer_accepted      { background: #d4ead4; color: #2d6e2d; }
+.lo-status-evidence_submitted  { background: #cde2f0; color: #1d4ed8; }
+.lo-status-validated           { background: #cee7ea; color: #266872; }
+.lo-status-leased              { background: #c8e0c8; color: #1d5a1d; }
+.lo-status-rejected            { background: #f3d7d4; color: #8b2a1f; }
+.lo-status-withdrawn           { background: #ebe6dc; color: #8a7a55; }
+
+/* ── Expanded body (sits below summary, full width of row) ─────────── */
+.lo-row-body {
+  border-top: 1px solid var(--border);
+  padding: 10px;
+  background: var(--surface2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Submitted-offer detail tables ─────────────────────────────────── */
+.lo-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lo-detail-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+}
+
+.lo-detail-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.lo-primary-tag {
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lo-detail-table {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+.lo-detail-table th {
+  text-align: left;
+  padding: 3px 8px 3px 0;
+  font-weight: 500;
+  color: var(--muted);
+  width: 150px;
+  vertical-align: top;
+}
+.lo-detail-table td {
+  padding: 3px 0;
+  color: var(--text);
+  word-break: break-word;
+}
+.lo-detail-table th.lo-subhead {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  padding-top: 6px;
+  width: auto;
+  border-top: 1px dashed var(--border);
+}
+
+/* ── Token block (Offer Form / Evidence Upload Form magic-link UI) ──── */
+.lo-token-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lo-token-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lo-token-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.lo-token-url-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.lo-token-url {
+  flex: 1;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Mono', 'Monaco', monospace;
+  font-size: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 6px;
+  color: var(--text);
+  min-width: 0;
+}
+
+.lo-token-action-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 9px;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 500;
+}
+.lo-token-action-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.lo-token-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lo-token-meta {
+  font-size: 10px;
+  color: var(--muted);
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.lo-token-email {
+  font-weight: 500;
+  color: var(--text);
+}
+.lo-token-sep {
+  color: var(--border);
+}
+.lo-token-state-pending  { color: #c4841a; }
+.lo-token-state-verified { color: #15803d; }
+.lo-token-state-done     { color: #15803d; font-weight: 600; }
+
+/* ── "Send link" empty-state row (same shape as a populated row) ───── */
+.lo-token-row-empty .lo-token-url-row {
+  /* Single-button row — let the button take available width but cap it */
+}
+.lo-token-row-empty .lo-issue-btn {
+  flex: 0 1 auto;
+}
+
+.lo-issue-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lo-issue-btn:hover    { opacity: 0.9; }
+.lo-issue-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Decision row (Accept / Reject) ──────────────────────────────────── */
+.lo-decision-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.lo-accept-btn {
+  background: #15803d;
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-accept-btn:hover    { background: #166534; }
+.lo-accept-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.lo-reject-btn {
+  background: transparent;
+  color: #b91c1c;
+  border: 1px solid #b91c1c;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lo-reject-btn:hover    { background: rgba(185, 28, 28, 0.08); }
+.lo-reject-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2c — Retention Policy sub-page
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.notif-policy-box {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin-top: 8px;
+}
+.notif-policy-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.notif-policy-body {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.notif-policy-body code {
+  background: var(--surface);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.notif-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 14px;
+  background: var(--surface2);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.retention-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.retention-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
+.retention-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.retention-row-headline {
+  font-size: 13px;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.retention-row-property {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.retention-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.retention-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.retention-purge-btn {
+  font-size: 12px;
+  padding: 5px 12px;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2d — Application & Evidence review block (inside expanded offer row)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.lo-review-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lo-review-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--accent);
+}
+
+.lo-review-consents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lo-consent-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+}
+.lo-consent-yes { background: #d4ead4; color: #1d5a1d; }
+.lo-consent-no  { background: #f3d7d4; color: #8b2a1f; }
+
+.lo-review-section {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 10px 12px;
+}
+
+.lo-review-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.lo-review-applicant,
+.lo-review-entry {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.lo-review-applicant:last-child,
+.lo-review-entry:last-child { margin-bottom: 0; }
+
+.lo-review-applicant-head,
+.lo-review-entry-head {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.lo-review-entry-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.lo-review-points {
+  font-weight: 600;
+  color: #15803d;
+}
+.lo-review-points-low {
+  color: #b91c1c;
+}
+
+.lo-review-files {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.lo-review-files li {
+  font-size: 12px;
+  padding: 3px 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.lo-review-file-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lo-review-file-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.lo-review-view-link {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 11px;
+  text-decoration: none;
+  font-weight: 600;
+  padding: 1px 7px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+}
+.lo-review-view-link:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.lo-review-empty {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.lo-review-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lo-review-check {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.lo-review-check input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+.lo-review-check input:disabled + * { cursor: default; }
+.lo-review-check input:disabled,
+.lo-review-check input:disabled ~ * {
+  opacity: 0.7;
+}
+
+.lo-review-notes-row {
+  margin-top: 6px;
+}
+
+.lo-review-notes {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+  box-sizing: border-box;
+}
+.lo-review-notes:disabled { opacity: 0.7; cursor: not-allowed; }
+
+.lo-review-meta {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.lo-review-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.lo-validate-btn {
+  background: #15803d;
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-validate-btn:hover:not(:disabled) { background: #166534; }
+.lo-validate-btn:disabled            { opacity: 0.5; cursor: not-allowed; }
+
+.lo-resubmit-btn {
+  background: transparent;
+  color: #c4841a;
+  border: 1px solid #c4841a;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lo-resubmit-btn:hover:not(:disabled) { background: rgba(196, 132, 26, 0.08); }
+.lo-resubmit-btn:disabled             { opacity: 0.5; cursor: not-allowed; }
+
+/* New status pill for resubmit_requested */
+.lo-status-evidence_resubmit_requested  { background: #fef3c7; color: #92400e; }
+
+/* ────────────────────────────────────────────────────────────────────────────
+   V77.2g — Roles "Board Default" multi-select widget + chips
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.params-board-chip {
+  display: inline-block;
+  background: rgba(196, 132, 26, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(196, 132, 26, 0.3);
+  border-radius: 3px;
+  padding: 1px 7px;
+  font-size: 11px;
+  margin: 1px 3px 1px 0;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.params-empty-marker {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.params-multi-select {
+  position: relative;
+  min-width: 180px;
+}
+.params-multi-select-trigger {
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.params-multi-select-trigger:hover { border-color: var(--accent); }
+.params-multi-select-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.params-multi-select-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.16);
+  z-index: 100;
+  max-height: 240px;
+  overflow-y: auto;
+  min-width: 220px;
+}
+
+.params-board-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.params-board-opt:hover { background: var(--surface2); }
+.params-board-opt input { margin: 0; }

@@ -12,93 +12,40 @@
 
 const CRM_BASE = '/api/contacts';
 
-const ROLES = [
-  // Property-scope — belongs to the property itself across deals
-  { value: 'vendor',           label: 'Vendor',           scopes: ['property'] },
-  { value: 'owner',            label: 'Owner',            scopes: ['property'] },
-  { value: 'property_manager', label: 'Property Manager', scopes: ['property'] },
-  // Deal-scope — specific to a given deal
-  { value: 'agent',            label: 'Agent',            scopes: ['deal'] },
-  { value: 'buyers_agent',     label: "Buyer's Agent",    scopes: ['deal'] },
-  { value: 'purchaser',        label: 'Purchaser',        scopes: ['deal'] },
-  { value: 'enquirer',         label: 'Enquirer',         scopes: ['deal'] },
-  // Mixed-scope — can be linked to either
-  { value: 'solicitor',        label: 'Solicitor',        scopes: ['property', 'deal'] },
-  { value: 'referrer',         label: 'Referrer',         scopes: ['property', 'deal'] },
-];
-function rolesForScope(scope) {
-  return ROLES.filter(r => r.scopes.includes(scope));
+// V77.2g — Roles are sourced exclusively from the DB (the `roles` table) via
+// the Lookups module. No hardcoded fallback array — if Lookups isn't ready,
+// callers must await Lookups.getRolesActive() first.
+//
+// Lookups caches the roles list in memory for the page lifetime, with a TTL
+// refresh so changes made by other agents propagate within ~60s. Edits made
+// in this browser invalidate the cache immediately via Lookups.invalidateRoles.
+async function rolesForScope(scope) {
+  if (!window.Lookups) {
+    console.warn('[crm] Lookups not loaded — cannot resolve roles');
+    return [];
+  }
+  const rows = await Lookups.getRolesActive({ scope });
+  // Map to the existing { value, label, scopes } shape that callsites expect
+  return rows.map(r => ({ value: r.id, label: r.label, scopes: r.scopes }));
 }
 function roleLabel(id) {
-  const r = ROLES.find(x => x.value === id);
-  return r ? r.label : id;
+  if (!window.Lookups) return id;
+  return Lookups.roleLabel(id) || id;
 }
 
-const SOURCES = [
-  'Our Website',
-  'Realestate.com.au',
-  'Domain.com.au',
-  'Instagram',
-  'Facebook',
-  'Letter Drop',
-  'Door Knocking',
-  'Walk-In',
-  'Signboard',
-  'Cold-Calling',
-  'Open House',
-  'Referral',
-  'Other',
-];
-
-// Resolve a raw source value into { dropdown, other }.
-// - If source matches one of SOURCES → dropdown=that, other=''
-// - Empty/null/undefined → dropdown='', other=''
-// - Anything else (legacy/custom) → dropdown='Other', other=<raw value>
-function resolveSource(raw) {
-  if (!raw) return { dropdown: '', other: '' };
-  const s = String(raw);
-  if (SOURCES.includes(s)) return { dropdown: s, other: '' };
-  return { dropdown: 'Other', other: s };
+// V77.2g — Find the lowest-sort_order active role for a given scope. Used as
+// the default selection when rendering a role dropdown without a specific
+// pre-fill. Returns null if no roles configured for the scope.
+async function defaultRoleIdForScope(scope) {
+  const roles = await rolesForScope(scope);
+  return roles.length ? roles[0].value : null;
 }
 
-// Render the Source field HTML (dropdown + hidden Other input that reveals
-// when 'Other' is selected). Classes crm-source-sel and crm-source-other are
-// used for query selection by the save handlers.
-function renderSourceField(rawValue) {
-  const { dropdown, other } = resolveSource(rawValue);
-  const otherVisible = dropdown === 'Other';
-  return `
-    <select class="kb-input crm-source-sel">
-      <option value="">Select source…</option>
-      ${SOURCES.map(s => `<option value="${s}" ${s === dropdown ? 'selected' : ''}>${s}</option>`).join('')}
-    </select>
-    <input class="kb-input crm-source-other" type="text" placeholder="Describe source…"
-      value="${other.replace(/"/g, '&quot;')}"
-      style="margin-top:6px;${otherVisible ? '' : 'display:none'}">
-  `;
-}
-
-// Read the effective source from the form (drop value, or Other text when
-// 'Other' is selected). Returns empty string if nothing chosen.
-function readSourceField(container) {
-  const sel = container.querySelector('.crm-source-sel');
-  const oth = container.querySelector('.crm-source-other');
-  if (!sel) return '';
-  const val = sel.value;
-  if (val === 'Other') return (oth?.value || '').trim() || 'Other';
-  return val;
-}
-
-// Wire up the dropdown so 'Other' reveals the text input.
-function wireSourceField(container) {
-  const sel = container.querySelector('.crm-source-sel');
-  const oth = container.querySelector('.crm-source-other');
-  if (!sel || !oth) return;
-  sel.addEventListener('change', () => {
-    oth.style.display = sel.value === 'Other' ? '' : 'none';
-    if (sel.value === 'Other') oth.focus();
-  });
-}
+// V77.1c — SOURCES array, resolveSource(), renderSourceField(),
+// readSourceField(), wireSourceField() all REMOVED. Source is no longer a
+// contact-level attribute. Per-interaction source lives on notes.source and
+// is captured via NoteForm (note-form.js) when interaction_type direction is
+// 'inbound'.
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
 
@@ -363,6 +310,80 @@ function renderDuplicateWarning(container, duplicates, onSelectExisting) {
   container.insertBefore(warn, container.firstChild);
 }
 
+// V77.1c — Modal dialog shown when the Domain "+ Add" flow finds possible
+// duplicates. Returns a Promise that resolves to one of:
+//   { action: 'use_existing', contactId: <id> }
+//   { action: 'create_new' }
+//   { action: 'cancel' }
+function openDomainDuplicateDialog({ agent, duplicates }) {
+  return new Promise((resolve) => {
+    const escHtml = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const fullName = [agent.first_name, agent.last_name].filter(Boolean).join(' ').trim() || '(no name)';
+    const meta = [agent.email, agent.phone, agent.agency].filter(Boolean).map(escHtml).join(' · ');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'v77-modal-overlay';
+    overlay.innerHTML = `
+      <div class="v77-modal" style="max-width:560px">
+        <div class="v77-modal-header">
+          <div class="v77-modal-title">Possible duplicate${duplicates.length > 1 ? 's' : ''} found</div>
+          <button class="v77-modal-close" data-role="cancel">✕</button>
+        </div>
+        <div class="v77-modal-body">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Domain agent details:</div>
+          <div style="background:var(--surface2);padding:8px 10px;border-radius:4px;margin-bottom:14px;font-size:13px">
+            <strong>${escHtml(fullName)}</strong>
+            ${meta ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">${meta}</div>` : ''}
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px">${duplicates.length} matching contact${duplicates.length > 1 ? 's' : ''} in your system:</div>
+          <div class="dom-dup-list" data-role="dup-list"></div>
+        </div>
+        <div class="v77-modal-footer" style="justify-content:space-between">
+          <button class="params-cancel-btn" data-role="cancel">Cancel</button>
+          <button class="params-save-btn" data-role="create-new">Create new anyway</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+
+    const list = overlay.querySelector('[data-role="dup-list"]');
+    duplicates.forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'dom-dup-row';
+      const cName = displayName(c);
+      const cMeta = [c.org_name, c.email, c.mobile].filter(Boolean).map(escHtml).join(' · ');
+      row.innerHTML = `
+        <div class="dom-dup-row-main">
+          <strong>${escHtml(cName)}</strong>
+          ${cMeta ? `<div class="dom-dup-row-meta">${cMeta}</div>` : ''}
+        </div>
+        <button class="params-save-btn dom-dup-use" data-id="${c.id}">Use this contact</button>
+      `;
+      row.querySelector('.dom-dup-use').addEventListener('click', () => {
+        close();
+        resolve({ action: 'use_existing', contactId: c.id });
+      });
+      list.appendChild(row);
+    });
+
+    overlay.querySelectorAll('[data-role="cancel"]').forEach(b => b.addEventListener('click', () => {
+      close();
+      resolve({ action: 'cancel' });
+    }));
+    overlay.querySelector('[data-role="create-new"]').addEventListener('click', () => {
+      close();
+      resolve({ action: 'create_new' });
+    });
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) {
+        close();
+        resolve({ action: 'cancel' });
+      }
+    });
+  });
+}
+
 // ─── Contact notes panel ──────────────────────────────────────────────────────
 
 async function renderNotesPanel(contactId, pipelineId) {
@@ -376,10 +397,7 @@ async function renderNotesPanel(contactId, pipelineId) {
       .catch(() => []);
     panel.innerHTML = `
       <div class="crm-notes-title">Notes</div>
-      <div class="crm-notes-input-row">
-        <input class="kb-input crm-note-input" type="text" placeholder="Add a note…">
-        <button class="crm-note-add-btn">Add</button>
-      </div>
+      <div class="v77-note-form-mount-crm"></div>
       <div class="crm-notes-list"></div>`;
 
     const listEl = panel.querySelector('.crm-notes-list');
@@ -389,11 +407,12 @@ async function renderNotesPanel(contactId, pipelineId) {
       notes.forEach(n => {
         const entry = document.createElement('div');
         entry.className = 'crm-note-entry';
-        const src = n.source_label ? ` <span class="crm-note-prop">· ${n.source_label}</span>` : '';
+        const src     = n.source_label           ? ` <span class="crm-note-prop">· ${n.source_label}</span>` : '';
+        const typeBdg = n.interaction_type_label ? ` <span class="crm-note-prop">· ${n.interaction_type_label}</span>` : '';
         const author = n.author_name || 'Unknown';
         entry.innerHTML = `
           <div class="crm-note-meta">
-            <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}${src}</span>
+            <span class="crm-note-date">${formatNoteDate(n.created_at)} · by ${author}${typeBdg}${src}</span>
             <button class="crm-note-delete" data-id="${n.id}">✕</button>
           </div>
           <div class="crm-note-text">${n.note_text}</div>`;
@@ -405,27 +424,33 @@ async function renderNotesPanel(contactId, pipelineId) {
       });
     }
 
-    panel.querySelector('.crm-note-add-btn').addEventListener('click', async () => {
-      const input = panel.querySelector('.crm-note-input');
-      const text = input.value.trim();
-      if (!text) return;
-      // Panel is rendered from the agent-side CRM section of the pipeline
-      // modal. The note is attached to the deal (pipelineId) when present,
-      // otherwise to the contact.
-      const entity_type = pipelineId ? 'deal'        : 'contact';
-      const entity_id   = pipelineId ? String(pipelineId) : String(contactId);
-      const tagged_contact_id = pipelineId ? contactId : null;
-      await fetch('/api/notes', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entity_type, entity_id, note_text: text, tagged_contact_id }),
+    // V77.1 — Mount the NoteForm with type+source dropdowns
+    const noteMount = panel.querySelector('.v77-note-form-mount-crm');
+    if (window.NoteForm && noteMount) {
+      NoteForm.mount(noteMount, {
+        placeholder: 'Add a note…',
+        // No contact tagger needed here — the contact context is implicit (this is the contact's notes)
+        showContactTagger: false,
+        onAdd: async (vals) => {
+          const text = (vals.note_text || '').trim();
+          if (!text) return;
+          // Panel rendered from agent-side CRM section of pipeline modal.
+          // Note attaches to the deal when pipelineId is present, otherwise to the contact.
+          const entity_type = pipelineId ? 'deal'              : 'contact';
+          const entity_id   = pipelineId ? String(pipelineId)  : String(contactId);
+          const tagged_contact_id = pipelineId ? contactId : null;
+          const body = { entity_type, entity_id, note_text: text, tagged_contact_id };
+          if (vals.interaction_type) body.interaction_type = vals.interaction_type;
+          if (vals.source)           body.source           = vals.source;
+          await fetch('/api/notes', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(body),
+          });
+          loadNotes();
+        },
       });
-      input.value = '';
-      loadNotes();
-    });
-    panel.querySelector('.crm-note-input').addEventListener('keydown', e => {
-      if (e.key === 'Enter') panel.querySelector('.crm-note-add-btn').click();
-    });
+    }
   }
 
   await loadNotes();
@@ -438,39 +463,30 @@ async function renderContactsSection(pipelineId, agentData) {
   const section = document.createElement('div');
   section.className = 'crm-section';
 
+  // V77.2g — This component is mounted inside a deal modal, so role-pickers
+  // here should show roles flagged with scope='deal'. (Property-scope contacts
+  // are handled by a different rendering path.)
+  const scope = 'deal';
+
+  // V77.1 — Contacts is always expanded; header matches other static sections
+  // (kb-section-label) for visual consistency. The "+ Add" affordance lives on
+  // the right of the heading row.
   section.innerHTML = `
-    <div class="crm-header">
-      <button class="crm-toggle" aria-expanded="false">
-        <span class="crm-toggle-icon">▶</span>
-        <span class="kb-section-label" style="margin:0">Contacts</span>
-        <span class="crm-count"></span>
-      </button>
-      <button class="crm-add-btn" title="Add contact" style="display:none">+ Add</button>
+    <div class="crm-static-header">
+      <span class="kb-section-label" style="margin:0">Contacts <span class="crm-count"></span></span>
+      <button class="crm-add-btn" title="Add contact">+ Add</button>
     </div>
-    <div class="crm-body" style="display:none">
+    <div class="crm-body">
       <div class="crm-list"></div>
       <div class="crm-form" style="display:none"></div>
     </div>`;
 
-  const toggleBtn = section.querySelector('.crm-toggle');
-  const toggleIcon = section.querySelector('.crm-toggle-icon');
   const addBtn    = section.querySelector('.crm-add-btn');
-  const body      = section.querySelector('.crm-body');
   const listEl    = section.querySelector('.crm-list');
   const formEl    = section.querySelector('.crm-form');
   const countEl   = section.querySelector('.crm-count');
 
-  let expanded = false;
-
-  function setExpanded(val) {
-    expanded = val;
-    body.style.display    = expanded ? '' : 'none';
-    addBtn.style.display  = expanded ? '' : 'none';
-    toggleBtn.setAttribute('aria-expanded', expanded);
-    toggleIcon.textContent = expanded ? '▼' : '▶';
-  }
-
-  toggleBtn.addEventListener('click', () => setExpanded(!expanded));
+  // V77.1 — Always expanded; no toggle.
 
   async function reload() {
     listEl.innerHTML = '<div class="crm-loading">Loading…</div>';
@@ -522,17 +538,90 @@ async function renderContactsSection(pipelineId, agentData) {
             const org = await apiPost({ action: 'create_org', name: agentData.agency });
             orgId = org.id;
           }
-          const existing = agentData.email
-            ? (await apiGet({ search: agentData.email }).catch(() => [])).filter(c => c.email === agentData.email)
-            : [];
+
+          // V77.1c: smarter duplicate detection. Look for matches on first+last
+          // name, email, OR mobile (any combination). If found, ask the user
+          // whether to use an existing record or create new anyway.
+          const dups = await checkDuplicates(first_name, last_name, agentData.email || '', agentData.phone || '');
+
           let contactId;
-          if (existing.length) {
-            contactId = existing[0].id;
-          } else {
-            const created = await apiPost({ first_name, last_name, mobile: agentData.phone || '', email: agentData.email || '', organisation_id: orgId, source: 'Domain.com.au', domain_id: String(pipelineId) });
+          let isNewContact = false;
+
+          if (dups.length === 0) {
+            // No matches → just create
+            const created = await apiPost({ first_name, last_name, mobile: agentData.phone || '', email: agentData.email || '', organisation_id: orgId, domain_id: String(pipelineId) });
             contactId = created.id;
+            isNewContact = true;
+          } else {
+            // Possible duplicates → ask the user
+            const choice = await openDomainDuplicateDialog({
+              agent: { first_name, last_name, email: agentData.email || '', phone: agentData.phone || '', agency: agentData.agency || '' },
+              duplicates: dups,
+            });
+            if (choice.action === 'cancel') {
+              // User backed out — restore button and stop
+              btn.disabled = false;
+              btn.textContent = '+';
+              return;
+            }
+            if (choice.action === 'use_existing') {
+              contactId = choice.contactId;
+              isNewContact = false;
+            } else if (choice.action === 'create_new') {
+              const created = await apiPost({ first_name, last_name, mobile: agentData.phone || '', email: agentData.email || '', organisation_id: orgId, domain_id: String(pipelineId) });
+              contactId = created.id;
+              isNewContact = true;
+            }
           }
-          await apiPost({ action: 'link', contact_id: contactId, pipeline_id: pipelineId, role: 'agent' });
+
+          // V77.2g — link the agent contact using the default role flagged
+          // for this deal's board (no hardcoded role IDs). Falls back to the
+          // first deal-scope role if the board has no defaults flagged.
+          let agentRoleId = null;
+          try {
+            // pipelineId is the deal id — fetch its board to resolve eligible roles
+            const dealRes = await fetch(`/api/deals?id=${encodeURIComponent(pipelineId)}`);
+            if (dealRes.ok) {
+              const deal = await dealRes.json();
+              const boardId = deal?.board_id;
+              if (boardId && window.Lookups?.getDefaultRolesForBoard) {
+                const eligible = await Lookups.getDefaultRolesForBoard(boardId);
+                if (eligible.length) agentRoleId = eligible[0].id;
+              }
+            }
+          } catch (_) {}
+          if (!agentRoleId) agentRoleId = await defaultRoleIdForScope('deal');
+          if (!agentRoleId) {
+            console.warn('[crm] no role available for agent link — skipping');
+          } else {
+            await apiPost({ action: 'link', contact_id: contactId, pipeline_id: pipelineId, role: agentRoleId });
+          }
+
+          // V77.1c — auto-create contact-level note for new contacts only.
+          // Records that this contact came in via the Domain API as a first
+          // inbound interaction. Existing contacts being re-linked to another
+          // listing don't get a new note (that's a deal-level event, not a
+          // contact-origin event).
+          if (isNewContact) {
+            try {
+              const noteText = `Contact details imported from Domain.com.au (listing #${pipelineId}${agentData.agency ? `, agency: ${agentData.agency}` : ''}).`;
+              await fetch('/api/notes', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                  entity_type:      'contact',
+                  entity_id:        String(contactId),
+                  note_text:        noteText,
+                  interaction_type: 'domain_api',
+                  source:           'domain_com_au',
+                }),
+              });
+            } catch (noteErr) {
+              // Non-fatal — the contact + link succeeded; just log
+              console.warn('[CRM] auto-note for Domain agent failed:', noteErr);
+            }
+          }
+
           btn.textContent = '✓';
           setTimeout(() => reload(), 800);
         } catch (err) {
@@ -554,8 +643,8 @@ async function renderContactsSection(pipelineId, agentData) {
     contacts.forEach(contact => {
       const row = document.createElement('div');
       row.className = 'crm-contact-row';
-      const currentRole = contact.role || 'vendor';
-      const roleLabel = ROLES.find(r => r.value === currentRole)?.label || currentRole;
+      const currentRole = contact.role || '';
+      const currentRoleLabel = currentRole ? roleLabel(currentRole) : '—';
       row.innerHTML = `
         <div class="crm-contact-info">
           <div class="crm-contact-name">
@@ -563,7 +652,7 @@ async function renderContactsSection(pipelineId, agentData) {
           </div>
           <div class="crm-contact-meta">
             ${contact.org_name ? `<span>${contact.org_name}</span>` : ''}
-            <span class="crm-role-badge crm-role-${currentRole.replace(/[^a-z0-9]/gi,'_')}">${roleLabel}</span>
+            <span class="crm-role-badge crm-role-${(currentRole || 'unset').replace(/[^a-z0-9]/gi,'_')}">${currentRoleLabel}</span>
             ${contact.mobile   ? `<a href="tel:${contact.mobile}" class="crm-link">${contact.mobile}</a>` : ''}
             ${contact.email    ? `<a href="mailto:${contact.email}" class="crm-link">${contact.email}</a>` : ''}
           </div>
@@ -589,171 +678,217 @@ async function renderContactsSection(pipelineId, agentData) {
       });
 
       // Edit opens form — Role dropdown is available there and saves per-property
-      row.querySelector('.crm-edit-btn').addEventListener('click', () => showForm(contact, contact.role));
+      row.querySelector('.crm-edit-btn').addEventListener('click', async () => {
+        try {
+          await showForm(contact, contact.role);
+        } catch (err) {
+          console.error('[crm] showForm (edit) failed:', err);
+          formEl.style.display = 'none';
+          formEl.innerHTML = '';
+          addBtn.style.display = '';
+          alert('Could not open the Edit form: ' + (err?.message || err));
+        }
+      });
       listEl.appendChild(row);
     });
   }
 
   // ── Contact form ────────────────────────────────────────────────────────────
+  //
+  // V77.2g — Two flows:
+  //   Edit existing link: showForm(contactObj, contactObj.role) — just role dropdown.
+  //   Add new link:       showForm() — search box; pick existing OR + Create new
+  //                       (which opens the full CRM Contact modal). After pick,
+  //                       a compact "Selected: NAME ✕" + Role dropdown is shown.
 
-  function showForm(prefill = {}, prefillRole = 'vendor') {
+  async function showForm(prefill = {}, prefillRole = null) {
     formEl.style.display = 'block';
     addBtn.style.display = 'none';
     const isEdit = !!prefill.id;
+    // Local HTML-escape helper (no global esc available in this module).
+    const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-    formEl.innerHTML = `
-      <div class="crm-form-inner">
-        <div class="crm-form-title">${isEdit ? 'Edit Contact' : 'Add Contact'}</div>
+    // Resolve role list + a sensible default for the dropdown.
+    const roleList = await rolesForScope(scope);
+    const defaultRole = prefillRole || (await defaultRoleIdForScope(scope)) || (roleList[0]?.value || '');
 
-        ${!isEdit ? `
-        <div style="margin-bottom:10px">
-          <label class="kb-field-label">Search existing contacts</label>
-          <input class="kb-input crm-search" type="text" placeholder="Name, organisation, email…">
-          <div class="crm-search-results"></div>
-        </div>
-        <div class="crm-form-divider">— or create new —</div>
-        <div class="crm-duplicate-warning-wrap"></div>` : ''}
-
-        <div class="crm-form-row">
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">First Name *</label>
-            <input class="kb-input crm-first" type="text" placeholder="First" value="${prefill.first_name || ''}">
+    if (isEdit) {
+      // Lightweight: just the contact label + role dropdown + save/cancel.
+      formEl.innerHTML = `
+        <div class="crm-form-inner">
+          <div class="crm-form-title">Edit role for <strong>${esc(displayName(prefill))}</strong></div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Role</label>
+              <select class="kb-input crm-role">
+                ${roleList.length
+                  ? roleList.map(r => `<option value="${esc(r.value)}" ${r.value === defaultRole ? 'selected' : ''}>${esc(r.label)}</option>`).join('')
+                  : '<option value="">No roles configured</option>'}
+              </select>
+            </div>
           </div>
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">Last Name</label>
-            <input class="kb-input crm-last" type="text" placeholder="Last" value="${prefill.last_name || ''}">
+          <div class="crm-form-actions">
+            <button class="crm-save-btn">Save Changes</button>
+            <button class="crm-cancel-btn">Cancel</button>
           </div>
-        </div>
-        <div class="crm-form-row">
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">Mobile</label>
-            <input class="kb-input crm-mobile" type="text" placeholder="04xx xxx xxx" value="${prefill.mobile || ''}">
+        </div>`;
+    } else {
+      // Add-link flow: search-pick-role.
+      formEl.innerHTML = `
+        <div class="crm-form-inner">
+          <div class="crm-form-title">Add Contact</div>
+          <div class="crm-pick-wrap" data-role="pick-wrap">
+            <label class="kb-field-label">Search contacts</label>
+            <input class="kb-input crm-search" type="text" placeholder="Type name, email, or mobile…" autocomplete="off">
+            <div class="crm-search-results"></div>
           </div>
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">Email</label>
-            <input class="kb-input crm-email" type="text" placeholder="email@domain.com" value="${prefill.email || ''}">
+          <div class="crm-form-row" data-role="role-row" style="display:none;margin-top:10px">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Role</label>
+              <select class="kb-input crm-role">
+                ${roleList.length
+                  ? roleList.map(r => `<option value="${esc(r.value)}" ${r.value === defaultRole ? 'selected' : ''}>${esc(r.label)}</option>`).join('')
+                  : '<option value="">No roles configured</option>'}
+              </select>
+            </div>
           </div>
-        </div>
-        <div class="crm-form-row">
-          <div class="kb-field-wrap" style="flex:2">
-            <label class="kb-field-label">Organisation</label>
-            <div class="crm-org-wrap"></div>
+          <div class="crm-form-actions">
+            <button class="crm-save-btn" disabled>Link</button>
+            <button class="crm-cancel-btn">Cancel</button>
           </div>
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">Role (this property)</label>
-            <select class="kb-input crm-role">
-              ${ROLES.map(r => `<option value="${r.value}" ${r.value === prefillRole ? 'selected' : ''}>${r.label}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-        <div class="crm-form-row">
-          <div class="kb-field-wrap" style="flex:1">
-            <label class="kb-field-label">Source</label>
-            ${renderSourceField(prefill.source)}
-          </div>
-        </div>
-
-        <div class="crm-form-actions">
-          <button class="crm-save-btn">${isEdit ? 'Save Changes' : 'Save & Link'}</button>
-          <button class="crm-cancel-btn">Cancel</button>
-        </div>
-      </div>`;
-
-    // Org typeahead
-    const orgWrap = formEl.querySelector('.crm-org-wrap');
-    let selectedOrgId = prefill.organisation_id || null;
-    const orgTA = buildOrgTypeahead(orgWrap, (id) => { selectedOrgId = id; });
-    if (prefill.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
-
-    // Source field — reveal Other input when selected
-    wireSourceField(formEl);
-
-    // Duplicate detection (new contacts only)
-    if (!isEdit) {
-      const dupWrap = formEl.querySelector('.crm-duplicate-warning-wrap');
-      let dupTimer;
-      const checkDups = () => {
-        clearTimeout(dupTimer);
-        dupTimer = setTimeout(async () => {
-          const first  = formEl.querySelector('.crm-first').value.trim();
-          const last   = formEl.querySelector('.crm-last').value.trim();
-          const email  = formEl.querySelector('.crm-email').value.trim();
-          const mobile = formEl.querySelector('.crm-mobile').value.trim();
-          if (!first && !email && !mobile) { dupWrap.innerHTML = ''; return; }
-          const dups = await checkDuplicates(first, last, email, mobile);
-          renderDuplicateWarning(dupWrap, dups, async (existing) => {
-            // Link existing contact with the role currently selected in the form
-            const role = formEl.querySelector('.crm-role').value;
-            await apiPost({ action: 'link', contact_id: existing.id, pipeline_id: pipelineId, role });
-            hideForm(); reload();
-          });
-        }, 500);
-      };
-      ['crm-first','crm-last','crm-email','crm-mobile'].forEach(cls => {
-        formEl.querySelector(`.${cls}`)?.addEventListener('input', checkDups);
-      });
+        </div>`;
     }
 
-    // Search existing
-    const searchEl = formEl.querySelector('.crm-search');
-    if (searchEl) {
+    // ── Wire up edit flow ──
+    if (isEdit) {
+      formEl.querySelector('.crm-save-btn').addEventListener('click', async () => {
+        const role = formEl.querySelector('.crm-role').value;
+        if (!role) { alert('Pick a role.'); return; }
+        try {
+          await apiPost({ action: 'link', contact_id: prefill.id, pipeline_id: pipelineId, role });
+        } catch (err) {
+          alert(err?.message || 'Save failed');
+          return;
+        }
+        hideForm();
+        reload();
+      });
+      formEl.querySelector('.crm-cancel-btn').addEventListener('click', hideForm);
+      return;
+    }
+
+    // ── Wire up add-link flow ──
+    let _pickedContact = null;  // null until user picks one
+    const pickWrap   = formEl.querySelector('[data-role="pick-wrap"]');
+    const searchEl   = formEl.querySelector('.crm-search');
+    const resultsEl  = formEl.querySelector('.crm-search-results');
+    const roleRow    = formEl.querySelector('[data-role="role-row"]');
+    const saveBtn    = formEl.querySelector('.crm-save-btn');
+
+    const renderSelected = () => {
+      pickWrap.innerHTML = `
+        <label class="kb-field-label">Contact</label>
+        <div class="crm-pick-selected">
+          <div class="crm-pick-selected-info">
+            <strong>${esc(displayName(_pickedContact))}</strong>
+            ${_pickedContact.org_name ? `<span class="crm-pick-selected-meta"> · ${esc(_pickedContact.org_name)}</span>` : ''}
+            ${(_pickedContact.email || _pickedContact.mobile) ? `<span class="crm-pick-selected-meta"> · ${esc(_pickedContact.email || _pickedContact.mobile)}</span>` : ''}
+          </div>
+          <button class="crm-pick-clear-btn" type="button" title="Clear">✕</button>
+        </div>`;
+      pickWrap.querySelector('.crm-pick-clear-btn').addEventListener('click', () => {
+        _pickedContact = null;
+        roleRow.style.display = 'none';
+        saveBtn.disabled = true;
+        renderSearch();
+      });
+    };
+    const renderSearch = () => {
+      pickWrap.innerHTML = `
+        <label class="kb-field-label">Search contacts</label>
+        <input class="kb-input crm-search" type="text" placeholder="Type name, email, or mobile…" autocomplete="off">
+        <div class="crm-search-results"></div>`;
+      wireSearch();
+    };
+    const wireSearch = () => {
+      const sEl = pickWrap.querySelector('.crm-search');
+      const rEl = pickWrap.querySelector('.crm-search-results');
       let t;
-      searchEl.addEventListener('input', () => {
+      sEl.addEventListener('input', () => {
         clearTimeout(t);
-        const q = searchEl.value.trim();
-        const resultsEl = formEl.querySelector('.crm-search-results');
-        if (q.length < 2) { resultsEl.innerHTML = ''; return; }
+        const q = sEl.value.trim();
+        if (q.length < 2) { rEl.innerHTML = ''; return; }
         t = setTimeout(async () => {
-          const results = await apiGet({ search: q }).catch(() => []);
-          if (!results.length) { resultsEl.innerHTML = '<div class="crm-empty">No matches</div>'; return; }
-          resultsEl.innerHTML = '';
-          results.forEach(ct => {
+          let results = [];
+          try {
+            results = await apiGet({ search: q });
+            if (!Array.isArray(results)) results = [];
+          } catch (_) {}
+          // Build result list + a final "+ Create new contact" row
+          rEl.innerHTML = '';
+          results.slice(0, 10).forEach(ct => {
             const item = document.createElement('div');
             item.className = 'crm-search-item';
-            item.innerHTML = `<strong>${displayName(ct)}</strong>${ct.org_name ? ` · ${ct.org_name}` : ''}${ct.mobile || ct.email ? ` · ${ct.mobile || ct.email}` : ''}`;
-            item.addEventListener('click', async () => {
-              // Seed form role with their most recent role on any property,
-              // so user can accept the default or override before linking.
-              const lr = await apiGet({ last_role: '1', contact_id: ct.id }).catch(() => ({}));
-              const roleSel = formEl.querySelector('.crm-role');
-              if (lr?.role && roleSel) roleSel.value = lr.role;
-              const role = roleSel ? roleSel.value : 'vendor';
-              await apiPost({ action: 'link', contact_id: ct.id, pipeline_id: pipelineId, role });
-              hideForm();
-              reload();
+            const meta = [ct.org_name, ct.email, ct.mobile].filter(Boolean).join(' · ');
+            item.innerHTML = `<strong>${esc(displayName(ct))}</strong>${meta ? `<span class="crm-search-item-meta"> · ${esc(meta)}</span>` : ''}`;
+            item.addEventListener('click', () => {
+              _pickedContact = ct;
+              renderSelected();
+              roleRow.style.display = '';
+              saveBtn.disabled = false;
             });
-            resultsEl.appendChild(item);
+            rEl.appendChild(item);
           });
-        }, 300);
+          // "+ Create new contact" entry — opens the CRM Contact modal
+          const createItem = document.createElement('div');
+          createItem.className = 'crm-search-item crm-search-item-create';
+          createItem.innerHTML = `<strong>+ Create new contact</strong><span class="crm-search-item-meta"> · enter full details</span>`;
+          createItem.addEventListener('click', () => {
+            // Ensure renderCRMView has run so the standalone helper is
+            // registered on window. We don't show the CRM view — only need
+            // the function definitions to exist.
+            const crmContainer = document.getElementById('crmViewContent');
+            if (crmContainer && !crmContainer.dataset.rendered && window.CRM?.renderCRMView) {
+              crmContainer.dataset.rendered = '1';
+              window.CRM.renderCRMView(crmContainer);
+            }
+            if (typeof window.openContactModalStandalone === 'function') {
+              window.openContactModalStandalone(null, async (createdId) => {
+                // Callback fires after the new contact is created. Re-fetch and select.
+                if (!createdId) return;
+                try {
+                  const ct = await apiGet({ id: createdId });
+                  _pickedContact = Array.isArray(ct) ? ct[0] : ct;
+                  if (_pickedContact) {
+                    renderSelected();
+                    roleRow.style.display = '';
+                    saveBtn.disabled = false;
+                  }
+                } catch (_) {}
+              });
+            } else {
+              alert('Contact modal unavailable — please refresh the page.');
+            }
+          });
+          rEl.appendChild(createItem);
+        }, 250);
       });
-    }
+    };
+    wireSearch();
 
-    formEl.querySelector('.crm-save-btn').addEventListener('click', async () => {
-      const first = formEl.querySelector('.crm-first').value.trim();
-      if (!first) { formEl.querySelector('.crm-first').focus(); return; }
-      const sourceVal = readSourceField(formEl);
-      const data = {
-        first_name:      first,
-        last_name:       formEl.querySelector('.crm-last').value.trim(),
-        mobile:          formEl.querySelector('.crm-mobile').value.trim(),
-        email:           formEl.querySelector('.crm-email').value.trim(),
-        organisation_id: selectedOrgId,
-        source:          sourceVal || prefill.source || 'Other',
-        domain_id:       prefill.domain_id || null,
-      };
+    saveBtn.addEventListener('click', async () => {
+      if (!_pickedContact) return;
       const role = formEl.querySelector('.crm-role').value;
-      if (isEdit) {
-        // Identity fields via PUT; role via link upsert (scoped to this property)
-        await apiPut({ id: prefill.id, ...data });
-        await apiPost({ action: 'link', contact_id: prefill.id, pipeline_id: pipelineId, role });
-      } else {
-        const created = await apiPost(data);
-        await apiPost({ action: 'link', contact_id: created.id, pipeline_id: pipelineId, role });
+      if (!role) { alert('Pick a role.'); return; }
+      try {
+        await apiPost({ action: 'link', contact_id: _pickedContact.id, pipeline_id: pipelineId, role });
+      } catch (err) {
+        alert(err?.message || 'Save failed');
+        return;
       }
       hideForm();
       reload();
     });
-
     formEl.querySelector('.crm-cancel-btn').addEventListener('click', hideForm);
   }
 
@@ -763,7 +898,18 @@ async function renderContactsSection(pipelineId, agentData) {
     addBtn.style.display = '';
   }
 
-  addBtn.addEventListener('click', () => showForm());
+  addBtn.addEventListener('click', async () => {
+    try {
+      await showForm();
+    } catch (err) {
+      console.error('[crm] showForm failed:', err);
+      // Restore button so the agent can retry
+      formEl.style.display = 'none';
+      formEl.innerHTML = '';
+      addBtn.style.display = '';
+      alert('Could not open the Add Contact form: ' + (err?.message || err));
+    }
+  });
 
   // Load contacts async — section renders immediately, contacts populate in background
   reload();
@@ -783,11 +929,10 @@ function renderCRMView(container) {
         <span class="crm-view-title"><svg class="module-header-icon"><use href="#icon-crm"/></svg> CRM</span>
         <div class="crm-view-tabs">
           <button class="crm-tab active" data-tab="contacts">Contacts</button>
+          <button class="crm-tab"        data-tab="organisations">Organisations</button>
           <button class="crm-tab"        data-tab="properties">Properties</button>
           <button class="crm-tab"        data-tab="parcels">Parcels</button>
-          <button class="crm-tab"        data-tab="organisations">Organisations</button>
         </div>
-        <button class="crm-view-add-btn" id="crmViewAddBtn">+ New Contact</button>
       </div>
       <div class="crm-view-body">
         <div class="crm-tab-pane active" id="crm-pane-contacts"></div>
@@ -800,25 +945,6 @@ function renderCRMView(container) {
       <div class="crm-modal" id="crmModal"></div>
     </div>`;
 
-  // Add-button label/handler per tab
-  function configureAddButton(tabName) {
-    const btn = container.querySelector('#crmViewAddBtn');
-    if (tabName === 'contacts') {
-      btn.textContent = '+ New Contact';
-      btn.style.display = '';
-      btn.onclick = () => openModal(modal => renderContactModal(modal, null, () => { closeModal(); loadContactsPane(); }));
-    } else if (tabName === 'organisations') {
-      btn.textContent = '+ New Organisation';
-      btn.style.display = '';
-      btn.onclick = () => openModal(modal => renderOrgModal(modal, null, () => { closeModal(); loadOrgsPane(); }));
-    } else {
-      // Properties and Parcels don't support direct create from the CRM in V75.4
-      // — they're created via map ⌘-click or by adding a pipeline deal.
-      btn.style.display = 'none';
-      btn.onclick = null;
-    }
-  }
-
   // Tab switching
   container.querySelectorAll('.crm-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -826,7 +952,6 @@ function renderCRMView(container) {
       container.querySelectorAll('.crm-tab-pane').forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
       container.querySelector(`#crm-pane-${tab.dataset.tab}`).classList.add('active');
-      configureAddButton(tab.dataset.tab);
       if (tab.dataset.tab === 'contacts')      loadContactsPane();
       if (tab.dataset.tab === 'properties')    loadPropertiesPane();
       if (tab.dataset.tab === 'parcels')       loadParcelsPane();
@@ -848,6 +973,54 @@ function renderCRMView(container) {
     container.querySelector('#crmModal').innerHTML = '';
   }
   window._crmCloseModal = closeModal;
+
+  // V77.1: expose openContactModal globally so deal-modal flows can open a
+  // contact's master-record CRM modal as a sub-overlay (e.g. "Edit contact
+  // details" from inside the Add Contact form on a deal modal).
+  // V77.2g — Accept optional callback. When called as openContactModal(id),
+  // opens for view/edit. When called as openContactModal(null, cb), opens the
+  // creation form; cb(newContactId) fires on save (used by other UIs that need
+  // to immediately reuse the just-created contact).
+  window.openContactModal = function (contactId, onCreated) {
+    if (contactId) {
+      openModal(modal => renderContactDetail(modal, contactId, () => closeModal()));
+    } else {
+      openModal(modal => renderContactModal(modal, null, (created) => {
+        closeModal();
+        if (typeof onCreated === 'function' && created?.id) onCreated(created.id);
+      }));
+    }
+  };
+
+  // V77.2g+ — Body-mounted variant for callsites where the CRM view is hidden
+  // (e.g. kanban deal modals). The CRM-view-scoped openContactModal above
+  // shows its overlay inside #crmViewContent, which is itself a child of
+  // #crmView (display:none until the user navigates to CRM). When called
+  // from a deal modal in the kanban board, that overlay is rendered into a
+  // hidden parent and the modal never appears. This standalone variant
+  // attaches a fresh .crm-modal-overlay directly to <body>, independent of
+  // #crmView visibility, so the modal is always visible.
+  window.openContactModalStandalone = function (contactId, onCreated) {
+    const overlay = document.createElement('div');
+    overlay.className = 'crm-modal-overlay';
+    overlay.style.display = '';
+    const modal = document.createElement('div');
+    modal.className = 'crm-modal';
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const close = () => { overlay.remove(); };
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    if (contactId) {
+      renderContactDetail(modal, contactId, close);
+    } else {
+      renderContactModal(modal, null, (created) => {
+        close();
+        if (typeof onCreated === 'function' && created?.id) onCreated(created.id);
+      });
+    }
+  };
 
   // V75.5.2: Sync in-memory pipeline state + map pins + CRM caches after a
   // CRM modal deletes a Parcel or Property directly (bypassing Kanban's
@@ -885,9 +1058,6 @@ function renderCRMView(container) {
     if (window.CRM?.invalidatePropertiesCache) window.CRM.invalidatePropertiesCache();
   }
 
-  // + Add button wired by configureAddButton() based on active tab
-  configureAddButton('contacts');
-
   // ── Contacts pane ──────────────────────────────────────────────────────────
 
   let contactSearch = '';
@@ -899,6 +1069,7 @@ function renderCRMView(container) {
     pane.innerHTML = `
       <div class="crm-pane-toolbar">
         <input class="kb-input crm-view-search" placeholder="Search contacts…" value="${contactSearch}">
+        <button class="crm-pane-add-btn" data-role="pane-add-contact">+ New Contact</button>
       </div>
       <div class="crm-contact-table-wrap">
         <table class="crm-contact-table">
@@ -914,6 +1085,9 @@ function renderCRMView(container) {
       contactSearch = e.target.value;
       contactPage   = 0;
       fetchContacts();
+    });
+    pane.querySelector('[data-role="pane-add-contact"]').addEventListener('click', () => {
+      openModal(modal => renderContactModal(modal, null, () => { closeModal(); loadContactsPane(); }));
     });
 
     fetchContacts();
@@ -1019,12 +1193,14 @@ function renderCRMView(container) {
   async function renderContactDetail(modal, contactId, onDone) {
     modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
     try {
-      const [contactData, notes, props, allPipeline, me] = await Promise.all([
+      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles] = await Promise.all([
         apiGet({ id: contactId }),
         fetch(`/api/notes?by_contact=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
         apiGet({ pipeline_list: '1' }).catch(() => []),
         fetch('/api/auth/me').then(r => r.json()).catch(() => ({ authenticated: false })),
+        rolesForScope('property'),
+        rolesForScope('deal'),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
@@ -1136,7 +1312,6 @@ function renderCRMView(container) {
               ${c.mobile   ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
               ${c.email    ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
               ${c.org_name ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
-              <div class="crm-detail-label">Source</div><div>${c.source || "manual"}</div>
             </div>
           </div>
 
@@ -1153,7 +1328,7 @@ function renderCRMView(container) {
                   <div class="crm-prop-row" data-entity-type="property" data-entity-id="${p.entity_id}">
                     <a href="#" class="crm-prop-open" data-property-id="${p.entity_id}" title="Open property">${p.address || '—'}${p.suburb ? ", " + p.suburb : ""}</a>
                     <select class="crm-prop-role-sel kb-input" data-entity-type="property" data-entity-id="${p.entity_id}" style="font-size:11px;padding:2px 4px;width:auto">
-                      ${ROLES.map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
+                      ${propScopeRoles.map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
                     </select>
                     <button class="crm-prop-unlink-btn" data-entity-type="property" data-entity-id="${p.entity_id}" title="Remove">✕</button>
                   </div>`).join("") : '<div class="crm-empty">No linked properties</div>'}
@@ -1165,7 +1340,7 @@ function renderCRMView(container) {
                     ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
                   </select>
                   <select class="kb-input crm-prop-role-new" style="font-size:12px">
-                    ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                    ${propScopeRoles.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-prop-link-save kb-add-offer-btn">Link</button>
                   <button class="crm-prop-link-cancel crm-cancel-btn">Cancel</button>
@@ -1187,7 +1362,7 @@ function renderCRMView(container) {
                     <span class="crm-deal-badge crm-deal-badge-workflow">${workflowLabels[d.workflow] || d.workflow || 'Acquisition'}</span>
                     <span class="crm-deal-badge crm-deal-badge-stage">${dealStageLabels[d.stage] || d.stage || '—'}</span>
                     <select class="crm-prop-role-sel kb-input" data-entity-type="deal" data-entity-id="${d.entity_id}" style="font-size:11px;padding:2px 4px;width:auto">
-                      ${ROLES.map(r => `<option value="${r.value}" ${r.value === d.role ? "selected" : ""}>${r.label}</option>`).join("")}
+                      ${dealScopeRoles.map(r => `<option value="${r.value}" ${r.value === d.role ? "selected" : ""}>${r.label}</option>`).join("")}
                     </select>
                     <button class="crm-prop-unlink-btn" data-entity-type="deal" data-entity-id="${d.entity_id}" title="Remove">✕</button>
                   </div>`).join("") : '<div class="crm-empty">No deals linked</div>'}
@@ -1199,7 +1374,7 @@ function renderCRMView(container) {
                     ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
                   </select>
                   <select class="kb-input crm-deal-role-new" style="font-size:12px">
-                    ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                    ${dealScopeRoles.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-deal-link-save kb-add-offer-btn">Link</button>
                   <button class="crm-deal-link-cancel crm-cancel-btn">Cancel</button>
@@ -1215,11 +1390,7 @@ function renderCRMView(container) {
             </div>
             <div class="crm-section-body">
               <div class="crm-modal-note-input" style="display:none;margin-bottom:10px">
-                <textarea class="kb-input crm-modal-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
-                <div style="display:flex;gap:6px;margin-top:4px;align-items:center">
-                  <button class="crm-modal-note-save kb-add-offer-btn">Save Note</button>
-                  <button class="crm-modal-note-cancel crm-cancel-btn">Cancel</button>
-                </div>
+                <div class="v77-note-form-mount-contact-modal"></div>
               </div>
               <div class="crm-modal-notes-list">
                 ${notes.length ? notes.map(n => {
@@ -1350,26 +1521,39 @@ function renderCRMView(container) {
         });
       });
 
-      // Notes (V75.3 — /api/notes)
+      // V77.1 — Notes use the extended NoteForm (type+source dropdowns).
+      // Toggling visibility of the panel still uses the +Add Note button.
       const addNoteBtn = modal.querySelector(".crm-modal-add-note-btn");
       const noteInput  = modal.querySelector(".crm-modal-note-input");
-      addNoteBtn.addEventListener("click", () => { noteInput.style.display = ""; addNoteBtn.style.display = "none"; modal.querySelector(".crm-modal-note-text").focus(); });
-      modal.querySelector(".crm-modal-note-cancel").addEventListener("click", () => { noteInput.style.display = "none"; addNoteBtn.style.display = ""; });
-      modal.querySelector(".crm-modal-note-save").addEventListener("click", async () => {
-        const text = modal.querySelector(".crm-modal-note-text").value.trim();
-        if (!text) return;
-        await fetch('/api/notes', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            entity_type: 'contact',
-            entity_id:   String(contactId),
-            note_text:   text,
-            // tagged_contact_id intentionally null — notes written here are
-            // attached to THIS contact already; tagging would be redundant
-          }),
-        });
-        renderContactDetail(modal, contactId, onDone);
+      const noteMount  = modal.querySelector(".v77-note-form-mount-contact-modal");
+      let _crmNoteFormHandle = null;
+      addNoteBtn.addEventListener("click", () => {
+        noteInput.style.display = "";
+        addNoteBtn.style.display = "none";
+        if (window.NoteForm && noteMount && !_crmNoteFormHandle) {
+          _crmNoteFormHandle = NoteForm.mount(noteMount, {
+            placeholder: 'Add a note…',
+            showContactTagger: false,
+            onAdd: async (vals) => {
+              const text = (vals.note_text || '').trim();
+              if (!text) return;
+              const body = {
+                entity_type: 'contact',
+                entity_id:   String(contactId),
+                note_text:   text,
+              };
+              if (vals.interaction_type) body.interaction_type = vals.interaction_type;
+              if (vals.source)           body.source           = vals.source;
+              await fetch('/api/notes', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(body),
+              });
+              renderContactDetail(modal, contactId, onDone);
+            },
+          });
+        }
+        if (_crmNoteFormHandle?.focus) _crmNoteFormHandle.focus();
       });
       modal.querySelectorAll(".crm-note-delete").forEach(btn => {
         btn.addEventListener("click", async () => {
@@ -1524,12 +1708,6 @@ function renderCRMView(container) {
               <div class="crm-org-wrap"></div>
             </div>
           </div>
-          <div class="crm-form-row">
-            <div class="kb-field-wrap" style="flex:1">
-              <label class="kb-field-label">Source</label>
-              ${renderSourceField(prefill?.source)}
-            </div>
-          </div>
           <div class="crm-duplicate-warning-wrap"></div>
           <div class="crm-form-actions">
             <button class="crm-save-btn kb-add-offer-btn">${isEdit ? 'Save Changes' : 'Create Contact'}</button>
@@ -1547,8 +1725,7 @@ function renderCRMView(container) {
     const orgTA = buildOrgTypeahead(modal.querySelector('.crm-org-wrap'), (id) => { selectedOrgId = id; });
     if (prefill?.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
 
-    // Source field — reveal Other input when selected
-    wireSourceField(modal);
+    // V77.1c: Source field removed — source now lives only on notes.source
 
     // Duplicate detection (new only)
     if (!isEdit) {
@@ -1577,21 +1754,22 @@ function renderCRMView(container) {
     modal.querySelector('.crm-save-btn').addEventListener('click', async () => {
       const first = modal.querySelector('.crm-first').value.trim();
       if (!first) { modal.querySelector('.crm-first').focus(); return; }
-      const sourceVal = readSourceField(modal);
       const data = {
         first_name:      first,
         last_name:       modal.querySelector('.crm-last').value.trim(),
         mobile:          modal.querySelector('.crm-mobile').value.trim(),
         email:           modal.querySelector('.crm-email').value.trim(),
         organisation_id: selectedOrgId,
-        source:          sourceVal || prefill?.source || 'Other',
       };
+      let saved;
       if (isEdit) {
-        await apiPut({ id: prefill.id, ...data });
+        saved = await apiPut({ id: prefill.id, ...data });
       } else {
-        await apiPost(data);
+        saved = await apiPost(data);
       }
-      onDone();
+      // V77.2g — pass saved contact to onDone callback so callers can
+      // re-use the freshly-created/updated contact (e.g. inline link flows).
+      onDone(saved);
     });
 
     // Delete (edit only) — V76.7+ site-styled confirm modal
@@ -2155,10 +2333,7 @@ function renderCRMView(container) {
           <div class="crm-modal-section crm-section-collapsible" data-section="deals">
             <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${parcelDeals.length})</span></span>
-              ${activeDeal
-                ? `<button class="crm-parcel-open-deal-btn kb-add-offer-btn" data-deal-id="${activeDeal.id}">Open Active Deal</button>`
-                : `<button class="crm-parcel-new-deal-btn kb-add-offer-btn">+ New Deal${closedCount ? ` <span style="font-weight:400;font-size:10px;color:rgba(255,255,255,0.75)">(history: ${closedCount} closed)</span>` : ''}</button>`
-              }
+              ${closedCount ? `<span class="crm-section-meta" style="font-size:11px;color:var(--muted)">(history: ${closedCount} closed)</span>` : ''}
             </div>
             <div class="crm-section-body">
               ${parcelDeals.length ? parcelDeals.map(d => `
@@ -2203,11 +2378,7 @@ function renderCRMView(container) {
             </div>
             <div class="crm-section-body">
               <div class="crm-parcel-note-input" style="display:none;margin-bottom:10px">
-                <textarea class="kb-input crm-parcel-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
-                <div style="display:flex;gap:6px;margin-top:4px">
-                  <button class="crm-parcel-note-save kb-add-offer-btn">Save Note</button>
-                  <button class="crm-parcel-note-cancel crm-cancel-btn">Cancel</button>
-                </div>
+                <div class="v77-note-form-mount-parcel-modal"></div>
               </div>
               <div class="crm-parcel-notes-list">
                 ${parcelNotes.length ? parcelNotes.map(n => {
@@ -2372,20 +2543,39 @@ function renderCRMView(container) {
         });
       });
 
-      // Notes add / delete
+      // V77.1 — Notes use the extended NoteForm.
       const addNoteBtn = modal.querySelector('.crm-parcel-add-note-btn');
       const noteInput  = modal.querySelector('.crm-parcel-note-input');
-      addNoteBtn.addEventListener('click', () => { noteInput.style.display = ''; addNoteBtn.style.display = 'none'; modal.querySelector('.crm-parcel-note-text').focus(); });
-      modal.querySelector('.crm-parcel-note-cancel').addEventListener('click', () => { noteInput.style.display = 'none'; addNoteBtn.style.display = ''; });
-      modal.querySelector('.crm-parcel-note-save').addEventListener('click', async () => {
-        const text = modal.querySelector('.crm-parcel-note-text').value.trim();
-        if (!text) return;
-        await fetch('/api/notes', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entity_type: 'parcel', entity_id: parcel.id, note_text: text }),
-        });
-        renderParcelModal(modal, parcelId, onDone);
+      const noteMount  = modal.querySelector('.v77-note-form-mount-parcel-modal');
+      let _parcelNoteFormHandle = null;
+      addNoteBtn.addEventListener('click', () => {
+        noteInput.style.display = '';
+        addNoteBtn.style.display = 'none';
+        if (window.NoteForm && noteMount && !_parcelNoteFormHandle) {
+          _parcelNoteFormHandle = NoteForm.mount(noteMount, {
+            placeholder: 'Add a note…',
+            showContactTagger: true,
+            onAdd: async (vals) => {
+              const text = (vals.note_text || '').trim();
+              if (!text) return;
+              const body = {
+                entity_type: 'parcel',
+                entity_id:   parcel.id,
+                note_text:   text,
+              };
+              if (vals.tagged_contact_id) body.tagged_contact_id = vals.tagged_contact_id;
+              if (vals.interaction_type)  body.interaction_type  = vals.interaction_type;
+              if (vals.source)            body.source            = vals.source;
+              await fetch('/api/notes', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(body),
+              });
+              renderParcelModal(modal, parcelId, onDone);
+            },
+          });
+        }
+        if (_parcelNoteFormHandle?.focus) _parcelNoteFormHandle.focus();
       });
       modal.querySelectorAll('.crm-note-delete').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -2769,10 +2959,7 @@ function renderCRMView(container) {
           <div class="crm-modal-section crm-section-collapsible" data-section="deals">
             <div class="crm-modal-section-title crm-section-header">
               <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Deals <span class="crm-section-count">(${propertyDeals.length})</span></span>
-              ${activeDeal
-                ? `<button class="crm-prop-open-deal-btn kb-add-offer-btn" data-deal-id="${activeDeal.id}">Open Active Deal</button>`
-                : (inParcel ? '' : `<button class="crm-prop-new-deal-btn kb-add-offer-btn">+ New Deal${closedCount ? ` <span style="font-weight:400;font-size:10px;color:rgba(255,255,255,0.75)">(history: ${closedCount} closed)</span>` : ''}</button>`)
-              }
+              ${closedCount ? `<span class="crm-section-meta" style="font-size:11px;color:var(--muted)">(history: ${closedCount} closed)</span>` : ''}
             </div>
             <div class="crm-section-body">
               ${inParcel && !propertyDeals.length ? '<div class="crm-empty" style="padding:10px 0;color:var(--text-secondary);font-size:12px">Deals for properties in a parcel are tracked at the parcel level.</div>' : ''}
@@ -2818,11 +3005,7 @@ function renderCRMView(container) {
             </div>
             <div class="crm-section-body">
               <div class="crm-prop-note-input" style="display:none;margin-bottom:10px">
-                <textarea class="kb-input crm-prop-note-text" rows="3" placeholder="Add a note…" style="width:100%;resize:vertical;box-sizing:border-box"></textarea>
-                <div style="display:flex;gap:6px;margin-top:4px">
-                  <button class="crm-prop-note-save kb-add-offer-btn">Save Note</button>
-                  <button class="crm-prop-note-cancel crm-cancel-btn">Cancel</button>
-                </div>
+                <div class="v77-note-form-mount-property-modal"></div>
               </div>
               <div class="crm-prop-notes-list">
                 ${propNotes.length ? propNotes.map(n => {
@@ -3145,30 +3328,39 @@ function renderCRMView(container) {
         });
       });
 
-      // Notes — add, save, cancel, delete
+      // V77.1 — Notes use the extended NoteForm.
       const addNoteBtn  = modal.querySelector('.crm-prop-add-note-btn');
       const noteInput   = modal.querySelector('.crm-prop-note-input');
-      const noteTextEl  = modal.querySelector('.crm-prop-note-text');
-      const noteSaveBtn = modal.querySelector('.crm-prop-note-save');
-      const noteCancelBtn = modal.querySelector('.crm-prop-note-cancel');
+      const noteMount   = modal.querySelector('.v77-note-form-mount-property-modal');
+      let _propNoteFormHandle = null;
       addNoteBtn?.addEventListener('click', (e) => {
         e.stopPropagation();
         noteInput.style.display = '';
-        noteTextEl.focus();
-      });
-      noteCancelBtn?.addEventListener('click', () => {
-        noteInput.style.display = 'none';
-        noteTextEl.value = '';
-      });
-      noteSaveBtn?.addEventListener('click', async () => {
-        const text = noteTextEl.value.trim();
-        if (!text) return;
-        await fetch('/api/notes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entity_type: 'property', entity_id: property.id, note_text: text }),
-        });
-        renderPropertyModal(modal, propertyId, onDone);
+        if (window.NoteForm && noteMount && !_propNoteFormHandle) {
+          _propNoteFormHandle = NoteForm.mount(noteMount, {
+            placeholder: 'Add a note…',
+            showContactTagger: true,
+            onAdd: async (vals) => {
+              const text = (vals.note_text || '').trim();
+              if (!text) return;
+              const body = {
+                entity_type: 'property',
+                entity_id:   property.id,
+                note_text:   text,
+              };
+              if (vals.tagged_contact_id) body.tagged_contact_id = vals.tagged_contact_id;
+              if (vals.interaction_type)  body.interaction_type  = vals.interaction_type;
+              if (vals.source)            body.source            = vals.source;
+              await fetch('/api/notes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify(body),
+              });
+              renderPropertyModal(modal, propertyId, onDone);
+            },
+          });
+        }
+        if (_propNoteFormHandle?.focus) _propNoteFormHandle.focus();
       });
       modal.querySelectorAll('.crm-note-delete').forEach(btn => {
         btn.addEventListener('click', async () => {

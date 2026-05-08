@@ -39,6 +39,8 @@ const PUBLIC_PATHS = new Set([
 const PUBLIC_PREFIXES = [
   '/Images/',           // favicons, brand images
   '/_vercel/',          // Vercel internal
+  '/lease-offer/',      // V77.2 — public form pages (token-authed via lib/public-token-auth.js)
+  '/api/public/',       // V77.2 — public API endpoints (token-authed via lib/public-token-auth.js)
 ];
 
 function isPublic(pathname) {

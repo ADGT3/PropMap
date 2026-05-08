@@ -1,0 +1,266 @@
+/* Step 2 specific styles, builds on lease-offer-form.css */
+
+.lof-step2-intro {
+  background: #fff8e8;
+  border-left: 3px solid var(--lof-accent);
+  padding: 10px 14px;
+  border-radius: 4px;
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--lof-text);
+  font-weight: 500;
+}
+
+.s2-applicant-block {
+  background: #faf6ec;
+  border: 1px solid var(--lof-border);
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.s2-applicant-block-header {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--lof-accent-d);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.s2-points-display {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--lof-success);
+  background: #d4ead4;
+  padding: 3px 10px;
+  border-radius: 12px;
+}
+.s2-points-display.s2-points-low {
+  color: #7c2d12;
+  background: #fef5f5;
+}
+
+.s2-id-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--lof-border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.s2-id-row select {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--lof-border);
+  border-radius: 4px;
+  font-size: 13px;
+  background: var(--lof-input-bg);
+}
+
+.s2-id-row .s2-points {
+  font-weight: 600;
+  color: var(--lof-accent-d);
+  min-width: 60px;
+  text-align: right;
+}
+
+.s2-upload-zone {
+  border: 2px dashed var(--lof-border);
+  border-radius: 6px;
+  padding: 18px;
+  text-align: center;
+  cursor: pointer;
+  background: #fff;
+  font-size: 13px;
+  color: var(--lof-muted);
+  transition: border-color 0.12s, background 0.12s;
+}
+.s2-upload-zone:hover,
+.s2-upload-zone.s2-drag-over {
+  border-color: var(--lof-accent);
+  background: var(--lof-input-bg-focus);
+  color: var(--lof-text);
+}
+
+.s2-upload-zone-prompt {
+  font-weight: 500;
+  color: var(--lof-text);
+  margin-bottom: 4px;
+}
+
+.s2-upload-zone-help {
+  font-size: 11px;
+  color: var(--lof-muted);
+}
+
+.s2-upload-zone input[type="file"] {
+  display: none;
+}
+
+.s2-uploaded-files {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.s2-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #fff;
+  border: 1px solid var(--lof-border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.s2-file-icon {
+  font-size: 16px;
+}
+
+.s2-file-name {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s2-file-size {
+  color: var(--lof-muted);
+  font-size: 11px;
+}
+
+.s2-file-status {
+  font-size: 11px;
+  color: var(--lof-success);
+  font-weight: 500;
+}
+.s2-file-status.s2-file-uploading {
+  color: var(--lof-accent);
+}
+.s2-file-status.s2-file-error {
+  color: var(--lof-error);
+}
+
+.s2-add-id-btn {
+  background: transparent;
+  color: var(--lof-accent);
+  border: 1px dashed var(--lof-accent);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+.s2-add-id-btn:hover {
+  background: var(--lof-accent);
+  color: #fff;
+}
+
+.s2-history-entry {
+  background: #fff;
+  border: 1px solid var(--lof-border);
+  border-radius: 6px;
+  padding: 14px;
+  margin-bottom: 10px;
+  position: relative;
+}
+
+.s2-history-entry-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: 0;
+  color: var(--lof-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 3px;
+}
+.s2-history-entry-remove:hover {
+  background: rgba(185, 28, 28, 0.08);
+  color: var(--lof-error);
+}
+
+/* Replace / Remove buttons on uploaded file rows */
+.s2-file-action-btn {
+  background: transparent;
+  border: 1px solid var(--lof-border);
+  color: var(--lof-muted);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.s2-file-action-btn:hover {
+  background: var(--lof-input-bg-focus);
+  border-color: var(--lof-accent);
+  color: var(--lof-accent-d);
+}
+.s2-file-remove-btn:hover {
+  background: rgba(185, 28, 28, 0.08);
+  border-color: var(--lof-error);
+  color: var(--lof-error);
+}
+
+/* Per-entry evidence zone (housing & income) — smaller variant */
+.s2-entry-evidence {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--lof-border);
+}
+
+.s2-entry-evidence-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--lof-text);
+  margin-bottom: 6px;
+}
+
+.s2-upload-zone-small {
+  padding: 10px 12px;
+  font-size: 12px;
+}
+.s2-upload-zone-small .s2-upload-zone-prompt {
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.s2-upload-zone-small .s2-upload-zone-help {
+  font-size: 10px;
+}
+
+/* Lease Documents — two-up layout for the two slots */
+.s2-leasedoc-zones {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.s2-leasedoc {
+  background: var(--lof-surface2, #f3eee2);
+  border: 1px solid var(--lof-border);
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.s2-leasedoc-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--lof-text);
+  margin-bottom: 8px;
+}
