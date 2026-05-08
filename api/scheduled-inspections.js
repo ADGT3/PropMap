@@ -92,18 +92,21 @@ export default async function handler(req, res) {
           return res.status(200).json(rows);
         }
         // V78 — `?date=today` (or YYYY-MM-DD) returns inspections across all
-        // listings for that date. Joins property address through the deal's
-        // property/parcel relation so the mobile "Today's inspections" view
-        // can show what to check in for. Read-only convenience query.
+        // listings for that date. `?date=upcoming` returns inspections on or
+        // after today. Joins property address through the deal's
+        // property/parcel relation so cross-listing views can show what to
+        // check in for. Read-only convenience query.
         if (date) {
           // Resolve `today` server-side so client clock skew doesn't cause off-by-one
           let dateClause;
           if (date === 'today') {
             dateClause = sql`si.scheduled_date = (now() AT TIME ZONE 'Australia/Sydney')::date`;
+          } else if (date === 'upcoming') {
+            dateClause = sql`si.scheduled_date >= (now() AT TIME ZONE 'Australia/Sydney')::date`;
           } else if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
             dateClause = sql`si.scheduled_date = ${date}::date`;
           } else {
-            return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD or "today".' });
+            return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD, "today", or "upcoming".' });
           }
           const rows = await sql`
             SELECT si.*,
@@ -117,7 +120,7 @@ export default async function handler(req, res) {
             LEFT JOIN properties p ON p.id  = d.property_id
             LEFT JOIN parcels    par ON par.id = d.parcel_id
             WHERE ${dateClause}
-            ORDER BY si.start_time ASC, si.id ASC`;
+            ORDER BY si.scheduled_date ASC, si.start_time ASC, si.id ASC`;
           return res.status(200).json(rows);
         }
         return res.status(400).json({ error: 'Specify id or listing_deal_id or date' });
