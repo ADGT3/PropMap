@@ -2727,6 +2727,24 @@ function renderBoard() {
   if (currentBoardId === 'sys_sales_enquiry' || currentBoardId === 'sys_lease_enquiry') {
     enrichEnquiryCardsAsync();
   }
+
+  // V78 — Mobile shell: switch to single-column picker on narrow viewports.
+  // The mobile-shell module re-applies the active-column class + injects the
+  // picker dropdown. No-op on desktop / tablet.
+  // Sync the small set of state mobile-shell needs onto window so it can read
+  // them without depending on module-internal scope.
+  window.currentBoardId = currentBoardId;
+  window.pipeline       = pipeline;
+  window.openCardModal  = openCardModal;
+  window.renderBoard    = renderBoard;
+  if (window.MobileShell) {
+    if (typeof window.MobileShell.applyKanbanMobileLayout === 'function') {
+      window.MobileShell.applyKanbanMobileLayout();
+    }
+    if (typeof window.MobileShell.refreshTodayBanner === 'function') {
+      window.MobileShell.refreshTodayBanner();
+    }
+  }
 }
 
 // ─── V75.7: Actions module ────────────────────────────────────────────────────
