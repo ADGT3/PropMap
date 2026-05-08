@@ -395,6 +395,12 @@ function findPipelineByDomainId(domainId) {
 }
 window.findPipelineByDomainId = findPipelineByDomainId;
 
+// V78 — expose at module load so mobile-shell can open a deal modal from the
+// Upcoming Inspections panel even before the kanban view has been rendered.
+// All three are function declarations, so hoisted and safe to reference here.
+window.openCardModal              = openCardModal;
+window.reloadPipelineEntryFromDb  = reloadPipelineEntryFromDb;
+
 // ── localStorage helpers (cache / offline fallback) ──────────────────────────
 function cacheLoad() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (_) { return {}; }

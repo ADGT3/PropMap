@@ -269,18 +269,15 @@
 
   function fmtDate(iso) {
     if (!iso) return '';
-    // iso is YYYY-MM-DD; render as "Sat 11 May" or "Today" / "Tomorrow"
-    const d = new Date(iso + 'T00:00:00');
-    if (Number.isNaN(d.getTime())) return iso;
-    const today = new Date();
-    today.setHours(0,0,0,0);
-    const dayMs = 86400000;
-    const diff = Math.round((d - today) / dayMs);
-    if (diff === 0) return 'Today';
-    if (diff === 1) return 'Tomorrow';
-    const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`;
+    // scheduled_date may come back as either:
+    //   - a date-only string "YYYY-MM-DD"
+    //   - a full ISO timestamp "YYYY-MM-DDT00:00:00.000Z"
+    // Strip to first 10 chars to get just the date portion.
+    const datePart = String(iso).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return String(iso);
+    const [y, m, d] = datePart.split('-');
+    // Australian format: DD-MM-YYYY
+    return `${d}-${m}-${y}`;
   }
 
   async function openUpcomingInspectionsPanel() {
@@ -349,33 +346,29 @@
     });
   }
 
-  function jumpToListingDeal(dealId, inspectionId) {
-    // We need the deal to be in the in-memory pipeline before openCardModal
-    // can find it. If it's not, the deal is on a board we haven't loaded yet.
-    // Fetch it, slot it in, then open.
-    if (window.pipeline && window.pipeline[dealId]) {
-      if (typeof window.openCardModal === 'function') {
-        window.openCardModal(dealId);
-      }
+  async function jumpToListingDeal(dealId, inspectionId) {
+    // Make sure the deal is loaded into the kanban's in-memory pipeline before
+    // opening its modal. openCardModal reads pipeline[dealId] and expects a
+    // properly-shaped entry (with .property etc.) — so we delegate to
+    // reloadPipelineEntryFromDb which handles the fetch + shape conversion.
+    if (typeof window.openCardModal !== 'function') {
+      alert('Pipeline not loaded yet — please open the Pipeline tab first, then try again.');
       return;
     }
-    fetch(`/api/deals?id=${encodeURIComponent(dealId)}`).then(r => r.json()).then(deal => {
-      if (!deal) {
-        alert('Could not load deal — try navigating manually.');
-        return;
+    try {
+      // Always re-fetch to ensure we have the latest data and the entry exists
+      // in pipeline (it might already be there from a kanban render — that's
+      // fine, this just refreshes it).
+      if (typeof window.reloadPipelineEntryFromDb === 'function') {
+        await window.reloadPipelineEntryFromDb(dealId);
       }
-      if (window.pipeline) {
-        window.pipeline[dealId] = window.pipeline[dealId] || deal;
-      }
-      if (typeof window.openCardModal === 'function') {
-        window.openCardModal(dealId);
-      } else {
-        alert('Navigation unavailable — please open the listing manually.');
-      }
-    }).catch(err => {
-      console.warn('[v78] jumpToListingDeal fetch failed:', err);
-      alert('Could not load deal — try navigating manually.');
-    });
+      // openCardModal reads from the kanban's internal `pipeline` dict; if
+      // reloadPipelineEntryFromDb succeeded the entry is now there.
+      window.openCardModal(dealId);
+    } catch (err) {
+      console.warn('[v78] jumpToListingDeal failed:', err);
+      alert('Could not open deal — try opening it manually from the kanban.');
+    }
   }
 
   function escapeHtml(s) {
