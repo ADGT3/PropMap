@@ -536,6 +536,36 @@ header {
     border-bottom: 1px solid var(--border);
   }
 
+  /* V78 — On mobile, the JS positioning math (which uses getBoundingClientRect
+     and the visual viewport) gets tangled by the iOS keyboard and full-screen
+     modal layout. Override `.insp-att-results` to flow as a normal inline
+     block below the search input — no fixed positioning, no flip-above logic.
+     The iOS keyboard then scrolls the input into view naturally and the
+     dropdown sits directly below where the agent expects it. */
+  .insp-att-results {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 320px !important;
+    margin-top: 6px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
+  }
+  /* Hide the .is-open requirement — show whenever populated */
+  .insp-att-results:not(:empty) {
+    display: block !important;
+  }
+  .insp-att-results:empty {
+    display: none !important;
+  }
+  .insp-att-result,
+  .insp-att-result-create {
+    padding: 14px 12px !important;
+    font-size: 14px !important;
+  }
+
   /* ── + New Card two-step modal ────────────────────────────────────────── */
 
   .knc-results,
