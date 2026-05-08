@@ -4555,6 +4555,19 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 .knc-result-main { font-size: 13px; font-weight: 500; }
 .knc-result-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
+/* V77.3 — "+ Create new contact" row at the bottom of the results list.
+   Visually distinct from regular search-match rows. */
+.knc-result-create {
+  background: var(--surface2);
+  border-top: 1px solid var(--border);
+}
+.knc-result-create .knc-result-main {
+  color: var(--accent);
+}
+.knc-result-create:hover {
+  background: rgba(196,132,26,0.08);
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    V77.1b — Listing Summary section (Enquiry deal modals)
    ════════════════════════════════════════════════════════════════════════════ */
