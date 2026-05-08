@@ -12,43 +12,33 @@
 
 const CRM_BASE = '/api/contacts';
 
-// V77.1 — fallback array (used if Lookups module isn't loaded yet or fetch fails).
-// Preferred path: window.Lookups (lookups.js) which fetches /api/roles and caches.
-// Production frontend should always have lookups.js loaded; this array is just
-// a hardcoded backup so the UI doesn't blank-out if the cache is empty.
-const ROLES = [
-  // Property-scope — belongs to the property itself across deals
-  { value: 'vendor',           label: 'Vendor',           scopes: ['property'] },
-  { value: 'owner',            label: 'Owner',            scopes: ['property'] },
-  { value: 'property_manager', label: 'Property Manager', scopes: ['property'] },
-  // Deal-scope — specific to a given deal
-  { value: 'agent',            label: 'Agent',            scopes: ['deal'] },
-  { value: 'buyers_agent',     label: "Buyer's Agent",    scopes: ['deal'] },
-  { value: 'purchaser',        label: 'Purchaser',        scopes: ['deal'] },
-  { value: 'enquirer',         label: 'Enquirer',         scopes: ['deal'] },
-  // Mixed-scope — can be linked to either
-  { value: 'solicitor',        label: 'Solicitor',        scopes: ['property', 'deal'] },
-  { value: 'referrer',         label: 'Referrer',         scopes: ['property', 'deal'] },
-];
-function rolesForScope(scope) {
-  // V77.1 — prefer cached Lookups roles if available; falls back to hardcoded array
-  if (window.Lookups) {
-    const cached = Lookups.rolesForScope(scope);
-    if (cached.length) {
-      // Map to existing { value, label, scopes } shape that callsites expect
-      return cached.map(r => ({ value: r.id, label: r.label, scopes: r.scopes }));
-    }
+// V77.2g — Roles are sourced exclusively from the DB (the `roles` table) via
+// the Lookups module. No hardcoded fallback array — if Lookups isn't ready,
+// callers must await Lookups.getRolesActive() first.
+//
+// Lookups caches the roles list in memory for the page lifetime, with a TTL
+// refresh so changes made by other agents propagate within ~60s. Edits made
+// in this browser invalidate the cache immediately via Lookups.invalidateRoles.
+async function rolesForScope(scope) {
+  if (!window.Lookups) {
+    console.warn('[crm] Lookups not loaded — cannot resolve roles');
+    return [];
   }
-  return ROLES.filter(r => r.scopes.includes(scope));
+  const rows = await Lookups.getRolesActive({ scope });
+  // Map to the existing { value, label, scopes } shape that callsites expect
+  return rows.map(r => ({ value: r.id, label: r.label, scopes: r.scopes }));
 }
 function roleLabel(id) {
-  // V77.1 — prefer cached Lookups
-  if (window.Lookups) {
-    const lbl = Lookups.roleLabel(id);
-    if (lbl && lbl !== id) return lbl;  // cache returns id when not found
-  }
-  const r = ROLES.find(x => x.value === id);
-  return r ? r.label : id;
+  if (!window.Lookups) return id;
+  return Lookups.roleLabel(id) || id;
+}
+
+// V77.2g — Find the lowest-sort_order active role for a given scope. Used as
+// the default selection when rendering a role dropdown without a specific
+// pre-fill. Returns null if no roles configured for the scope.
+async function defaultRoleIdForScope(scope) {
+  const roles = await rolesForScope(scope);
+  return roles.length ? roles[0].value : null;
 }
 
 // V77.1c — SOURCES array, resolveSource(), renderSourceField(),
@@ -473,6 +463,11 @@ async function renderContactsSection(pipelineId, agentData) {
   const section = document.createElement('div');
   section.className = 'crm-section';
 
+  // V77.2g — This component is mounted inside a deal modal, so role-pickers
+  // here should show roles flagged with scope='deal'. (Property-scope contacts
+  // are handled by a different rendering path.)
+  const scope = 'deal';
+
   // V77.1 — Contacts is always expanded; header matches other static sections
   // (kb-section-label) for visual consistency. The "+ Add" affordance lives on
   // the right of the heading row.
@@ -579,7 +574,28 @@ async function renderContactsSection(pipelineId, agentData) {
             }
           }
 
-          await apiPost({ action: 'link', contact_id: contactId, pipeline_id: pipelineId, role: 'agent' });
+          // V77.2g — link the agent contact using the default role flagged
+          // for this deal's board (no hardcoded role IDs). Falls back to the
+          // first deal-scope role if the board has no defaults flagged.
+          let agentRoleId = null;
+          try {
+            // pipelineId is the deal id — fetch its board to resolve eligible roles
+            const dealRes = await fetch(`/api/deals?id=${encodeURIComponent(pipelineId)}`);
+            if (dealRes.ok) {
+              const deal = await dealRes.json();
+              const boardId = deal?.board_id;
+              if (boardId && window.Lookups?.getDefaultRolesForBoard) {
+                const eligible = await Lookups.getDefaultRolesForBoard(boardId);
+                if (eligible.length) agentRoleId = eligible[0].id;
+              }
+            }
+          } catch (_) {}
+          if (!agentRoleId) agentRoleId = await defaultRoleIdForScope('deal');
+          if (!agentRoleId) {
+            console.warn('[crm] no role available for agent link — skipping');
+          } else {
+            await apiPost({ action: 'link', contact_id: contactId, pipeline_id: pipelineId, role: agentRoleId });
+          }
 
           // V77.1c — auto-create contact-level note for new contacts only.
           // Records that this contact came in via the Domain API as a first
@@ -627,8 +643,8 @@ async function renderContactsSection(pipelineId, agentData) {
     contacts.forEach(contact => {
       const row = document.createElement('div');
       row.className = 'crm-contact-row';
-      const currentRole = contact.role || 'vendor';
-      const roleLabel = ROLES.find(r => r.value === currentRole)?.label || currentRole;
+      const currentRole = contact.role || '';
+      const currentRoleLabel = currentRole ? roleLabel(currentRole) : '—';
       row.innerHTML = `
         <div class="crm-contact-info">
           <div class="crm-contact-name">
@@ -636,7 +652,7 @@ async function renderContactsSection(pipelineId, agentData) {
           </div>
           <div class="crm-contact-meta">
             ${contact.org_name ? `<span>${contact.org_name}</span>` : ''}
-            <span class="crm-role-badge crm-role-${currentRole.replace(/[^a-z0-9]/gi,'_')}">${roleLabel}</span>
+            <span class="crm-role-badge crm-role-${(currentRole || 'unset').replace(/[^a-z0-9]/gi,'_')}">${currentRoleLabel}</span>
             ${contact.mobile   ? `<a href="tel:${contact.mobile}" class="crm-link">${contact.mobile}</a>` : ''}
             ${contact.email    ? `<a href="mailto:${contact.email}" class="crm-link">${contact.email}</a>` : ''}
           </div>
@@ -668,241 +684,197 @@ async function renderContactsSection(pipelineId, agentData) {
   }
 
   // ── Contact form ────────────────────────────────────────────────────────────
+  //
+  // V77.2g — Two flows:
+  //   Edit existing link: showForm(contactObj, contactObj.role) — just role dropdown.
+  //   Add new link:       showForm() — search box; pick existing OR + Create new
+  //                       (which opens the full CRM Contact modal). After pick,
+  //                       a compact "Selected: NAME ✕" + Role dropdown is shown.
 
-  function showForm(prefill = {}, prefillRole = 'vendor') {
+  async function showForm(prefill = {}, prefillRole = null) {
     formEl.style.display = 'block';
     addBtn.style.display = 'none';
     const isEdit = !!prefill.id;
 
-    formEl.innerHTML = `
-      <div class="crm-form-inner">
-        <div class="crm-form-title">${isEdit ? 'Edit Contact' : 'Add Contact'}</div>
+    // Resolve role list + a sensible default for the dropdown.
+    const roleList = await rolesForScope(scope);
+    const defaultRole = prefillRole || (await defaultRoleIdForScope(scope)) || (roleList[0]?.value || '');
 
-        ${!isEdit ? `
-        <div style="margin-bottom:10px">
-          <label class="kb-field-label">Search existing contacts</label>
-          <input class="kb-input crm-search" type="text" placeholder="Name, organisation, email…">
-          <div class="crm-search-results"></div>
-        </div>
-        <div class="crm-duplicate-warning-wrap"></div>` : ''}
-
-        <div class="crm-form-row">
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">First Name *</label>
-            <input class="kb-input crm-first" type="text" placeholder="First" value="${prefill.first_name || ''}">
+    if (isEdit) {
+      // Lightweight: just the contact label + role dropdown + save/cancel.
+      formEl.innerHTML = `
+        <div class="crm-form-inner">
+          <div class="crm-form-title">Edit role for <strong>${esc(displayName(prefill))}</strong></div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Role</label>
+              <select class="kb-input crm-role">
+                ${roleList.length
+                  ? roleList.map(r => `<option value="${esc(r.value)}" ${r.value === defaultRole ? 'selected' : ''}>${esc(r.label)}</option>`).join('')
+                  : '<option value="">No roles configured</option>'}
+              </select>
+            </div>
           </div>
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">Last Name</label>
-            <input class="kb-input crm-last" type="text" placeholder="Last" value="${prefill.last_name || ''}">
+          <div class="crm-form-actions">
+            <button class="crm-save-btn">Save Changes</button>
+            <button class="crm-cancel-btn">Cancel</button>
           </div>
-        </div>
-        <div class="crm-form-row">
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">Mobile</label>
-            <input class="kb-input crm-mobile" type="text" placeholder="04xx xxx xxx" value="${prefill.mobile || ''}">
+        </div>`;
+    } else {
+      // Add-link flow: search-pick-role.
+      formEl.innerHTML = `
+        <div class="crm-form-inner">
+          <div class="crm-form-title">Add Contact</div>
+          <div class="crm-pick-wrap" data-role="pick-wrap">
+            <label class="kb-field-label">Search contacts</label>
+            <input class="kb-input crm-search" type="text" placeholder="Type name, email, or mobile…" autocomplete="off">
+            <div class="crm-search-results"></div>
           </div>
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">Email</label>
-            <input class="kb-input crm-email" type="text" placeholder="email@domain.com" value="${prefill.email || ''}">
+          <div class="crm-form-row" data-role="role-row" style="display:none;margin-top:10px">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Role</label>
+              <select class="kb-input crm-role">
+                ${roleList.length
+                  ? roleList.map(r => `<option value="${esc(r.value)}" ${r.value === defaultRole ? 'selected' : ''}>${esc(r.label)}</option>`).join('')
+                  : '<option value="">No roles configured</option>'}
+              </select>
+            </div>
           </div>
-        </div>
-        <div class="crm-form-row">
-          <div class="kb-field-wrap" style="flex:2">
-            <label class="kb-field-label">Organisation</label>
-            <div class="crm-org-wrap"></div>
+          <div class="crm-form-actions">
+            <button class="crm-save-btn" disabled>Link</button>
+            <button class="crm-cancel-btn">Cancel</button>
           </div>
-          <div class="kb-field-wrap">
-            <label class="kb-field-label">Role (this property)</label>
-            <select class="kb-input crm-role">
-              ${ROLES.map(r => `<option value="${r.value}" ${r.value === prefillRole ? 'selected' : ''}>${r.label}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-
-        <div class="crm-form-actions">
-          <button class="crm-save-btn">${isEdit ? 'Save Changes' : 'Save & Link'}</button>
-          <button class="crm-cancel-btn">Cancel</button>
-        </div>
-      </div>`;
-
-    // Org typeahead
-    const orgWrap = formEl.querySelector('.crm-org-wrap');
-    let selectedOrgId = prefill.organisation_id || null;
-    const orgTA = buildOrgTypeahead(orgWrap, (id) => { selectedOrgId = id; });
-    if (prefill.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
-
-    // V77.1c: Source field removed — source now lives only on notes.source
-
-    // Duplicate detection (new contacts only)
-    if (!isEdit) {
-      const dupWrap = formEl.querySelector('.crm-duplicate-warning-wrap');
-      let dupTimer;
-      const checkDups = () => {
-        clearTimeout(dupTimer);
-        dupTimer = setTimeout(async () => {
-          const first  = formEl.querySelector('.crm-first').value.trim();
-          const last   = formEl.querySelector('.crm-last').value.trim();
-          const email  = formEl.querySelector('.crm-email').value.trim();
-          const mobile = formEl.querySelector('.crm-mobile').value.trim();
-          if (!first && !email && !mobile) { dupWrap.innerHTML = ''; return; }
-          const dups = await checkDuplicates(first, last, email, mobile);
-          renderDuplicateWarning(dupWrap, dups, async (existing) => {
-            // Link existing contact with the role currently selected in the form
-            const role = formEl.querySelector('.crm-role').value;
-            await apiPost({ action: 'link', contact_id: existing.id, pipeline_id: pipelineId, role });
-            hideForm(); reload();
-          });
-        }, 500);
-      };
-      ['crm-first','crm-last','crm-email','crm-mobile'].forEach(cls => {
-        formEl.querySelector(`.${cls}`)?.addEventListener('input', checkDups);
-      });
+        </div>`;
     }
 
-    // Search existing
-    // V77.1: clicking a search result populates the form fields rather than
-    // auto-saving + closing. User reviews/edits the prefilled data, then
-    // clicks Save & Link. Tracked by `_pickedExistingId` — if non-null on save,
-    // we PUT to update + link rather than POST to create.
-    let _pickedExistingId = null;
-    let _pickedSnapshot = null;  // baseline values; lets us detect what user edited
-    const searchEl = formEl.querySelector('.crm-search');
-    if (searchEl) {
+    // ── Wire up edit flow ──
+    if (isEdit) {
+      formEl.querySelector('.crm-save-btn').addEventListener('click', async () => {
+        const role = formEl.querySelector('.crm-role').value;
+        if (!role) { alert('Pick a role.'); return; }
+        try {
+          await apiPost({ action: 'link', contact_id: prefill.id, pipeline_id: pipelineId, role });
+        } catch (err) {
+          alert(err?.message || 'Save failed');
+          return;
+        }
+        hideForm();
+        reload();
+      });
+      formEl.querySelector('.crm-cancel-btn').addEventListener('click', hideForm);
+      return;
+    }
+
+    // ── Wire up add-link flow ──
+    let _pickedContact = null;  // null until user picks one
+    const pickWrap   = formEl.querySelector('[data-role="pick-wrap"]');
+    const searchEl   = formEl.querySelector('.crm-search');
+    const resultsEl  = formEl.querySelector('.crm-search-results');
+    const roleRow    = formEl.querySelector('[data-role="role-row"]');
+    const saveBtn    = formEl.querySelector('.crm-save-btn');
+
+    const renderSelected = () => {
+      pickWrap.innerHTML = `
+        <label class="kb-field-label">Contact</label>
+        <div class="crm-pick-selected">
+          <div class="crm-pick-selected-info">
+            <strong>${esc(displayName(_pickedContact))}</strong>
+            ${_pickedContact.org_name ? `<span class="crm-pick-selected-meta"> · ${esc(_pickedContact.org_name)}</span>` : ''}
+            ${(_pickedContact.email || _pickedContact.mobile) ? `<span class="crm-pick-selected-meta"> · ${esc(_pickedContact.email || _pickedContact.mobile)}</span>` : ''}
+          </div>
+          <button class="crm-pick-clear-btn" type="button" title="Clear">✕</button>
+        </div>`;
+      pickWrap.querySelector('.crm-pick-clear-btn').addEventListener('click', () => {
+        _pickedContact = null;
+        roleRow.style.display = 'none';
+        saveBtn.disabled = true;
+        renderSearch();
+      });
+    };
+    const renderSearch = () => {
+      pickWrap.innerHTML = `
+        <label class="kb-field-label">Search contacts</label>
+        <input class="kb-input crm-search" type="text" placeholder="Type name, email, or mobile…" autocomplete="off">
+        <div class="crm-search-results"></div>`;
+      wireSearch();
+    };
+    const wireSearch = () => {
+      const sEl = pickWrap.querySelector('.crm-search');
+      const rEl = pickWrap.querySelector('.crm-search-results');
       let t;
-      searchEl.addEventListener('input', () => {
+      sEl.addEventListener('input', () => {
         clearTimeout(t);
-        const q = searchEl.value.trim();
-        const resultsEl = formEl.querySelector('.crm-search-results');
-        if (q.length < 2) { resultsEl.innerHTML = ''; return; }
+        const q = sEl.value.trim();
+        if (q.length < 2) { rEl.innerHTML = ''; return; }
         t = setTimeout(async () => {
-          const results = await apiGet({ search: q }).catch(() => []);
-          if (!results.length) { resultsEl.innerHTML = '<div class="crm-empty">No matches</div>'; return; }
-          resultsEl.innerHTML = '';
-          results.forEach(ct => {
+          let results = [];
+          try {
+            results = await apiGet({ search: q });
+            if (!Array.isArray(results)) results = [];
+          } catch (_) {}
+          // Build result list + a final "+ Create new contact" row
+          rEl.innerHTML = '';
+          results.slice(0, 10).forEach(ct => {
             const item = document.createElement('div');
             item.className = 'crm-search-item';
-            item.innerHTML = `<strong>${displayName(ct)}</strong>${ct.org_name ? ` · ${ct.org_name}` : ''}${ct.mobile || ct.email ? ` · ${ct.mobile || ct.email}` : ''}`;
-            item.addEventListener('click', async () => {
-              // V77.1: pick existing contact → fields go READ-ONLY (master-record
-              // edits go via CRM > Contact, not buried inside a deal modal). Only
-              // Role stays editable (per-deal). "Edit contact details →" button
-              // opens the contact's CRM modal as a sub-overlay.
-              _pickedExistingId = ct.id;
-              _pickedSnapshot = {
-                first_name: ct.first_name || '',
-                last_name:  ct.last_name  || '',
-                mobile:     ct.mobile     || '',
-                email:      ct.email      || '',
-                organisation_id: ct.organisation_id || null,
-              };
-              const setLocked = (selector, val) => {
-                const el = formEl.querySelector(selector);
-                if (!el) return;
-                el.value = val;
-                el.readOnly = true;
-                el.classList.add('kb-input-locked');
-              };
-              setLocked('.crm-first',  _pickedSnapshot.first_name);
-              setLocked('.crm-last',   _pickedSnapshot.last_name);
-              setLocked('.crm-mobile', _pickedSnapshot.mobile);
-              setLocked('.crm-email',  _pickedSnapshot.email);
-              if (ct.organisation_id && ct.org_name) {
-                orgTA.setValue(ct.organisation_id, ct.org_name);
-                selectedOrgId = ct.organisation_id;
-              }
-              // Lock the org typeahead input, too
-              const orgInput = formEl.querySelector('.crm-org-wrap input');
-              if (orgInput) {
-                orgInput.readOnly = true;
-                orgInput.classList.add('kb-input-locked');
-              }
-              // V77.1c: source field removed entirely from contact form
-              // Seed role from their most recent role on any property (per-deal — stays editable)
-              const lr = await apiGet({ last_role: '1', contact_id: ct.id }).catch(() => ({}));
-              const roleSel = formEl.querySelector('.crm-role');
-              if (lr?.role && roleSel) roleSel.value = lr.role;
-              // Clear search input & results
-              searchEl.value = '';
-              resultsEl.innerHTML = '';
-              // Banner with "Edit contact details" link
-              const dupWrap = formEl.querySelector('.crm-duplicate-warning-wrap');
-              if (dupWrap) {
-                dupWrap.innerHTML = `
-                  <div class="crm-pick-banner">
-                    Linking existing contact <strong>${displayName(ct)}</strong>. Identity fields are locked — only Role applies to this deal.
-                    <div class="crm-pick-banner-actions">
-                      <button class="crm-pick-edit-master" type="button" data-contact-id="${ct.id}">Edit contact details →</button>
-                      <button class="crm-pick-clear" type="button">clear selection</button>
-                    </div>
-                  </div>`;
-                dupWrap.querySelector('.crm-pick-clear').addEventListener('click', () => {
-                  _pickedExistingId = null;
-                  _pickedSnapshot = null;
-                  // Unlock + clear all fields
-                  ['.crm-first','.crm-last','.crm-mobile','.crm-email'].forEach(sel => {
-                    const el = formEl.querySelector(sel);
-                    if (el) { el.value = ''; el.readOnly = false; el.classList.remove('kb-input-locked'); }
-                  });
-                  if (orgInput) { orgInput.readOnly = false; orgInput.classList.remove('kb-input-locked'); }
-                  orgTA.setValue(null, '');
-                  selectedOrgId = null;
-                  dupWrap.innerHTML = '';
-                });
-                // Edit master contact — opens the CRM contact modal as a sub-overlay
-                dupWrap.querySelector('.crm-pick-edit-master').addEventListener('click', () => {
-                  // Ensure CRM view is rendered (so its overlay markup + modal helpers exist).
-                  // We don't need to make CRM visible — just have its DOM mounted so
-                  // window.openContactModal becomes callable.
-                  const crmContainer = document.getElementById('crmViewContent');
-                  if (crmContainer && !crmContainer.dataset.rendered && window.CRM?.renderCRMView) {
-                    crmContainer.dataset.rendered = '1';
-                    window.CRM.renderCRMView(crmContainer);
-                  }
-                  if (typeof window.openContactModal === 'function') {
-                    window.openContactModal(ct.id);
-                  } else {
-                    alert('Contact modal unavailable — please refresh the page.');
-                  }
-                });
-              }
-              // Role gets focus — that's the only thing user can change here
-              roleSel?.focus();
+            const meta = [ct.org_name, ct.email, ct.mobile].filter(Boolean).join(' · ');
+            item.innerHTML = `<strong>${esc(displayName(ct))}</strong>${meta ? `<span class="crm-search-item-meta"> · ${esc(meta)}</span>` : ''}`;
+            item.addEventListener('click', () => {
+              _pickedContact = ct;
+              renderSelected();
+              roleRow.style.display = '';
+              saveBtn.disabled = false;
             });
-            resultsEl.appendChild(item);
+            rEl.appendChild(item);
           });
-        }, 300);
+          // "+ Create new contact" entry — opens the CRM Contact modal
+          const createItem = document.createElement('div');
+          createItem.className = 'crm-search-item crm-search-item-create';
+          createItem.innerHTML = `<strong>+ Create new contact</strong><span class="crm-search-item-meta"> · enter full details</span>`;
+          createItem.addEventListener('click', () => {
+            // Ensure CRM markup is mounted so window.openContactModal works
+            const crmContainer = document.getElementById('crmViewContent');
+            if (crmContainer && !crmContainer.dataset.rendered && window.CRM?.renderCRMView) {
+              crmContainer.dataset.rendered = '1';
+              window.CRM.renderCRMView(crmContainer);
+            }
+            if (typeof window.openContactModal === 'function') {
+              window.openContactModal(null, async (createdId) => {
+                // Callback fires after the new contact is created. Re-fetch and select.
+                if (!createdId) return;
+                try {
+                  const ct = await apiGet({ id: createdId });
+                  _pickedContact = Array.isArray(ct) ? ct[0] : ct;
+                  if (_pickedContact) {
+                    renderSelected();
+                    roleRow.style.display = '';
+                    saveBtn.disabled = false;
+                  }
+                } catch (_) {}
+              });
+            } else {
+              alert('Contact modal unavailable — please refresh the page.');
+            }
+          });
+          rEl.appendChild(createItem);
+        }, 250);
       });
-    }
+    };
+    wireSearch();
 
-    formEl.querySelector('.crm-save-btn').addEventListener('click', async () => {
-      const first = formEl.querySelector('.crm-first').value.trim();
-      if (!first) { formEl.querySelector('.crm-first').focus(); return; }
-      const data = {
-        first_name:      first,
-        last_name:       formEl.querySelector('.crm-last').value.trim(),
-        mobile:          formEl.querySelector('.crm-mobile').value.trim(),
-        email:           formEl.querySelector('.crm-email').value.trim(),
-        organisation_id: selectedOrgId,
-        domain_id:       prefill.domain_id || null,
-      };
+    saveBtn.addEventListener('click', async () => {
+      if (!_pickedContact) return;
       const role = formEl.querySelector('.crm-role').value;
-      if (isEdit) {
-        // Identity fields via PUT; role via link upsert (scoped to this property)
-        await apiPut({ id: prefill.id, ...data });
-        await apiPost({ action: 'link', contact_id: prefill.id, pipeline_id: pipelineId, role });
-      } else if (_pickedExistingId) {
-        // V77.1: user picked an existing contact via search. Identity fields are
-        // locked in this flow — master-record edits go via CRM > Contact, not
-        // here. We only create the entity_contacts link with the chosen role.
-        await apiPost({ action: 'link', contact_id: _pickedExistingId, pipeline_id: pipelineId, role });
-      } else {
-        const created = await apiPost(data);
-        await apiPost({ action: 'link', contact_id: created.id, pipeline_id: pipelineId, role });
+      if (!role) { alert('Pick a role.'); return; }
+      try {
+        await apiPost({ action: 'link', contact_id: _pickedContact.id, pipeline_id: pipelineId, role });
+      } catch (err) {
+        alert(err?.message || 'Save failed');
+        return;
       }
       hideForm();
       reload();
     });
-
     formEl.querySelector('.crm-cancel-btn').addEventListener('click', hideForm);
   }
 
@@ -980,8 +952,19 @@ function renderCRMView(container) {
   // V77.1: expose openContactModal globally so deal-modal flows can open a
   // contact's master-record CRM modal as a sub-overlay (e.g. "Edit contact
   // details" from inside the Add Contact form on a deal modal).
-  window.openContactModal = function (contactId) {
-    openModal(modal => renderContactDetail(modal, contactId, () => closeModal()));
+  // V77.2g — Accept optional callback. When called as openContactModal(id),
+  // opens for view/edit. When called as openContactModal(null, cb), opens the
+  // creation form; cb(newContactId) fires on save (used by other UIs that need
+  // to immediately reuse the just-created contact).
+  window.openContactModal = function (contactId, onCreated) {
+    if (contactId) {
+      openModal(modal => renderContactDetail(modal, contactId, () => closeModal()));
+    } else {
+      openModal(modal => renderContactModal(modal, null, (created) => {
+        closeModal();
+        if (typeof onCreated === 'function' && created?.id) onCreated(created.id);
+      }));
+    }
   };
 
   // V75.5.2: Sync in-memory pipeline state + map pins + CRM caches after a
@@ -1155,12 +1138,14 @@ function renderCRMView(container) {
   async function renderContactDetail(modal, contactId, onDone) {
     modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
     try {
-      const [contactData, notes, props, allPipeline, me] = await Promise.all([
+      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles] = await Promise.all([
         apiGet({ id: contactId }),
         fetch(`/api/notes?by_contact=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
         apiGet({ pipeline_list: '1' }).catch(() => []),
         fetch('/api/auth/me').then(r => r.json()).catch(() => ({ authenticated: false })),
+        rolesForScope('property'),
+        rolesForScope('deal'),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
@@ -1288,7 +1273,7 @@ function renderCRMView(container) {
                   <div class="crm-prop-row" data-entity-type="property" data-entity-id="${p.entity_id}">
                     <a href="#" class="crm-prop-open" data-property-id="${p.entity_id}" title="Open property">${p.address || '—'}${p.suburb ? ", " + p.suburb : ""}</a>
                     <select class="crm-prop-role-sel kb-input" data-entity-type="property" data-entity-id="${p.entity_id}" style="font-size:11px;padding:2px 4px;width:auto">
-                      ${ROLES.map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
+                      ${propScopeRoles.map(r => `<option value="${r.value}" ${r.value === p.role ? "selected" : ""}>${r.label}</option>`).join("")}
                     </select>
                     <button class="crm-prop-unlink-btn" data-entity-type="property" data-entity-id="${p.entity_id}" title="Remove">✕</button>
                   </div>`).join("") : '<div class="crm-empty">No linked properties</div>'}
@@ -1300,7 +1285,7 @@ function renderCRMView(container) {
                     ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
                   </select>
                   <select class="kb-input crm-prop-role-new" style="font-size:12px">
-                    ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                    ${propScopeRoles.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-prop-link-save kb-add-offer-btn">Link</button>
                   <button class="crm-prop-link-cancel crm-cancel-btn">Cancel</button>
@@ -1322,7 +1307,7 @@ function renderCRMView(container) {
                     <span class="crm-deal-badge crm-deal-badge-workflow">${workflowLabels[d.workflow] || d.workflow || 'Acquisition'}</span>
                     <span class="crm-deal-badge crm-deal-badge-stage">${dealStageLabels[d.stage] || d.stage || '—'}</span>
                     <select class="crm-prop-role-sel kb-input" data-entity-type="deal" data-entity-id="${d.entity_id}" style="font-size:11px;padding:2px 4px;width:auto">
-                      ${ROLES.map(r => `<option value="${r.value}" ${r.value === d.role ? "selected" : ""}>${r.label}</option>`).join("")}
+                      ${dealScopeRoles.map(r => `<option value="${r.value}" ${r.value === d.role ? "selected" : ""}>${r.label}</option>`).join("")}
                     </select>
                     <button class="crm-prop-unlink-btn" data-entity-type="deal" data-entity-id="${d.entity_id}" title="Remove">✕</button>
                   </div>`).join("") : '<div class="crm-empty">No deals linked</div>'}
@@ -1334,7 +1319,7 @@ function renderCRMView(container) {
                     ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
                   </select>
                   <select class="kb-input crm-deal-role-new" style="font-size:12px">
-                    ${ROLES.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                    ${dealScopeRoles.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-deal-link-save kb-add-offer-btn">Link</button>
                   <button class="crm-deal-link-cancel crm-cancel-btn">Cancel</button>
@@ -1721,12 +1706,15 @@ function renderCRMView(container) {
         email:           modal.querySelector('.crm-email').value.trim(),
         organisation_id: selectedOrgId,
       };
+      let saved;
       if (isEdit) {
-        await apiPut({ id: prefill.id, ...data });
+        saved = await apiPut({ id: prefill.id, ...data });
       } else {
-        await apiPost(data);
+        saved = await apiPost(data);
       }
-      onDone();
+      // V77.2g — pass saved contact to onDone callback so callers can
+      // re-use the freshly-created/updated contact (e.g. inline link flows).
+      onDone(saved);
     });
 
     // Delete (edit only) — V76.7+ site-styled confirm modal

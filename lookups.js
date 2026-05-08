@@ -45,6 +45,14 @@
   let _sourcesCache           = null;
   let _interactionTypesCache  = null;
 
+  // V77.2g — TTL for roles cache. Roles change rarely (only via System
+  // Settings → Parameters), but other agents' edits don't push to this
+  // browser. A short TTL ensures changes propagate within ~1 minute without
+  // requiring a page reload. Manual edits in the same browser still call
+  // invalidateRoles() for instant refresh.
+  const ROLES_TTL_MS = 60_000;
+  let _rolesCachedAt = 0;
+
   // In-flight promises so concurrent calls share one fetch
   let _rolesPromise            = null;
   let _sourcesPromise          = null;
@@ -61,14 +69,22 @@
   // ── Roles ─────────────────────────────────────────────────────────────────
 
   async function getRoles(opts = {}) {
-    if (_rolesCache !== null) {
+    const stale = Date.now() - _rolesCachedAt > ROLES_TTL_MS;
+    if (_rolesCache !== null && !stale) {
       return opts.scope ? _rolesCache.filter(r => Array.isArray(r.scopes) && r.scopes.includes(opts.scope)) : _rolesCache;
     }
     if (!_rolesPromise) {
-      _rolesPromise = _fetchAndCache('/api/roles', rows => { _rolesCache = rows; })
+      _rolesPromise = _fetchAndCache('/api/roles', rows => {
+        _rolesCache = rows;
+        _rolesCachedAt = Date.now();
+      })
         .catch(err => { _rolesPromise = null; throw err; });
     }
-    await _rolesPromise;
+    try {
+      await _rolesPromise;
+    } finally {
+      _rolesPromise = null;  // allow next refresh
+    }
     return opts.scope ? _rolesCache.filter(r => Array.isArray(r.scopes) && r.scopes.includes(opts.scope)) : _rolesCache;
   }
 
@@ -105,6 +121,7 @@
 
   function invalidateRoles() {
     _rolesCache    = null;
+    _rolesCachedAt = 0;
     _rolesPromise  = null;
   }
 

@@ -652,8 +652,11 @@
           alert('This Enquiry deal has no linked Contacts. Add an enquirer Contact first.');
           return null;
         }
-        const enquirer = linked.find(c => c.role === 'enquirer' || c.role === 'applicant');
-        const c = enquirer || linked[0];
+        // V77.2g — Enquiry creation always links the enquirer first via Wave 2B
+        // (kanban-new-card flow). The contacts response is ordered by linked_at
+        // ASC, so the first entry is the enquirer. No hardcoded role filter
+        // needed — the data flow guarantees the ordering.
+        const c = linked[0];
         if (!c.email || !/^\S+@\S+\.\S+$/.test(c.email)) {
           alert(`Contact "${c.first_name || ''} ${c.last_name || ''}" has no valid email. Edit the Contact and try again.`);
           return null;
