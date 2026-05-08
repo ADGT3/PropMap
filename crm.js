@@ -678,7 +678,17 @@ async function renderContactsSection(pipelineId, agentData) {
       });
 
       // Edit opens form — Role dropdown is available there and saves per-property
-      row.querySelector('.crm-edit-btn').addEventListener('click', () => showForm(contact, contact.role));
+      row.querySelector('.crm-edit-btn').addEventListener('click', async () => {
+        try {
+          await showForm(contact, contact.role);
+        } catch (err) {
+          console.error('[crm] showForm (edit) failed:', err);
+          formEl.style.display = 'none';
+          formEl.innerHTML = '';
+          addBtn.style.display = '';
+          alert('Could not open the Edit form: ' + (err?.message || err));
+        }
+      });
       listEl.appendChild(row);
     });
   }
@@ -695,6 +705,8 @@ async function renderContactsSection(pipelineId, agentData) {
     formEl.style.display = 'block';
     addBtn.style.display = 'none';
     const isEdit = !!prefill.id;
+    // Local HTML-escape helper (no global esc available in this module).
+    const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
     // Resolve role list + a sensible default for the dropdown.
     const roleList = await rolesForScope(scope);
@@ -884,7 +896,18 @@ async function renderContactsSection(pipelineId, agentData) {
     addBtn.style.display = '';
   }
 
-  addBtn.addEventListener('click', () => showForm());
+  addBtn.addEventListener('click', async () => {
+    try {
+      await showForm();
+    } catch (err) {
+      console.error('[crm] showForm failed:', err);
+      // Restore button so the agent can retry
+      formEl.style.display = 'none';
+      formEl.innerHTML = '';
+      addBtn.style.display = '';
+      alert('Could not open the Add Contact form: ' + (err?.message || err));
+    }
+  });
 
   // Load contacts async — section renders immediately, contacts populate in background
   reload();
