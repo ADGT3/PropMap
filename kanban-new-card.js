@@ -740,7 +740,7 @@
           const typeLabel = state.interaction_type ? state.interaction_type.replace(/_/g, ' ') : 'enquiry';
           const summary = `New ${typeLabel} enquiry from ${state.contact.label} for "${state.listing.label}".`;
           const msg = (state.enquiry_message || '').trim();
-          const noteText = msg ? `${summary}\n\nEnquiry: ${msg}` : summary;
+          const noteText = msg ? `${summary}\nEnquiry:\n${msg}` : summary;
           const body = {
             entity_type:       'deal',
             entity_id:         String(dealId),
