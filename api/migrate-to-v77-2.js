@@ -126,6 +126,22 @@ async function execute(req, res) {
         created_by        INTEGER     REFERENCES contacts(id) ON DELETE SET NULL,
         created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
       )`;
+    // V77.2 idempotency fix — V77.1 created this table without `contact_id`.
+    // CREATE TABLE IF NOT EXISTS above is a no-op on existing tables, so we
+    // explicitly ALTER to add the column (and FK) when missing.
+    await sql`ALTER TABLE applicant_form_tokens ADD COLUMN IF NOT EXISTS contact_id INTEGER`;
+    await sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'applicant_form_tokens_contact_id_fkey'
+        ) THEN
+          ALTER TABLE applicant_form_tokens
+          ADD CONSTRAINT applicant_form_tokens_contact_id_fkey
+          FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE SET NULL;
+        END IF;
+      END $$`;
     // UNIQUE on (application_id, step) — only one valid token per offer per step.
     // Reissuing replaces the previous token (DELETE old, INSERT new in api/applicant-form-tokens.js).
     await sql`CREATE UNIQUE INDEX IF NOT EXISTS applicant_form_tokens_app_step_uq ON applicant_form_tokens (application_id, step)`;
