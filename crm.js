@@ -844,14 +844,16 @@ async function renderContactsSection(pipelineId, agentData) {
           createItem.className = 'crm-search-item crm-search-item-create';
           createItem.innerHTML = `<strong>+ Create new contact</strong><span class="crm-search-item-meta"> · enter full details</span>`;
           createItem.addEventListener('click', () => {
-            // Ensure CRM markup is mounted so window.openContactModal works
+            // Ensure renderCRMView has run so the standalone helper is
+            // registered on window. We don't show the CRM view — only need
+            // the function definitions to exist.
             const crmContainer = document.getElementById('crmViewContent');
             if (crmContainer && !crmContainer.dataset.rendered && window.CRM?.renderCRMView) {
               crmContainer.dataset.rendered = '1';
               window.CRM.renderCRMView(crmContainer);
             }
-            if (typeof window.openContactModal === 'function') {
-              window.openContactModal(null, async (createdId) => {
+            if (typeof window.openContactModalStandalone === 'function') {
+              window.openContactModalStandalone(null, async (createdId) => {
                 // Callback fires after the new contact is created. Re-fetch and select.
                 if (!createdId) return;
                 try {
@@ -987,6 +989,36 @@ function renderCRMView(container) {
         closeModal();
         if (typeof onCreated === 'function' && created?.id) onCreated(created.id);
       }));
+    }
+  };
+
+  // V77.2g+ — Body-mounted variant for callsites where the CRM view is hidden
+  // (e.g. kanban deal modals). The CRM-view-scoped openContactModal above
+  // shows its overlay inside #crmViewContent, which is itself a child of
+  // #crmView (display:none until the user navigates to CRM). When called
+  // from a deal modal in the kanban board, that overlay is rendered into a
+  // hidden parent and the modal never appears. This standalone variant
+  // attaches a fresh .crm-modal-overlay directly to <body>, independent of
+  // #crmView visibility, so the modal is always visible.
+  window.openContactModalStandalone = function (contactId, onCreated) {
+    const overlay = document.createElement('div');
+    overlay.className = 'crm-modal-overlay';
+    overlay.style.display = '';
+    const modal = document.createElement('div');
+    modal.className = 'crm-modal';
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const close = () => { overlay.remove(); };
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+
+    if (contactId) {
+      renderContactDetail(modal, contactId, close);
+    } else {
+      renderContactModal(modal, null, (created) => {
+        close();
+        if (typeof onCreated === 'function' && created?.id) onCreated(created.id);
+      });
     }
   };
 
