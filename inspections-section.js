@@ -388,12 +388,44 @@
       const resultsEl  = containerEl.querySelector('[data-role="att-results"]');
       let _searchTimer = null;
 
-      // Position the (fixed) results dropdown directly under the search input
+      // Position the (fixed) results dropdown directly under the search input,
+      // flipping above when there's not enough room below (search sits at the
+      // bottom of the attendees container, often near the viewport bottom).
       const positionResults = () => {
         const r = searchEl.getBoundingClientRect();
+        // Make the dropdown measurable without a visible flash. .is-open sets
+        // display:block; we briefly add it (and visibility:hidden) to read the
+        // rendered height of the populated content.
+        const hadOpen = resultsEl.classList.contains('is-open');
+        const prevVis = resultsEl.style.visibility;
+        if (!hadOpen) {
+          resultsEl.style.visibility = 'hidden';
+          resultsEl.classList.add('is-open');
+        }
+        const dropdownH = resultsEl.offsetHeight || 200;
+        if (!hadOpen) {
+          resultsEl.classList.remove('is-open');
+          resultsEl.style.visibility = prevVis;
+        }
+
+        const viewportH   = window.innerHeight;
+        const spaceBelow  = viewportH - r.bottom;
+        const spaceAbove  = r.top;
+        // Prefer below if there's room; otherwise flip above
+        const flipUp = (spaceBelow < dropdownH + 12) && (spaceAbove > spaceBelow);
+
         resultsEl.style.left  = r.left + 'px';
-        resultsEl.style.top   = (r.bottom + 2) + 'px';
         resultsEl.style.width = r.width + 'px';
+        if (flipUp) {
+          const top = Math.max(8, r.top - dropdownH - 2);
+          resultsEl.style.top    = top + 'px';
+          resultsEl.style.bottom = '';
+          resultsEl.style.maxHeight = (r.top - 12) + 'px';
+        } else {
+          resultsEl.style.top    = (r.bottom + 2) + 'px';
+          resultsEl.style.bottom = '';
+          resultsEl.style.maxHeight = Math.max(120, viewportH - r.bottom - 12) + 'px';
+        }
       };
       const openResults  = () => { positionResults(); resultsEl.classList.add('is-open'); };
       const closeResults = () => { resultsEl.classList.remove('is-open'); resultsEl.innerHTML = ''; };
@@ -420,27 +452,78 @@
             const contacts = await sr.json();
             const taken = new Set(attendees.map(a => a.contact_id));
             const available = contacts.filter(c => !taken.has(c.id));
-            resultsEl.innerHTML = available.slice(0, 20).map(c => {
+            // V77.3 — render available matches PLUS a "+ Create new contact"
+            // row at the bottom. Empty state is replaced by just the create row.
+            const matchesHtml = available.slice(0, 20).map(c => {
               const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || `Contact #${c.id}`;
               const detailParts = [c.email, c.mobile].filter(Boolean);
               const detailHtml = detailParts.length
                 ? `<div class="insp-att-result-meta">${esc(detailParts.join(' · '))}</div>`
                 : '';
               return `<div class="insp-att-result" data-contact-id="${c.id}" data-contact-name="${esc(name)}"><div class="insp-att-result-name">${esc(name)}</div>${detailHtml}</div>`;
-            }).join('') || '<div class="insp-att-result-empty">No matches</div>';
+            }).join('');
+            const noMatchesHtml = available.length
+              ? ''
+              : '<div class="insp-att-result-empty">No matches.</div>';
+            const createRowHtml = `
+              <div class="insp-att-result insp-att-result-create" data-role="att-create">
+                <div class="insp-att-result-name"><strong>+ Create new contact</strong></div>
+                <div class="insp-att-result-meta">Open the contact form to add their details</div>
+              </div>`;
+            resultsEl.innerHTML = matchesHtml + noMatchesHtml + createRowHtml;
             openResults();
             resultsEl.querySelectorAll('.insp-att-result').forEach(item => {
-              item.addEventListener('click', () => {
-                openCheckInDialog({
-                  contactId:    parseInt(item.getAttribute('data-contact-id'), 10),
-                  contactName:  item.getAttribute('data-contact-name'),
-                  inspection,
-                  dealId,
-                  onDone: () => { renderAttendances(containerEl, inspection, dealId); },
+              if (item.getAttribute('data-role') === 'att-create') {
+                item.addEventListener('click', () => {
+                  // Ensure CRM markup is mounted so the standalone helper exists.
+                  const crmContainer = document.getElementById('crmViewContent');
+                  if (crmContainer && !crmContainer.dataset.rendered && window.CRM?.renderCRMView) {
+                    crmContainer.dataset.rendered = '1';
+                    window.CRM.renderCRMView(crmContainer);
+                  }
+                  if (typeof window.openContactModalStandalone !== 'function') {
+                    alert('Contact modal unavailable — please refresh the page.');
+                    return;
+                  }
+                  searchEl.value = '';
+                  closeResults();
+                  window.openContactModalStandalone(null, async (createdId) => {
+                    if (!createdId) return;
+                    // Re-fetch the new contact's display name then jump straight
+                    // into the check-in dialog (no extra search step).
+                    try {
+                      const r = await fetch(`/api/contacts?id=${createdId}`);
+                      if (!r.ok) throw new Error(r.status);
+                      const data = await r.json();
+                      const ct = Array.isArray(data) ? data[0] : data;
+                      if (!ct) return;
+                      const name = [ct.first_name, ct.last_name].filter(Boolean).join(' ').trim() || `Contact #${ct.id}`;
+                      openCheckInDialog({
+                        contactId:   ct.id,
+                        contactName: name,
+                        inspection,
+                        dealId,
+                        onDone: () => { renderAttendances(containerEl, inspection, dealId); },
+                      });
+                    } catch (err) {
+                      console.warn('[insp] failed to fetch newly-created contact:', err);
+                      alert('Contact created. Search for them by name to register attendance.');
+                    }
+                  });
                 });
-                searchEl.value = '';
-                closeResults();
-              });
+              } else if (item.getAttribute('data-contact-id')) {
+                item.addEventListener('click', () => {
+                  openCheckInDialog({
+                    contactId:    parseInt(item.getAttribute('data-contact-id'), 10),
+                    contactName:  item.getAttribute('data-contact-name'),
+                    inspection,
+                    dealId,
+                    onDone: () => { renderAttendances(containerEl, inspection, dealId); },
+                  });
+                  searchEl.value = '';
+                  closeResults();
+                });
+              }
             });
           } catch (e) {
             console.warn('[insp] contact search failed', e);
