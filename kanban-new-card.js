@@ -59,6 +59,61 @@
     showToast._t = setTimeout(() => toast.classList.remove('v77-toast-visible'), 4000);
   }
 
+  // V77.3 — Append a "+ Create new contact" row to the contact search results.
+  // Tapping it opens the standalone contact modal (body-mounted so it works
+  // over the kanban deal modal on every device). On save, the newly-created
+  // contact is auto-selected as state.contact and the Create Card button is
+  // enabled — user can submit immediately without searching again.
+  //
+  // Used by both the Sales/Lease Enquiry contact pickers and (in future) any
+  // other contact-search-with-create flow.
+  function appendCreateNewContactRow(resultsEl, state, createBtn) {
+    const row = document.createElement('div');
+    row.className = 'knc-result knc-result-create';
+    row.innerHTML = `
+      <div class="knc-result-main"><strong>+ Create new contact</strong></div>
+      <div class="knc-result-sub">Open the contact form to add their details</div>
+    `;
+    row.addEventListener('click', () => {
+      // Make sure renderCRMView has run so the standalone helper is registered.
+      const crmContainer = document.getElementById('crmViewContent');
+      if (crmContainer && !crmContainer.dataset.rendered && window.CRM?.renderCRMView) {
+        crmContainer.dataset.rendered = '1';
+        window.CRM.renderCRMView(crmContainer);
+      }
+      if (typeof window.openContactModalStandalone !== 'function') {
+        alert('Contact modal unavailable — please refresh the page.');
+        return;
+      }
+      window.openContactModalStandalone(null, async (createdId) => {
+        if (!createdId) return;
+        try {
+          // Re-fetch to get the full contact record (with first_name/last_name/email/mobile)
+          const r = await fetch(`/api/contacts?id=${createdId}`);
+          if (!r.ok) throw new Error(r.status);
+          const data = await r.json();
+          const ct = Array.isArray(data) ? data[0] : data;
+          if (!ct) return;
+          const name = [ct.first_name, ct.last_name].filter(Boolean).join(' ').trim() || `Contact #${ct.id}`;
+          state.contact = { id: ct.id, label: name };
+          // Reflect selection in the results list — clear any prior selection,
+          // mark a synthetic selected row at the top so the user sees what's chosen.
+          resultsEl.innerHTML = `
+            <div class="knc-result knc-result-selected" data-id="${ct.id}">
+              <div class="knc-result-main">${esc(name)} <span style="color:var(--muted);font-weight:normal">(just created)</span></div>
+              ${ct.email || ct.mobile ? `<div class="knc-result-sub">${esc([ct.email, ct.mobile].filter(Boolean).join(' · '))}</div>` : ''}
+            </div>
+          `;
+          createBtn.disabled = false;
+        } catch (err) {
+          console.warn('[knc] failed to fetch newly-created contact:', err);
+          alert('Contact created but could not be auto-selected. Search for them by name.');
+        }
+      });
+    });
+    resultsEl.appendChild(row);
+  }
+
   // ── Attach button to toolbar ──────────────────────────────────────────────
 
   function attachToToolbar(toolbarEl, currentBoardId, onDealCreated) {
@@ -511,28 +566,33 @@
           const r = await fetch(`/api/contacts?search=${encodeURIComponent(q)}`);
           if (!r.ok) throw new Error(r.status);
           const contacts = await r.json();
+          // V77.3 — Always show the "+ Create new contact" row at the bottom
+          // of the results list. When there are no matches, the create row is
+          // the only entry; when there are matches, it sits below them.
           if (!contacts.length) {
-            emptyMsg.style.display = '';
-            return;
-          }
-          results.innerHTML = contacts.slice(0, 10).map(c => {
-            const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || `Contact #${c.id}`;
-            const meta = [c.email, c.mobile].filter(Boolean).join(' · ');
-            return `
-              <div class="knc-result" data-id="${c.id}" data-label="${esc(name)}">
-                <div class="knc-result-main">${esc(name)}</div>
-                ${meta ? `<div class="knc-result-sub">${esc(meta)}</div>` : ''}
-              </div>
-            `;
-          }).join('');
-          results.querySelectorAll('.knc-result').forEach(item => {
-            item.addEventListener('click', () => {
-              results.querySelectorAll('.knc-result').forEach(x => x.classList.remove('knc-result-selected'));
-              item.classList.add('knc-result-selected');
-              state.contact = { id: parseInt(item.getAttribute('data-id'), 10), label: item.getAttribute('data-label') };
-              createBtn.disabled = false;
+            emptyMsg.style.display = 'none';
+            results.innerHTML = '<div class="knc-result-empty" style="padding:8px 4px;color:var(--muted);font-size:12px">No matches.</div>';
+          } else {
+            results.innerHTML = contacts.slice(0, 10).map(c => {
+              const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || `Contact #${c.id}`;
+              const meta = [c.email, c.mobile].filter(Boolean).join(' · ');
+              return `
+                <div class="knc-result" data-id="${c.id}" data-label="${esc(name)}">
+                  <div class="knc-result-main">${esc(name)}</div>
+                  ${meta ? `<div class="knc-result-sub">${esc(meta)}</div>` : ''}
+                </div>
+              `;
+            }).join('');
+            results.querySelectorAll('.knc-result').forEach(item => {
+              item.addEventListener('click', () => {
+                results.querySelectorAll('.knc-result').forEach(x => x.classList.remove('knc-result-selected'));
+                item.classList.add('knc-result-selected');
+                state.contact = { id: parseInt(item.getAttribute('data-id'), 10), label: item.getAttribute('data-label') };
+                createBtn.disabled = false;
+              });
             });
-          });
+          }
+          appendCreateNewContactRow(results, state, createBtn);
         } catch (err) {
           console.warn('[knc] contact search failed', err);
         }
@@ -639,28 +699,33 @@
           const r = await fetch(`/api/contacts?search=${encodeURIComponent(q)}`);
           if (!r.ok) throw new Error(r.status);
           const contacts = await r.json();
+          // V77.3 — Always show the "+ Create new contact" row at the bottom
+          // of the results list. When there are no matches, the create row is
+          // the only entry; when there are matches, it sits below them.
           if (!contacts.length) {
-            emptyMsg.style.display = '';
-            return;
-          }
-          results.innerHTML = contacts.slice(0, 10).map(c => {
-            const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || `Contact #${c.id}`;
-            const meta = [c.email, c.mobile].filter(Boolean).join(' · ');
-            return `
-              <div class="knc-result" data-id="${c.id}" data-label="${esc(name)}">
-                <div class="knc-result-main">${esc(name)}</div>
-                ${meta ? `<div class="knc-result-sub">${esc(meta)}</div>` : ''}
-              </div>
-            `;
-          }).join('');
-          results.querySelectorAll('.knc-result').forEach(item => {
-            item.addEventListener('click', () => {
-              results.querySelectorAll('.knc-result').forEach(x => x.classList.remove('knc-result-selected'));
-              item.classList.add('knc-result-selected');
-              state.contact = { id: parseInt(item.getAttribute('data-id'), 10), label: item.getAttribute('data-label') };
-              createBtn.disabled = false;
+            emptyMsg.style.display = 'none';
+            results.innerHTML = '<div class="knc-result-empty" style="padding:8px 4px;color:var(--muted);font-size:12px">No matches.</div>';
+          } else {
+            results.innerHTML = contacts.slice(0, 10).map(c => {
+              const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || `Contact #${c.id}`;
+              const meta = [c.email, c.mobile].filter(Boolean).join(' · ');
+              return `
+                <div class="knc-result" data-id="${c.id}" data-label="${esc(name)}">
+                  <div class="knc-result-main">${esc(name)}</div>
+                  ${meta ? `<div class="knc-result-sub">${esc(meta)}</div>` : ''}
+                </div>
+              `;
+            }).join('');
+            results.querySelectorAll('.knc-result').forEach(item => {
+              item.addEventListener('click', () => {
+                results.querySelectorAll('.knc-result').forEach(x => x.classList.remove('knc-result-selected'));
+                item.classList.add('knc-result-selected');
+                state.contact = { id: parseInt(item.getAttribute('data-id'), 10), label: item.getAttribute('data-label') };
+                createBtn.disabled = false;
+              });
             });
-          });
+          }
+          appendCreateNewContactRow(results, state, createBtn);
         } catch (err) {
           console.warn('[knc] contact search failed', err);
         }
