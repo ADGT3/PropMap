@@ -1193,7 +1193,7 @@ function renderCRMView(container) {
   async function renderContactDetail(modal, contactId, onDone) {
     modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
     try {
-      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles] = await Promise.all([
+      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles, contactActions] = await Promise.all([
         apiGet({ id: contactId }),
         fetch(`/api/notes?by_contact=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
@@ -1201,9 +1201,16 @@ function renderCRMView(container) {
         fetch('/api/auth/me').then(r => r.json()).catch(() => ({ authenticated: false })),
         rolesForScope('property'),
         rolesForScope('deal'),
+        // V80 — actions where this contact is an assignee
+        fetch(`/api/actions?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
+
+      // Local HTML-escape helper for the V80 Action Requests section.
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch =>
+        ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])
+      );
 
       const viewerIsAdmin = !!(me && me.authenticated && me.user && me.user.isAdmin);
       const viewerId      = me && me.authenticated && me.user ? String(me.user.id) : '';
@@ -1357,6 +1364,51 @@ function renderCRMView(container) {
           </div>
 
           ${siteAccessHtml}
+
+          <!-- V80 — Pending Action Requests on this contact (joined via
+               action_assignees from check-in triggers, etc.). Read-only
+               summary; full details on the assignee's My Actions board. -->
+          <div class="crm-modal-section crm-section-collapsible" data-section="action-requests">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Action Requests <span class="crm-section-count">(${(contactActions || []).length})</span></span>
+            </div>
+            <div class="crm-section-body">
+              ${(() => {
+                if (!contactActions || !contactActions.length) {
+                  return '<div class="crm-empty">No outstanding action requests for this contact.</div>';
+                }
+                const statusBadge = (s) => {
+                  const map = {
+                    todo: ['ToDo',  '#64748b'],
+                    wip:  ['WIP',   '#2563eb'],
+                    due:  ['Due',   '#dc2626'],
+                    done: ['Done',  '#16a34a'],
+                    void: ['Void',  '#94a3b8'],
+                  };
+                  const [label, color] = map[s] || [s, '#94a3b8'];
+                  return `<span style="background:${color};color:white;padding:2px 8px;border-radius:9px;font-size:11px;font-weight:500">${label}</span>`;
+                };
+                const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-AU') : '';
+                return contactActions.map(a => {
+                  const assignees = (a.assignees || []).map(x => x.name).filter(Boolean).join(', ') || '(unassigned)';
+                  const due = a.due_date ? `Due ${fmtDate(a.due_date)}` : '';
+                  return `
+                    <div class="crm-action-request-row">
+                      <div class="crm-action-request-main">
+                        ${statusBadge(a.status)}
+                        <span class="crm-action-request-desc">${esc(a.description || '')}</span>
+                      </div>
+                      <div class="crm-action-request-meta">
+                        <span>Assigned to: ${esc(assignees)}</span>
+                        ${due ? `<span>${esc(due)}</span>` : ''}
+                        ${a.deal?.label ? `<span>🔗 ${esc(a.deal.label)}</span>` : ''}
+                      </div>
+                    </div>
+                  `;
+                }).join('');
+              })()}
+            </div>
+          </div>
 
           <div class="crm-modal-section crm-section-collapsible" data-section="linked-properties">
             <div class="crm-modal-section-title crm-section-header">

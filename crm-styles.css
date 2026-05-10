@@ -991,3 +991,29 @@
 .crm-mkt-yes   { background: rgba(46,160,67,0.12); color: #2ea043; }
 .crm-mkt-dns   { background: rgba(207,93,93,0.12); color: #cf5d5d; }
 .crm-mkt-none  { background: var(--surface2); color: var(--text); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V80 — Pending Action Requests section in contact detail view
+   ════════════════════════════════════════════════════════════════════════════ */
+.crm-action-request-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.crm-action-request-row:last-child { border-bottom: 0; }
+.crm-action-request-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.crm-action-request-desc {
+  font-size: 13px;
+  color: var(--text);
+}
+.crm-action-request-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}

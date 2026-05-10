@@ -2844,7 +2844,13 @@ function _buildActionCard(a) {
   card.draggable = true;
   card.dataset.id = a.id;
 
-  const assignee = a.assignee?.name || 'Unassigned';
+  // V80 — show ALL assignees, not just the first. Multiple agents may be
+  // assigned to the same Action; everyone sees the same row, drag-by-anyone
+  // changes the shared status, individual reorders within column are private.
+  const assignees = Array.isArray(a.assignees) && a.assignees.length
+    ? a.assignees.map(x => x.name).filter(Boolean)
+    : [a.assignee?.name].filter(Boolean);
+  const assigneeText = assignees.length ? assignees.join(', ') : 'Unassigned';
   const dealLabel = a.deal?.label ? `🔗 ${a.deal.label}` : '';
   const dueLabel  = a.due_date ? `📅 ${_formatDateShort(a.due_date)}` : '';
   const remLabel  = a.reminder_date ? `⏰ ${_formatDateShort(a.reminder_date)}` : '';
@@ -2852,7 +2858,7 @@ function _buildActionCard(a) {
   card.innerHTML = `
     <div class="kb-action-desc">${_escapeHtml(a.description)}</div>
     <div class="kb-action-meta">
-      <span class="kb-action-assignee">👤 ${_escapeHtml(assignee)}</span>
+      <span class="kb-action-assignee" title="${_escapeHtml(assigneeText)}">👤 ${_escapeHtml(assigneeText)}</span>
       ${dueLabel ? `<span class="kb-action-due ${_isOverdue(a) ? 'overdue' : ''}">${dueLabel}</span>` : ''}
     </div>
     ${(remLabel || dealLabel) ? `
@@ -3098,7 +3104,16 @@ async function openActionModal(id, defaults) {
 
   const isEdit = !!action;
   const contacts = await fetchContactsForAssignee();
-  const defaultAssignee = isEdit ? action.assignee_id : (defaults?.assignee_id || window._sessionUserId || null);
+  // V80 — actions can have multiple assignees. Edit dropdown only shows ONE
+  // assignee for now (the first); changing it via Edit replaces the full
+  // assignees set with just that single contact. To preserve multi-assignee
+  // wiring on edit (e.g. Listing Agent + Listing Admin both stay), avoid
+  // editing the assignee field — use the dropdown only when you want to
+  // narrow to one. Future enhancement: multi-pick UI here.
+  const firstAssignee = isEdit
+    ? (action.assignees?.[0]?.id || action.assignee?.id || null)
+    : null;
+  const defaultAssignee = isEdit ? firstAssignee : (defaults?.assignee_id || window._sessionUserId || null);
 
   // Build modal
   const wrap = document.createElement('div');
@@ -3320,7 +3335,11 @@ async function openActionModal(id, defaults) {
 
     const payload = {
       description:    desc,
-      assignee_id:    parseInt(assigneeSel, 10),
+      // V80 — server accepts assignee_ids array (multi-assignee model). For
+      // edit, sending a single-element array tells the server to replace any
+      // existing multi-assignee setup with just this one. POST also accepts
+      // the array. The legacy assignee_id is also still read by the server.
+      assignee_ids:   [parseInt(assigneeSel, 10)],
       effort_days:    parseSettlementDays(wrap.querySelector('#kbActionEffort').value) || null,
       duration_days:  parseSettlementDays(wrap.querySelector('#kbActionDuration').value) || null,
       due_date:       wrap.querySelector('#kbActionDue').value || null,
