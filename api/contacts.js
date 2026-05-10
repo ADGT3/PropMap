@@ -530,7 +530,13 @@ export default async function handler(req, res) {
           dob = null,
           current_address = null, current_address_suburb = null,
           current_address_state = null, current_address_postcode = null,
-          privacy_consent, marketing_email_consent, marketing_sms_consent, do_not_contact,
+          // V79 — `privacy_consent` removed (column dropped in v79 migration).
+          // `do_not_contact` renamed to `do_not_send_marketing` (more accurate label).
+          // New `marketing_pref_set_at` is set whenever the caller signals an
+          // explicit preference was recorded (true on any of marketing_email_consent,
+          // marketing_sms_consent, or do_not_send_marketing).
+          marketing_email_consent, marketing_sms_consent, do_not_send_marketing,
+          marketing_pref_set,
         } = body;
         if (!first_name?.trim()) return res.status(400).json({ error: 'first_name required' });
 
@@ -539,10 +545,14 @@ export default async function handler(req, res) {
           if (input === true) return new Date().toISOString();
           return null; // false/'revoke'/null/anything else → no timestamp
         };
-        const privacyAt   = consentField(privacy_consent);
-        const emailMktAt  = consentField(marketing_email_consent);
-        const smsMktAt    = consentField(marketing_sms_consent);
-        const doNotCtcAt  = consentField(do_not_contact);
+        const emailMktAt   = consentField(marketing_email_consent);
+        const smsMktAt     = consentField(marketing_sms_consent);
+        const doNotSendAt  = consentField(do_not_send_marketing);
+        // marketing_pref_set_at: explicit if caller passed marketing_pref_set:true,
+        // else infer from any preference being set
+        const prefSetExplicit = marketing_pref_set === true;
+        const prefImplied     = !!(emailMktAt || smsMktAt || doNotSendAt);
+        const prefSetAt       = (prefSetExplicit || prefImplied) ? new Date().toISOString() : null;
 
         const rows = await sql`
           INSERT INTO contacts (
@@ -550,14 +560,14 @@ export default async function handler(req, res) {
             domain_id,
             dob, current_address, current_address_suburb,
             current_address_state, current_address_postcode,
-            privacy_consent_at, marketing_email_consent_at,
-            marketing_sms_consent_at, do_not_contact_at
+            marketing_email_consent_at, marketing_sms_consent_at,
+            do_not_send_marketing_at, marketing_pref_set_at
           ) VALUES (
             ${first_name.trim()}, ${last_name.trim()}, ${mobile.trim()}, ${email.trim()}, ${organisation_id},
             ${domain_id},
             ${dob}, ${current_address}, ${current_address_suburb},
             ${current_address_state}, ${current_address_postcode},
-            ${privacyAt}, ${emailMktAt}, ${smsMktAt}, ${doNotCtcAt}
+            ${emailMktAt}, ${smsMktAt}, ${doNotSendAt}, ${prefSetAt}
           )
           RETURNING *`;
         return res.status(201).json(rows[0]);
@@ -571,12 +581,21 @@ export default async function handler(req, res) {
           // V77.1 — new columns on contacts
           dob,
           current_address, current_address_suburb, current_address_state, current_address_postcode,
-          // Consent fields use a tri-state convention:
-          //   true        → stamp now() (user ticked the consent box)
-          //   false / 'revoke' → set to NULL (user un-ticked / revoked)
-          //   undefined   → leave column untouched
-          // Frontend sends the boolean; backend converts to timestamp.
-          privacy_consent, marketing_email_consent, marketing_sms_consent, do_not_contact,
+          // V79 consent fields. Two acceptable input shapes:
+          //   1. Boolean tri-state (legacy form):
+          //        true        → stamp now() (user ticked the consent box)
+          //        false       → set to NULL  (user un-ticked / revoked)
+          //        undefined   → leave column untouched
+          //   2. ISO timestamp string or null (new V79 forms — attendee
+          //      registration + agent modal):
+          //        "2026-05-09T01:23:45.000Z" → write that timestamp
+          //        null                       → set to NULL
+          //        undefined                  → leave column untouched
+          // Both shapes accepted on the same field for backward compat.
+          marketing_email_consent_at, marketing_sms_consent_at,
+          do_not_send_marketing_at, marketing_pref_set_at,
+          // Legacy boolean field aliases (still accepted from older callers)
+          marketing_email_consent, marketing_sms_consent, do_not_send_marketing,
         } = req.body;
 
         // Update organisation
@@ -596,21 +615,28 @@ export default async function handler(req, res) {
 
         if (!id) return res.status(400).json({ error: 'id required' });
 
-        // V77.1 consent helper — translate tri-state boolean to timestamp value
-        // for SQL. Returns:
-        //   { touch: false, value: null }  if undefined (leave column alone)
-        //   { touch: true,  value: ISO    } if true  (stamp now)
-        //   { touch: true,  value: null   } if false/'revoke' (clear)
+        // V79 consent helper — handles BOTH boolean tri-state AND direct
+        // timestamp/null values. Returns { touch, value }:
+        //   { touch: false, value: null }   → undefined (leave column alone)
+        //   { touch: true,  value: ISO }    → true OR explicit ISO string
+        //   { touch: true,  value: null }   → false / 'revoke' / explicit null
         const consentField = (input) => {
           if (input === undefined) return { touch: false, value: null };
-          if (input === true) return { touch: true, value: new Date().toISOString() };
-          if (input === false || input === 'revoke' || input === null) return { touch: true, value: null };
+          if (input === true)  return { touch: true, value: new Date().toISOString() };
+          if (input === null)  return { touch: true, value: null };
+          if (input === false || input === 'revoke') return { touch: true, value: null };
+          // String → assume ISO timestamp
+          if (typeof input === 'string' && input.length) {
+            return { touch: true, value: input };
+          }
           return { touch: false, value: null };
         };
-        const cPrivacy   = consentField(privacy_consent);
-        const cEmailMkt  = consentField(marketing_email_consent);
-        const cSmsMkt    = consentField(marketing_sms_consent);
-        const cDoNotCtc  = consentField(do_not_contact);
+
+        // Prefer the explicit timestamp field if present, fall back to legacy boolean.
+        const cEmailMkt  = consentField(marketing_email_consent_at !== undefined ? marketing_email_consent_at : marketing_email_consent);
+        const cSmsMkt    = consentField(marketing_sms_consent_at   !== undefined ? marketing_sms_consent_at   : marketing_sms_consent);
+        const cDoNotSend = consentField(do_not_send_marketing_at   !== undefined ? do_not_send_marketing_at   : do_not_send_marketing);
+        const cPrefSet   = consentField(marketing_pref_set_at);
 
         // First: fetch current row so we can preserve untouched consent timestamps
         const cur = await sql`SELECT * FROM contacts WHERE id = ${parseInt(id)}`;
@@ -618,10 +644,10 @@ export default async function handler(req, res) {
         const c = cur[0];
 
         // Final consent values to write — touch ones get new value, untouched keep current
-        const nextPrivacy  = cPrivacy.touch  ? cPrivacy.value  : c.privacy_consent_at;
-        const nextEmailMkt = cEmailMkt.touch ? cEmailMkt.value : c.marketing_email_consent_at;
-        const nextSmsMkt   = cSmsMkt.touch   ? cSmsMkt.value   : c.marketing_sms_consent_at;
-        const nextDoNotCtc = cDoNotCtc.touch ? cDoNotCtc.value : c.do_not_contact_at;
+        const nextEmailMkt  = cEmailMkt.touch  ? cEmailMkt.value  : c.marketing_email_consent_at;
+        const nextSmsMkt    = cSmsMkt.touch    ? cSmsMkt.value    : c.marketing_sms_consent_at;
+        const nextDoNotSend = cDoNotSend.touch ? cDoNotSend.value : c.do_not_send_marketing_at;
+        const nextPrefSet   = cPrefSet.touch   ? cPrefSet.value   : c.marketing_pref_set_at;
 
         const rows = await sql`
           UPDATE contacts SET
@@ -636,10 +662,10 @@ export default async function handler(req, res) {
             current_address_suburb      = COALESCE(${current_address_suburb  ?? null}, current_address_suburb),
             current_address_state       = COALESCE(${current_address_state   ?? null}, current_address_state),
             current_address_postcode    = COALESCE(${current_address_postcode?? null}, current_address_postcode),
-            privacy_consent_at          = ${nextPrivacy},
             marketing_email_consent_at  = ${nextEmailMkt},
             marketing_sms_consent_at    = ${nextSmsMkt},
-            do_not_contact_at           = ${nextDoNotCtc},
+            do_not_send_marketing_at    = ${nextDoNotSend},
+            marketing_pref_set_at       = ${nextPrefSet},
             updated_at                  = now()
           WHERE id = ${parseInt(id)}
           RETURNING *`;

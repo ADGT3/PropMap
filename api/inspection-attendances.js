@@ -21,13 +21,16 @@
  *      in the actions table linked to the Enquiry deal. Action descriptions
  *      include the contact's name and the listing property's address.
  *
- *   4. CONTACT PREFERENCES — three OTHER tickboxes (privacy_consent,
- *      marketing_email_consent, marketing_sms_consent) write timestamps
- *      directly to the contacts table, NOT to attendance. These are the
- *      contact's own preferences — the attendance is just where they got
- *      asked. Per build plan §4.3.4, attendances and contact prefs are
- *      independent: undoing a contact preference doesn't change attendance,
- *      undoing attendance doesn't change contact preferences.
+ *   4. CONTACT PREFERENCES — V79: two channel tickboxes (marketing_email_consent,
+ *      marketing_sms_consent) write timestamps directly to the contacts
+ *      table, NOT to attendance. These are the contact's own preferences —
+ *      the attendance is just where they got asked. Per build plan §4.3.4,
+ *      attendances and contact prefs are independent: undoing a contact
+ *      preference doesn't change attendance, undoing attendance doesn't
+ *      change contact preferences. V79 removed the privacy_consent flag
+ *      (column dropped) — clearing prefs / setting do_not_send_marketing
+ *      now happens via PUT /api/contacts directly (which can both SET and
+ *      CLEAR; the attendance POST flow is set-only).
  *
  * Schema (inspection_attendances):
  *   id, scheduled_inspection_id, contact_id, enquiry_deal_id,
@@ -49,10 +52,10 @@
  *   POST   /api/inspection-attendances
  *           Body: {
  *             scheduled_inspection_id, contact_id,
- *             // The 6 tickboxes — booleans. The first 3 write to attendance + create Action;
- *             // the last 3 write to contact only.
+ *             // The 5 tickboxes — booleans. The first 3 write to attendance + create Action;
+ *             // the last 2 write to contact only (V79 — privacy_consent removed).
  *             trigger_followup?, trigger_offer_form?, trigger_contract?,
- *             contact_pref_privacy?, contact_pref_email_marketing?, contact_pref_sms_marketing?,
+ *             contact_pref_email_marketing?, contact_pref_sms_marketing?,
  *             notes?
  *           }
  *           Returns: { attendance, enquiry_deal_id, actions_created: [Action ids] }
@@ -270,26 +273,21 @@ async function createAutoAction({
 
 // ── Apply contact preferences to the contact row ──────────────────────────
 //
-// Sets the granular consent timestamps on the contacts table. Each is independent:
-// any combination can be set or left alone. true → timestamp now(); false → no change.
+// V79: simplified. The agent-side check-in modal now also has the new
+// "Marketing not yet set" / "Do not send Marketing" / "Email" / "SMS" model
+// (V79+), but for the purposes of the legacy inspection-attendances POST
+// flow we only ever SET marketing consents (never clear). Clearing is done
+// by the dedicated PUT to /api/contacts. So this helper just stamps the
+// channel timestamps when the corresponding flag is true. Also stamps
+// marketing_pref_set_at when any preference is recorded.
 async function applyContactPreferences(contactId, prefs) {
-  const updates = [];
-  if (prefs.privacy === true)         updates.push('privacy_consent_at = now()');
-  if (prefs.email_marketing === true) updates.push('marketing_email_consent_at = now()');
-  if (prefs.sms_marketing === true)   updates.push('marketing_sms_consent_at = now()');
-  if (!updates.length) return;
-  // Driver doesn't support dynamic column lists, so build branches by combination.
-  // 7 combinations (2^3 - 1, all-false case skipped above).
-  const p = prefs.privacy === true;
   const e = prefs.email_marketing === true;
-  const s = prefs.sms_marketing === true;
-  if      (p && e && s)  await sql`UPDATE contacts SET privacy_consent_at = now(), marketing_email_consent_at = now(), marketing_sms_consent_at = now() WHERE id = ${contactId}`;
-  else if (p && e)       await sql`UPDATE contacts SET privacy_consent_at = now(), marketing_email_consent_at = now() WHERE id = ${contactId}`;
-  else if (p && s)       await sql`UPDATE contacts SET privacy_consent_at = now(), marketing_sms_consent_at = now() WHERE id = ${contactId}`;
-  else if (e && s)       await sql`UPDATE contacts SET marketing_email_consent_at = now(), marketing_sms_consent_at = now() WHERE id = ${contactId}`;
-  else if (p)            await sql`UPDATE contacts SET privacy_consent_at = now() WHERE id = ${contactId}`;
-  else if (e)            await sql`UPDATE contacts SET marketing_email_consent_at = now() WHERE id = ${contactId}`;
-  else if (s)            await sql`UPDATE contacts SET marketing_sms_consent_at = now() WHERE id = ${contactId}`;
+  const s = prefs.sms_marketing   === true;
+  if (!e && !s) return;
+  // Driver doesn't compose embedded sql fragments — branch out per combo.
+  if      (e && s)  await sql`UPDATE contacts SET marketing_email_consent_at = now(), marketing_sms_consent_at = now(), marketing_pref_set_at = now() WHERE id = ${contactId}`;
+  else if (e)       await sql`UPDATE contacts SET marketing_email_consent_at = now(), marketing_pref_set_at = now() WHERE id = ${contactId}`;
+  else if (s)       await sql`UPDATE contacts SET marketing_sms_consent_at = now(), marketing_pref_set_at = now() WHERE id = ${contactId}`;
 }
 
 // ── Handler ────────────────────────────────────────────────────────────────
@@ -394,7 +392,10 @@ async function handlePost(req, res, session) {
   const {
     scheduled_inspection_id, contact_id,
     trigger_followup, trigger_offer_form, trigger_contract,
-    contact_pref_privacy, contact_pref_email_marketing, contact_pref_sms_marketing,
+    // V79: contact_pref_privacy removed (column dropped). Only marketing
+    // channel flags accepted now. Marketing pref clearing / DNS opt-out
+    // happens via PUT /api/contacts directly.
+    contact_pref_email_marketing, contact_pref_sms_marketing,
     notes,
   } = body;
 
@@ -522,7 +523,6 @@ async function handlePost(req, res, session) {
 
   // 5. Apply contact preferences (independent of attendance)
   await applyContactPreferences(parseInt(contact_id, 10), {
-    privacy:         contact_pref_privacy,
     email_marketing: contact_pref_email_marketing,
     sms_marketing:   contact_pref_sms_marketing,
   });
