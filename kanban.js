@@ -119,6 +119,80 @@ let _searchContactsCache = null;
 // Currently-applied search query (UI keeps it in sync via input event).
 let _searchQuery = '';
 
+// V80.4 — Per-user kanban sort preference. localStorage-backed.
+// Values: 'interest' (default) | 'created' | 'actions_due' | 'dd_risk'.
+const KANBAN_SORT_KEY = 'propmap.kanban.sortMode';
+const VALID_KANBAN_SORT_MODES = ['interest', 'created', 'actions_due', 'dd_risk'];
+function getKanbanSortMode() {
+  try {
+    const v = localStorage.getItem(KANBAN_SORT_KEY);
+    if (v && VALID_KANBAN_SORT_MODES.includes(v)) return v;
+  } catch (_) {}
+  return 'interest';
+}
+function setKanbanSortMode(mode) {
+  if (!VALID_KANBAN_SORT_MODES.includes(mode)) return;
+  try { localStorage.setItem(KANBAN_SORT_KEY, mode); } catch (_) {}
+}
+// Comparator factory — returns (entryA, entryB) → number.
+// `entry` shape from the stage loop: [dealId, pipelineItem]. Each item has:
+//   item.data.interest_level (0-100 or null)
+//   item.addedAt              (ms epoch — used as creation time + tiebreaker)
+//   item._earliestActionDue   (ISO date string for soonest due_date among
+//                              the deal's overdue/due-today actions, or null)
+//   item.dd                   ({ <ddItem>: { status: 'high'|'possible'|'low' } })
+function buildKanbanComparator(mode, ddItems) {
+  switch (mode) {
+    case 'created':
+      // Most recent first
+      return (a, b) => (b[1].addedAt || 0) - (a[1].addedAt || 0);
+    case 'actions_due':
+      // Most-overdue first; null (no due action) last.
+      return (a, b) => {
+        const da = a[1]._earliestActionDue;
+        const db = b[1]._earliestActionDue;
+        if (!da && !db) return (b[1].addedAt || 0) - (a[1].addedAt || 0);
+        if (!da) return 1;
+        if (!db) return -1;
+        return da < db ? -1 : da > db ? 1 : 0;
+      };
+    case 'dd_risk': {
+      // Per Q4 — low risk first (and unset/empty are also "low"), high last.
+      // Score: high=3, possible=2, low=1, none=0.
+      const score = (item) => {
+        const dd = item.dd || {};
+        let max = 0;
+        for (const k of ddItems) {
+          const s = dd[k.toLowerCase()]?.status;
+          if (s === 'high')     max = Math.max(max, 3);
+          else if (s === 'possible') max = Math.max(max, 2);
+          else if (s === 'low')      max = Math.max(max, 1);
+        }
+        return max;
+      };
+      return (a, b) => {
+        const sa = score(a[1]);
+        const sb = score(b[1]);
+        if (sa !== sb) return sa - sb;
+        return (b[1].addedAt || 0) - (a[1].addedAt || 0);
+      };
+    }
+    case 'interest':
+    default:
+      // High first; UNSET sorts to the TOP (per Q5=b — demand attention)
+      return (a, b) => {
+        const ia = a[1].data?.interest_level;
+        const ib = b[1].data?.interest_level;
+        const aSet = (ia != null);
+        const bSet = (ib != null);
+        if (!aSet && !bSet) return (b[1].addedAt || 0) - (a[1].addedAt || 0);
+        if (!aSet) return -1; // a is unset → a goes top
+        if (!bSet) return  1;
+        return ib - ia; // higher first
+      };
+  }
+}
+
 async function _ensureContactsCache() {
   if (_searchContactsCache) return _searchContactsCache;
   _searchContactsCache = {};
@@ -532,6 +606,9 @@ function dealRowToInternal(row) {
     _hasDueAction:      !!row.has_due_action,
     _dueActionCount:    Number(row.due_action_count || 0),
     _hasOverdueAction:  !!row.has_overdue_action,
+    // V80.4: earliest open action's due_date (ISO string), or null.
+    // Powers the "Actions due" kanban sort mode.
+    _earliestActionDue: row.earliest_action_due_date || null,
   };
 }
 
@@ -1449,6 +1526,21 @@ function _renderBoardSelectorBar() {
         }, 300);
       });
     }
+    // V80.4 — keep the sort select's DD-risk option visibility in sync as
+    // boards change. Other state (selected mode) is already correct in
+    // localStorage; just toggle the option visibility.
+    const sortSelFast = bar.querySelector('#kanbanSortSelect');
+    if (sortSelFast) {
+      const ddOptFast = sortSelFast.querySelector('option[value="dd_risk"]');
+      if (ddOptFast) {
+        const isAcquisition = currentBoardId === 'sys_acquisition';
+        ddOptFast.hidden = !isAcquisition;
+        if (!isAcquisition && sortSelFast.value === 'dd_risk') {
+          sortSelFast.value = 'interest';
+          setKanbanSortMode('interest');
+        }
+      }
+    }
     return;
   }
 
@@ -1472,6 +1564,13 @@ function _renderBoardSelectorBar() {
     <button class="kb-toolbar-btn kb-toolbar-btn-danger" id="kanbanDeleteBoardBtn" ${canDeleteCurrent ? '' : 'disabled'} title="${canDeleteCurrent ? 'Delete this board' : 'You cannot delete this board'}">Delete Board</button>
     <input type="search" class="kb-search-input" id="kanbanSearchInput" placeholder="Search… (e.g. contact=anthony AND suburb=rossmore)" title="Boolean search: AND, OR, NOT, parens. Fields: address, suburb, state, stage, contact, agent, beds, baths, price… or just type a word for free-text search."
            value="${(_searchQuery || '').replace(/"/g,'&quot;')}">
+    <span class="kb-sort-label">Sort By</span>
+    <select class="kb-sort-select" id="kanbanSortSelect" title="Sort cards within each column">
+      <option value="interest">Interest level</option>
+      <option value="created">Date created</option>
+      <option value="actions_due">Actions due</option>
+      <option value="dd_risk">DD risk (low first)</option>
+    </select>
   `;
 
   // Set selected AFTER options are in the DOM
@@ -1530,6 +1629,31 @@ function _renderBoardSelectorBar() {
       renderBoard();
     }, 250);
   });
+
+  // V80.4 — Wire the sort-order select. Persists the chosen mode in
+  // localStorage; same key is used across all deal boards (per Q2=a).
+  const sortSel = bar.querySelector('#kanbanSortSelect');
+  if (sortSel) {
+    sortSel.value = getKanbanSortMode();
+    sortSel.addEventListener('change', (e) => {
+      setKanbanSortMode(e.target.value);
+      renderBoard();
+    });
+    // DD risk option only makes sense on Acquisition (other boards don't
+    // populate dd state). Hide it elsewhere.
+    const ddOption = sortSel.querySelector('option[value="dd_risk"]');
+    if (ddOption) {
+      const isAcquisition = currentBoardId === 'sys_acquisition';
+      ddOption.hidden = !isAcquisition;
+      // If user previously had dd_risk selected and switches to a non-Acq
+      // board, fall back to the default (interest) so they don't see a
+      // hidden value selected.
+      if (!isAcquisition && sortSel.value === 'dd_risk') {
+        sortSel.value = 'interest';
+        setKanbanSortMode('interest');
+      }
+    }
+  }
 
   // V77.1: attach the "+ New Card" button (only visible on V77.1 system boards).
   if (window.KanbanNewCard) {
@@ -2327,7 +2451,7 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
   const ddHigh   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
   const ddPoss   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
   const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
-  const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
+  // V80.3 — Terms badge removed (no longer surfaced on cards).
 
   const stageOptions = stages.map(s =>
     `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
@@ -2339,6 +2463,15 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
   const isLeaseListing = (boardId || item._boardId || currentBoardId) === 'sys_lease_listings';
   const headline = isLeaseListing ? formatKbRent(terms) : formatKbPrice(p.price, terms.price);
 
+  // V80.2 — Interest level badge: shown on every card type now (was Enquiry-only).
+  // Format: "{MoSCoW} {score}" — e.g. "Wont 5", "Could 35", "Should 60", "Must 90".
+  const interestLevel = (item.data?.interest_level != null)
+    ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
+    : null;
+  const interestBadgeHtml = (interestLevel != null)
+    ? `<span class="kb-ind kb-ind-interest kb-ind-interest-${moscowBand(interestLevel)}" title="Interest level (0–100)">${moscowLabel(interestLevel)} ${interestLevel}</span>`
+    : '';
+
   card.innerHTML = `
     <div class="kb-card-top">
       <span class="kb-card-type">${p.type || ''}</span>
@@ -2349,7 +2482,7 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
     <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
     <select class="kb-stage-select">${stageOptions}</select>
     <div class="kb-card-indicators">
-      ${hasTerms   ? `<span class="kb-ind kb-ind-terms" title="Vendor terms recorded">Terms</span>` : ''}
+      ${interestBadgeHtml}
       ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
       ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
       ${(Array.isArray(item.note) ? item.note.length : item.note) ? `<span class="kb-ind kb-ind-note" title="Has notes">Note</span>` : ''}
@@ -2357,6 +2490,27 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
     </div>
   `;
 }
+
+// V80.2 — MoSCoW band helpers. Thresholds match the slider's label positions
+// in the deal modal (labels at 0%, 25%, 50%, 75% of the track):
+//   0-24   → Won't  (low/no priority)
+//   25-49  → Could  (nice to have)
+//   50-74  → Should (important)
+//   75-100 → Must   (critical — and the 75-100 range gives a Must spectrum)
+// Used by both renderEnquiryCard and the non-Enquiry card render above.
+function moscowLabel(n) {
+  if (n >= 75) return 'Must';
+  if (n >= 50) return 'Should';
+  if (n >= 25) return 'Could';
+  return 'Wont';
+}
+function moscowBand(n) {
+  if (n >= 75) return 'must';
+  if (n >= 50) return 'should';
+  if (n >= 25) return 'could';
+  return 'wont';
+}
+
 
 function renderEnquiryCard(card, id, item, p, stages, boardId) {
   // V77.1 — Enquiry card layout. No "type/price headline" gold writing — we
@@ -2389,9 +2543,9 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
     if (meta.has_contract_requested)  badges.push(`<span class="kb-ind kb-ind-enq kb-ind-contract"  title="Contract requested">Contract</span>`);
     if (meta.latest_rent != null)     badges.push(`<span class="kb-ind kb-ind-enq kb-ind-rent" title="Latest offer price">$${Math.round(meta.latest_rent).toLocaleString('en-AU')}</span>`);
   }
-  // Interest level badge — only when set (not null)
+  // V80.2 — Interest level badge — only when set. Format: "{MoSCoW} {score}".
   if (interestLevel != null) {
-    badges.push(`<span class="kb-ind kb-ind-enq kb-ind-interest" title="Interest level (0–100)">Interest ${interestLevel}</span>`);
+    badges.push(`<span class="kb-ind kb-ind-enq kb-ind-interest kb-ind-interest-${moscowBand(interestLevel)}" title="Interest level (0–100)">${moscowLabel(interestLevel)} ${interestLevel}</span>`);
   }
   // Common across both Enquiry types
   if (item._dueActionCount > 0) {
@@ -2517,15 +2671,12 @@ function renderBoard() {
       return _searchMatches(id, v);
     });
 
-    // Sort: per-user column_order wins if present, else fall back to addedAt asc
-    entries.sort((a, b) => {
-      const oa = userDealOrder[a[0]];
-      const ob = userDealOrder[b[0]];
-      if (oa != null && ob != null) return oa - ob;
-      if (oa != null) return -1;
-      if (ob != null) return 1;
-      return (a[1].addedAt || 0) - (b[1].addedAt || 0);
-    });
+    // V80.4 — Sort by user-selected mode (default: interest level high→low).
+    // Replaces the legacy "manual drag-to-reorder" model: drag now only
+    // moves cards between columns, not within. This keeps card order
+    // deterministic and consistent across viewers.
+    const sortMode = getKanbanSortMode();
+    entries.sort(buildKanbanComparator(sortMode, DD_ITEMS));
 
     const col = document.createElement('div');
     col.className = 'kb-col';
@@ -2671,59 +2822,28 @@ function renderBoard() {
       if (!id || !pipeline[id]) return;
 
       const targetColumnId = stage.id;
-      const { idx: insertIdx } = computeInsertSpec(e);
       const sameColumn = (pipeline[id]._columnId || stageToColumnId(pipeline[id].stage)) === targetColumnId;
 
-      if (!sameColumn) {
-        // Cross-column: change column first (mutates pipeline + persists in bg)
-        moveToColumn(id, targetColumnId);
-      }
+      // V80.4 — Drop is now COLUMN-ONLY: drag-to-reorder within the same
+      // column has been removed (per Q6=b). The auto-sort (interest/created/
+      // actions_due/dd_risk) decides ordering within columns. A drop on the
+      // same column is silently ignored.
+      if (sameColumn) return;
 
-      // Build the new order for the target column, insert at idx
-      const colEntries = Object.entries(pipeline)
-        .filter(([, v]) => (v._columnId || stageToColumnId(v.stage)) === targetColumnId)
-        .sort((a, b) => {
-          const oa = userDealOrder[a[0]];
-          const ob = userDealOrder[b[0]];
-          if (oa != null && ob != null) return oa - ob;
-          if (oa != null) return -1;
-          if (ob != null) return 1;
-          return (a[1].addedAt || 0) - (b[1].addedAt || 0);
-        })
-        .map(([k]) => k);
+      // Cross-column: change the deal's column. moveToColumn handles
+      // pipeline mutation + background persistence. The next renderBoard
+      // (driven by the optimistic DOM update below) will place the card in
+      // the right spot under the active sort mode.
+      moveToColumn(id, targetColumnId);
 
-      // Remove the dragged id from colEntries (if present) and insert at insertIdx
-      const without = colEntries.filter(k => k !== id);
-      const finalIdx = Math.min(insertIdx, without.length);
-      without.splice(finalIdx, 0, id);
-
-      // Assign sequential column_order values
-      const orderUpdates = without.map((dealId, idx) => ({ deal_id: dealId, column_order: idx }));
-      // Update in-memory userDealOrder immediately so re-render reflects drop
-      orderUpdates.forEach(u => { userDealOrder[u.deal_id] = u.column_order; });
-
-      // ── Optimistic DOM update ───────────────────────────────────────────
-      // Move the dragged card into its new position immediately. For cross-
-      // column moves we also need to relocate the card to the target column.
+      // Optimistic DOM update — append the dragged card to the new column.
+      // Its precise position will be corrected on next renderBoard.
       const draggedCard = document.querySelector(`.kb-card[data-id="${id}"]`);
       if (draggedCard) {
-        const siblings = [...cardsEl.querySelectorAll('.kb-card:not(.dragging)')]
-          .filter(c => c !== draggedCard);
-        const refCard = siblings[finalIdx] || null;
-        if (refCard) cardsEl.insertBefore(draggedCard, refCard);
-        else         cardsEl.appendChild(draggedCard);
-        // Refresh card content in case stage indicator etc. changed (cross-column)
-        if (!sameColumn) refreshCardLive(id);
+        cardsEl.appendChild(draggedCard);
+        refreshCardLive(id);
       }
-      // Update the column counts in the headers without rebuilding everything
       _updateColumnCounts();
-
-      // ── Persist per-user ordering in background (don't block UI) ────────
-      fetch('/api/deal-order', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ board_id: currentBoardId, order: orderUpdates }),
-      }).catch(err => console.warn('[deal-order] save failed', err.message));
     });
 
     board.appendChild(col);
@@ -2844,7 +2964,13 @@ function _buildActionCard(a) {
   card.draggable = true;
   card.dataset.id = a.id;
 
-  const assignee = a.assignee?.name || 'Unassigned';
+  // V80 — show ALL assignees, not just the first. Multiple agents may be
+  // assigned to the same Action; everyone sees the same row, drag-by-anyone
+  // changes the shared status, individual reorders within column are private.
+  const assignees = Array.isArray(a.assignees) && a.assignees.length
+    ? a.assignees.map(x => x.name).filter(Boolean)
+    : [a.assignee?.name].filter(Boolean);
+  const assigneeText = assignees.length ? assignees.join(', ') : 'Unassigned';
   const dealLabel = a.deal?.label ? `🔗 ${a.deal.label}` : '';
   const dueLabel  = a.due_date ? `📅 ${_formatDateShort(a.due_date)}` : '';
   const remLabel  = a.reminder_date ? `⏰ ${_formatDateShort(a.reminder_date)}` : '';
@@ -2852,7 +2978,7 @@ function _buildActionCard(a) {
   card.innerHTML = `
     <div class="kb-action-desc">${_escapeHtml(a.description)}</div>
     <div class="kb-action-meta">
-      <span class="kb-action-assignee">👤 ${_escapeHtml(assignee)}</span>
+      <span class="kb-action-assignee" title="${_escapeHtml(assigneeText)}">👤 ${_escapeHtml(assigneeText)}</span>
       ${dueLabel ? `<span class="kb-action-due ${_isOverdue(a) ? 'overdue' : ''}">${dueLabel}</span>` : ''}
     </div>
     ${(remLabel || dealLabel) ? `
@@ -3098,7 +3224,16 @@ async function openActionModal(id, defaults) {
 
   const isEdit = !!action;
   const contacts = await fetchContactsForAssignee();
-  const defaultAssignee = isEdit ? action.assignee_id : (defaults?.assignee_id || window._sessionUserId || null);
+  // V80 — actions can have multiple assignees. Edit dropdown only shows ONE
+  // assignee for now (the first); changing it via Edit replaces the full
+  // assignees set with just that single contact. To preserve multi-assignee
+  // wiring on edit (e.g. Listing Agent + Listing Admin both stay), avoid
+  // editing the assignee field — use the dropdown only when you want to
+  // narrow to one. Future enhancement: multi-pick UI here.
+  const firstAssignee = isEdit
+    ? (action.assignees?.[0]?.id || action.assignee?.id || null)
+    : null;
+  const defaultAssignee = isEdit ? firstAssignee : (defaults?.assignee_id || window._sessionUserId || null);
 
   // Build modal
   const wrap = document.createElement('div');
@@ -3320,7 +3455,11 @@ async function openActionModal(id, defaults) {
 
     const payload = {
       description:    desc,
-      assignee_id:    parseInt(assigneeSel, 10),
+      // V80 — server accepts assignee_ids array (multi-assignee model). For
+      // edit, sending a single-element array tells the server to replace any
+      // existing multi-assignee setup with just this one. POST also accepts
+      // the array. The legacy assignee_id is also still read by the server.
+      assignee_ids:   [parseInt(assigneeSel, 10)],
       effort_days:    parseSettlementDays(wrap.querySelector('#kbActionEffort').value) || null,
       duration_days:  parseSettlementDays(wrap.querySelector('#kbActionDuration').value) || null,
       due_date:       wrap.querySelector('#kbActionDue').value || null,
@@ -3952,9 +4091,11 @@ ${rows.join('')}`;
     }
   }
 
-  // V77.1: Interest level slider — Enquiry boards only. Appears between Listing
-  // Summary and the deal Status. Persists data.interest_level via savePipeline().
-  if (dealBoardForSections === 'sys_sales_enquiry' || dealBoardForSections === 'sys_lease_enquiry') {
+  // V80.2 — Interest level slider — now ALL deal modals (was Enquiry-only).
+  // Field is data.interest_level (0-100, step 5). MoSCoW band labels
+  // (Won't / Could / Should / Must) sit under the track at 0/33/66/100% so
+  // the agent sees both the precise number AND the qualitative position.
+  {
     const interestMount = modal.querySelector('.v77-interest-mount');
     if (interestMount) {
       const initialLevel = (item.data?.interest_level != null)
@@ -3967,7 +4108,12 @@ ${rows.join('')}`;
             <input type="range" class="kb-modal-interest-slider" min="0" max="100" step="5" value="${initialLevel}">
             <span class="kb-modal-interest-value">${initialLevel}</span>
           </div>
-          <div class="kb-modal-interest-help">0 — low interest    ·    100 — very strong interest</div>
+          <div class="kb-interest-moscow">
+            <span class="kb-interest-moscow-label" style="left:0%">Won't</span>
+            <span class="kb-interest-moscow-label" style="left:25%">Could</span>
+            <span class="kb-interest-moscow-label" style="left:50%">Should</span>
+            <span class="kb-interest-moscow-label" style="left:75%">Must</span>
+          </div>
         </div>
       `;
       const slider = interestMount.querySelector('.kb-modal-interest-slider');
@@ -4078,6 +4224,26 @@ ${rows.join('')}`;
 
   const closeAndRefresh = async () => {
     if (!(await canCloseDealModal())) return;
+    // V80 — run any registered close-hooks (e.g. inspection trigger flush).
+    // Each hook returns truthy on success / falsy on failure. On any
+    // failure we abort the close so the user can resolve the error.
+    if (Array.isArray(window._dealModalCloseHooks) && window._dealModalCloseHooks.length) {
+      const hooks = window._dealModalCloseHooks.slice();
+      // Sequential — order matters less than reliability; one toast at a time
+      for (const hook of hooks) {
+        try {
+          const ok = await hook();
+          if (ok === false) return; // hook signalled "don't close"
+        } catch (err) {
+          console.warn('[deal-modal close-hook] failed', err);
+          // Hook errors don't block close — they're best-effort cleanup.
+        }
+      }
+      // Drop hooks that belong to this modal (they're tied to DOM elements
+      // that are about to be removed). Cleanest: clear the lot, since
+      // hooks should only ever exist while a modal is open.
+      window._dealModalCloseHooks = [];
+    }
     overlay.remove();
     if (kanbanVisible) renderBoard();
   };
@@ -4710,7 +4876,7 @@ function refreshCardIndicators(card, id) {
   const ddHigh  = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
   const ddPoss  = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
   const ddClass = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
-  const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
+  // V80.3 — Terms badge removed from cards.
 
   // Update price (Lease-aware — Lease Listings show rent, not "Price Unavailable").
   const priceEl = card.querySelector('.kb-card-price');
@@ -4727,7 +4893,6 @@ function refreshCardIndicators(card, id) {
   const cachedNotes = _notesCache.get(id);
   const noteCount = Array.isArray(cachedNotes) ? cachedNotes.length : 0;
   el.innerHTML = `
-    ${hasTerms    ? `<span class="kb-ind kb-ind-terms">Terms</span>` : ''}
     ${offers.length ? `<span class="kb-ind kb-ind-offers">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
     ${ddCount     ? `<span class="kb-ind kb-ind-dd ${ddClass}">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
     ${noteCount   ? `<span class="kb-ind kb-ind-note">${noteCount} Note${noteCount > 1 ? 's' : ''}</span>` : ''}

@@ -21,13 +21,16 @@
  *      in the actions table linked to the Enquiry deal. Action descriptions
  *      include the contact's name and the listing property's address.
  *
- *   4. CONTACT PREFERENCES — three OTHER tickboxes (privacy_consent,
- *      marketing_email_consent, marketing_sms_consent) write timestamps
- *      directly to the contacts table, NOT to attendance. These are the
- *      contact's own preferences — the attendance is just where they got
- *      asked. Per build plan §4.3.4, attendances and contact prefs are
- *      independent: undoing a contact preference doesn't change attendance,
- *      undoing attendance doesn't change contact preferences.
+ *   4. CONTACT PREFERENCES — V79: two channel tickboxes (marketing_email_consent,
+ *      marketing_sms_consent) write timestamps directly to the contacts
+ *      table, NOT to attendance. These are the contact's own preferences —
+ *      the attendance is just where they got asked. Per build plan §4.3.4,
+ *      attendances and contact prefs are independent: undoing a contact
+ *      preference doesn't change attendance, undoing attendance doesn't
+ *      change contact preferences. V79 removed the privacy_consent flag
+ *      (column dropped) — clearing prefs / setting do_not_send_marketing
+ *      now happens via PUT /api/contacts directly (which can both SET and
+ *      CLEAR; the attendance POST flow is set-only).
  *
  * Schema (inspection_attendances):
  *   id, scheduled_inspection_id, contact_id, enquiry_deal_id,
@@ -49,10 +52,10 @@
  *   POST   /api/inspection-attendances
  *           Body: {
  *             scheduled_inspection_id, contact_id,
- *             // The 6 tickboxes — booleans. The first 3 write to attendance + create Action;
- *             // the last 3 write to contact only.
+ *             // The 5 tickboxes — booleans. The first 3 write to attendance + create Action;
+ *             // the last 2 write to contact only (V79 — privacy_consent removed).
  *             trigger_followup?, trigger_offer_form?, trigger_contract?,
- *             contact_pref_privacy?, contact_pref_email_marketing?, contact_pref_sms_marketing?,
+ *             contact_pref_email_marketing?, contact_pref_sms_marketing?,
  *             notes?
  *           }
  *           Returns: { attendance, enquiry_deal_id, actions_created: [Action ids] }
@@ -212,12 +215,14 @@ async function findOrCreateEnquiryDeal({
 // the role on a single deal (e.g. two listing agents collaborating); we
 // return them all so callers can fan out actions to each.
 //
-// Returns: array of contact_ids (possibly empty).
-async function resolveListingAgents(listingDealId) {
+// V80 — name reflects that this resolves any action-assignee role flagged for
+// the listing's board (Listing Agent, Listing Admin, or anything else admin
+// adds via System Settings → Parameters → Roles + role_boards). Returns a
+// distinct array of contact_ids holding such roles on the listing deal.
+async function resolveActionAssignees(listingDealId) {
   const dealRows = await sql`SELECT board_id FROM deals WHERE id = ${listingDealId} LIMIT 1`;
   const boardId = dealRows[0]?.board_id;
   if (!boardId) return [];
-  // Find all contacts on this deal whose role is flagged for this board.
   const rows = await sql`
     SELECT DISTINCT ec.contact_id
       FROM entity_contacts ec
@@ -229,67 +234,208 @@ async function resolveListingAgents(listingDealId) {
   return rows.map(r => r.contact_id);
 }
 
-// V76.x compat shim — returns the first listing agent id (or null) so older
-// call sites that expect a single value still work. New code should call
-// resolveListingAgents (plural).
-async function resolveListingAgent(listingDealId) {
-  const ids = await resolveListingAgents(listingDealId);
+// Legacy name — kept as alias so any internal callers don't break.
+const resolveListingAgents = resolveActionAssignees;
+const resolveListingAgent = async (listingDealId) => {
+  const ids = await resolveActionAssignees(listingDealId);
   return ids.length ? ids[0] : null;
-}
+};
 
 // ── Build Action description for each trigger type ────────────────────────
-function actionDescription(triggerType, contactName, propertyAddress) {
-  const who   = contactName       || 'enquirer';
-  const where = propertyAddress   || 'the listing';
+// V80.1 — descriptions are listing-level (collective across attendees), since
+// duplicate triggers on the same listing now reuse one action. Specific
+// requester names live on each contact's CRM Action Requests + the auto-note.
+function actionDescription(triggerType, propertyAddress) {
+  const where = propertyAddress || 'the listing';
   switch (triggerType) {
-    case 'followup':   return `Followup with ${who} — attended inspection at ${where}`;
-    case 'offer_form': return `Send offer form to ${who} — interested after inspection at ${where}`;
-    case 'contract':   return `Send contract to ${who} — wants to proceed after inspection at ${where}`;
-    default:           return `Action requested by ${who} at inspection of ${where}`;
+    case 'followup':   return `Follow-up with attendees — inspection at ${where}`;
+    case 'offer_form': return `Send offer form to attendees — inspection at ${where}`;
+    case 'contract':   return `Send contract to attendees — inspection at ${where}`;
+    default:           return `Action requested by attendees at inspection of ${where}`;
   }
 }
 
-// ── Create one auto-Action on an Enquiry deal ─────────────────────────────
+// ── Create or refresh an auto-Action (V80.1) ──────────────────────────────
 //
-// Returns: action id (integer) or null if no listing agent could be resolved
-// (we don't create assignee-less actions because actions.assignee_id is NOT NULL).
-// In that case the trigger timestamp is still recorded; agent can manually create
-// the action later.
+// Dedupe logic: at most ONE action per (listing_deal_id, trigger_type) in
+// 'todo' status. If one already exists, bump its due_date to today instead
+// of creating a duplicate. Done/void actions don't match — those are settled,
+// so a new ask creates a fresh action.
+//
+// Returns { action_id, action: 'created'|'bumped' } or null if no assignees.
 async function createAutoAction({
-  triggerType, enquiryDealId, listingAgentId, creatorId,
-  contactName, propertyAddress,
+  triggerType, listingDealId, assigneeIds, creatorId, propertyAddress,
 }) {
-  if (!listingAgentId) return null;
-  const description = actionDescription(triggerType, contactName, propertyAddress);
-  const rows = await sql`
-    INSERT INTO actions (description, assignee_id, creator_id, deal_id, status)
-    VALUES (${description}, ${listingAgentId}, ${creatorId}, ${enquiryDealId}, 'todo')
+  if (!assigneeIds || !assigneeIds.length) return null;
+  const description = actionDescription(triggerType, propertyAddress);
+  const today = new Date().toISOString().slice(0, 10);
+
+  // 1) Look for an existing todo action on this listing for this trigger.
+  // We match by (deal_id, status, description_prefix) since description is
+  // the only column that encodes the trigger semantic (no dedicated trigger
+  // column on actions table). The description prefixes are unique per
+  // trigger type so prefix-matching is reliable.
+  const prefixMap = {
+    followup:   'Follow-up with attendees',
+    offer_form: 'Send offer form to attendees',
+    contract:   'Send contract to attendees',
+  };
+  const prefix = prefixMap[triggerType] || '';
+  let existingId = null;
+  if (prefix) {
+    const matches = await sql`
+      SELECT id FROM actions
+       WHERE deal_id = ${String(listingDealId)}
+         AND status  = 'todo'
+         AND description LIKE ${prefix + '%'}
+       ORDER BY created_at DESC
+       LIMIT 1`;
+    existingId = matches[0]?.id || null;
+  }
+
+  if (existingId) {
+    // 2a) Found a todo match — bump due_date to today.
+    await sql`
+      UPDATE actions
+         SET due_date   = ${today},
+             updated_at = now()
+       WHERE id = ${existingId}`;
+    // Note: we deliberately don't touch the action's assignees here. The
+    // existing assignee set was decided when the action was created; if the
+    // listing's role-flagged contacts have changed since, the new ones can
+    // be added manually via the actions UI. This preserves the in-flight
+    // assignment state.
+    return { action_id: existingId, action: 'bumped' };
+  }
+
+  // 2b) No match — create a fresh action.
+  // V80.1.1 — leave due_date NULL on fresh creates so the action lands in
+  // the agent's ToDo column, not Due. due_date is only set by the bump path
+  // above when a SECOND+ tick on the same (listing, trigger) signals
+  // collective urgency.
+  const inserted = await sql`
+    INSERT INTO actions (description, creator_id, deal_id, status, due_date)
+    VALUES (${description}, ${creatorId}, ${String(listingDealId)}, 'todo', NULL)
     RETURNING id`;
-  return rows[0]?.id ?? null;
+  const actionId = inserted[0]?.id;
+  if (!actionId) return null;
+
+  // 3) Insert action_assignees rows for each assignee, placed on their
+  //    own My Actions board's todo column.
+  for (const aid of assigneeIds) {
+    const boardRow = await sql`
+      SELECT id FROM boards
+       WHERE owner_id = ${aid} AND board_type = 'action'
+       ORDER BY created_at ASC LIMIT 1`;
+    let colId = null;
+    if (boardRow.length) {
+      const colRow = await sql`
+        SELECT id FROM board_columns
+         WHERE board_id = ${boardRow[0].id} AND stage_slug = 'todo' LIMIT 1`;
+      colId = colRow[0]?.id || null;
+    }
+    const max = colId
+      ? await sql`SELECT COALESCE(MAX(column_order), -1) + 1 AS next
+                    FROM action_assignees
+                   WHERE column_id = ${colId} AND contact_id = ${aid}`
+      : [{ next: 0 }];
+    await sql`
+      INSERT INTO action_assignees (action_id, contact_id, column_id, column_order)
+      VALUES (${actionId}, ${aid}, ${colId}, ${max[0]?.next ?? 0})
+      ON CONFLICT (action_id, contact_id) DO NOTHING`;
+  }
+
+  return { action_id: actionId, action: 'created' };
+}
+
+// ── V80 — Auto-create a contact note recording the attendance ────────────
+//
+// Body format:
+//   Attended {Open Home/Private Inspection} — {address} on {DD-MM-YYYY at H:MMam/pm}.
+//   Requested: Follow-up, Offer.
+//
+// interaction_type='inspection_attendance' (seeded by v80 migration).
+// entity_type='contact', entity_id=contact_id so it appears in the CRM
+// contact card's notes feed.
+async function createAttendanceNote({ contactId, inspection, propertyLabel, triggers, creatorId }) {
+  try {
+    const dateStr = formatNoteDate(inspection.scheduled_date);
+    const timeStr = formatNoteTime(inspection.start_time, inspection.end_time);
+    const typeLabel = (inspection.inspection_type || 'inspection').replace(/_/g, ' ');
+    const requested = [];
+    if (triggers.followup)   requested.push('Follow-up');
+    if (triggers.offer_form) requested.push('Offer');
+    if (triggers.contract)   requested.push('Contract');
+
+    let body = `Attended ${typeLabel} — ${propertyLabel}`;
+    if (dateStr || timeStr) body += ' on ' + [dateStr, timeStr].filter(Boolean).join(' at ');
+    body += '.';
+    if (requested.length) body += `\nRequested: ${requested.join(', ')}.`;
+
+    // Resolve author name from the creator contact (best effort).
+    let authorName = null;
+    if (creatorId) {
+      const arows = await sql`SELECT first_name, last_name FROM contacts WHERE id = ${creatorId} LIMIT 1`;
+      if (arows.length) {
+        authorName = [arows[0].first_name, arows[0].last_name].filter(Boolean).join(' ').trim() || null;
+      }
+    }
+
+    await sql`
+      INSERT INTO notes (
+        entity_type, entity_id, note_text,
+        interaction_type, author_id, author_name
+      )
+      VALUES (
+        'contact', ${String(contactId)}, ${body},
+        'inspection_attendance', ${creatorId}, ${authorName}
+      )`;
+  } catch (err) {
+    // Don't fail the attendance registration if note creation goes sideways.
+    console.warn('[inspection-attendances] createAttendanceNote failed:', err);
+  }
+}
+
+function formatNoteDate(d) {
+  if (!d) return '';
+  const s = String(d).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+  const [y, m, da] = s.split('-');
+  return `${da}-${m}-${y}`;
+}
+
+function formatNoteTime(start, end) {
+  const fmt = (t) => {
+    if (!t) return '';
+    const [hh, mm] = String(t).split(':');
+    let h = parseInt(hh, 10);
+    const ampm = h >= 12 ? 'pm' : 'am';
+    h = h % 12; if (h === 0) h = 12;
+    return `${h}:${mm}${ampm}`;
+  };
+  const s = fmt(start);
+  const e = fmt(end);
+  if (!s) return '';
+  return e ? `${s}–${e}` : s;
 }
 
 // ── Apply contact preferences to the contact row ──────────────────────────
 //
-// Sets the granular consent timestamps on the contacts table. Each is independent:
-// any combination can be set or left alone. true → timestamp now(); false → no change.
+// V79: simplified. The agent-side check-in modal now also has the new
+// "Marketing not yet set" / "Do not send Marketing" / "Email" / "SMS" model
+// (V79+), but for the purposes of the legacy inspection-attendances POST
+// flow we only ever SET marketing consents (never clear). Clearing is done
+// by the dedicated PUT to /api/contacts. So this helper just stamps the
+// channel timestamps when the corresponding flag is true. Also stamps
+// marketing_pref_set_at when any preference is recorded.
 async function applyContactPreferences(contactId, prefs) {
-  const updates = [];
-  if (prefs.privacy === true)         updates.push('privacy_consent_at = now()');
-  if (prefs.email_marketing === true) updates.push('marketing_email_consent_at = now()');
-  if (prefs.sms_marketing === true)   updates.push('marketing_sms_consent_at = now()');
-  if (!updates.length) return;
-  // Driver doesn't support dynamic column lists, so build branches by combination.
-  // 7 combinations (2^3 - 1, all-false case skipped above).
-  const p = prefs.privacy === true;
   const e = prefs.email_marketing === true;
-  const s = prefs.sms_marketing === true;
-  if      (p && e && s)  await sql`UPDATE contacts SET privacy_consent_at = now(), marketing_email_consent_at = now(), marketing_sms_consent_at = now() WHERE id = ${contactId}`;
-  else if (p && e)       await sql`UPDATE contacts SET privacy_consent_at = now(), marketing_email_consent_at = now() WHERE id = ${contactId}`;
-  else if (p && s)       await sql`UPDATE contacts SET privacy_consent_at = now(), marketing_sms_consent_at = now() WHERE id = ${contactId}`;
-  else if (e && s)       await sql`UPDATE contacts SET marketing_email_consent_at = now(), marketing_sms_consent_at = now() WHERE id = ${contactId}`;
-  else if (p)            await sql`UPDATE contacts SET privacy_consent_at = now() WHERE id = ${contactId}`;
-  else if (e)            await sql`UPDATE contacts SET marketing_email_consent_at = now() WHERE id = ${contactId}`;
-  else if (s)            await sql`UPDATE contacts SET marketing_sms_consent_at = now() WHERE id = ${contactId}`;
+  const s = prefs.sms_marketing   === true;
+  if (!e && !s) return;
+  // Driver doesn't compose embedded sql fragments — branch out per combo.
+  if      (e && s)  await sql`UPDATE contacts SET marketing_email_consent_at = now(), marketing_sms_consent_at = now(), marketing_pref_set_at = now() WHERE id = ${contactId}`;
+  else if (e)       await sql`UPDATE contacts SET marketing_email_consent_at = now(), marketing_pref_set_at = now() WHERE id = ${contactId}`;
+  else if (s)       await sql`UPDATE contacts SET marketing_sms_consent_at = now(), marketing_pref_set_at = now() WHERE id = ${contactId}`;
 }
 
 // ── Handler ────────────────────────────────────────────────────────────────
@@ -394,7 +540,10 @@ async function handlePost(req, res, session) {
   const {
     scheduled_inspection_id, contact_id,
     trigger_followup, trigger_offer_form, trigger_contract,
-    contact_pref_privacy, contact_pref_email_marketing, contact_pref_sms_marketing,
+    // V79: contact_pref_privacy removed (column dropped). Only marketing
+    // channel flags accepted now. Marketing pref clearing / DNS opt-out
+    // happens via PUT /api/contacts directly.
+    contact_pref_email_marketing, contact_pref_sms_marketing,
     notes,
   } = body;
 
@@ -404,8 +553,12 @@ async function handlePost(req, res, session) {
 
   // Fetch parent inspection + its listing deal context — single round-trip
   const ctx = await sql`
-    SELECT si.id           AS si_id,
+    SELECT si.id              AS si_id,
            si.listing_deal_id,
+           si.scheduled_date,
+           si.start_time,
+           si.end_time,
+           si.inspection_type,
            d.board_id      AS listing_board_id,
            d.property_id,
            d.parcel_id,
@@ -497,40 +650,60 @@ async function handlePost(req, res, session) {
   }
 
   // 4. Auto-create Actions for any triggered tickboxes.
-  // V77.2g — assign to ALL contacts holding a Default Board Role for the
-  // listing deal's board (typically "listing_agent"). If multiple agents are
-  // listed on the deal, one Action per agent is created.
-  const listingAgentIds = await resolveListingAgents(c.listing_deal_id);
+  // V80 — one Action per trigger, with ALL assignees attached to the same
+  // action row via action_assignees. When one assignee marks it done,
+  // everyone sees it done — there's only one action.
+  const assigneeIds = await resolveActionAssignees(c.listing_deal_id);
   const actionsCreated = [];
-  // Helper to fan out a single trigger across all agents
-  const fanOut = async (triggerType) => {
-    for (const agentId of listingAgentIds) {
-      const aid = await createAutoAction({
-        triggerType,
-        enquiryDealId,
-        listingAgentId: agentId,
-        creatorId: createdBy,
-        contactName,
-        propertyAddress: propertyLabel,
-      });
-      if (aid) actionsCreated.push({ trigger: triggerType, action_id: aid, assignee_contact_id: agentId });
-    }
+  const fireTrigger = async (triggerType) => {
+    const result = await createAutoAction({
+      triggerType,
+      listingDealId:   c.listing_deal_id,
+      assigneeIds,
+      creatorId:       createdBy,
+      propertyAddress: propertyLabel,
+    });
+    if (result) actionsCreated.push({
+      trigger: triggerType,
+      action_id: result.action_id,
+      action: result.action, // 'created' or 'bumped'
+      assignee_contact_ids: assigneeIds,
+    });
   };
-  if (trigger_followup   === true) await fanOut('followup');
-  if (trigger_offer_form === true) await fanOut('offer_form');
-  if (trigger_contract   === true) await fanOut('contract');
+  if (trigger_followup   === true) await fireTrigger('followup');
+  if (trigger_offer_form === true) await fireTrigger('offer_form');
+  if (trigger_contract   === true) await fireTrigger('contract');
 
   // 5. Apply contact preferences (independent of attendance)
   await applyContactPreferences(parseInt(contact_id, 10), {
-    privacy:         contact_pref_privacy,
     email_marketing: contact_pref_email_marketing,
     sms_marketing:   contact_pref_sms_marketing,
+  });
+
+  // 6. V80 — Auto-create a Note on the contact recording attendance.
+  // Provides chronological history in the CRM contact card. Body summarises
+  // the inspection and any action requests they made.
+  await createAttendanceNote({
+    contactId:      parseInt(contact_id, 10),
+    inspection:     {
+      scheduled_date:  c.scheduled_date,
+      start_time:      c.start_time,
+      end_time:        c.end_time,
+      inspection_type: c.inspection_type,
+    },
+    propertyLabel,
+    triggers: {
+      followup:   trigger_followup   === true,
+      offer_form: trigger_offer_form === true,
+      contract:   trigger_contract   === true,
+    },
+    creatorId: createdBy,
   });
 
   return res.status(201).json({
     attendance:        attendanceRow,
     enquiry_deal_id:   enquiryDealId,
-    listing_agent_ids: listingAgentIds,
+    assignee_ids:      assigneeIds,
     actions_created:   actionsCreated,
   });
 }
@@ -598,28 +771,30 @@ async function handlePut(req, res, session) {
     WHERE id = ${attendanceId}
     RETURNING *`;
 
-  // Create Actions for any flags that just transitioned false→true
+  // Create or bump Actions for any flags that just transitioned false→true
   let actionsCreated = [];
   if (willTriggerNew.length) {
-    const listingAgentIds = await resolveListingAgents(cur.listing_deal_id);
-    const createdBy      = resolveCreator(session);
-    const contactName    = [cur.first_name, cur.last_name].filter(Boolean).join(' ').trim() || `Contact #${cur.contact_id}`;
-    const propertyLabel  = cur.property_address
+    const assigneeIds   = await resolveActionAssignees(cur.listing_deal_id);
+    const createdBy     = resolveCreator(session);
+    const propertyLabel = cur.property_address
       ? `${cur.property_address}${cur.property_suburb ? ', ' + cur.property_suburb : ''}`
       : (cur.parcel_name || 'the listing');
     for (const trig of willTriggerNew) {
-      // V77.2g — fan out to ALL listing agents on the deal, one Action each
-      for (const agentId of listingAgentIds) {
-        const aid = await createAutoAction({
-          triggerType: trig,
-          enquiryDealId:   cur.enquiry_deal_id,
-          listingAgentId:  agentId,
-          creatorId:       createdBy,
-          contactName,
-          propertyAddress: propertyLabel,
-        });
-        if (aid) actionsCreated.push({ trigger: trig, action_id: aid, assignee_contact_id: agentId });
-      }
+      // V80.1 — dedupe per (listing_deal_id, trigger_type) on todo. Existing
+      // todo match → bump due_date to today; no match → create fresh.
+      const result = await createAutoAction({
+        triggerType:     trig,
+        listingDealId:   cur.listing_deal_id,
+        assigneeIds,
+        creatorId:       createdBy,
+        propertyAddress: propertyLabel,
+      });
+      if (result) actionsCreated.push({
+        trigger: trig,
+        action_id: result.action_id,
+        action: result.action,
+        assignee_contact_ids: assigneeIds,
+      });
     }
   }
 

@@ -71,6 +71,9 @@ export default async function handler(req, res) {
           const dealIds = rows.map(r => r.id);
           const dueCounts = new Map();    // deal_id → broad count (badge)
           const overdueSet = new Set();   // deal_id → has narrow overdue (bar)
+          // V80.4 — per-deal earliest open action due_date (or null).
+          // Powers the "Actions due" sort mode in kanban.
+          const earliestDueByDeal = new Map();
           if (dealIds.length) {
             try {
               const dueRows = await sql`
@@ -95,6 +98,21 @@ export default async function handler(req, res) {
                    AND due_date IS NOT NULL
                    AND due_date <= CURRENT_DATE`;
               overdueRows.forEach(r => { if (r.deal_id) overdueSet.add(r.deal_id); });
+
+              // V80.4 — earliest non-terminal due_date per deal (any open
+              // action, even if not yet overdue — gives a forward-looking
+              // ordering. NULL due_dates are excluded — those have no
+              // schedule signal).
+              const earliestRows = await sql`
+                SELECT deal_id, MIN(due_date) AS earliest
+                  FROM actions
+                 WHERE deal_id = ANY(${dealIds})
+                   AND status NOT IN ('done','void')
+                   AND due_date IS NOT NULL
+                 GROUP BY deal_id`;
+              earliestRows.forEach(r => {
+                if (r.deal_id && r.earliest) earliestDueByDeal.set(r.deal_id, r.earliest);
+              });
             } catch (err) {
               // Actions table may not exist on an older DB — fail soft so
               // the deals list still loads.
@@ -107,6 +125,7 @@ export default async function handler(req, res) {
             due_action_count:   dueCounts.get(r.id) || 0,
             has_due_action:     dueCounts.has(r.id),
             has_overdue_action: overdueSet.has(r.id),
+            earliest_action_due_date: earliestDueByDeal.get(r.id) || null,
           }));
         }
 

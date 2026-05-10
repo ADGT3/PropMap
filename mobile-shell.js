@@ -340,13 +340,26 @@
 
       card.addEventListener('click', () => {
         close();
-        jumpToListingDeal(group.listing_deal_id, insp.id);
+        // V79 — Tapping a listing card on the Upcoming Inspections panel
+        // opens the attendee self-registration screen, not the listing's
+        // deal modal. The agent hands the device to attendees who self-
+        // register one at a time. The agent-side check-in dialog inside
+        // the listing modal remains unchanged for the agent's own use via
+        // the deal modal.
+        if (window.AttendeeRegistration?.open) {
+          window.AttendeeRegistration.open({ inspection: insp });
+        } else {
+          console.warn('[v79] AttendeeRegistration module not loaded');
+          alert('Registration form not loaded — please refresh the page.');
+        }
       });
       listEl.appendChild(card);
     });
   }
 
   async function jumpToListingDeal(dealId, inspectionId) {
+    // V79 — kept for any future caller that needs it, but no longer used by
+    // the Upcoming Inspections panel.
     // Make sure the deal is loaded into the kanban's in-memory pipeline before
     // opening its modal. openCardModal reads pipeline[dealId] and expects a
     // properly-shaped entry (with .property etc.) — so we delegate to

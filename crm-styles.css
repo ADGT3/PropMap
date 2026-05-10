@@ -343,7 +343,7 @@
   padding: 0 2px;
 }
 .crm-note-delete:hover { color: #c0392b; }
-.crm-note-text { color: #333; line-height: 1.4; }
+.crm-note-text { color: #333; line-height: 1.4; white-space: pre-wrap; }
 .crm-notes-btn {
   background: none;
   border: none;
@@ -976,3 +976,73 @@
   white-space: nowrap;
   vertical-align: baseline;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V79 — Marketing Preference status badge (read-only, in contact detail view)
+   ════════════════════════════════════════════════════════════════════════════ */
+.crm-mkt-status {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.crm-mkt-unset { background: var(--surface2); color: var(--muted); font-style: italic; }
+.crm-mkt-yes   { background: rgba(46,160,67,0.12); color: #2ea043; }
+.crm-mkt-dns   { background: rgba(207,93,93,0.12); color: #cf5d5d; }
+.crm-mkt-none  { background: var(--surface2); color: var(--text); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V80 — Pending Action Requests section in contact detail view
+   ════════════════════════════════════════════════════════════════════════════ */
+.crm-action-request-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.crm-action-request-row:last-child { border-bottom: 0; }
+.crm-action-request-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.crm-action-request-desc {
+  font-size: 13px;
+  color: var(--text);
+}
+.crm-action-request-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V80 — "Add Contact" picked-contact preview row.
+   Styled to match the saved-contact rows above it for visual consistency.
+   ════════════════════════════════════════════════════════════════════════════ */
+.crm-pick-selected {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+.crm-pick-selected .crm-contact-info { flex: 1; min-width: 0; }
+.crm-pick-clear-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: #64748b;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+.crm-pick-clear-btn:hover { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }

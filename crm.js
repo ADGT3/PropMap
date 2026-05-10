@@ -786,13 +786,20 @@ async function renderContactsSection(pipelineId, agentData) {
     const saveBtn    = formEl.querySelector('.crm-save-btn');
 
     const renderSelected = () => {
+      // V80 — match the saved-contact-row styling so the picked-contact
+      // preview is visually consistent with the rest of the section
+      // (name in bold on its own line, meta details below in a smaller
+      // muted row, separated by · bullets).
       pickWrap.innerHTML = `
         <label class="kb-field-label">Contact</label>
         <div class="crm-pick-selected">
-          <div class="crm-pick-selected-info">
-            <strong>${esc(displayName(_pickedContact))}</strong>
-            ${_pickedContact.org_name ? `<span class="crm-pick-selected-meta"> · ${esc(_pickedContact.org_name)}</span>` : ''}
-            ${(_pickedContact.email || _pickedContact.mobile) ? `<span class="crm-pick-selected-meta"> · ${esc(_pickedContact.email || _pickedContact.mobile)}</span>` : ''}
+          <div class="crm-pick-selected-info crm-contact-info">
+            <div class="crm-contact-name">${esc(displayName(_pickedContact))}</div>
+            <div class="crm-contact-meta">
+              ${_pickedContact.org_name ? `<span>${esc(_pickedContact.org_name)}</span>` : ''}
+              ${_pickedContact.mobile ? `<a href="tel:${esc(_pickedContact.mobile)}" class="crm-link">${esc(_pickedContact.mobile)}</a>` : ''}
+              ${_pickedContact.email  ? `<a href="mailto:${esc(_pickedContact.email)}" class="crm-link">${esc(_pickedContact.email)}</a>` : ''}
+            </div>
           </div>
           <button class="crm-pick-clear-btn" type="button" title="Clear">✕</button>
         </div>`;
@@ -1193,7 +1200,7 @@ function renderCRMView(container) {
   async function renderContactDetail(modal, contactId, onDone) {
     modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
     try {
-      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles] = await Promise.all([
+      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles, contactActions] = await Promise.all([
         apiGet({ id: contactId }),
         fetch(`/api/notes?by_contact=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
@@ -1201,9 +1208,16 @@ function renderCRMView(container) {
         fetch('/api/auth/me').then(r => r.json()).catch(() => ({ authenticated: false })),
         rolesForScope('property'),
         rolesForScope('deal'),
+        // V80 — actions where this contact is an assignee
+        fetch(`/api/actions?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
+
+      // Local HTML-escape helper for the V80 Action Requests section.
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch =>
+        ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])
+      );
 
       const viewerIsAdmin = !!(me && me.authenticated && me.user && me.user.isAdmin);
       const viewerId      = me && me.authenticated && me.user ? String(me.user.id) : '';
@@ -1315,7 +1329,93 @@ function renderCRMView(container) {
             </div>
           </div>
 
+          <!-- V79 — Marketing preference status (read-only). Set via the
+               attendee registration form or the agent check-in modal. -->
+          <div class="crm-modal-section">
+            <div class="crm-modal-section-title">Marketing Preferences</div>
+            <div class="crm-detail-grid">
+              ${(() => {
+                const dns       = !!c.do_not_send_marketing_at;
+                const email     = !!c.marketing_email_consent_at;
+                const sms       = !!c.marketing_sms_consent_at;
+                const prefSetAt = c.marketing_pref_set_at;
+                let statusLabel, statusClass;
+                if (!prefSetAt) {
+                  statusLabel = 'Not yet confirmed';
+                  statusClass = 'crm-mkt-unset';
+                } else if (dns) {
+                  statusLabel = 'Do not send marketing';
+                  statusClass = 'crm-mkt-dns';
+                } else if (email && sms) {
+                  statusLabel = 'Email + SMS';
+                  statusClass = 'crm-mkt-yes';
+                } else if (email) {
+                  statusLabel = 'Email only';
+                  statusClass = 'crm-mkt-yes';
+                } else if (sms) {
+                  statusLabel = 'SMS only';
+                  statusClass = 'crm-mkt-yes';
+                } else {
+                  statusLabel = 'Asked, no marketing channels';
+                  statusClass = 'crm-mkt-none';
+                }
+                const lastSet = prefSetAt ? new Date(prefSetAt).toLocaleString() : '—';
+                return `
+                  <div class="crm-detail-label">Status</div>
+                  <div><span class="crm-mkt-status ${statusClass}">${statusLabel}</span></div>
+                  <div class="crm-detail-label">Last set</div>
+                  <div>${lastSet}</div>
+                `;
+              })()}
+            </div>
+          </div>
+
           ${siteAccessHtml}
+
+          <!-- V80 — Pending Action Requests on this contact (joined via
+               action_assignees from check-in triggers, etc.). Read-only
+               summary; full details on the assignee's My Actions board. -->
+          <div class="crm-modal-section crm-section-collapsible" data-section="action-requests">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Action Requests <span class="crm-section-count">(${(contactActions || []).length})</span></span>
+            </div>
+            <div class="crm-section-body">
+              ${(() => {
+                if (!contactActions || !contactActions.length) {
+                  return '<div class="crm-empty">No outstanding action requests for this contact.</div>';
+                }
+                const statusBadge = (s) => {
+                  const map = {
+                    todo: ['ToDo',  '#64748b'],
+                    wip:  ['WIP',   '#2563eb'],
+                    due:  ['Due',   '#dc2626'],
+                    done: ['Done',  '#16a34a'],
+                    void: ['Void',  '#94a3b8'],
+                  };
+                  const [label, color] = map[s] || [s, '#94a3b8'];
+                  return `<span style="background:${color};color:white;padding:2px 8px;border-radius:9px;font-size:11px;font-weight:500">${label}</span>`;
+                };
+                const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-AU') : '';
+                return contactActions.map(a => {
+                  const assignees = (a.assignees || []).map(x => x.name).filter(Boolean).join(', ') || '(unassigned)';
+                  const due = a.due_date ? `Due ${fmtDate(a.due_date)}` : '';
+                  return `
+                    <div class="crm-action-request-row">
+                      <div class="crm-action-request-main">
+                        ${statusBadge(a.status)}
+                        <span class="crm-action-request-desc">${esc(a.description || '')}</span>
+                      </div>
+                      <div class="crm-action-request-meta">
+                        <span>Assigned to: ${esc(assignees)}</span>
+                        ${due ? `<span>${esc(due)}</span>` : ''}
+                        ${a.deal?.label ? `<span>🔗 ${esc(a.deal.label)}</span>` : ''}
+                      </div>
+                    </div>
+                  `;
+                }).join('');
+              })()}
+            </div>
+          </div>
 
           <div class="crm-modal-section crm-section-collapsible" data-section="linked-properties">
             <div class="crm-modal-section-title crm-section-header">
