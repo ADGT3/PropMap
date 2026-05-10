@@ -228,7 +228,7 @@
         </div>
         <div class="areg-actions">
           <button class="areg-btn areg-btn-cancel" data-role="cancel" type="button">Cancel</button>
-          <button class="areg-btn areg-btn-save"   data-role="save"   type="button">Save</button>
+          <button class="areg-btn areg-btn-save"   data-role="save"   type="button">Register</button>
         </div>
       </div>
     `;
