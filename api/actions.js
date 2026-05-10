@@ -1,57 +1,42 @@
 /**
- * api/actions.js — V75.7
+ * api/actions.js — V80
  *
- * CRUD for Actions (tasks assigned to contacts, optionally linked to a deal).
+ * Multi-assignee Actions. An Action can have one or more assignees; the
+ * shared status lives on `actions`, while each assignee's column placement
+ * lives on `action_assignees(action_id, contact_id, column_id, column_order)`.
  *
- *   GET  /api/actions?assignee=me
- *        Lists actions for the current user's own "My Actions" board.
- *        Auto-bootstraps the board + 5 default columns on first access.
- *        Auto-promotes todo/wip rows whose due_date ≤ today to status='due'.
- *        Returns: { board: {..., columns:[...]}, actions: [...] }
+ * When any assignee drags the card to a new column on their board:
+ *   - That assignee's action_assignees.column_id + column_order update
+ *   - The action's shared status (derived from new column's stage_slug)
+ *     propagates to every other assignee, who on next refresh sees their
+ *     own card in their own board's matching-stage column
  *
- *   GET  /api/actions?count=due
- *        V76.4: lightweight count for the Pipeline header bell badge.
- *        V76.4.2: counts both "due" and "reminder due" rows for the current
- *        user. Specifically: rows where status NOT IN ('done','void') AND
- *        any of:
- *          - status = 'due', OR
- *          - due_date <= CURRENT_DATE, OR
- *          - reminder_date <= CURRENT_DATE
- *        Reminders do NOT auto-promote to the Due column (only due_date
- *        does — see promoteDueActions); they just count toward the badge.
- *        Returns: { count: N }
+ * When status changes via direct PATCH (not column drag), every assignee's
+ * column_id is realigned to their board's matching-stage column.
  *
- *   GET  /api/actions?deal_id=X
- *        Lists actions linked to a deal (regardless of assignee).
- *        Returns: [...actions]
- *
- *   GET  /api/actions?id=N
- *        Single action (joined with assignee/creator names + deal address).
+ *   GET  /api/actions?assignee=me                  → My Actions board for current user
+ *   GET  /api/actions?count=due                    → due count for current user (badge)
+ *   GET  /api/actions?deal_id=X                    → all actions linked to a deal
+ *   GET  /api/actions?contact_id=N                 → V80: actions where contact_id is an assignee
+ *   GET  /api/actions?id=N                         → single action with all assignees
  *
  *   POST /api/actions
- *        Body: {
- *          description, assignee_id, deal_id?,
- *          effort_value?, effort_unit?, duration_value?, duration_unit?,
- *          due_date?, reminder_date?, status? (default 'todo')
- *        }
- *        creator_id stamped from session.
- *        Places the action on the assignee's My Actions board, in the
- *        column matching status (creates the board if it doesn't exist yet).
+ *     Body: {
+ *       description (required),
+ *       assignee_ids: [N, M, ...]  (V80; array of contact ids),
+ *       OR assignee_id: N          (legacy; converted to single-element array),
+ *       deal_id?, effort_days?, duration_days?, due_date?, reminder_date?, status?
+ *     }
  *
  *   PATCH /api/actions?id=N
- *        Body: any subset of the POST fields, plus optional { column_id, column_order }
- *        When column_id changes, the action's `status` is derived from the
- *        column's stage_slug (todo/wip/due/done/void). This is how
- *        drag-and-drop persists.
+ *     Body: any subset of POST fields, plus:
+ *       column_id?    (interpreted as the dragger's own board column)
+ *       column_order? (interpreted as personalised order for the dragger)
+ *     If column_id is present, the dragger is the session user; we update
+ *     their action_assignees row + recalculate shared status from column slug.
+ *     If status is changed directly, every assignee's column_id is realigned.
  *
  *   DELETE /api/actions?id=N
- *
- * Due promotion (server-side):
- *   Performed lazily on every GET. No cron. Rows where status IN ('todo','wip')
- *   AND due_date <= CURRENT_DATE get:
- *     - status='due'
- *     - column_id = the assignee's board's 'due' column (if found)
- *   This means: client sees correct state immediately on load, DB converges.
  */
 
 import { neon } from '@neondatabase/serverless';
@@ -67,10 +52,10 @@ const DEFAULT_COLUMNS = [
   { stage_slug: 'done', name: 'Done', color: '#16a34a', show_on_map: false, is_terminal: true  },
   { stage_slug: 'void', name: 'Void', color: '#94a3b8', show_on_map: false, is_terminal: true  },
 ];
+const VALID_STATUSES = ['todo', 'wip', 'due', 'done', 'void'];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function resolveSessionUserId(session) {
-  // Mirrors notes.js / boards.js pattern. 'fallback' admin has no contacts row.
   if (!session) return null;
   const sub = session.sub;
   if (typeof sub === 'number') return sub;
@@ -79,14 +64,12 @@ function resolveSessionUserId(session) {
 }
 
 /**
- * Ensure the given user has a My Actions board. Creates it + 5 default
- * columns on first call, idempotent afterwards. Returns the board row
- * with its columns attached.
+ * Ensure the given user has a My Actions board. Creates board + 5 default
+ * columns on first call. Idempotent. Returns the board with columns attached.
  */
 async function ensureUserActionsBoard(userId) {
   if (!userId) throw new Error('ensureUserActionsBoard requires a real userId');
 
-  // Look for an existing action-type board owned by this user.
   const existing = await sql`
     SELECT * FROM boards
     WHERE owner_id = ${userId} AND board_type = 'action'
@@ -117,43 +100,6 @@ async function ensureUserActionsBoard(userId) {
   return { ...board, columns: cols };
 }
 
-/**
- * Server-side due promotion. For a given assignee, flips any todo/wip
- * action whose due_date is today-or-earlier to status='due', moving it
- * to the board's Due column. Returns the count of rows affected.
- */
-async function promoteDueActions(assigneeId, board) {
-  const dueCol = (board?.columns || []).find(c => c.stage_slug === 'due');
-  if (!dueCol) return 0;
-  // Single UPDATE; does nothing if no rows match.
-  const result = await sql`
-    UPDATE actions
-       SET status     = 'due',
-           column_id  = ${dueCol.id},
-           updated_at = now()
-     WHERE assignee_id = ${assigneeId}
-       AND status IN ('todo', 'wip')
-       AND due_date IS NOT NULL
-       AND due_date <= CURRENT_DATE
-     RETURNING id`;
-  return result.length;
-}
-
-/**
- * Derive status from the column the action is dropped into. Looks up the
- * column's stage_slug; falls back to 'todo' if it can't be resolved (e.g.
- * user has renamed columns but kept stage_slug).
- */
-async function deriveStatusFromColumn(columnId) {
-  if (!columnId) return null;
-  const rows = await sql`
-    SELECT stage_slug FROM board_columns WHERE id = ${columnId} LIMIT 1`;
-  if (!rows.length) return null;
-  const slug = rows[0].stage_slug;
-  if (['todo','wip','due','done','void'].includes(slug)) return slug;
-  return null; // unknown slug → leave status unchanged
-}
-
 async function getColumnForStatus(boardId, status) {
   const rows = await sql`
     SELECT * FROM board_columns
@@ -163,30 +109,155 @@ async function getColumnForStatus(boardId, status) {
 }
 
 /**
- * Enrich a set of action rows with assignee/creator/deal display info.
+ * Resolve column-id on a specific user's My Actions board for a given status.
+ * Helper used when realigning all assignees after a shared status change.
  */
-async function enrichActions(rows) {
+async function resolveColumnForUser(userId, status) {
+  const board = await ensureUserActionsBoard(userId);
+  const col = await getColumnForStatus(board.id, status);
+  return col?.id || null;
+}
+
+/**
+ * For each (action, this user) row matching due conditions, flip status to
+ * 'due' on actions table and align this user's column_id to their Due column.
+ * Returns count of rows promoted.
+ */
+async function promoteDueActions(userId, board) {
+  const dueCol = (board?.columns || []).find(c => c.stage_slug === 'due');
+  if (!dueCol) return 0;
+
+  // Find candidate action ids — for THIS user
+  const candidates = await sql`
+    SELECT a.id
+      FROM actions a
+      JOIN action_assignees aa ON aa.action_id = a.id
+     WHERE aa.contact_id = ${userId}
+       AND a.status IN ('todo', 'wip')
+       AND a.due_date IS NOT NULL
+       AND a.due_date <= CURRENT_DATE`;
+  if (!candidates.length) return 0;
+
+  const ids = candidates.map(r => r.id);
+
+  // 1) Update shared status on those actions (lazy: only those due for ME
+  //    actually flip — other assignees see propagation on their own next read)
+  await sql`UPDATE actions SET status = 'due', updated_at = now()
+            WHERE id = ANY(${ids})`;
+
+  // 2) Realign every assignee's column_id on these actions to their Due column.
+  //    Each assignee may be on a different board, so we have to resolve
+  //    per-assignee. Single-batch: fetch all (action_id, contact_id) pairs,
+  //    resolve their Due columns, update.
+  const pairs = await sql`
+    SELECT aa.action_id, aa.contact_id, b.id AS board_id
+      FROM action_assignees aa
+      JOIN boards b ON b.owner_id = aa.contact_id AND b.board_type = 'action'
+     WHERE aa.action_id = ANY(${ids})`;
+
+  const colCache = new Map(); // board_id → due_col_id
+  for (const p of pairs) {
+    let due = colCache.get(p.board_id);
+    if (due === undefined) {
+      const col = await sql`
+        SELECT id FROM board_columns
+         WHERE board_id = ${p.board_id} AND stage_slug = 'due' LIMIT 1`;
+      due = col[0]?.id || null;
+      colCache.set(p.board_id, due);
+    }
+    if (due) {
+      await sql`
+        UPDATE action_assignees
+           SET column_id = ${due}
+         WHERE action_id = ${p.action_id} AND contact_id = ${p.contact_id}`;
+    }
+  }
+
+  return ids.length;
+}
+
+async function deriveStatusFromColumn(columnId) {
+  if (!columnId) return null;
+  const rows = await sql`
+    SELECT stage_slug FROM board_columns WHERE id = ${columnId} LIMIT 1`;
+  if (!rows.length) return null;
+  const slug = rows[0].stage_slug;
+  return VALID_STATUSES.includes(slug) ? slug : null;
+}
+
+/**
+ * Realign every assignee's column_id on a given action to their board's
+ * column matching the new shared status. Called when status changes for
+ * any reason except a single user's drag (which already updates that user's
+ * column_id directly).
+ */
+async function realignAllAssigneesToStatus(actionId, status) {
+  if (!VALID_STATUSES.includes(status)) return;
+  const pairs = await sql`
+    SELECT aa.contact_id, b.id AS board_id
+      FROM action_assignees aa
+      JOIN boards b ON b.owner_id = aa.contact_id AND b.board_type = 'action'
+     WHERE aa.action_id = ${actionId}`;
+  for (const p of pairs) {
+    const col = await sql`
+      SELECT id FROM board_columns
+       WHERE board_id = ${p.board_id} AND stage_slug = ${status} LIMIT 1`;
+    const colId = col[0]?.id || null;
+    await sql`
+      UPDATE action_assignees
+         SET column_id = ${colId}
+       WHERE action_id = ${actionId} AND contact_id = ${p.contact_id}`;
+  }
+}
+
+/**
+ * Enrich rows with assignees array, creator info, deal info, plus per-viewer
+ * column placement. The viewer is `viewerId`; if they're an assignee, we
+ * include their column_id + column_order at the row level for backward
+ * compatibility with kanban renderers.
+ */
+async function enrichActions(rows, viewerId = null) {
   if (!rows.length) return rows;
 
-  const assigneeIds = [...new Set(rows.map(r => r.assignee_id).filter(Boolean))];
-  const creatorIds  = [...new Set(rows.map(r => r.creator_id).filter(Boolean))];
-  const dealIds     = [...new Set(rows.map(r => r.deal_id).filter(Boolean))];
+  const actionIds  = rows.map(r => r.id);
+  const creatorIds = [...new Set(rows.map(r => r.creator_id).filter(Boolean))];
+  const dealIds    = [...new Set(rows.map(r => r.deal_id).filter(Boolean))];
 
-  const contactIds = [...new Set([...assigneeIds, ...creatorIds])];
+  // Fetch all assignees for these actions
+  const assigneeRows = await sql`
+    SELECT aa.action_id, aa.contact_id, aa.column_id, aa.column_order,
+           c.first_name, c.last_name, c.email
+      FROM action_assignees aa
+      JOIN contacts c ON c.id = aa.contact_id
+     WHERE aa.action_id = ANY(${actionIds})`;
+  const assigneesByAction = new Map();
+  for (const a of assigneeRows) {
+    if (!assigneesByAction.has(a.action_id)) assigneesByAction.set(a.action_id, []);
+    assigneesByAction.get(a.action_id).push({
+      id:           a.contact_id,
+      name:         `${a.first_name || ''} ${a.last_name || ''}`.trim(),
+      email:        a.email,
+      column_id:    a.column_id,
+      column_order: a.column_order,
+    });
+  }
+
+  // Creator names
   const contactMap = {};
-  if (contactIds.length) {
+  if (creatorIds.length) {
     const crows = await sql`
       SELECT id, first_name, last_name, email FROM contacts
-      WHERE id = ANY(${contactIds})`;
+      WHERE id = ANY(${creatorIds})`;
     crows.forEach(c => {
       contactMap[c.id] = {
         id: c.id,
-        name: `${c.first_name} ${c.last_name}`.trim(),
+        name: `${c.first_name || ''} ${c.last_name || ''}`.trim(),
         email: c.email,
       };
     });
   }
 
+  // Deal addresses
   const dealMap = {};
   if (dealIds.length) {
     const drows = await sql`
@@ -206,12 +277,23 @@ async function enrichActions(rows) {
     });
   }
 
-  return rows.map(r => ({
-    ...r,
-    assignee: contactMap[r.assignee_id] || null,
-    creator:  contactMap[r.creator_id]  || null,
-    deal:     dealMap[r.deal_id]        || null,
-  }));
+  return rows.map(r => {
+    const assignees = assigneesByAction.get(r.id) || [];
+    const viewerRow = viewerId ? assignees.find(a => a.id === viewerId) : null;
+    return {
+      ...r,
+      // V80 — primary multi-assignee shape:
+      assignees,
+      // Per-viewer placement, for kanban renderers that expect it
+      column_id:    viewerRow?.column_id    ?? null,
+      column_order: viewerRow?.column_order ?? 0,
+      // V75-shape compat: first assignee surfaced as `assignee` so legacy UIs
+      // still display something sensible
+      assignee:     assignees[0] || null,
+      creator:      contactMap[r.creator_id] || null,
+      deal:         dealMap[r.deal_id]       || null,
+    };
+  });
 }
 
 // ── Handler ─────────────────────────────────────────────────────────────────
@@ -234,26 +316,23 @@ export default async function handler(req, res) {
 
 // ── GET ─────────────────────────────────────────────────────────────────────
 async function handleGet(req, res, session) {
-  const { assignee, deal_id, id, count } = req.query;
+  const { assignee, deal_id, contact_id, id, count } = req.query;
 
-  // V76.4: lightweight due-count for the Pipeline header badge.
-  // V76.4.2: now also includes actions whose `reminder_date <= CURRENT_DATE`,
-  // regardless of column. A reminder doesn't move the action to the Due column
-  // (that's still due_date-driven via promoteDueActions); it just flags
-  // "needs attention today" for the badge.
+  // V76.4 / V76.4.2: due-count for the badge.
   if (count === 'due') {
     const userId = resolveSessionUserId(session);
     if (!userId) return res.status(200).json({ count: 0 });
     const rows = await sql`
       SELECT COUNT(*)::int AS n
-      FROM actions
-      WHERE assignee_id = ${userId}
-        AND status NOT IN ('done', 'void')
-        AND (
-          status = 'due'
-          OR (due_date      IS NOT NULL AND due_date      <= CURRENT_DATE)
-          OR (reminder_date IS NOT NULL AND reminder_date <= CURRENT_DATE)
-        )`;
+        FROM actions a
+        JOIN action_assignees aa ON aa.action_id = a.id
+       WHERE aa.contact_id = ${userId}
+         AND a.status NOT IN ('done', 'void')
+         AND (
+           a.status = 'due'
+           OR (a.due_date      IS NOT NULL AND a.due_date      <= CURRENT_DATE)
+           OR (a.reminder_date IS NOT NULL AND a.reminder_date <= CURRENT_DATE)
+         )`;
     return res.status(200).json({ count: rows[0]?.n || 0 });
   }
 
@@ -261,7 +340,8 @@ async function handleGet(req, res, session) {
   if (id) {
     const rows = await sql`SELECT * FROM actions WHERE id = ${parseInt(id, 10)}`;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
-    const enriched = await enrichActions(rows);
+    const viewer = resolveSessionUserId(session);
+    const enriched = await enrichActions(rows, viewer);
     return res.status(200).json(enriched[0]);
   }
 
@@ -270,15 +350,29 @@ async function handleGet(req, res, session) {
     const rows = await sql`
       SELECT * FROM actions WHERE deal_id = ${String(deal_id)}
       ORDER BY due_date NULLS LAST, created_at DESC`;
-    const enriched = await enrichActions(rows);
+    const viewer = resolveSessionUserId(session);
+    const enriched = await enrichActions(rows, viewer);
     return res.status(200).json(enriched);
   }
 
-  // My Actions kanban wall
+  // V80 — Actions where given contact is an assignee
+  if (contact_id) {
+    const cid = parseInt(contact_id, 10);
+    if (Number.isNaN(cid)) return res.status(400).json({ error: 'contact_id must be integer' });
+    const rows = await sql`
+      SELECT DISTINCT a.*
+        FROM actions a
+        JOIN action_assignees aa ON aa.action_id = a.id
+       WHERE aa.contact_id = ${cid}
+       ORDER BY a.due_date NULLS LAST, a.created_at DESC`;
+    const enriched = await enrichActions(rows, cid);
+    return res.status(200).json(enriched);
+  }
+
+  // My Actions board
   if (assignee === 'me') {
     const userId = resolveSessionUserId(session);
     if (!userId) {
-      // Fallback admin has no contacts row → empty board
       return res.status(200).json({
         board: null,
         actions: [],
@@ -287,25 +381,26 @@ async function handleGet(req, res, session) {
     }
 
     const board = await ensureUserActionsBoard(userId);
-    // Lazy promote before reading — so the client sees the correct state
     await promoteDueActions(userId, board);
 
     const rows = await sql`
-      SELECT * FROM actions
-      WHERE assignee_id = ${userId}
-      ORDER BY column_order ASC, created_at ASC`;
-    const enriched = await enrichActions(rows);
+      SELECT a.*
+        FROM actions a
+        JOIN action_assignees aa ON aa.action_id = a.id
+       WHERE aa.contact_id = ${userId}
+       ORDER BY aa.column_order ASC, a.created_at ASC`;
+    const enriched = await enrichActions(rows, userId);
     return res.status(200).json({ board, actions: enriched });
   }
 
-  return res.status(400).json({ error: 'Specify assignee=me, deal_id, or id' });
+  return res.status(400).json({ error: 'Specify assignee=me, deal_id, contact_id, or id' });
 }
 
 // ── POST ────────────────────────────────────────────────────────────────────
 async function handlePost(req, res, session) {
   const body = req.body || {};
   const {
-    description, assignee_id, deal_id,
+    description, deal_id,
     effort_days, duration_days,
     due_date, reminder_date, status,
   } = body;
@@ -313,58 +408,73 @@ async function handlePost(req, res, session) {
   if (!description || !String(description).trim()) {
     return res.status(400).json({ error: 'description required' });
   }
-  if (!assignee_id) {
-    return res.status(400).json({ error: 'assignee_id required' });
+
+  // Accept assignee_ids: [n,m,...] (V80) OR legacy assignee_id: n (single).
+  let assigneeIds = [];
+  if (Array.isArray(body.assignee_ids)) {
+    assigneeIds = body.assignee_ids.map(x => parseInt(x, 10)).filter(x => !Number.isNaN(x));
+  } else if (body.assignee_id != null) {
+    const a = parseInt(body.assignee_id, 10);
+    if (!Number.isNaN(a)) assigneeIds = [a];
+  }
+  // Dedup
+  assigneeIds = [...new Set(assigneeIds)];
+  if (!assigneeIds.length) {
+    return res.status(400).json({ error: 'assignee_ids required (or legacy assignee_id)' });
   }
 
-  const assignee = parseInt(assignee_id, 10);
-  if (Number.isNaN(assignee)) return res.status(400).json({ error: 'assignee_id must be integer' });
+  // Validate every assignee exists
+  const validated = await sql`SELECT id FROM contacts WHERE id = ANY(${assigneeIds})`;
+  const validIds = new Set(validated.map(r => r.id));
+  const missing = assigneeIds.filter(id => !validIds.has(id));
+  if (missing.length) {
+    return res.status(400).json({ error: `assignee_ids not found: ${missing.join(', ')}` });
+  }
 
-  // Validate assignee exists as a contact
-  const assigneeExists = await sql`SELECT id FROM contacts WHERE id = ${assignee} LIMIT 1`;
-  if (!assigneeExists.length) return res.status(400).json({ error: 'assignee_id not found' });
-
-  const creatorId = resolveSessionUserId(session); // nullable for fallback admin
-
-  const finalStatus = (status && ['todo','wip','due','done','void'].includes(status)) ? status : 'todo';
-
-  // Ensure assignee's actions board exists + find the matching column
-  const board = await ensureUserActionsBoard(assignee);
-  const col   = await getColumnForStatus(board.id, finalStatus);
-
-  // Compute column_order = max existing + 1 in that column
-  const maxRow = await sql`
-    SELECT COALESCE(MAX(column_order), -1) + 1 AS next
-      FROM actions WHERE column_id = ${col?.id || null}`;
-  const nextOrder = maxRow[0]?.next ?? 0;
-
-  // Coerce effort/duration to integer days (or NULL).
+  const creatorId   = resolveSessionUserId(session);
+  const finalStatus = (status && VALID_STATUSES.includes(status)) ? status : 'todo';
   const effortDays   = (effort_days   != null && effort_days   !== '') ? Math.round(Number(effort_days))   : null;
   const durationDays = (duration_days != null && duration_days !== '') ? Math.round(Number(duration_days)) : null;
 
-  const rows = await sql`
+  // 1) Insert the action row (no per-assignee placement here)
+  const inserted = await sql`
     INSERT INTO actions (
-      description, assignee_id, creator_id, deal_id,
+      description, creator_id, deal_id,
       effort_days, duration_days,
-      due_date, reminder_date, status,
-      board_id, column_id, column_order
+      due_date, reminder_date, status
     ) VALUES (
       ${String(description).trim()},
-      ${assignee},
       ${creatorId},
       ${deal_id ? String(deal_id) : null},
       ${effortDays},
       ${durationDays},
       ${due_date || null},
       ${reminder_date || null},
-      ${finalStatus},
-      ${board.id},
-      ${col?.id || null},
-      ${nextOrder}
+      ${finalStatus}
     )
     RETURNING *`;
+  const newAction = inserted[0];
 
-  const enriched = await enrichActions(rows);
+  // 2) For each assignee, ensure their actions board exists, find the column
+  //    matching status, compute their column_order, and insert action_assignees
+  for (const aid of assigneeIds) {
+    const board = await ensureUserActionsBoard(aid);
+    const col   = await getColumnForStatus(board.id, finalStatus);
+    const colId = col?.id || null;
+    const maxRow = colId
+      ? await sql`SELECT COALESCE(MAX(column_order), -1) + 1 AS next
+                    FROM action_assignees
+                   WHERE column_id = ${colId} AND contact_id = ${aid}`
+      : [{ next: 0 }];
+    const nextOrder = maxRow[0]?.next ?? 0;
+    await sql`
+      INSERT INTO action_assignees (action_id, contact_id, column_id, column_order)
+      VALUES (${newAction.id}, ${aid}, ${colId}, ${nextOrder})
+      ON CONFLICT (action_id, contact_id) DO NOTHING`;
+  }
+
+  const viewer = resolveSessionUserId(session);
+  const enriched = await enrichActions([newAction], viewer);
   return res.status(201).json(enriched[0]);
 }
 
@@ -379,76 +489,118 @@ async function handlePatch(req, res, session) {
   if (!current.length) return res.status(404).json({ error: 'Not found' });
   const row = current[0];
 
-  const body = req.body || {};
+  const body     = req.body || {};
+  const viewerId = resolveSessionUserId(session);
 
-  // If column_id is being changed, derive status from the new column
+  // Determine new shared status. If column_id is being changed, derive status
+  // from the new column. Otherwise honour an explicit status field.
   let newStatus = body.status !== undefined ? body.status : undefined;
   if (body.column_id !== undefined) {
     const derived = await deriveStatusFromColumn(body.column_id);
     if (derived) newStatus = derived;
   }
-  // Validate status if explicitly passed
-  if (newStatus !== undefined && !['todo','wip','due','done','void'].includes(newStatus)) {
+  if (newStatus !== undefined && !VALID_STATUSES.includes(newStatus)) {
     return res.status(400).json({ error: 'invalid status' });
   }
 
-  // Validate assignee if changed
-  let newAssignee = body.assignee_id !== undefined ? parseInt(body.assignee_id, 10) : undefined;
-  if (newAssignee !== undefined) {
-    if (Number.isNaN(newAssignee)) return res.status(400).json({ error: 'assignee_id must be integer' });
-    const exists = await sql`SELECT id FROM contacts WHERE id = ${newAssignee} LIMIT 1`;
-    if (!exists.length) return res.status(400).json({ error: 'assignee_id not found' });
+  const finalStatus = newStatus !== undefined ? newStatus : row.status;
+  const statusChanged = finalStatus !== row.status;
 
-    // If assignee changes, we need to move the action to the NEW assignee's
-    // actions board, not keep it on the old one.
-    if (newAssignee !== row.assignee_id) {
-      const newBoard = await ensureUserActionsBoard(newAssignee);
-      const statusForNewCol = newStatus || row.status;
-      const col = await getColumnForStatus(newBoard.id, statusForNewCol);
-      // We have to update board_id and column_id alongside assignee_id.
-      // Do that now as a single UPDATE that also covers other changed fields.
-      body._forceBoardId  = newBoard.id;
-      body._forceColumnId = col?.id || null;
-    }
-  }
-
-  // Build the UPDATE — field-by-field so untouched columns stay put.
-  // Using COALESCE-style individual statements would be cleaner with Postgres,
-  // but Neon's tagged-template SQL requires each value inline. Simpler:
-  // fetch current row above, overlay with body, UPDATE all columns.
+  // Update the actions row (shared fields only — no per-assignee placement)
   const merged = {
     description:    body.description    !== undefined ? String(body.description).trim() : row.description,
-    assignee_id:    newAssignee         !== undefined ? newAssignee                     : row.assignee_id,
     deal_id:        body.deal_id        !== undefined ? (body.deal_id ? String(body.deal_id) : null) : row.deal_id,
-    effort_days:    body.effort_days    !== undefined ? (body.effort_days   === '' || body.effort_days   == null ? null : Math.round(Number(body.effort_days)))   : row.effort_days,
-    duration_days:  body.duration_days  !== undefined ? (body.duration_days === '' || body.duration_days == null ? null : Math.round(Number(body.duration_days))) : row.duration_days,
+    effort_days:    body.effort_days    !== undefined
+                      ? (body.effort_days   === '' || body.effort_days   == null ? null : Math.round(Number(body.effort_days)))
+                      : row.effort_days,
+    duration_days:  body.duration_days  !== undefined
+                      ? (body.duration_days === '' || body.duration_days == null ? null : Math.round(Number(body.duration_days)))
+                      : row.duration_days,
     due_date:       body.due_date       !== undefined ? (body.due_date       || null) : row.due_date,
     reminder_date:  body.reminder_date  !== undefined ? (body.reminder_date  || null) : row.reminder_date,
-    status:         newStatus           !== undefined ? newStatus            : row.status,
-    board_id:       body._forceBoardId  !== undefined ? body._forceBoardId   : row.board_id,
-    column_id:      body._forceColumnId !== undefined ? body._forceColumnId
-                     : (body.column_id  !== undefined ? body.column_id       : row.column_id),
-    column_order:   body.column_order   !== undefined ? Number(body.column_order)      : row.column_order,
+    status:         finalStatus,
   };
 
-  const updated = await sql`
+  await sql`
     UPDATE actions SET
       description    = ${merged.description},
-      assignee_id    = ${merged.assignee_id},
       deal_id        = ${merged.deal_id},
       effort_days    = ${merged.effort_days},
       duration_days  = ${merged.duration_days},
       due_date       = ${merged.due_date},
       reminder_date  = ${merged.reminder_date},
       status         = ${merged.status},
-      board_id       = ${merged.board_id},
-      column_id      = ${merged.column_id},
-      column_order   = ${merged.column_order},
       updated_at     = now()
-    WHERE id = ${actionId}
-    RETURNING *`;
+    WHERE id = ${actionId}`;
 
-  const enriched = await enrichActions(updated);
+  // ── Per-assignee placement updates ─────────────────────────────────────────
+  if (body.column_id !== undefined && viewerId) {
+    // Viewer is dragging the card on their own board. Update only their row.
+    const newOrder = body.column_order !== undefined ? Number(body.column_order) : 0;
+    await sql`
+      UPDATE action_assignees
+         SET column_id    = ${body.column_id},
+             column_order = ${newOrder}
+       WHERE action_id  = ${actionId}
+         AND contact_id = ${viewerId}`;
+    // If status changed as a result, realign other assignees' column_id
+    if (statusChanged) {
+      const others = await sql`
+        SELECT contact_id FROM action_assignees
+         WHERE action_id = ${actionId} AND contact_id != ${viewerId}`;
+      for (const o of others) {
+        const colId = await resolveColumnForUser(o.contact_id, finalStatus);
+        await sql`
+          UPDATE action_assignees
+             SET column_id = ${colId}
+           WHERE action_id = ${actionId} AND contact_id = ${o.contact_id}`;
+      }
+    }
+  } else if (statusChanged) {
+    // Status changed via direct PATCH (not column drag). Realign every assignee.
+    await realignAllAssigneesToStatus(actionId, finalStatus);
+  } else if (body.column_order !== undefined && viewerId) {
+    // Reorder within column on viewer's board only
+    await sql`
+      UPDATE action_assignees
+         SET column_order = ${Number(body.column_order)}
+       WHERE action_id  = ${actionId}
+         AND contact_id = ${viewerId}`;
+  }
+
+  // V80 — assignee_ids change: if caller explicitly passes a new assignees
+  // array, replace the join rows (delta-style: add missing, remove dropped).
+  if (Array.isArray(body.assignee_ids)) {
+    const newSet = new Set(body.assignee_ids.map(x => parseInt(x, 10)).filter(x => !Number.isNaN(x)));
+    const cur = await sql`SELECT contact_id FROM action_assignees WHERE action_id = ${actionId}`;
+    const curSet = new Set(cur.map(r => r.contact_id));
+    // Add missing
+    for (const aid of newSet) {
+      if (!curSet.has(aid)) {
+        const colId = await resolveColumnForUser(aid, finalStatus);
+        const max = colId
+          ? await sql`SELECT COALESCE(MAX(column_order), -1) + 1 AS next
+                        FROM action_assignees
+                       WHERE column_id = ${colId} AND contact_id = ${aid}`
+          : [{ next: 0 }];
+        await sql`
+          INSERT INTO action_assignees (action_id, contact_id, column_id, column_order)
+          VALUES (${actionId}, ${aid}, ${colId}, ${max[0]?.next ?? 0})
+          ON CONFLICT (action_id, contact_id) DO NOTHING`;
+      }
+    }
+    // Remove dropped
+    for (const aid of curSet) {
+      if (!newSet.has(aid)) {
+        await sql`DELETE FROM action_assignees
+                  WHERE action_id = ${actionId} AND contact_id = ${aid}`;
+      }
+    }
+  }
+
+  // Refetch + enrich + return
+  const fresh = await sql`SELECT * FROM actions WHERE id = ${actionId} LIMIT 1`;
+  const enriched = await enrichActions(fresh, viewerId);
   return res.status(200).json(enriched[0]);
 }
 
@@ -458,7 +610,7 @@ async function handleDelete(req, res) {
   if (!id) return res.status(400).json({ error: 'id required' });
   const actionId = parseInt(id, 10);
   if (Number.isNaN(actionId)) return res.status(400).json({ error: 'id must be integer' });
-
+  // action_assignees rows cascade-delete via FK
   await sql`DELETE FROM actions WHERE id = ${actionId}`;
   return res.status(200).json({ ok: true });
 }
