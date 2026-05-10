@@ -215,6 +215,7 @@
     return `
       <div class="insp-row" data-role="inspection-row" data-id="${i.id}">
         <div class="insp-row-header" data-role="row-header">
+          <span class="insp-row-chev">▾</span>
           <div class="insp-row-main">
             <div class="insp-row-date">${esc(dateLabel)}</div>
             <div class="insp-row-time">${esc(timeLabel)}</div>
@@ -227,7 +228,6 @@
             </select>
             <button class="insp-row-btn" data-role="edit-btn" title="Edit">✎</button>
             <button class="insp-row-btn" data-role="delete-btn" title="Delete">✕</button>
-            <span class="insp-row-chev">▾</span>
           </div>
         </div>
         <div class="insp-attendances" data-role="attendances"></div>
@@ -541,9 +541,9 @@
       <div class="insp-att-row" data-role="attendee-row" data-id="${a.id}" data-contact-id="${a.contact_id}">
         <div class="insp-att-row-name">${esc(name)}</div>
         <div class="insp-att-row-checks">
-          <label title="Followup"><input type="checkbox" data-trigger="followup" ${a.requested_followup_at ? 'checked' : ''}> F</label>
-          <label title="Send offer form"><input type="checkbox" data-trigger="offer_form" ${a.requested_offer_form_at ? 'checked' : ''}> O</label>
-          <label title="Send contract"><input type="checkbox" data-trigger="contract" ${a.requested_contract_at ? 'checked' : ''}> C</label>
+          <label title="Follow-up"><input type="checkbox" data-trigger="followup" ${a.requested_followup_at ? 'checked' : ''}> Follow-up</label>
+          <label title="Send offer form"><input type="checkbox" data-trigger="offer_form" ${a.requested_offer_form_at ? 'checked' : ''}> Send Offer</label>
+          <label title="Send contract"><input type="checkbox" data-trigger="contract" ${a.requested_contract_at ? 'checked' : ''}> Send Contract</label>
         </div>
         <div class="insp-att-row-meta">${a.notes ? esc(a.notes) : ''}</div>
         <div class="insp-att-row-actions">

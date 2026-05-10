@@ -4233,7 +4233,10 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 .insp-row-chev {
   font-size: 10px;
   color: var(--muted);
-  margin-left: 4px;
+  margin-right: 8px;
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
   transition: transform 0.15s;
 }
 .insp-row-expanded .insp-row-chev { transform: rotate(180deg); }
@@ -4269,15 +4272,17 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 .insp-att-row-name { font-weight: 500; }
 .insp-att-row-checks {
   display: flex;
-  gap: 8px;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .insp-att-row-checks label {
   font-size: 11px;
   color: var(--muted);
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   cursor: pointer;
+  white-space: nowrap;
 }
 .insp-att-row-meta {
   font-size: 11px;
