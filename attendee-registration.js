@@ -169,6 +169,13 @@
         alert('Contact created — please find yourself in the search.');
       }
     });
+    // V79 — the standalone modal overlay defaults to z-index 9000, but the
+    // attendee-rego screen sits at 9700; without lifting the modal it would
+    // open BEHIND the registration screen and the user would see nothing
+    // happen. Find the just-mounted overlay and bump it above us.
+    // (The standalone helper appends its overlay synchronously to body.)
+    const overlay = document.body.querySelector('.crm-modal-overlay:last-of-type');
+    if (overlay) overlay.style.zIndex = '9800';
   }
 
   async function showFormStep(screen, inspection, contact) {
