@@ -343,7 +343,7 @@
   padding: 0 2px;
 }
 .crm-note-delete:hover { color: #c0392b; }
-.crm-note-text { color: #333; line-height: 1.4; }
+.crm-note-text { color: #333; line-height: 1.4; white-space: pre-wrap; }
 .crm-notes-btn {
   background: none;
   border: none;
@@ -976,3 +976,18 @@
   white-space: nowrap;
   vertical-align: baseline;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V79 — Marketing Preference status badge (read-only, in contact detail view)
+   ════════════════════════════════════════════════════════════════════════════ */
+.crm-mkt-status {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.crm-mkt-unset { background: var(--surface2); color: var(--muted); font-style: italic; }
+.crm-mkt-yes   { background: rgba(46,160,67,0.12); color: #2ea043; }
+.crm-mkt-dns   { background: rgba(207,93,93,0.12); color: #cf5d5d; }
+.crm-mkt-none  { background: var(--surface2); color: var(--text); }

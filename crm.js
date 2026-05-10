@@ -1315,6 +1315,47 @@ function renderCRMView(container) {
             </div>
           </div>
 
+          <!-- V79 — Marketing preference status (read-only). Set via the
+               attendee registration form or the agent check-in modal. -->
+          <div class="crm-modal-section">
+            <div class="crm-modal-section-title">Marketing Preferences</div>
+            <div class="crm-detail-grid">
+              ${(() => {
+                const dns       = !!c.do_not_send_marketing_at;
+                const email     = !!c.marketing_email_consent_at;
+                const sms       = !!c.marketing_sms_consent_at;
+                const prefSetAt = c.marketing_pref_set_at;
+                let statusLabel, statusClass;
+                if (!prefSetAt) {
+                  statusLabel = 'Not yet confirmed';
+                  statusClass = 'crm-mkt-unset';
+                } else if (dns) {
+                  statusLabel = 'Do not send marketing';
+                  statusClass = 'crm-mkt-dns';
+                } else if (email && sms) {
+                  statusLabel = 'Email + SMS';
+                  statusClass = 'crm-mkt-yes';
+                } else if (email) {
+                  statusLabel = 'Email only';
+                  statusClass = 'crm-mkt-yes';
+                } else if (sms) {
+                  statusLabel = 'SMS only';
+                  statusClass = 'crm-mkt-yes';
+                } else {
+                  statusLabel = 'Asked, no marketing channels';
+                  statusClass = 'crm-mkt-none';
+                }
+                const lastSet = prefSetAt ? new Date(prefSetAt).toLocaleString() : '—';
+                return `
+                  <div class="crm-detail-label">Status</div>
+                  <div><span class="crm-mkt-status ${statusClass}">${statusLabel}</span></div>
+                  <div class="crm-detail-label">Last set</div>
+                  <div>${lastSet}</div>
+                `;
+              })()}
+            </div>
+          </div>
+
           ${siteAccessHtml}
 
           <div class="crm-modal-section crm-section-collapsible" data-section="linked-properties">

@@ -703,3 +703,331 @@ header {
 /* ════════════════════════════════════════════════════════════════════════════
    ─── Print / very large screens / etc. left untouched ───────────────────
    ════════════════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ─── V79 — Attendee Registration full-screen view ───────────────────────
+   Used on iPhone, iPad and desktop. Designed for the agent's device, with
+   attendees operating it directly. Large tap targets, clear typography,
+   safe-area-aware on notched iOS devices.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.areg-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 9700;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.areg-header {
+  display: flex;
+  align-items: flex-start;
+  padding: 16px 20px;
+  padding-top: calc(env(safe-area-inset-top) + 16px);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  gap: 12px;
+}
+.areg-header-text {
+  flex: 1;
+  min-width: 0;
+}
+.areg-title {
+  font-family: 'DM Serif Display', serif;
+  font-size: 22px;
+  color: var(--text);
+  line-height: 1.1;
+}
+.areg-subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.areg-subtitle strong { color: var(--text); font-weight: 500; }
+.areg-close {
+  background: none;
+  border: none;
+  font-size: 22px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px 12px;
+  min-width: 44px;
+  min-height: 44px;
+  flex-shrink: 0;
+}
+.areg-close:hover { color: var(--text); }
+
+.areg-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 24px 20px;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 24px);
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.areg-prompt {
+  font-size: 16px;
+  color: var(--text);
+  margin-bottom: 16px;
+  text-align: center;
+}
+.areg-search-wrap {
+  position: relative;
+  width: 100%;
+}
+.areg-search {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  min-height: 50px;
+  box-sizing: border-box;
+}
+.areg-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.areg-search-results {
+  margin-top: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  max-height: 60vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: none;
+}
+.areg-search-results.areg-results-open { display: block; }
+.areg-result {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.areg-result:last-child { border-bottom: 0; }
+.areg-result:hover { background: var(--surface2); }
+.areg-result-name { font-size: 15px; font-weight: 500; color: var(--text); }
+.areg-result-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.areg-result-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 13px;
+}
+.areg-result-create {
+  background: var(--surface2);
+  border-top: 1px solid var(--border);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+.areg-result-create .areg-result-name { color: var(--accent); }
+.areg-result-create:hover { background: rgba(196,132,26,0.08); }
+
+/* ── Form step ───────────────────────────────────────────────────────── */
+
+.areg-form-loading,
+.areg-error {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+.areg-error { color: #c0392b; }
+
+.areg-section { margin-bottom: 24px; }
+.areg-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.areg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .areg-grid { grid-template-columns: 1fr; }
+}
+.areg-field { display: flex; flex-direction: column; gap: 4px; }
+.areg-field label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.areg-input {
+  padding: 12px 14px;
+  font-size: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  min-height: 48px;
+  box-sizing: border-box;
+}
+.areg-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.areg-consent-text {
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+.areg-via-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 10px;
+  padding: 6px 0;
+}
+.areg-via-label {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.areg-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  min-height: 36px;
+}
+.areg-check input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+}
+.areg-check input:disabled + * { opacity: 0.5; }
+.areg-stack-check {
+  display: flex;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.areg-stack-check:last-child { border-bottom: 0; }
+.areg-dns-row {
+  display: flex;
+  margin-top: 6px;
+  font-weight: 500;
+}
+
+.areg-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+.areg-btn {
+  padding: 12px 24px;
+  font-size: 15px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  min-height: 48px;
+  min-width: 110px;
+  border: 1px solid var(--border);
+}
+.areg-btn-cancel { background: var(--surface); color: var(--muted); }
+.areg-btn-cancel:hover { background: var(--surface2); }
+.areg-btn-save {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.areg-btn-save:hover { filter: brightness(1.05); }
+.areg-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.areg-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: areg-spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes areg-spin { to { transform: rotate(360deg); } }
+
+/* ── Thank you confirmation ─────────────────────────────────────────── */
+
+.areg-thanks {
+  text-align: center;
+  padding: 60px 20px;
+}
+.areg-thanks-tick {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 20px;
+  background: var(--accent);
+  color: white;
+  border-radius: 50%;
+  font-size: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}
+.areg-thanks-headline {
+  font-family: 'DM Serif Display', serif;
+  font-size: 24px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.areg-thanks-sub {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Mobile-specific tweaks */
+@media (max-width: 600px) {
+  .areg-title { font-size: 19px; }
+  .areg-subtitle { font-size: 12px; }
+  .areg-body { padding: 18px 16px; }
+  .areg-actions { flex-direction: column-reverse; gap: 10px; }
+  .areg-btn { width: 100%; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ─── V79 — Agent check-in modal preferences styling ─────────────────────
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.insp-checkin-prefs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.insp-pref-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+.insp-pref-row input[type="checkbox"]:disabled + * { opacity: 0.5; }
