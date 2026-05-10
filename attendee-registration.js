@@ -40,7 +40,8 @@
     const time = start ? `${start}${end ? '–' + end : ''}` : '';
     const type = (insp.inspection_type || '').replace(/_/g, ' ');
     const parts = [];
-    if (addr) parts.push(`<strong>${esc(addr)}</strong>`);
+    // V80.5 — prefix the line with "Welcome to" before the address.
+    if (addr) parts.push(`Welcome to <strong>${esc(addr)}</strong>`);
     if (type) parts.push(esc(type));
     if (date) parts.push(esc(date));
     if (time) parts.push(esc(time));
