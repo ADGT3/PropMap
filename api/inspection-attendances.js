@@ -309,9 +309,13 @@ async function createAutoAction({
   }
 
   // 2b) No match — create a fresh action.
+  // V80.1.1 — leave due_date NULL on fresh creates so the action lands in
+  // the agent's ToDo column, not Due. due_date is only set by the bump path
+  // above when a SECOND+ tick on the same (listing, trigger) signals
+  // collective urgency.
   const inserted = await sql`
     INSERT INTO actions (description, creator_id, deal_id, status, due_date)
-    VALUES (${description}, ${creatorId}, ${String(listingDealId)}, 'todo', ${today})
+    VALUES (${description}, ${creatorId}, ${String(listingDealId)}, 'todo', NULL)
     RETURNING id`;
   const actionId = inserted[0]?.id;
   if (!actionId) return null;
