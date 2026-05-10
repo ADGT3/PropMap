@@ -242,47 +242,83 @@ const resolveListingAgent = async (listingDealId) => {
 };
 
 // ── Build Action description for each trigger type ────────────────────────
-function actionDescription(triggerType, contactName, propertyAddress) {
-  const who   = contactName       || 'enquirer';
-  const where = propertyAddress   || 'the listing';
+// V80.1 — descriptions are listing-level (collective across attendees), since
+// duplicate triggers on the same listing now reuse one action. Specific
+// requester names live on each contact's CRM Action Requests + the auto-note.
+function actionDescription(triggerType, propertyAddress) {
+  const where = propertyAddress || 'the listing';
   switch (triggerType) {
-    case 'followup':   return `Followup with ${who} — attended inspection at ${where}`;
-    case 'offer_form': return `Send offer form to ${who} — interested after inspection at ${where}`;
-    case 'contract':   return `Send contract to ${who} — wants to proceed after inspection at ${where}`;
-    default:           return `Action requested by ${who} at inspection of ${where}`;
+    case 'followup':   return `Follow-up with attendees — inspection at ${where}`;
+    case 'offer_form': return `Send offer form to attendees — inspection at ${where}`;
+    case 'contract':   return `Send contract to attendees — inspection at ${where}`;
+    default:           return `Action requested by attendees at inspection of ${where}`;
   }
 }
 
-// ── Create one auto-Action with multiple assignees (V80) ───────────────────
+// ── Create or refresh an auto-Action (V80.1) ──────────────────────────────
 //
-// Inserts ONE row in `actions` and N rows in `action_assignees` — one per
-// assignee. Each assignee's row is placed on their own My Actions board in
-// the column matching status='todo'. When any assignee later changes status
-// (drag column), the shared status changes and other assignees see the move
-// next refresh; column_order is private per assignee.
+// Dedupe logic: at most ONE action per (listing_deal_id, trigger_type) in
+// 'todo' status. If one already exists, bump its due_date to today instead
+// of creating a duplicate. Done/void actions don't match — those are settled,
+// so a new ask creates a fresh action.
 //
-// Returns the new action id, or null if no assignees could be resolved.
+// Returns { action_id, action: 'created'|'bumped' } or null if no assignees.
 async function createAutoAction({
-  triggerType, enquiryDealId, assigneeIds, creatorId,
-  contactName, propertyAddress,
+  triggerType, listingDealId, assigneeIds, creatorId, propertyAddress,
 }) {
   if (!assigneeIds || !assigneeIds.length) return null;
-  const description = actionDescription(triggerType, contactName, propertyAddress);
+  const description = actionDescription(triggerType, propertyAddress);
+  const today = new Date().toISOString().slice(0, 10);
 
-  // 1) Insert the action row (no per-assignee placement)
+  // 1) Look for an existing todo action on this listing for this trigger.
+  // We match by (deal_id, status, description_prefix) since description is
+  // the only column that encodes the trigger semantic (no dedicated trigger
+  // column on actions table). The description prefixes are unique per
+  // trigger type so prefix-matching is reliable.
+  const prefixMap = {
+    followup:   'Follow-up with attendees',
+    offer_form: 'Send offer form to attendees',
+    contract:   'Send contract to attendees',
+  };
+  const prefix = prefixMap[triggerType] || '';
+  let existingId = null;
+  if (prefix) {
+    const matches = await sql`
+      SELECT id FROM actions
+       WHERE deal_id = ${String(listingDealId)}
+         AND status  = 'todo'
+         AND description LIKE ${prefix + '%'}
+       ORDER BY created_at DESC
+       LIMIT 1`;
+    existingId = matches[0]?.id || null;
+  }
+
+  if (existingId) {
+    // 2a) Found a todo match — bump due_date to today.
+    await sql`
+      UPDATE actions
+         SET due_date   = ${today},
+             updated_at = now()
+       WHERE id = ${existingId}`;
+    // Note: we deliberately don't touch the action's assignees here. The
+    // existing assignee set was decided when the action was created; if the
+    // listing's role-flagged contacts have changed since, the new ones can
+    // be added manually via the actions UI. This preserves the in-flight
+    // assignment state.
+    return { action_id: existingId, action: 'bumped' };
+  }
+
+  // 2b) No match — create a fresh action.
   const inserted = await sql`
-    INSERT INTO actions (description, creator_id, deal_id, status)
-    VALUES (${description}, ${creatorId}, ${enquiryDealId}, 'todo')
+    INSERT INTO actions (description, creator_id, deal_id, status, due_date)
+    VALUES (${description}, ${creatorId}, ${String(listingDealId)}, 'todo', ${today})
     RETURNING id`;
   const actionId = inserted[0]?.id;
   if (!actionId) return null;
 
-  // 2) For each assignee, ensure their My Actions board exists and find their
-  //    'todo' column, then insert the join row.
+  // 3) Insert action_assignees rows for each assignee, placed on their
+  //    own My Actions board's todo column.
   for (const aid of assigneeIds) {
-    // Resolve the assignee's My Actions board id (the actions API helper
-    // would create it, but we live in inspection-attendances and don't import
-    // that — instead we look up an existing board and tolerate missing ones).
     const boardRow = await sql`
       SELECT id FROM boards
        WHERE owner_id = ${aid} AND board_type = 'action'
@@ -294,10 +330,6 @@ async function createAutoAction({
          WHERE board_id = ${boardRow[0].id} AND stage_slug = 'todo' LIMIT 1`;
       colId = colRow[0]?.id || null;
     }
-    // If the assignee has no board yet, column_id stays null. Their next
-    // visit to /api/actions?assignee=me will create the board, and the
-    // realign-on-status-change logic will populate column_id later. For now
-    // we just record the assignment so they get notified on next refresh.
     const max = colId
       ? await sql`SELECT COALESCE(MAX(column_order), -1) + 1 AS next
                     FROM action_assignees
@@ -309,7 +341,7 @@ async function createAutoAction({
       ON CONFLICT (action_id, contact_id) DO NOTHING`;
   }
 
-  return actionId;
+  return { action_id: actionId, action: 'created' };
 }
 
 // ── V80 — Auto-create a contact note recording the attendance ────────────
@@ -620,15 +652,19 @@ async function handlePost(req, res, session) {
   const assigneeIds = await resolveActionAssignees(c.listing_deal_id);
   const actionsCreated = [];
   const fireTrigger = async (triggerType) => {
-    const aid = await createAutoAction({
+    const result = await createAutoAction({
       triggerType,
-      enquiryDealId,
+      listingDealId:   c.listing_deal_id,
       assigneeIds,
-      creatorId: createdBy,
-      contactName,
+      creatorId:       createdBy,
       propertyAddress: propertyLabel,
     });
-    if (aid) actionsCreated.push({ trigger: triggerType, action_id: aid, assignee_contact_ids: assigneeIds });
+    if (result) actionsCreated.push({
+      trigger: triggerType,
+      action_id: result.action_id,
+      action: result.action, // 'created' or 'bumped'
+      assignee_contact_ids: assigneeIds,
+    });
   };
   if (trigger_followup   === true) await fireTrigger('followup');
   if (trigger_offer_form === true) await fireTrigger('offer_form');
@@ -731,26 +767,30 @@ async function handlePut(req, res, session) {
     WHERE id = ${attendanceId}
     RETURNING *`;
 
-  // Create Actions for any flags that just transitioned false→true
+  // Create or bump Actions for any flags that just transitioned false→true
   let actionsCreated = [];
   if (willTriggerNew.length) {
     const assigneeIds   = await resolveActionAssignees(cur.listing_deal_id);
     const createdBy     = resolveCreator(session);
-    const contactName   = [cur.first_name, cur.last_name].filter(Boolean).join(' ').trim() || `Contact #${cur.contact_id}`;
     const propertyLabel = cur.property_address
       ? `${cur.property_address}${cur.property_suburb ? ', ' + cur.property_suburb : ''}`
       : (cur.parcel_name || 'the listing');
     for (const trig of willTriggerNew) {
-      // V80 — one Action with all assignees attached via action_assignees
-      const aid = await createAutoAction({
+      // V80.1 — dedupe per (listing_deal_id, trigger_type) on todo. Existing
+      // todo match → bump due_date to today; no match → create fresh.
+      const result = await createAutoAction({
         triggerType:     trig,
-        enquiryDealId:   cur.enquiry_deal_id,
+        listingDealId:   cur.listing_deal_id,
         assigneeIds,
         creatorId:       createdBy,
-        contactName,
         propertyAddress: propertyLabel,
       });
-      if (aid) actionsCreated.push({ trigger: trig, action_id: aid, assignee_contact_ids: assigneeIds });
+      if (result) actionsCreated.push({
+        trigger: trig,
+        action_id: result.action_id,
+        action: result.action,
+        assignee_contact_ids: assigneeIds,
+      });
     }
   }
 
