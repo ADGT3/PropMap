@@ -134,78 +134,49 @@
     resultsEl.querySelectorAll('.areg-result').forEach(item => {
       if (item.getAttribute('data-role') === 'create') {
         item.addEventListener('click', (e) => {
-          // V79 fix — stop the click from bubbling. Without this, the click
-          // event continues bubbling up the DOM AFTER our handler synchronously
-          // mounts the standalone-modal overlay; the bubbling click then hits
-          // that newly-mounted overlay, whose "click on backdrop closes me"
-          // handler fires, closing the modal we just opened.
           e.stopPropagation();
-          onCreateNewContact(screen, inspection);
+          // V79.1 — skip the popup. Go straight to the form step in
+          // "create new contact" mode (no contact id, empty fields).
+          showFormStep(screen, inspection, { id: null, name: '', isNew: true });
         });
       } else {
         item.addEventListener('click', () => {
           const id   = parseInt(item.getAttribute('data-id'), 10);
           const name = item.getAttribute('data-name');
-          showFormStep(screen, inspection, { id, name });
+          showFormStep(screen, inspection, { id, name, isNew: false });
         });
       }
     });
   }
 
-  function onCreateNewContact(screen, inspection) {
-    // V79 fix — reap any leaked .crm-modal-overlay elements left behind by
-    // earlier failed opens (each tap before the bubble-fix below would create
-    // a new overlay then immediately get closed via the bubble; the closed
-    // ones may still be in the DOM with display:none).
-    document.querySelectorAll('.crm-modal-overlay').forEach(el => {
-      const cs = getComputedStyle(el);
-      if (cs.display === 'none' || el.dataset.aregStale === '1') el.remove();
-    });
-
-    const crmContainer = document.getElementById('crmViewContent');
-    if (crmContainer && !crmContainer.dataset.rendered && window.CRM?.renderCRMView) {
-      crmContainer.dataset.rendered = '1';
-      window.CRM.renderCRMView(crmContainer);
-    }
-    if (typeof window.openContactModalStandalone !== 'function') {
-      alert('Contact form unavailable — please tell the agent.');
-      return;
-    }
-    window.openContactModalStandalone(null, async (createdId) => {
-      if (!createdId) return;
-      try {
-        const r = await fetch(`/api/contacts?id=${createdId}`);
-        if (!r.ok) throw new Error(r.status);
-        const data = await r.json();
-        const ct = Array.isArray(data) ? data[0] : data;
-        if (!ct) return;
-        const name = [ct.first_name, ct.last_name].filter(Boolean).join(' ').trim() || `Contact #${ct.id}`;
-        showFormStep(screen, inspection, { id: ct.id, name });
-      } catch (err) {
-        console.warn('[attendee-reg] failed to fetch newly-created contact:', err);
-        alert('Contact created — please find yourself in the search.');
-      }
-    });
-    // V79 — the standalone modal overlay defaults to z-index 9000, but the
-    // attendee-rego screen sits at 9700; without lifting the modal it would
-    // open BEHIND the registration screen. Lift any present overlay above us.
-    document.querySelectorAll('.crm-modal-overlay').forEach(el => {
-      el.style.zIndex = '9800';
-    });
-  }
+  // (V79.1 — onCreateNewContact removed; the search-step result handler
+  //  now goes straight into showFormStep with isNew: true.)
 
   async function showFormStep(screen, inspection, contact) {
     const body = screen.querySelector('[data-role="body"]');
-    body.innerHTML = `<div class="areg-form-step"><div class="areg-form-loading">Loading your details…</div></div>`;
+    const isNew = !!contact.isNew;
     let c;
-    try {
-      const r = await fetch(`/api/contacts?id=${contact.id}`);
-      if (!r.ok) throw new Error(r.status);
-      c = await r.json();
-      if (Array.isArray(c)) c = c[0];
-    } catch (err) {
-      body.innerHTML = `<div class="areg-error">Could not load your details: ${esc(err.message)}</div>`;
-      return;
+    if (isNew) {
+      // Empty record for the create-new flow — no GET needed.
+      c = {
+        id: null,
+        first_name: '', last_name: '', email: '', mobile: '',
+        marketing_pref_set_at: null,
+        do_not_send_marketing_at: null,
+        marketing_email_consent_at: null,
+        marketing_sms_consent_at: null,
+      };
+    } else {
+      body.innerHTML = `<div class="areg-form-step"><div class="areg-form-loading">Loading your details…</div></div>`;
+      try {
+        const r = await fetch(`/api/contacts?id=${contact.id}`);
+        if (!r.ok) throw new Error(r.status);
+        c = await r.json();
+        if (Array.isArray(c)) c = c[0];
+      } catch (err) {
+        body.innerHTML = `<div class="areg-error">Could not load your details: ${esc(err.message)}</div>`;
+        return;
+      }
     }
     // Pre-fill defaults
     const isFresh = !c.marketing_pref_set_at;
@@ -297,52 +268,107 @@
         saveBtn.textContent = origText;
       };
 
+      // ── Collect edited values ────────────────────────────────────────────
       const edited = {};
       body.querySelectorAll('[data-cf]').forEach(input => {
         edited[input.getAttribute('data-cf')] = input.value.trim();
       });
+
+      // ── Validation ───────────────────────────────────────────────────────
+      // V79.1 — for create-new: first AND last required, plus at least one of
+      // email or mobile. For existing contact: same rules apply if they edit
+      // the fields, but we don't force them to fill missing legacy data.
+      const validationErrors = [];
+      if (isNew) {
+        if (!edited.first_name) validationErrors.push('First name is required.');
+        if (!edited.last_name)  validationErrors.push('Last name is required.');
+        if (!edited.email && !edited.mobile) validationErrors.push('Please provide either an email or a mobile number.');
+      }
       if (edited.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(edited.email)) {
-        alert('Please enter a valid email address (or leave blank).');
+        validationErrors.push('Please enter a valid email address.');
+      }
+      if (validationErrors.length) {
+        alert(validationErrors.join('\n'));
         restore();
         return;
       }
 
+      // ── Compute consent state ────────────────────────────────────────────
       const wantDns   = dnsCb.checked;
       const wantEmail = emailCb.checked && !wantDns;
       const wantSms   = smsCb.checked   && !wantDns;
       const nowIso    = new Date().toISOString();
-      const contactPatch = { id: contact.id };
-      for (const k of ['first_name', 'last_name', 'email', 'mobile']) {
-        if ((edited[k] || '') !== (c[k] || '')) {
-          contactPatch[k] = edited[k] || null;
-        }
-      }
-      contactPatch.marketing_email_consent_at = wantEmail ? (c.marketing_email_consent_at || nowIso) : null;
-      contactPatch.marketing_sms_consent_at   = wantSms   ? (c.marketing_sms_consent_at   || nowIso) : null;
-      contactPatch.do_not_send_marketing_at   = wantDns   ? (c.do_not_send_marketing_at   || nowIso) : null;
-      contactPatch.marketing_pref_set_at      = c.marketing_pref_set_at || nowIso;
 
-      try {
-        const r = await fetch('/api/contacts', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(contactPatch),
-        });
-        if (!r.ok) {
-          const err = await r.json().catch(() => ({}));
-          alert('Could not save: ' + (err.error || r.status));
+      // ── Step 1a: CREATE new contact (if isNew) ──────────────────────────
+      let contactId = contact.id;
+      if (isNew) {
+        const createBody = {
+          first_name:   edited.first_name,
+          last_name:    edited.last_name,
+          email:        edited.email   || '',
+          mobile:       edited.mobile  || '',
+          // Marketing prefs sent via the new V79 fields the contacts CREATE
+          // accepts. Channel timestamps inferred server-side.
+          marketing_email_consent: !!wantEmail,
+          marketing_sms_consent:   !!wantSms,
+          do_not_send_marketing:   !!wantDns,
+          marketing_pref_set:      true,    // attendee did go through the form
+        };
+        try {
+          const r = await fetch('/api/contacts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(createBody),
+          });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            alert('Could not create contact: ' + (err.error || r.status));
+            restore();
+            return;
+          }
+          const created = await r.json();
+          contactId = created.id;
+        } catch (err) {
+          alert('Could not create contact: ' + err.message);
           restore();
           return;
         }
-      } catch (err) {
-        alert('Could not save: ' + err.message);
-        restore();
-        return;
+      } else {
+        // ── Step 1b: PATCH existing contact ────────────────────────────────
+        const contactPatch = { id: contact.id };
+        for (const k of ['first_name', 'last_name', 'email', 'mobile']) {
+          if ((edited[k] || '') !== (c[k] || '')) {
+            contactPatch[k] = edited[k] || null;
+          }
+        }
+        contactPatch.marketing_email_consent_at = wantEmail ? (c.marketing_email_consent_at || nowIso) : null;
+        contactPatch.marketing_sms_consent_at   = wantSms   ? (c.marketing_sms_consent_at   || nowIso) : null;
+        contactPatch.do_not_send_marketing_at   = wantDns   ? (c.do_not_send_marketing_at   || nowIso) : null;
+        contactPatch.marketing_pref_set_at      = c.marketing_pref_set_at || nowIso;
+
+        try {
+          const r = await fetch('/api/contacts', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(contactPatch),
+          });
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            alert('Could not save: ' + (err.error || r.status));
+            restore();
+            return;
+          }
+        } catch (err) {
+          alert('Could not save: ' + err.message);
+          restore();
+          return;
+        }
       }
 
+      // ── Step 2: POST attendance with action-request flags ────────────────
       const attBody = {
         scheduled_inspection_id: inspection.id,
-        contact_id:              contact.id,
+        contact_id:              contactId,
         notes:                   null,
       };
       ['trigger_followup', 'trigger_offer_form', 'trigger_contract'].forEach(flag => {
