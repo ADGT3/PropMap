@@ -5821,3 +5821,12 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 }
 .params-board-opt:hover { background: var(--surface2); }
 .params-board-opt input { margin: 0; }
+
+/* V80 — Attendee row in a "pending changes" state (tickbox toggled but not
+   yet flushed; flush happens on deal-modal close). Subtle yellow tint so
+   the agent can see what's unsaved without being intrusive. */
+.insp-att-row-dirty {
+  background: #fffbeb;
+  border-left: 3px solid #f59e0b;
+  padding-left: 5px;
+}

@@ -786,13 +786,20 @@ async function renderContactsSection(pipelineId, agentData) {
     const saveBtn    = formEl.querySelector('.crm-save-btn');
 
     const renderSelected = () => {
+      // V80 — match the saved-contact-row styling so the picked-contact
+      // preview is visually consistent with the rest of the section
+      // (name in bold on its own line, meta details below in a smaller
+      // muted row, separated by · bullets).
       pickWrap.innerHTML = `
         <label class="kb-field-label">Contact</label>
         <div class="crm-pick-selected">
-          <div class="crm-pick-selected-info">
-            <strong>${esc(displayName(_pickedContact))}</strong>
-            ${_pickedContact.org_name ? `<span class="crm-pick-selected-meta"> · ${esc(_pickedContact.org_name)}</span>` : ''}
-            ${(_pickedContact.email || _pickedContact.mobile) ? `<span class="crm-pick-selected-meta"> · ${esc(_pickedContact.email || _pickedContact.mobile)}</span>` : ''}
+          <div class="crm-pick-selected-info crm-contact-info">
+            <div class="crm-contact-name">${esc(displayName(_pickedContact))}</div>
+            <div class="crm-contact-meta">
+              ${_pickedContact.org_name ? `<span>${esc(_pickedContact.org_name)}</span>` : ''}
+              ${_pickedContact.mobile ? `<a href="tel:${esc(_pickedContact.mobile)}" class="crm-link">${esc(_pickedContact.mobile)}</a>` : ''}
+              ${_pickedContact.email  ? `<a href="mailto:${esc(_pickedContact.email)}" class="crm-link">${esc(_pickedContact.email)}</a>` : ''}
+            </div>
           </div>
           <button class="crm-pick-clear-btn" type="button" title="Clear">✕</button>
         </div>`;

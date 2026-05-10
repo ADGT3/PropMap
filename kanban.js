@@ -4097,6 +4097,26 @@ ${rows.join('')}`;
 
   const closeAndRefresh = async () => {
     if (!(await canCloseDealModal())) return;
+    // V80 — run any registered close-hooks (e.g. inspection trigger flush).
+    // Each hook returns truthy on success / falsy on failure. On any
+    // failure we abort the close so the user can resolve the error.
+    if (Array.isArray(window._dealModalCloseHooks) && window._dealModalCloseHooks.length) {
+      const hooks = window._dealModalCloseHooks.slice();
+      // Sequential — order matters less than reliability; one toast at a time
+      for (const hook of hooks) {
+        try {
+          const ok = await hook();
+          if (ok === false) return; // hook signalled "don't close"
+        } catch (err) {
+          console.warn('[deal-modal close-hook] failed', err);
+          // Hook errors don't block close — they're best-effort cleanup.
+        }
+      }
+      // Drop hooks that belong to this modal (they're tied to DOM elements
+      // that are about to be removed). Cleanest: clear the lot, since
+      // hooks should only ever exist while a modal is open.
+      window._dealModalCloseHooks = [];
+    }
     overlay.remove();
     if (kanbanVisible) renderBoard();
   };

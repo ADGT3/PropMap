@@ -378,6 +378,21 @@
       `;
       containerEl.innerHTML = html;
 
+      // V80 — Pending trigger changes: deferred until modal close.
+      // Tickbox toggles no longer fire a PUT immediately; they accumulate
+      // in this Map and get flushed in a single batch when the deal modal
+      // closes. Untick on a previously-actioned trigger may be rejected by
+      // the server (if the auto-Action has been worked on) — in that case
+      // we revert the checkbox and surface the error.
+      // Map<attendanceId, { trigger_followup?, trigger_offer_form?, trigger_contract? }>
+      // Lives on the containerEl so multiple inspections in the same modal
+      // each have their own bucket.
+      if (!containerEl._pendingTriggers) containerEl._pendingTriggers = new Map();
+      // Register a flush hook on the deal modal close registry. The hook
+      // runs once per close attempt; if it succeeds, the modal closes.
+      // If it fails, the close is aborted and the user sees an error.
+      registerInspectionCloseHook(containerEl);
+
       // Wire existing attendee rows for trigger toggles + delete
       containerEl.querySelectorAll('[data-role="attendee-row"]').forEach(row => {
         wireAttendeeRow(row, inspection, dealId, containerEl);
@@ -556,48 +571,118 @@
   function wireAttendeeRow(row, inspection, dealId, containerEl) {
     const attendanceId = parseInt(row.getAttribute('data-id'), 10);
 
-    // Trigger checkbox changes — PUT to update the attendance
+    // V80 — Trigger checkbox changes are STAGED, not committed inline.
+    // The original DOM state of each checkbox at render time is the
+    // "server truth"; if the user reverts a tick, we drop the entry from
+    // the pending map (no-op net change). Flush happens on modal close
+    // via flushPendingTriggers(containerEl).
     row.querySelectorAll('[data-trigger]').forEach(cb => {
-      cb.addEventListener('change', async (e) => {
-        const triggerKey = `trigger_${cb.getAttribute('data-trigger')}`;
-        try {
-          const r = await fetch('/api/inspection-attendances', {
-            method:  'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ id: attendanceId, [triggerKey]: cb.checked }),
-          });
-          if (!r.ok) {
-            const err = await r.json();
-            alert(err.error || 'Update failed');
-            cb.checked = !cb.checked; // revert
-            return;
-          }
-          const data = await r.json();
-          // Show toast for any auto-Actions created
-          if (cb.checked && data.actions_created && data.actions_created.length) {
-            const triggerLabels = { followup: 'Followup', offer_form: 'Send offer form', contract: 'Send contract' };
-            const lbl = triggerLabels[cb.getAttribute('data-trigger')] || 'Action';
-            showToast(`✓ Action created: ${lbl}`, 'success');
-          }
-        } catch (err) {
-          alert('Update failed: ' + err.message);
-          cb.checked = !cb.checked;
+      const triggerKey = `trigger_${cb.getAttribute('data-trigger')}`;
+      const initial = cb.checked; // remember server truth
+      cb.dataset.initialState = initial ? '1' : '0';
+      cb.addEventListener('change', () => {
+        const pending = containerEl._pendingTriggers;
+        let bucket = pending.get(attendanceId);
+        if (!bucket) {
+          bucket = {};
+          pending.set(attendanceId, bucket);
         }
+        // Set or clear the staged value
+        if (cb.checked === initial) {
+          // Reverted to server state — drop from pending
+          delete bucket[triggerKey];
+          if (Object.keys(bucket).length === 0) pending.delete(attendanceId);
+        } else {
+          bucket[triggerKey] = cb.checked;
+        }
+        // Visual: row turns into "pending" state when it has dirty changes
+        const stillDirty = pending.has(attendanceId);
+        row.classList.toggle('insp-att-row-dirty', stillDirty);
       });
     });
 
-    // Delete button
+    // Delete button — kept inline (delete is a final action; deferring
+    // a delete adds no value and complicates the model)
     row.querySelector('[data-role="att-delete-btn"]')?.addEventListener('click', async () => {
       if (!confirm('Remove this attendance record?')) return;
       try {
         const r = await fetch(`/api/inspection-attendances?id=${attendanceId}`, { method: 'DELETE' });
         if (!r.ok) { alert('Delete failed'); return; }
+        // Drop any pending triggers for this attendance — it's gone
+        containerEl._pendingTriggers?.delete(attendanceId);
         renderAttendances(containerEl, inspection, dealId);
       } catch (err) {
         alert('Delete failed: ' + err.message);
       }
     });
   }
+
+  // V80 — Register a close-hook on the deal modal so that pending trigger
+  // changes flush before the modal closes. The hook returns a Promise that
+  // resolves to true when flush succeeds (or there's nothing to flush) and
+  // false when it fails (the modal stays open in that case).
+  function registerInspectionCloseHook(containerEl) {
+    if (containerEl._closeHookRegistered) return;
+    containerEl._closeHookRegistered = true;
+    if (!Array.isArray(window._dealModalCloseHooks)) {
+      window._dealModalCloseHooks = [];
+    }
+    const hook = async () => {
+      // If the containerEl is no longer in the DOM, the modal is being
+      // disposed for an unrelated reason — drop pending and resolve true.
+      if (!document.body.contains(containerEl)) return true;
+      return flushPendingTriggers(containerEl);
+    };
+    hook._inspContainer = containerEl; // for cleanup tracking
+    window._dealModalCloseHooks.push(hook);
+  }
+
+  // V80 — Flush all pending trigger changes for one inspection container.
+  // Returns true on success, false if any save failed.
+  // Per V80 design: untick clears the request timestamp on the attendance
+  // but does NOT delete the auto-Action (the Action is managed independently
+  // from its Actions board — pristine or worked-on, the agent decides). So
+  // there's no untick-rejection path; PUTs always succeed unless the network
+  // / server itself fails.
+  async function flushPendingTriggers(containerEl) {
+    const pending = containerEl._pendingTriggers;
+    if (!pending || !pending.size) return true;
+    let ok = true;
+    const entries = [...pending.entries()];
+    for (const [attendanceId, changes] of entries) {
+      try {
+        const r = await fetch('/api/inspection-attendances', {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ id: attendanceId, ...changes }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          ok = false;
+          // Revert the offending checkboxes for this row to their initial
+          // server state so the user can see what didn't save.
+          const row = containerEl.querySelector(`[data-role="attendee-row"][data-id="${attendanceId}"]`);
+          if (row) {
+            row.querySelectorAll('[data-trigger]').forEach(cb => {
+              const initial = cb.dataset.initialState === '1';
+              cb.checked = initial;
+            });
+            row.classList.remove('insp-att-row-dirty');
+          }
+          showToast(err.error || `Could not save attendance #${attendanceId} (${r.status})`, 'error');
+        } else {
+          pending.delete(attendanceId);
+          const row = containerEl.querySelector(`[data-role="attendee-row"][data-id="${attendanceId}"]`);
+          if (row) row.classList.remove('insp-att-row-dirty');
+        }
+      } catch (err) {
+        ok = false;
+        showToast(`Save failed: ${err.message}`, 'error');
+      }
+    }
+    return ok;
+  }
+
 
   // ── Check-in dialog ───────────────────────────────────────────────────────
   // Modal for first-time check-in: 6 tickboxes + notes field + save.
