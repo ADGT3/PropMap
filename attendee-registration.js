@@ -133,7 +133,15 @@
     resultsEl.classList.add('areg-results-open');
     resultsEl.querySelectorAll('.areg-result').forEach(item => {
       if (item.getAttribute('data-role') === 'create') {
-        item.addEventListener('click', () => onCreateNewContact(screen, inspection));
+        item.addEventListener('click', (e) => {
+          // V79 fix — stop the click from bubbling. Without this, the click
+          // event continues bubbling up the DOM AFTER our handler synchronously
+          // mounts the standalone-modal overlay; the bubbling click then hits
+          // that newly-mounted overlay, whose "click on backdrop closes me"
+          // handler fires, closing the modal we just opened.
+          e.stopPropagation();
+          onCreateNewContact(screen, inspection);
+        });
       } else {
         item.addEventListener('click', () => {
           const id   = parseInt(item.getAttribute('data-id'), 10);
@@ -145,6 +153,15 @@
   }
 
   function onCreateNewContact(screen, inspection) {
+    // V79 fix — reap any leaked .crm-modal-overlay elements left behind by
+    // earlier failed opens (each tap before the bubble-fix below would create
+    // a new overlay then immediately get closed via the bubble; the closed
+    // ones may still be in the DOM with display:none).
+    document.querySelectorAll('.crm-modal-overlay').forEach(el => {
+      const cs = getComputedStyle(el);
+      if (cs.display === 'none' || el.dataset.aregStale === '1') el.remove();
+    });
+
     const crmContainer = document.getElementById('crmViewContent');
     if (crmContainer && !crmContainer.dataset.rendered && window.CRM?.renderCRMView) {
       crmContainer.dataset.rendered = '1';
@@ -171,11 +188,10 @@
     });
     // V79 — the standalone modal overlay defaults to z-index 9000, but the
     // attendee-rego screen sits at 9700; without lifting the modal it would
-    // open BEHIND the registration screen and the user would see nothing
-    // happen. Find the just-mounted overlay and bump it above us.
-    // (The standalone helper appends its overlay synchronously to body.)
-    const overlay = document.body.querySelector('.crm-modal-overlay:last-of-type');
-    if (overlay) overlay.style.zIndex = '9800';
+    // open BEHIND the registration screen. Lift any present overlay above us.
+    document.querySelectorAll('.crm-modal-overlay').forEach(el => {
+      el.style.zIndex = '9800';
+    });
   }
 
   async function showFormStep(screen, inspection, contact) {
