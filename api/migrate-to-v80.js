@@ -75,19 +75,13 @@ export default async function handler(req, res) {
       }
 
       // 1) Create the join table with per-assignee position columns.
-      //    Each (action, contact) pair tracks its own placement on the
-      //    assignee's My Actions board — board_id is implicit (the assignee's
-      //    own board). column_id + column_order are personalised per assignee
-      //    so different assignees can reorder within a column independently.
-      //    Status is shared (lives on actions.status) — when any assignee
-      //    drags the card to a different column, status changes for everyone,
-      //    and every assignee's column_id is updated to the matching column
-      //    on their own board.
+      //    board_columns.id is TEXT (slug-style ids like "act_123_col_todo"),
+      //    so column_id here must be TEXT to match for the FK.
       await sql`
         CREATE TABLE IF NOT EXISTS action_assignees (
           action_id     INTEGER NOT NULL REFERENCES actions(id)  ON DELETE CASCADE,
           contact_id    INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
-          column_id     INTEGER REFERENCES board_columns(id) ON DELETE SET NULL,
+          column_id     TEXT REFERENCES board_columns(id) ON DELETE SET NULL,
           column_order  INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY (action_id, contact_id)
         )`;
