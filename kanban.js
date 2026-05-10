@@ -1562,14 +1562,15 @@ function _renderBoardSelectorBar() {
     <button class="kb-toolbar-btn" id="kanbanNewBoardBtn" title="Create a new board">+ Board</button>
     <button class="kb-toolbar-btn" id="kanbanEditColumnsBtn" title="Edit this board's columns">Edit Columns</button>
     <button class="kb-toolbar-btn kb-toolbar-btn-danger" id="kanbanDeleteBoardBtn" ${canDeleteCurrent ? '' : 'disabled'} title="${canDeleteCurrent ? 'Delete this board' : 'You cannot delete this board'}">Delete Board</button>
+    <input type="search" class="kb-search-input" id="kanbanSearchInput" placeholder="Search… (e.g. contact=anthony AND suburb=rossmore)" title="Boolean search: AND, OR, NOT, parens. Fields: address, suburb, state, stage, contact, agent, beds, baths, price… or just type a word for free-text search."
+           value="${(_searchQuery || '').replace(/"/g,'&quot;')}">
+    <span class="kb-sort-label">Sort By</span>
     <select class="kb-sort-select" id="kanbanSortSelect" title="Sort cards within each column">
       <option value="interest">Interest level</option>
       <option value="created">Date created</option>
       <option value="actions_due">Actions due</option>
       <option value="dd_risk">DD risk (low first)</option>
     </select>
-    <input type="search" class="kb-search-input" id="kanbanSearchInput" placeholder="Search… (e.g. contact=anthony AND suburb=rossmore)" title="Boolean search: AND, OR, NOT, parens. Fields: address, suburb, state, stage, contact, agent, beds, baths, price… or just type a word for free-text search."
-           value="${(_searchQuery || '').replace(/"/g,'&quot;')}">
   `;
 
   // Set selected AFTER options are in the DOM

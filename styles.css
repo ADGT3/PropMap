@@ -5887,3 +5887,12 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   max-width: 200px;
 }
 .kb-sort-select:hover { background: var(--surface2); }
+
+.kb-sort-label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0 4px 0 8px;
+  align-self: center;
+  white-space: nowrap;
+}
