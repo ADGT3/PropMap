@@ -2339,6 +2339,15 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
   const isLeaseListing = (boardId || item._boardId || currentBoardId) === 'sys_lease_listings';
   const headline = isLeaseListing ? formatKbRent(terms) : formatKbPrice(p.price, terms.price);
 
+  // V80.2 — Interest level badge: shown on every card type now (was Enquiry-only).
+  // Format: "{MoSCoW} {score}" — e.g. "Wont 5", "Could 35", "Should 60", "Must 90".
+  const interestLevel = (item.data?.interest_level != null)
+    ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
+    : null;
+  const interestBadgeHtml = (interestLevel != null)
+    ? `<span class="kb-ind kb-ind-interest kb-ind-interest-${moscowBand(interestLevel)}" title="Interest level (0–100)">${moscowLabel(interestLevel)} ${interestLevel}</span>`
+    : '';
+
   card.innerHTML = `
     <div class="kb-card-top">
       <span class="kb-card-type">${p.type || ''}</span>
@@ -2349,6 +2358,7 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
     <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
     <select class="kb-stage-select">${stageOptions}</select>
     <div class="kb-card-indicators">
+      ${interestBadgeHtml}
       ${hasTerms   ? `<span class="kb-ind kb-ind-terms" title="Vendor terms recorded">Terms</span>` : ''}
       ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
       ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
@@ -2357,6 +2367,27 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
     </div>
   `;
 }
+
+// V80.2 — MoSCoW band helpers. Thresholds match the slider's label positions
+// in the deal modal (labels at 0%, 25%, 50%, 75% of the track):
+//   0-24   → Won't  (low/no priority)
+//   25-49  → Could  (nice to have)
+//   50-74  → Should (important)
+//   75-100 → Must   (critical — and the 75-100 range gives a Must spectrum)
+// Used by both renderEnquiryCard and the non-Enquiry card render above.
+function moscowLabel(n) {
+  if (n >= 75) return 'Must';
+  if (n >= 50) return 'Should';
+  if (n >= 25) return 'Could';
+  return 'Wont';
+}
+function moscowBand(n) {
+  if (n >= 75) return 'must';
+  if (n >= 50) return 'should';
+  if (n >= 25) return 'could';
+  return 'wont';
+}
+
 
 function renderEnquiryCard(card, id, item, p, stages, boardId) {
   // V77.1 — Enquiry card layout. No "type/price headline" gold writing — we
@@ -2389,9 +2420,9 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
     if (meta.has_contract_requested)  badges.push(`<span class="kb-ind kb-ind-enq kb-ind-contract"  title="Contract requested">Contract</span>`);
     if (meta.latest_rent != null)     badges.push(`<span class="kb-ind kb-ind-enq kb-ind-rent" title="Latest offer price">$${Math.round(meta.latest_rent).toLocaleString('en-AU')}</span>`);
   }
-  // Interest level badge — only when set (not null)
+  // V80.2 — Interest level badge — only when set. Format: "{MoSCoW} {score}".
   if (interestLevel != null) {
-    badges.push(`<span class="kb-ind kb-ind-enq kb-ind-interest" title="Interest level (0–100)">Interest ${interestLevel}</span>`);
+    badges.push(`<span class="kb-ind kb-ind-enq kb-ind-interest kb-ind-interest-${moscowBand(interestLevel)}" title="Interest level (0–100)">${moscowLabel(interestLevel)} ${interestLevel}</span>`);
   }
   // Common across both Enquiry types
   if (item._dueActionCount > 0) {
@@ -3990,9 +4021,9 @@ ${rows.join('')}`;
           </div>
           <div class="kb-interest-moscow">
             <span class="kb-interest-moscow-label" style="left:0%">Won't</span>
-            <span class="kb-interest-moscow-label" style="left:33%">Could</span>
-            <span class="kb-interest-moscow-label" style="left:66%">Should</span>
-            <span class="kb-interest-moscow-label" style="left:100%">Must</span>
+            <span class="kb-interest-moscow-label" style="left:25%">Could</span>
+            <span class="kb-interest-moscow-label" style="left:50%">Should</span>
+            <span class="kb-interest-moscow-label" style="left:75%">Must</span>
           </div>
         </div>
       `;

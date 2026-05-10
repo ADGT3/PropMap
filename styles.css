@@ -5862,6 +5862,13 @@ body:not([data-route="mapping"]) .leaflet-control-container {
      the 0% label hugs left, the 100% label hugs right. */
 }
 .kb-interest-moscow-label[style*="left:0%"]   { transform: translateX(0%); }
-.kb-interest-moscow-label[style*="left:33%"]  { transform: translateX(-50%); }
-.kb-interest-moscow-label[style*="left:66%"]  { transform: translateX(-50%); }
-.kb-interest-moscow-label[style*="left:100%"] { transform: translateX(-100%); }
+.kb-interest-moscow-label[style*="left:25%"]  { transform: translateX(-50%); }
+.kb-interest-moscow-label[style*="left:50%"]  { transform: translateX(-50%); }
+.kb-interest-moscow-label[style*="left:75%"]  { transform: translateX(-50%); }
+
+/* V80.2 — MoSCoW band tints on the Interest badge.
+   Subtle backgrounds keep cards readable while signalling priority at a glance. */
+.kb-ind-interest-wont   { background:#f1f5f9 !important; color:#64748b !important; }
+.kb-ind-interest-could  { background:#fef3c7 !important; color:#92400e !important; }
+.kb-ind-interest-should { background:#dbeafe !important; color:#1e40af !important; }
+.kb-ind-interest-must   { background:#fee2e2 !important; color:#991b1b !important; }
