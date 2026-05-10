@@ -5830,3 +5830,38 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   border-left: 3px solid #f59e0b;
   padding-left: 5px;
 }
+
+/* V80.2 — MoSCoW band labels under the Interest slider.
+   Labels positioned at 0%, 33%, 66%, 100% of the track, equally spaced
+   from far-left to far-right under the slider. The container is relative
+   so absolute-positioned labels use the slider's full width.
+   The slider has 12px of horizontal padding (slider-row gap to value);
+   we account for that by using calc() inside the position so labels align
+   with the underlying track ends, not the row container ends. */
+.kb-interest-moscow {
+  position: relative;
+  margin-top: 8px;
+  height: 14px;
+  /* The slider inside .kb-interest-row sits with 12px gap before the value
+     element; track therefore spans roughly from 0 to (100% - 32px - 12px).
+     For visual simplicity we align labels to the FULL row width since the
+     label text wraps slightly in either direction; small misalignment vs
+     the actual thumb position is acceptable. */
+  padding-right: 44px; /* matches the value indicator + gap on the right */
+}
+.kb-interest-moscow-label {
+  position: absolute;
+  top: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  /* translateX(-50%) on the middle two so they centre on their position;
+     the 0% label hugs left, the 100% label hugs right. */
+}
+.kb-interest-moscow-label[style*="left:0%"]   { transform: translateX(0%); }
+.kb-interest-moscow-label[style*="left:33%"]  { transform: translateX(-50%); }
+.kb-interest-moscow-label[style*="left:66%"]  { transform: translateX(-50%); }
+.kb-interest-moscow-label[style*="left:100%"] { transform: translateX(-100%); }

@@ -3971,9 +3971,11 @@ ${rows.join('')}`;
     }
   }
 
-  // V77.1: Interest level slider — Enquiry boards only. Appears between Listing
-  // Summary and the deal Status. Persists data.interest_level via savePipeline().
-  if (dealBoardForSections === 'sys_sales_enquiry' || dealBoardForSections === 'sys_lease_enquiry') {
+  // V80.2 — Interest level slider — now ALL deal modals (was Enquiry-only).
+  // Field is data.interest_level (0-100, step 5). MoSCoW band labels
+  // (Won't / Could / Should / Must) sit under the track at 0/33/66/100% so
+  // the agent sees both the precise number AND the qualitative position.
+  {
     const interestMount = modal.querySelector('.v77-interest-mount');
     if (interestMount) {
       const initialLevel = (item.data?.interest_level != null)
@@ -3986,7 +3988,12 @@ ${rows.join('')}`;
             <input type="range" class="kb-modal-interest-slider" min="0" max="100" step="5" value="${initialLevel}">
             <span class="kb-modal-interest-value">${initialLevel}</span>
           </div>
-          <div class="kb-modal-interest-help">0 — low interest    ·    100 — very strong interest</div>
+          <div class="kb-interest-moscow">
+            <span class="kb-interest-moscow-label" style="left:0%">Won't</span>
+            <span class="kb-interest-moscow-label" style="left:33%">Could</span>
+            <span class="kb-interest-moscow-label" style="left:66%">Should</span>
+            <span class="kb-interest-moscow-label" style="left:100%">Must</span>
+          </div>
         </div>
       `;
       const slider = interestMount.querySelector('.kb-modal-interest-slider');
