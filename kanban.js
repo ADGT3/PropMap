@@ -119,6 +119,80 @@ let _searchContactsCache = null;
 // Currently-applied search query (UI keeps it in sync via input event).
 let _searchQuery = '';
 
+// V80.4 — Per-user kanban sort preference. localStorage-backed.
+// Values: 'interest' (default) | 'created' | 'actions_due' | 'dd_risk'.
+const KANBAN_SORT_KEY = 'propmap.kanban.sortMode';
+const VALID_KANBAN_SORT_MODES = ['interest', 'created', 'actions_due', 'dd_risk'];
+function getKanbanSortMode() {
+  try {
+    const v = localStorage.getItem(KANBAN_SORT_KEY);
+    if (v && VALID_KANBAN_SORT_MODES.includes(v)) return v;
+  } catch (_) {}
+  return 'interest';
+}
+function setKanbanSortMode(mode) {
+  if (!VALID_KANBAN_SORT_MODES.includes(mode)) return;
+  try { localStorage.setItem(KANBAN_SORT_KEY, mode); } catch (_) {}
+}
+// Comparator factory — returns (entryA, entryB) → number.
+// `entry` shape from the stage loop: [dealId, pipelineItem]. Each item has:
+//   item.data.interest_level (0-100 or null)
+//   item.addedAt              (ms epoch — used as creation time + tiebreaker)
+//   item._earliestActionDue   (ISO date string for soonest due_date among
+//                              the deal's overdue/due-today actions, or null)
+//   item.dd                   ({ <ddItem>: { status: 'high'|'possible'|'low' } })
+function buildKanbanComparator(mode, ddItems) {
+  switch (mode) {
+    case 'created':
+      // Most recent first
+      return (a, b) => (b[1].addedAt || 0) - (a[1].addedAt || 0);
+    case 'actions_due':
+      // Most-overdue first; null (no due action) last.
+      return (a, b) => {
+        const da = a[1]._earliestActionDue;
+        const db = b[1]._earliestActionDue;
+        if (!da && !db) return (b[1].addedAt || 0) - (a[1].addedAt || 0);
+        if (!da) return 1;
+        if (!db) return -1;
+        return da < db ? -1 : da > db ? 1 : 0;
+      };
+    case 'dd_risk': {
+      // Per Q4 — low risk first (and unset/empty are also "low"), high last.
+      // Score: high=3, possible=2, low=1, none=0.
+      const score = (item) => {
+        const dd = item.dd || {};
+        let max = 0;
+        for (const k of ddItems) {
+          const s = dd[k.toLowerCase()]?.status;
+          if (s === 'high')     max = Math.max(max, 3);
+          else if (s === 'possible') max = Math.max(max, 2);
+          else if (s === 'low')      max = Math.max(max, 1);
+        }
+        return max;
+      };
+      return (a, b) => {
+        const sa = score(a[1]);
+        const sb = score(b[1]);
+        if (sa !== sb) return sa - sb;
+        return (b[1].addedAt || 0) - (a[1].addedAt || 0);
+      };
+    }
+    case 'interest':
+    default:
+      // High first; UNSET sorts to the TOP (per Q5=b — demand attention)
+      return (a, b) => {
+        const ia = a[1].data?.interest_level;
+        const ib = b[1].data?.interest_level;
+        const aSet = (ia != null);
+        const bSet = (ib != null);
+        if (!aSet && !bSet) return (b[1].addedAt || 0) - (a[1].addedAt || 0);
+        if (!aSet) return -1; // a is unset → a goes top
+        if (!bSet) return  1;
+        return ib - ia; // higher first
+      };
+  }
+}
+
 async function _ensureContactsCache() {
   if (_searchContactsCache) return _searchContactsCache;
   _searchContactsCache = {};
@@ -532,6 +606,9 @@ function dealRowToInternal(row) {
     _hasDueAction:      !!row.has_due_action,
     _dueActionCount:    Number(row.due_action_count || 0),
     _hasOverdueAction:  !!row.has_overdue_action,
+    // V80.4: earliest open action's due_date (ISO string), or null.
+    // Powers the "Actions due" kanban sort mode.
+    _earliestActionDue: row.earliest_action_due_date || null,
   };
 }
 
@@ -1449,6 +1526,21 @@ function _renderBoardSelectorBar() {
         }, 300);
       });
     }
+    // V80.4 — keep the sort select's DD-risk option visibility in sync as
+    // boards change. Other state (selected mode) is already correct in
+    // localStorage; just toggle the option visibility.
+    const sortSelFast = bar.querySelector('#kanbanSortSelect');
+    if (sortSelFast) {
+      const ddOptFast = sortSelFast.querySelector('option[value="dd_risk"]');
+      if (ddOptFast) {
+        const isAcquisition = currentBoardId === 'sys_acquisition';
+        ddOptFast.hidden = !isAcquisition;
+        if (!isAcquisition && sortSelFast.value === 'dd_risk') {
+          sortSelFast.value = 'interest';
+          setKanbanSortMode('interest');
+        }
+      }
+    }
     return;
   }
 
@@ -1470,6 +1562,12 @@ function _renderBoardSelectorBar() {
     <button class="kb-toolbar-btn" id="kanbanNewBoardBtn" title="Create a new board">+ Board</button>
     <button class="kb-toolbar-btn" id="kanbanEditColumnsBtn" title="Edit this board's columns">Edit Columns</button>
     <button class="kb-toolbar-btn kb-toolbar-btn-danger" id="kanbanDeleteBoardBtn" ${canDeleteCurrent ? '' : 'disabled'} title="${canDeleteCurrent ? 'Delete this board' : 'You cannot delete this board'}">Delete Board</button>
+    <select class="kb-sort-select" id="kanbanSortSelect" title="Sort cards within each column">
+      <option value="interest">Interest level</option>
+      <option value="created">Date created</option>
+      <option value="actions_due">Actions due</option>
+      <option value="dd_risk">DD risk (low first)</option>
+    </select>
     <input type="search" class="kb-search-input" id="kanbanSearchInput" placeholder="Search… (e.g. contact=anthony AND suburb=rossmore)" title="Boolean search: AND, OR, NOT, parens. Fields: address, suburb, state, stage, contact, agent, beds, baths, price… or just type a word for free-text search."
            value="${(_searchQuery || '').replace(/"/g,'&quot;')}">
   `;
@@ -1530,6 +1628,31 @@ function _renderBoardSelectorBar() {
       renderBoard();
     }, 250);
   });
+
+  // V80.4 — Wire the sort-order select. Persists the chosen mode in
+  // localStorage; same key is used across all deal boards (per Q2=a).
+  const sortSel = bar.querySelector('#kanbanSortSelect');
+  if (sortSel) {
+    sortSel.value = getKanbanSortMode();
+    sortSel.addEventListener('change', (e) => {
+      setKanbanSortMode(e.target.value);
+      renderBoard();
+    });
+    // DD risk option only makes sense on Acquisition (other boards don't
+    // populate dd state). Hide it elsewhere.
+    const ddOption = sortSel.querySelector('option[value="dd_risk"]');
+    if (ddOption) {
+      const isAcquisition = currentBoardId === 'sys_acquisition';
+      ddOption.hidden = !isAcquisition;
+      // If user previously had dd_risk selected and switches to a non-Acq
+      // board, fall back to the default (interest) so they don't see a
+      // hidden value selected.
+      if (!isAcquisition && sortSel.value === 'dd_risk') {
+        sortSel.value = 'interest';
+        setKanbanSortMode('interest');
+      }
+    }
+  }
 
   // V77.1: attach the "+ New Card" button (only visible on V77.1 system boards).
   if (window.KanbanNewCard) {
@@ -2327,7 +2450,7 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
   const ddHigh   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
   const ddPoss   = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
   const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
-  const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
+  // V80.3 — Terms badge removed (no longer surfaced on cards).
 
   const stageOptions = stages.map(s =>
     `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
@@ -2359,7 +2482,6 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
     <select class="kb-stage-select">${stageOptions}</select>
     <div class="kb-card-indicators">
       ${interestBadgeHtml}
-      ${hasTerms   ? `<span class="kb-ind kb-ind-terms" title="Vendor terms recorded">Terms</span>` : ''}
       ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
       ${ddCount    ? `<span class="kb-ind kb-ind-dd ${ddClass}" title="${ddCount} DD items assessed">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
       ${(Array.isArray(item.note) ? item.note.length : item.note) ? `<span class="kb-ind kb-ind-note" title="Has notes">Note</span>` : ''}
@@ -2548,15 +2670,12 @@ function renderBoard() {
       return _searchMatches(id, v);
     });
 
-    // Sort: per-user column_order wins if present, else fall back to addedAt asc
-    entries.sort((a, b) => {
-      const oa = userDealOrder[a[0]];
-      const ob = userDealOrder[b[0]];
-      if (oa != null && ob != null) return oa - ob;
-      if (oa != null) return -1;
-      if (ob != null) return 1;
-      return (a[1].addedAt || 0) - (b[1].addedAt || 0);
-    });
+    // V80.4 — Sort by user-selected mode (default: interest level high→low).
+    // Replaces the legacy "manual drag-to-reorder" model: drag now only
+    // moves cards between columns, not within. This keeps card order
+    // deterministic and consistent across viewers.
+    const sortMode = getKanbanSortMode();
+    entries.sort(buildKanbanComparator(sortMode, DD_ITEMS));
 
     const col = document.createElement('div');
     col.className = 'kb-col';
@@ -2702,59 +2821,28 @@ function renderBoard() {
       if (!id || !pipeline[id]) return;
 
       const targetColumnId = stage.id;
-      const { idx: insertIdx } = computeInsertSpec(e);
       const sameColumn = (pipeline[id]._columnId || stageToColumnId(pipeline[id].stage)) === targetColumnId;
 
-      if (!sameColumn) {
-        // Cross-column: change column first (mutates pipeline + persists in bg)
-        moveToColumn(id, targetColumnId);
-      }
+      // V80.4 — Drop is now COLUMN-ONLY: drag-to-reorder within the same
+      // column has been removed (per Q6=b). The auto-sort (interest/created/
+      // actions_due/dd_risk) decides ordering within columns. A drop on the
+      // same column is silently ignored.
+      if (sameColumn) return;
 
-      // Build the new order for the target column, insert at idx
-      const colEntries = Object.entries(pipeline)
-        .filter(([, v]) => (v._columnId || stageToColumnId(v.stage)) === targetColumnId)
-        .sort((a, b) => {
-          const oa = userDealOrder[a[0]];
-          const ob = userDealOrder[b[0]];
-          if (oa != null && ob != null) return oa - ob;
-          if (oa != null) return -1;
-          if (ob != null) return 1;
-          return (a[1].addedAt || 0) - (b[1].addedAt || 0);
-        })
-        .map(([k]) => k);
+      // Cross-column: change the deal's column. moveToColumn handles
+      // pipeline mutation + background persistence. The next renderBoard
+      // (driven by the optimistic DOM update below) will place the card in
+      // the right spot under the active sort mode.
+      moveToColumn(id, targetColumnId);
 
-      // Remove the dragged id from colEntries (if present) and insert at insertIdx
-      const without = colEntries.filter(k => k !== id);
-      const finalIdx = Math.min(insertIdx, without.length);
-      without.splice(finalIdx, 0, id);
-
-      // Assign sequential column_order values
-      const orderUpdates = without.map((dealId, idx) => ({ deal_id: dealId, column_order: idx }));
-      // Update in-memory userDealOrder immediately so re-render reflects drop
-      orderUpdates.forEach(u => { userDealOrder[u.deal_id] = u.column_order; });
-
-      // ── Optimistic DOM update ───────────────────────────────────────────
-      // Move the dragged card into its new position immediately. For cross-
-      // column moves we also need to relocate the card to the target column.
+      // Optimistic DOM update — append the dragged card to the new column.
+      // Its precise position will be corrected on next renderBoard.
       const draggedCard = document.querySelector(`.kb-card[data-id="${id}"]`);
       if (draggedCard) {
-        const siblings = [...cardsEl.querySelectorAll('.kb-card:not(.dragging)')]
-          .filter(c => c !== draggedCard);
-        const refCard = siblings[finalIdx] || null;
-        if (refCard) cardsEl.insertBefore(draggedCard, refCard);
-        else         cardsEl.appendChild(draggedCard);
-        // Refresh card content in case stage indicator etc. changed (cross-column)
-        if (!sameColumn) refreshCardLive(id);
+        cardsEl.appendChild(draggedCard);
+        refreshCardLive(id);
       }
-      // Update the column counts in the headers without rebuilding everything
       _updateColumnCounts();
-
-      // ── Persist per-user ordering in background (don't block UI) ────────
-      fetch('/api/deal-order', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ board_id: currentBoardId, order: orderUpdates }),
-      }).catch(err => console.warn('[deal-order] save failed', err.message));
     });
 
     board.appendChild(col);
@@ -4787,7 +4875,7 @@ function refreshCardIndicators(card, id) {
   const ddHigh  = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'high');
   const ddPoss  = DD_ITEMS.some(i => dd[i.toLowerCase()]?.status === 'possible');
   const ddClass = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
-  const hasTerms = (terms.price != null && terms.price !== '' && terms.price !== 0 && terms.price !== null) || (terms.settlement != null && terms.settlement !== '' && terms.settlement !== 0);
+  // V80.3 — Terms badge removed from cards.
 
   // Update price (Lease-aware — Lease Listings show rent, not "Price Unavailable").
   const priceEl = card.querySelector('.kb-card-price');
@@ -4804,7 +4892,6 @@ function refreshCardIndicators(card, id) {
   const cachedNotes = _notesCache.get(id);
   const noteCount = Array.isArray(cachedNotes) ? cachedNotes.length : 0;
   el.innerHTML = `
-    ${hasTerms    ? `<span class="kb-ind kb-ind-terms">Terms</span>` : ''}
     ${offers.length ? `<span class="kb-ind kb-ind-offers">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
     ${ddCount     ? `<span class="kb-ind kb-ind-dd ${ddClass}">DD ${ddCount}/${DD_ITEMS.length}</span>` : ''}
     ${noteCount   ? `<span class="kb-ind kb-ind-note">${noteCount} Note${noteCount > 1 ? 's' : ''}</span>` : ''}
