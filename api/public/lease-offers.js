@@ -269,9 +269,9 @@ async function submitDraftAction(req, res, ctx) {
   const body = req.body || {};
   const application_id = ctx.application.id;
 
-  // Only draft applications can be edited via public form. If status has progressed,
-  // applicant cannot save further drafts.
-  if (ctx.application.status !== 'draft') {
+  // Only draft or resubmit-requested applications can be edited via public form.
+  // If status has progressed further, applicant cannot save further drafts.
+  if (ctx.application.status !== 'draft' && ctx.application.status !== 'offer_resubmit_requested') {
     return res.status(409).json({ error: 'This offer has already been submitted and cannot be edited.' });
   }
 
@@ -299,7 +299,8 @@ async function submitAction(req, res, ctx) {
   const body = req.body || {};
   const application_id = ctx.application.id;
 
-  if (ctx.application.status !== 'draft') {
+  // V78 — allow re-submission from offer_resubmit_requested (Step 1 resubmit)
+  if (ctx.application.status !== 'draft' && ctx.application.status !== 'offer_resubmit_requested') {
     return res.status(409).json({ error: 'This offer has already been submitted.' });
   }
 
@@ -643,8 +644,12 @@ async function step2Load(req, res, ctx) {
   const application_id = ctx.application.id;
 
   // Fetch application + property + applicants_jsonb (for per-applicant evidence sections)
+  // V78d — Also fetch the five Offer Terms fields so Step 2 can show the
+  // accepted terms at the top of the evidence upload form.
   const rows = await sql`
     SELECT a.id, a.status, a.applicants_jsonb,
+           a.requested_rent, a.bond_weeks, a.lease_term_months,
+           a.preferred_start_date, a.terms,
            a.credit_check_consent_at, a.tenancy_database_consent_at, a.retention_consent_at,
            d.id AS deal_id,
            p.address, p.suburb, p.state
@@ -733,6 +738,14 @@ async function step2Load(req, res, ctx) {
       credit_check_consent_at: app.credit_check_consent_at,
       tenancy_database_consent_at: app.tenancy_database_consent_at,
       retention_consent_at: app.retention_consent_at,
+      // V78d — Accepted Offer Terms summary for display at top of Step 2 form
+      offer_terms: {
+        requested_rent:       app.requested_rent,
+        bond_weeks:           app.bond_weeks,
+        lease_term_months:    app.lease_term_months,
+        preferred_start_date: app.preferred_start_date,
+        terms:                app.terms || '',
+      },
     },
     property: {
       address: app.address || '',
