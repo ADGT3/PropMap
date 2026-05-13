@@ -269,9 +269,9 @@ async function submitDraftAction(req, res, ctx) {
   const body = req.body || {};
   const application_id = ctx.application.id;
 
-  // Only draft applications can be edited via public form. If status has progressed,
-  // applicant cannot save further drafts.
-  if (ctx.application.status !== 'draft') {
+  // Only draft or resubmit-requested applications can be edited via public form.
+  // If status has progressed further, applicant cannot save further drafts.
+  if (ctx.application.status !== 'draft' && ctx.application.status !== 'offer_resubmit_requested') {
     return res.status(409).json({ error: 'This offer has already been submitted and cannot be edited.' });
   }
 
@@ -299,7 +299,8 @@ async function submitAction(req, res, ctx) {
   const body = req.body || {};
   const application_id = ctx.application.id;
 
-  if (ctx.application.status !== 'draft') {
+  // V78 — allow re-submission from offer_resubmit_requested (Step 1 resubmit)
+  if (ctx.application.status !== 'draft' && ctx.application.status !== 'offer_resubmit_requested') {
     return res.status(409).json({ error: 'This offer has already been submitted.' });
   }
 
