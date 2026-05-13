@@ -139,6 +139,16 @@
       const orig = addBtn.textContent;
       addBtn.textContent = 'Creating…';
       try {
+        // V78c — Pick the recipient up front. For single-enquirer deals
+        // (the common case) this is silent and uses the only linked contact.
+        // For multi-enquirer deals a picker dialog appears.
+        const contact = await pickContactForToken();
+        if (!contact) {
+          // pickContactForToken already alerted (no contacts / bad email / cancelled)
+          return;
+        }
+
+        addBtn.textContent = 'Creating…';
         const r = await fetch(API, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -150,9 +160,25 @@
         }
         const newOffer = await r.json();
         expandedIds.add(String(newOffer.id));
+
+        // Issue Step 1 token + send invite email to the chosen contact.
+        addBtn.textContent = 'Sending link…';
+        const tr = await fetch('/api/applicant-form-tokens', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'issue', application_id: newOffer.id, step: 1, contact_id: contact.id }),
+        });
+        if (!tr.ok) {
+          const err = await tr.json().catch(() => ({}));
+          // Draft was created — surface failure but don't roll back. The agent
+          // can use + Send Link on the empty token row to retry.
+          throw new Error(err.error || tr.status);
+        }
+
         await load();
       } catch (err) {
         alert('Failed to create offer: ' + err.message);
+        await load(); // reload anyway so a partial state (draft without token) is visible
       } finally {
         addBtn.disabled = false;
         addBtn.textContent = orig;
@@ -717,11 +743,20 @@
           alert('This Enquiry deal has no linked Contacts. Add an enquirer Contact first.');
           return null;
         }
-        // V77.2g — Enquiry creation always links the enquirer first via Wave 2B
-        // (kanban-new-card flow). The contacts response is ordered by linked_at
-        // ASC, so the first entry is the enquirer. No hardcoded role filter
-        // needed — the data flow guarantees the ordering.
-        const c = linked[0];
+
+        // V78c — If multiple Contacts are linked to the Enquiry deal (e.g. a
+        // couple or group of co-applicants), show a picker dialog. The agent
+        // selects which one receives the Offer Form link.
+        // For the common single-Contact case, fall through silently to the
+        // first (and only) linked contact.
+        let c;
+        if (linked.length === 1) {
+          c = linked[0];
+        } else {
+          c = await showContactPickerDialog(linked);
+          if (!c) return null; // user cancelled
+        }
+
         if (!c.email || !/^\S+@\S+\.\S+$/.test(c.email)) {
           alert(`Contact "${c.first_name || ''} ${c.last_name || ''}" has no valid email. Edit the Contact and try again.`);
           return null;
@@ -733,16 +768,63 @@
       }
     }
 
+    // V78c — Modal picker shown when an Enquiry deal has multiple linked
+    // Contacts and the agent must choose who receives the Offer Form link.
+    // Returns a Promise resolving to the chosen Contact, or null if cancelled.
+    // Uses the existing kb-modal-overlay pattern for consistency with the
+    // rest of the app.
+    function showContactPickerDialog(contacts) {
+      return new Promise(resolve => {
+        const wrap = document.createElement('div');
+        wrap.className = 'kb-modal-overlay';
+        wrap.innerHTML = `
+          <div class="kb-modal" role="dialog" aria-modal="true" style="max-width:480px">
+            <div class="kb-modal-header">
+              <h2>Send Offer Form to which applicant?</h2>
+              <button class="kb-modal-close" title="Close" type="button">✕</button>
+            </div>
+            <div class="kb-modal-body">
+              <div class="lo-picker-help">This Enquiry has multiple linked contacts. Choose who should receive the Offer Form link by email.</div>
+              <div class="lo-picker-list">
+                ${contacts.map((c, i) => `
+                  <label class="lo-picker-row">
+                    <input type="radio" name="lo-picker" value="${i}" ${i === 0 ? 'checked' : ''}>
+                    <span class="lo-picker-name">${esc([c.first_name, c.last_name].filter(Boolean).join(' ') || '(no name)')}</span>
+                    <span class="lo-picker-email">${esc(c.email || '— no email')}</span>
+                  </label>
+                `).join('')}
+              </div>
+            </div>
+            <div class="kb-modal-footer">
+              <button type="button" class="lo-picker-cancel-btn">Cancel</button>
+              <button type="button" class="lo-picker-send-btn">Send Link</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(wrap);
+
+        function close(result) {
+          if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+          resolve(result);
+        }
+        wrap.querySelector('.kb-modal-close').addEventListener('click', () => close(null));
+        wrap.querySelector('.lo-picker-cancel-btn').addEventListener('click', () => close(null));
+        wrap.querySelector('.lo-picker-send-btn').addEventListener('click', () => {
+          const checked = wrap.querySelector('input[name="lo-picker"]:checked');
+          if (!checked) { close(null); return; }
+          close(contacts[parseInt(checked.value, 10)]);
+        });
+      });
+    }
+
     function wireTokenActions() {
       listEl.querySelectorAll('.lo-issue-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const applicationId = btn.getAttribute('data-application-id');
           const step = parseInt(btn.getAttribute('data-step'), 10);
-          const formName = step === 1 ? 'Offer Form' : 'Evidence Upload Form';
           const contact = await pickContactForToken();
           if (!contact) return;
-          if (!confirm(`Send ${formName} link to ${contact.first_name || ''} ${contact.last_name || ''} <${contact.email}>?`)) return;
           btn.disabled = true;
           btn.textContent = 'Sending…';
           try {

@@ -5835,6 +5835,65 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   margin-top: 6px;
 }
 
+/* V78c — Multi-enquirer contact picker dialog (shown from + New Offer when
+   an Enquiry deal has more than one linked Contact). */
+.lo-picker-help {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 12px;
+}
+.lo-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lo-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 4px;
+  cursor: pointer;
+  background: #fff;
+}
+.lo-picker-row:hover { background: #f8fafc; }
+.lo-picker-row input[type="radio"] { margin: 0; }
+.lo-picker-name {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-size: 13px;
+}
+.lo-picker-email {
+  flex: 1 1 auto;
+  color: #666;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lo-picker-cancel-btn {
+  background: transparent;
+  color: #666;
+  border: 1px solid #d4d4d4;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lo-picker-cancel-btn:hover { background: #f5f5f5; }
+.lo-picker-send-btn {
+  background: var(--accent, #c4841a);
+  color: #fff;
+  border: 1px solid var(--accent, #c4841a);
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: auto;
+}
+.lo-picker-send-btn:hover { background: #a86f15; }
+
 /* ────────────────────────────────────────────────────────────────────────────
    V77.2g — Roles "Board Default" multi-select widget + chips
    ──────────────────────────────────────────────────────────────────────────── */
