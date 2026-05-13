@@ -5744,6 +5744,156 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 /* New status pill for resubmit_requested */
 .lo-status-evidence_resubmit_requested  { background: #fef3c7; color: #92400e; }
 
+/* V78 — Step 1 Request Offer Resubmit button (mirrors lo-resubmit-btn) */
+.lo-offer-resubmit-btn {
+  background: transparent;
+  color: #c4841a;
+  border: 1px solid #c4841a;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lo-offer-resubmit-btn:hover:not(:disabled) { background: rgba(196, 132, 26, 0.08); }
+.lo-offer-resubmit-btn:disabled             { opacity: 0.5; cursor: not-allowed; }
+
+/* V78 — Status pill for offer_resubmit_requested */
+.lo-status-offer_resubmit_requested { background: #fef3c7; color: #92400e; }
+
+/* ────────────────────────────────────────────────────────────────────────────
+   V78b — Inline-edit Offer Terms (agent overrides after verbal negotiation)
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.lo-terms-edit-btn {
+  margin-left: 10px;
+  background: transparent;
+  color: var(--accent, #c4841a);
+  border: 1px solid var(--accent, #c4841a);
+  border-radius: 3px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.lo-terms-edit-btn:hover { background: rgba(196, 132, 26, 0.08); }
+
+.lo-terms-edit input.lo-terms-input,
+.lo-terms-edit textarea.lo-terms-input {
+  width: 110px;
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid #d4d4d4;
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.lo-terms-edit textarea.lo-terms-textarea {
+  width: 100%;
+  min-height: 38px;
+  resize: vertical;
+}
+.lo-terms-edit input[type="date"].lo-terms-input { width: 150px; }
+.lo-terms-suffix {
+  font-size: 12px;
+  color: #666;
+  margin-left: 6px;
+}
+.lo-terms-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.lo-terms-save-btn {
+  background: #15803d;
+  color: #fff;
+  border: 1px solid #15803d;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-terms-save-btn:hover:not(:disabled) { background: #166534; }
+.lo-terms-save-btn:disabled             { opacity: 0.5; cursor: not-allowed; }
+.lo-terms-cancel-btn {
+  background: transparent;
+  color: #666;
+  border: 1px solid #d4d4d4;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lo-terms-cancel-btn:hover { background: #f5f5f5; }
+
+.lo-terms-amended-line {
+  font-size: 11px;
+  color: #666;
+  font-style: italic;
+  margin-top: 6px;
+}
+
+/* V78c — Multi-enquirer contact picker dialog (shown from + New Offer when
+   an Enquiry deal has more than one linked Contact). */
+.lo-picker-help {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 12px;
+}
+.lo-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lo-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 4px;
+  cursor: pointer;
+  background: #fff;
+}
+.lo-picker-row:hover { background: #f8fafc; }
+.lo-picker-row input[type="radio"] { margin: 0; }
+.lo-picker-name {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-size: 13px;
+}
+.lo-picker-email {
+  flex: 1 1 auto;
+  color: #666;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lo-picker-cancel-btn {
+  background: transparent;
+  color: #666;
+  border: 1px solid #d4d4d4;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lo-picker-cancel-btn:hover { background: #f5f5f5; }
+.lo-picker-send-btn {
+  background: var(--accent, #c4841a);
+  color: #fff;
+  border: 1px solid var(--accent, #c4841a);
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: auto;
+}
+.lo-picker-send-btn:hover { background: #a86f15; }
+
 /* ────────────────────────────────────────────────────────────────────────────
    V77.2g — Roles "Board Default" multi-select widget + chips
    ──────────────────────────────────────────────────────────────────────────── */

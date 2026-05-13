@@ -55,6 +55,7 @@
     return ({
       draft:                       'Draft',
       submitted:                   'Submitted',
+      offer_resubmit_requested:    'Offer Resubmit Requested',
       offer_accepted:              'Accepted',
       evidence_submitted:          'Evidence In',
       evidence_resubmit_requested: 'Resubmit Requested',
@@ -91,6 +92,10 @@
   function mount(containerEl, dealId) {
     let offers = [];
     let expandedIds = new Set();
+    // V78b — id of the offer whose Offer Terms are currently being edited inline
+    // (null = not editing). String, matching the existing pattern used for
+    // expandedIds and offer.id from the API. Cleared on save / cancel / row collapse.
+    let editingTermsId = null;
 
     containerEl.innerHTML = `
       <div class="kb-fin-pick-header" style="margin-top:16px">
@@ -134,6 +139,16 @@
       const orig = addBtn.textContent;
       addBtn.textContent = 'Creating…';
       try {
+        // V78c — Pick the recipient up front. For single-enquirer deals
+        // (the common case) this is silent and uses the only linked contact.
+        // For multi-enquirer deals a picker dialog appears.
+        const contact = await pickContactForToken();
+        if (!contact) {
+          // pickContactForToken already alerted (no contacts / bad email / cancelled)
+          return;
+        }
+
+        addBtn.textContent = 'Creating…';
         const r = await fetch(API, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -145,9 +160,25 @@
         }
         const newOffer = await r.json();
         expandedIds.add(String(newOffer.id));
+
+        // Issue Step 1 token + send invite email to the chosen contact.
+        addBtn.textContent = 'Sending link…';
+        const tr = await fetch('/api/applicant-form-tokens', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'issue', application_id: newOffer.id, step: 1, contact_id: contact.id }),
+        });
+        if (!tr.ok) {
+          const err = await tr.json().catch(() => ({}));
+          // Draft was created — surface failure but don't roll back. The agent
+          // can use + Send Link on the empty token row to retry.
+          throw new Error(err.error || tr.status);
+        }
+
         await load();
       } catch (err) {
         alert('Failed to create offer: ' + err.message);
+        await load(); // reload anyway so a partial state (draft without token) is visible
       } finally {
         addBtn.disabled = false;
         addBtn.textContent = orig;
@@ -209,7 +240,9 @@
       const status = offer.status || 'draft';
 
       let stateLine = '';
-      if (step === 1 && (status === 'submitted' || status === 'offer_accepted' || status === 'evidence_submitted' || status === 'evidence_resubmit_requested' || status === 'validated' || status === 'leased')) {
+      if (step === 1 && status === 'offer_resubmit_requested') {
+        stateLine = `<span class="lo-token-state lo-token-state-pending">↻ Offer resubmit requested — applicant can edit and resubmit</span>`;
+      } else if (step === 1 && (status === 'submitted' || status === 'offer_accepted' || status === 'evidence_submitted' || status === 'evidence_resubmit_requested' || status === 'validated' || status === 'leased')) {
         stateLine = `<span class="lo-token-state lo-token-state-done">✓ Submitted ${esc(fmtRelative(token.last_accessed_at || token.created_at))}</span>`;
       } else if (step === 2 && status === 'evidence_resubmit_requested') {
         stateLine = `<span class="lo-token-state lo-token-state-pending">↻ Resubmit requested — applicant can edit and resubmit</span>`;
@@ -246,18 +279,62 @@
       const apps = Array.isArray(offer.applicants_jsonb) ? offer.applicants_jsonb : [];
       const occ  = offer.occupants || {};
       const pets = offer.pets || {};
+      const status = offer.status || '';
+      const isTerminal = ['leased', 'rejected', 'withdrawn'].includes(status);
+      const canEditTerms = !isTerminal;
+      const isEditing = editingTermsId === String(offer.id);
 
       let html = '<div class="lo-detail">';
 
       html += '<div class="lo-detail-section">';
-      html += '<div class="lo-detail-section-title">Offer Terms</div>';
-      html += '<table class="lo-detail-table">';
-      html += `<tr><th>Rent offered</th><td>${esc(fmtCurrency(offer.requested_rent))}/wk</td></tr>`;
-      html += `<tr><th>Bond</th><td>${offer.bond_weeks || '—'} weeks</td></tr>`;
-      html += `<tr><th>Lease term</th><td>${offer.lease_term_months ? `${offer.lease_term_months} months` : '—'}</td></tr>`;
-      html += `<tr><th>Preferred start</th><td>${esc(fmtDate(offer.preferred_start_date))}</td></tr>`;
-      if (offer.terms) html += `<tr><th>Special terms</th><td>${esc(offer.terms)}</td></tr>`;
-      html += '</table></div>';
+      html += '<div class="lo-detail-section-title">Offer Terms';
+      if (canEditTerms && !isEditing) {
+        html += ` <button type="button" class="lo-terms-edit-btn" data-id="${esc(offer.id)}" title="Edit offer terms (e.g. after a verbal negotiation)">Edit</button>`;
+      }
+      html += '</div>';
+
+      if (isEditing) {
+        // V78b — Inline edit form for the five Offer Terms fields
+        const dateForInput = offer.preferred_start_date ? String(offer.preferred_start_date).slice(0, 10) : '';
+        html += `
+          <table class="lo-detail-table lo-terms-edit" data-id="${esc(offer.id)}">
+            <tr><th>Rent offered</th><td>
+              <input class="lo-terms-input" type="number" min="0" step="1" data-field="requested_rent" value="${esc(offer.requested_rent ?? '')}"> <span class="lo-terms-suffix">/wk</span>
+            </td></tr>
+            <tr><th>Bond</th><td>
+              <input class="lo-terms-input" type="number" min="0" step="1" data-field="bond_weeks" value="${esc(offer.bond_weeks ?? '')}"> <span class="lo-terms-suffix">weeks</span>
+            </td></tr>
+            <tr><th>Lease term</th><td>
+              <input class="lo-terms-input" type="number" min="0" step="1" data-field="lease_term_months" value="${esc(offer.lease_term_months ?? '')}"> <span class="lo-terms-suffix">months</span>
+            </td></tr>
+            <tr><th>Preferred start</th><td>
+              <input class="lo-terms-input" type="date" data-field="preferred_start_date" value="${esc(dateForInput)}">
+            </td></tr>
+            <tr><th>Special terms</th><td>
+              <textarea class="lo-terms-input lo-terms-textarea" rows="2" data-field="terms" placeholder="Any negotiated extras (e.g. early access, pet allowance)…">${esc(offer.terms || '')}</textarea>
+            </td></tr>
+          </table>
+          <div class="lo-terms-edit-actions">
+            <button type="button" class="lo-terms-save-btn" data-id="${esc(offer.id)}">Save Terms</button>
+            <button type="button" class="lo-terms-cancel-btn" data-id="${esc(offer.id)}">Cancel</button>
+          </div>
+        `;
+      } else {
+        html += '<table class="lo-detail-table">';
+        html += `<tr><th>Rent offered</th><td>${esc(fmtCurrency(offer.requested_rent))}/wk</td></tr>`;
+        html += `<tr><th>Bond</th><td>${offer.bond_weeks || '—'} weeks</td></tr>`;
+        html += `<tr><th>Lease term</th><td>${offer.lease_term_months ? `${offer.lease_term_months} months` : '—'}</td></tr>`;
+        html += `<tr><th>Preferred start</th><td>${esc(fmtDate(offer.preferred_start_date))}</td></tr>`;
+        if (offer.terms) html += `<tr><th>Special terms</th><td>${esc(offer.terms)}</td></tr>`;
+        html += '</table>';
+        // V78b — Amendment audit line. Shown only when an agent has edited terms
+        // post-submit. Applicants' own resubmissions don't stamp these fields.
+        if (offer.amended_at) {
+          const who = offer.amended_by_name ? `by ${esc(offer.amended_by_name)} ` : '';
+          html += `<div class="lo-terms-amended-line">Terms amended ${who}${esc(fmtRelative(offer.amended_at))}</div>`;
+        }
+      }
+      html += '</div>';
 
       html += '<div class="lo-detail-section">';
       html += '<div class="lo-detail-section-title">Household</div>';
@@ -517,11 +594,15 @@
         const term  = o.lease_term_months ? `${o.lease_term_months} mo` : '—';
         const start = fmtDate(o.preferred_start_date);
         const status = o.status || 'draft';
-        const isSubmitted = ['submitted', 'offer_accepted', 'evidence_submitted', 'evidence_resubmit_requested', 'validated', 'leased'].includes(status);
+        const isSubmitted = ['submitted', 'offer_resubmit_requested', 'offer_accepted', 'evidence_submitted', 'evidence_resubmit_requested', 'validated', 'leased'].includes(status);
         const hasEvidence = ['evidence_submitted', 'evidence_resubmit_requested', 'validated', 'leased'].includes(status);
         const isExpanded = expandedIds.has(String(o.id));
         const canAccept = status === 'submitted';
         const canReject = status === 'submitted';
+        // V78 — Step 1 resubmit. Shown while status is submitted (agent decides
+        // to unlock the form) and remains visible while in offer_resubmit_requested
+        // so the agent can re-trigger the email if needed.
+        const canOfferResubmit = status === 'submitted' || status === 'offer_resubmit_requested';
 
         const headlineRent = rent ? `${rent}/wk` : '—';
 
@@ -543,9 +624,10 @@
                 ${isSubmitted ? renderSubmittedDetail(o) : ''}
                 ${renderTokenBlock(o)}
                 ${hasEvidence ? renderReviewBlock(o) : ''}
-                ${canAccept || canReject ? `
+                ${canAccept || canReject || canOfferResubmit ? `
                   <div class="lo-decision-row">
                     ${canAccept ? `<button type="button" class="lo-accept-btn" data-id="${o.id}">Accept Offer</button>` : ''}
+                    ${canOfferResubmit ? `<button type="button" class="lo-offer-resubmit-btn" data-id="${o.id}" title="Unlock the offer form for the applicant — they'll get an email asking to review and resubmit.">Request Offer Resubmit</button>` : ''}
                     ${canReject ? `<button type="button" class="lo-reject-btn" data-id="${o.id}">Reject</button>` : ''}
                   </div>` : ''}
               </div>` : ''}
@@ -561,8 +643,13 @@
         btn.addEventListener('click', e => {
           e.stopPropagation();
           const id = String(btn.getAttribute('data-id'));
-          if (expandedIds.has(id)) expandedIds.delete(id);
-          else expandedIds.add(id);
+          if (expandedIds.has(id)) {
+            expandedIds.delete(id);
+            // V78b — clear inline-edit state when row collapses
+            if (editingTermsId === id) editingTermsId = null;
+          } else {
+            expandedIds.add(id);
+          }
           renderList();
         });
       });
@@ -570,8 +657,12 @@
         row.addEventListener('click', e => {
           if (e.target.closest('button') || e.target.closest('input')) return;
           const id = String(row.parentElement.getAttribute('data-id'));
-          if (expandedIds.has(id)) expandedIds.delete(id);
-          else expandedIds.add(id);
+          if (expandedIds.has(id)) {
+            expandedIds.delete(id);
+            if (editingTermsId === id) editingTermsId = null;
+          } else {
+            expandedIds.add(id);
+          }
           renderList();
         });
       });
@@ -652,11 +743,20 @@
           alert('This Enquiry deal has no linked Contacts. Add an enquirer Contact first.');
           return null;
         }
-        // V77.2g — Enquiry creation always links the enquirer first via Wave 2B
-        // (kanban-new-card flow). The contacts response is ordered by linked_at
-        // ASC, so the first entry is the enquirer. No hardcoded role filter
-        // needed — the data flow guarantees the ordering.
-        const c = linked[0];
+
+        // V78c — If multiple Contacts are linked to the Enquiry deal (e.g. a
+        // couple or group of co-applicants), show a picker dialog. The agent
+        // selects which one receives the Offer Form link.
+        // For the common single-Contact case, fall through silently to the
+        // first (and only) linked contact.
+        let c;
+        if (linked.length === 1) {
+          c = linked[0];
+        } else {
+          c = await showContactPickerDialog(linked);
+          if (!c) return null; // user cancelled
+        }
+
         if (!c.email || !/^\S+@\S+\.\S+$/.test(c.email)) {
           alert(`Contact "${c.first_name || ''} ${c.last_name || ''}" has no valid email. Edit the Contact and try again.`);
           return null;
@@ -668,16 +768,63 @@
       }
     }
 
+    // V78c — Modal picker shown when an Enquiry deal has multiple linked
+    // Contacts and the agent must choose who receives the Offer Form link.
+    // Returns a Promise resolving to the chosen Contact, or null if cancelled.
+    // Uses the existing kb-modal-overlay pattern for consistency with the
+    // rest of the app.
+    function showContactPickerDialog(contacts) {
+      return new Promise(resolve => {
+        const wrap = document.createElement('div');
+        wrap.className = 'kb-modal-overlay';
+        wrap.innerHTML = `
+          <div class="kb-modal" role="dialog" aria-modal="true" style="max-width:480px">
+            <div class="kb-modal-header">
+              <h2>Send Offer Form to which applicant?</h2>
+              <button class="kb-modal-close" title="Close" type="button">✕</button>
+            </div>
+            <div class="kb-modal-body">
+              <div class="lo-picker-help">This Enquiry has multiple linked contacts. Choose who should receive the Offer Form link by email.</div>
+              <div class="lo-picker-list">
+                ${contacts.map((c, i) => `
+                  <label class="lo-picker-row">
+                    <input type="radio" name="lo-picker" value="${i}" ${i === 0 ? 'checked' : ''}>
+                    <span class="lo-picker-name">${esc([c.first_name, c.last_name].filter(Boolean).join(' ') || '(no name)')}</span>
+                    <span class="lo-picker-email">${esc(c.email || '— no email')}</span>
+                  </label>
+                `).join('')}
+              </div>
+            </div>
+            <div class="kb-modal-footer">
+              <button type="button" class="lo-picker-cancel-btn">Cancel</button>
+              <button type="button" class="lo-picker-send-btn">Send Link</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(wrap);
+
+        function close(result) {
+          if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+          resolve(result);
+        }
+        wrap.querySelector('.kb-modal-close').addEventListener('click', () => close(null));
+        wrap.querySelector('.lo-picker-cancel-btn').addEventListener('click', () => close(null));
+        wrap.querySelector('.lo-picker-send-btn').addEventListener('click', () => {
+          const checked = wrap.querySelector('input[name="lo-picker"]:checked');
+          if (!checked) { close(null); return; }
+          close(contacts[parseInt(checked.value, 10)]);
+        });
+      });
+    }
+
     function wireTokenActions() {
       listEl.querySelectorAll('.lo-issue-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const applicationId = btn.getAttribute('data-application-id');
           const step = parseInt(btn.getAttribute('data-step'), 10);
-          const formName = step === 1 ? 'Offer Form' : 'Evidence Upload Form';
           const contact = await pickContactForToken();
           if (!contact) return;
-          if (!confirm(`Send ${formName} link to ${contact.first_name || ''} ${contact.last_name || ''} <${contact.email}>?`)) return;
           btn.disabled = true;
           btn.textContent = 'Sending…';
           try {
@@ -871,6 +1018,98 @@
           } catch (err) {
             alert('Could not request resubmit: ' + err.message);
             btn.disabled = false;
+          }
+        });
+      });
+
+      // V78 — Request Offer Resubmit (Step 1)
+      listEl.querySelectorAll('.lo-offer-resubmit-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-id');
+          if (!confirm('Request the applicant to review and resubmit their offer?\n\nThis will:\n• Unlock the offer form for them to edit\n• Send them a generic email asking them to log back in\n\nYou should follow up separately to explain what needs updating.')) return;
+          btn.disabled = true;
+          try {
+            const r = await fetch(API, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: parseInt(id, 10), status: 'offer_resubmit_requested' }),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              throw new Error(err.error || r.status);
+            }
+            await load();
+          } catch (err) {
+            alert('Could not request offer resubmit: ' + err.message);
+            btn.disabled = false;
+          }
+        });
+      });
+
+      // V78b — Edit Offer Terms (inline)
+      listEl.querySelectorAll('.lo-terms-edit-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          editingTermsId = String(btn.getAttribute('data-id'));
+          renderList();
+        });
+      });
+
+      listEl.querySelectorAll('.lo-terms-cancel-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          editingTermsId = null;
+          renderList();
+        });
+      });
+
+      listEl.querySelectorAll('.lo-terms-save-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const id = parseInt(btn.getAttribute('data-id'), 10);
+          const tbl = listEl.querySelector(`.lo-terms-edit[data-id="${id}"]`);
+          if (!tbl) return;
+
+          // Collect the five fields
+          const inputs = tbl.querySelectorAll('.lo-terms-input');
+          const payload = { id };
+          inputs.forEach(inp => {
+            const f = inp.getAttribute('data-field');
+            let v = inp.value;
+            if (f === 'requested_rent' || f === 'bond_weeks' || f === 'lease_term_months') {
+              v = v === '' ? null : Number(v);
+              if (v != null && (!Number.isFinite(v) || v < 0)) {
+                alert(`${f} must be a non-negative number`);
+                v = undefined;
+              }
+            } else if (f === 'preferred_start_date') {
+              v = v === '' ? null : v; // YYYY-MM-DD passes through
+            } else if (f === 'terms') {
+              v = String(v || '').trim();
+            }
+            if (v !== undefined) payload[f] = v;
+          });
+
+          btn.disabled = true;
+          const origLabel = btn.textContent;
+          btn.textContent = 'Saving…';
+          try {
+            const r = await fetch(API, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              throw new Error(err.error || r.status);
+            }
+            editingTermsId = null;
+            await load();
+          } catch (err) {
+            alert('Could not save terms: ' + err.message);
+            btn.disabled = false;
+            btn.textContent = origLabel;
           }
         });
       });
