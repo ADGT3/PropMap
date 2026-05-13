@@ -93,7 +93,8 @@
     let offers = [];
     let expandedIds = new Set();
     // V78b — id of the offer whose Offer Terms are currently being edited inline
-    // (null = not editing). Cleared on save / cancel / row collapse.
+    // (null = not editing). String, matching the existing pattern used for
+    // expandedIds and offer.id from the API. Cleared on save / cancel / row collapse.
     let editingTermsId = null;
 
     containerEl.innerHTML = `
@@ -255,7 +256,7 @@
       const status = offer.status || '';
       const isTerminal = ['leased', 'rejected', 'withdrawn'].includes(status);
       const canEditTerms = !isTerminal;
-      const isEditing = editingTermsId === offer.id;
+      const isEditing = editingTermsId === String(offer.id);
 
       let html = '<div class="lo-detail">';
 
@@ -619,7 +620,7 @@
           if (expandedIds.has(id)) {
             expandedIds.delete(id);
             // V78b — clear inline-edit state when row collapses
-            if (editingTermsId === parseInt(id, 10)) editingTermsId = null;
+            if (editingTermsId === id) editingTermsId = null;
           } else {
             expandedIds.add(id);
           }
@@ -632,7 +633,7 @@
           const id = String(row.parentElement.getAttribute('data-id'));
           if (expandedIds.has(id)) {
             expandedIds.delete(id);
-            if (editingTermsId === parseInt(id, 10)) editingTermsId = null;
+            if (editingTermsId === id) editingTermsId = null;
           } else {
             expandedIds.add(id);
           }
@@ -968,7 +969,7 @@
       listEl.querySelectorAll('.lo-terms-edit-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
-          editingTermsId = parseInt(btn.getAttribute('data-id'), 10);
+          editingTermsId = String(btn.getAttribute('data-id'));
           renderList();
         });
       });
