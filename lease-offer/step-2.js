@@ -1128,18 +1128,32 @@
     });
     // Each housing entry needs at least 1 evidence file
     HOUSING.forEach((h, i) => {
-      const files = (HOUSING_FILES[h.client_id] || []).filter(f => f.status === 'uploaded');
-      if (!files.length) {
-        const desc = h.address || `Housing entry ${i + 1}`;
-        errs.push(`Housing — "${desc}": at least one supporting document is required.`);
+      const all = HOUSING_FILES[h.client_id] || [];
+      const uploaded  = all.filter(f => f.status === 'uploaded');
+      const uploading = all.filter(f => f.status === 'uploading');
+      const desc = h.address || `Housing entry ${i + 1}`;
+      if (!uploaded.length) {
+        // V78e — distinguish in-flight uploads from a genuinely missing file
+        // so the message tells the applicant whether to wait or to upload.
+        if (uploading.length) {
+          errs.push(`Housing — "${desc}": file is still uploading. Please wait for it to finish, then submit.`);
+        } else {
+          errs.push(`Housing — "${desc}": at least one supporting document is required.`);
+        }
       }
     });
     // Each income entry needs at least 1 evidence file
     INCOME.forEach((inc, i) => {
-      const files = (INCOME_FILES[inc.client_id] || []).filter(f => f.status === 'uploaded');
-      if (!files.length) {
-        const desc = inc.income_source_name || `Income entry ${i + 1}`;
-        errs.push(`Income — "${desc}": at least one supporting document is required.`);
+      const all = INCOME_FILES[inc.client_id] || [];
+      const uploaded  = all.filter(f => f.status === 'uploaded');
+      const uploading = all.filter(f => f.status === 'uploading');
+      const desc = inc.income_source_name || `Income entry ${i + 1}`;
+      if (!uploaded.length) {
+        if (uploading.length) {
+          errs.push(`Income — "${desc}": file is still uploading. Please wait for it to finish, then submit.`);
+        } else {
+          errs.push(`Income — "${desc}": at least one supporting document is required.`);
+        }
       }
     });
     return errs;
