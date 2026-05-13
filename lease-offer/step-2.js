@@ -489,6 +489,24 @@
         fileEntry.id = data.evidence.id;
         fileEntry.url = data.evidence.url;
         fileEntry.status = 'uploaded';
+        // V78f — If the applicant picked a doc type while the upload was still
+        // in flight, the doc-type change handler couldn't persist it (no
+        // fileEntry.id yet). Now that the upload has returned an id, push the
+        // doc_type + points_value to the server so the agent's review block
+        // sees them.
+        if (fileEntry.doc_type) {
+          try {
+            await fetch(API_BASE + '/step2-update-evidence-meta', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                evidence_id:  fileEntry.id,
+                doc_type:     fileEntry.doc_type,
+                points_value: fileEntry.points || 0,
+              }),
+            });
+          } catch (err) { console.warn('post-upload meta sync failed', err); }
+        }
       }
     } catch (err) {
       fileEntry.status = 'error';
