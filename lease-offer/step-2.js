@@ -237,11 +237,37 @@
     document.getElementById('s2TenancyDbConsent').checked = !!LOAD_DATA.application.tenancy_database_consent_at;
     document.getElementById('s2RetentionConsent').checked = !!LOAD_DATA.application.retention_consent_at;
 
+    renderOfferTerms();
     renderIdSections();
     renderHousing();
     renderIncome();
     renderLeaseDocs();
     wireFormEvents();
+  }
+
+  // V78d — Render the Accepted Offer Terms summary at top of form.
+  // Read-only display of the five term fields agreed between applicant and agent.
+  function renderOfferTerms() {
+    const t = LOAD_DATA.application.offer_terms || {};
+    const wrap = document.getElementById('lofOfferTerms');
+    if (!wrap) return;
+    const rentStr  = fmtCurrency(t.requested_rent);
+    const rentTxt  = rentStr === '—' ? '—' : `${rentStr}/wk`;
+    const bondTxt  = t.bond_weeks ? `${t.bond_weeks} weeks` : '—';
+    const termTxt  = t.lease_term_months ? `${t.lease_term_months} months` : '—';
+    const startTxt = fmtDate(t.preferred_start_date);
+    let html = `
+      <dl class="lof-offer-terms-grid">
+        <dt>Rent</dt><dd>${esc(rentTxt)}</dd>
+        <dt>Bond</dt><dd>${esc(bondTxt)}</dd>
+        <dt>Lease term</dt><dd>${esc(termTxt)}</dd>
+        <dt>Preferred start</dt><dd>${esc(startTxt)}</dd>
+      </dl>
+    `;
+    if (t.terms) {
+      html += `<div class="lof-offer-terms-special"><strong>Special terms:</strong> ${esc(t.terms)}</div>`;
+    }
+    wrap.innerHTML = html;
   }
 
   function renderIdSections() {
@@ -1154,5 +1180,19 @@
     return String(s ?? '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // V78d — Formatters for the Accepted Offer Terms summary
+  function fmtCurrency(n) {
+    if (n == null || n === '') return '—';
+    const num = typeof n === 'number' ? n : parseFloat(String(n).replace(/[^0-9.]/g, ''));
+    if (isNaN(num) || num <= 0) return '—';
+    return '$' + Math.round(num).toLocaleString('en-AU');
+  }
+  function fmtDate(s) {
+    if (!s) return '—';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 })();

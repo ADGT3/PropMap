@@ -53,6 +53,13 @@
       </div>
 
       <form id="lofFormEl" autocomplete="on" novalidate>
+        <!-- V78d — Accepted Offer Terms summary (read-only, populated by JS) -->
+        <fieldset class="lof-section">
+          <legend>Accepted Offer Terms</legend>
+          <p class="lof-section-help">These are the terms your agent accepted. Please confirm they match your expectation before submitting evidence. If anything looks wrong, contact your agent.</p>
+          <div id="lofOfferTerms" class="lof-offer-terms-summary"></div>
+        </fieldset>
+
         <!-- 100 Points ID per applicant -->
         <fieldset class="lof-section">
           <legend>100 Points ID</legend>
@@ -79,7 +86,7 @@
         <!-- Lease Documents -->
         <fieldset class="lof-section">
           <legend>Lease Documents</legend>
-          <p class="lof-section-help">Once you've received the lease agreement and condition report from your agent, sign / accept and upload them here. These are optional at this stage — you can submit your application first and add them later by reopening this form.</p>
+          <p class="lof-section-help">Once you've received the lease agreement and condition report from your agent, sign / accept and upload them here. The Condition report can be submitted later, but prior to occupation, if required by reopening this form.</p>
           <div class="s2-leasedoc-zones" id="s2LeaseDocZones">
             <!-- two zones rendered by JS -->
           </div>
