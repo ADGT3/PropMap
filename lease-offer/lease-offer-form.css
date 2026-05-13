@@ -179,11 +179,53 @@ html, body {
   color: var(--lof-accent);
   padding: 0 8px;
   margin-left: -8px;
+  background: var(--lof-card-bg);
 }
 .lof-section-help {
   margin: -4px 0 14px;
   color: var(--lof-muted);
   font-size: 13px;
+}
+
+/* V78d — Accepted Offer Terms summary on Step 2 (read-only display) */
+.lof-offer-terms-summary {
+  background: var(--lof-surface2, #f8fafc);
+  border: 1px solid var(--lof-border);
+  border-radius: 6px;
+  padding: 14px 18px;
+}
+.lof-offer-terms-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 16px;
+  row-gap: 8px;
+  margin: 0;
+}
+.lof-offer-terms-grid dt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--lof-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  align-self: center;
+}
+.lof-offer-terms-grid dd {
+  margin: 0;
+  font-size: 14px;
+  color: var(--lof-text);
+  font-weight: 500;
+}
+.lof-offer-terms-special {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--lof-border);
+  font-size: 13px;
+  color: var(--lof-text);
+  line-height: 1.5;
+}
+.lof-offer-terms-special strong {
+  font-weight: 600;
+  color: var(--lof-accent);
 }
 
 /* ── Fields ───────────────────────────────────────────────────────────── */

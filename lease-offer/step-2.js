@@ -237,11 +237,37 @@
     document.getElementById('s2TenancyDbConsent').checked = !!LOAD_DATA.application.tenancy_database_consent_at;
     document.getElementById('s2RetentionConsent').checked = !!LOAD_DATA.application.retention_consent_at;
 
+    renderOfferTerms();
     renderIdSections();
     renderHousing();
     renderIncome();
     renderLeaseDocs();
     wireFormEvents();
+  }
+
+  // V78d — Render the Accepted Offer Terms summary at top of form.
+  // Read-only display of the five term fields agreed between applicant and agent.
+  function renderOfferTerms() {
+    const t = LOAD_DATA.application.offer_terms || {};
+    const wrap = document.getElementById('lofOfferTerms');
+    if (!wrap) return;
+    const rentStr  = fmtCurrency(t.requested_rent);
+    const rentTxt  = rentStr === '—' ? '—' : `${rentStr}/wk`;
+    const bondTxt  = t.bond_weeks ? `${t.bond_weeks} weeks` : '—';
+    const termTxt  = t.lease_term_months ? `${t.lease_term_months} months` : '—';
+    const startTxt = fmtDate(t.preferred_start_date);
+    let html = `
+      <dl class="lof-offer-terms-grid">
+        <dt>Rent</dt><dd>${esc(rentTxt)}</dd>
+        <dt>Bond</dt><dd>${esc(bondTxt)}</dd>
+        <dt>Lease term</dt><dd>${esc(termTxt)}</dd>
+        <dt>Preferred start</dt><dd>${esc(startTxt)}</dd>
+      </dl>
+    `;
+    if (t.terms) {
+      html += `<div class="lof-offer-terms-special"><strong>Special terms:</strong> ${esc(t.terms)}</div>`;
+    }
+    wrap.innerHTML = html;
   }
 
   function renderIdSections() {
@@ -463,6 +489,24 @@
         fileEntry.id = data.evidence.id;
         fileEntry.url = data.evidence.url;
         fileEntry.status = 'uploaded';
+        // V78f — If the applicant picked a doc type while the upload was still
+        // in flight, the doc-type change handler couldn't persist it (no
+        // fileEntry.id yet). Now that the upload has returned an id, push the
+        // doc_type + points_value to the server so the agent's review block
+        // sees them.
+        if (fileEntry.doc_type) {
+          try {
+            await fetch(API_BASE + '/step2-update-evidence-meta', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                evidence_id:  fileEntry.id,
+                doc_type:     fileEntry.doc_type,
+                points_value: fileEntry.points || 0,
+              }),
+            });
+          } catch (err) { console.warn('post-upload meta sync failed', err); }
+        }
       }
     } catch (err) {
       fileEntry.status = 'error';
@@ -1102,18 +1146,32 @@
     });
     // Each housing entry needs at least 1 evidence file
     HOUSING.forEach((h, i) => {
-      const files = (HOUSING_FILES[h.client_id] || []).filter(f => f.status === 'uploaded');
-      if (!files.length) {
-        const desc = h.address || `Housing entry ${i + 1}`;
-        errs.push(`Housing — "${desc}": at least one supporting document is required.`);
+      const all = HOUSING_FILES[h.client_id] || [];
+      const uploaded  = all.filter(f => f.status === 'uploaded');
+      const uploading = all.filter(f => f.status === 'uploading');
+      const desc = h.address || `Housing entry ${i + 1}`;
+      if (!uploaded.length) {
+        // V78e — distinguish in-flight uploads from a genuinely missing file
+        // so the message tells the applicant whether to wait or to upload.
+        if (uploading.length) {
+          errs.push(`Housing — "${desc}": file is still uploading. Please wait for it to finish, then submit.`);
+        } else {
+          errs.push(`Housing — "${desc}": at least one supporting document is required.`);
+        }
       }
     });
     // Each income entry needs at least 1 evidence file
     INCOME.forEach((inc, i) => {
-      const files = (INCOME_FILES[inc.client_id] || []).filter(f => f.status === 'uploaded');
-      if (!files.length) {
-        const desc = inc.income_source_name || `Income entry ${i + 1}`;
-        errs.push(`Income — "${desc}": at least one supporting document is required.`);
+      const all = INCOME_FILES[inc.client_id] || [];
+      const uploaded  = all.filter(f => f.status === 'uploaded');
+      const uploading = all.filter(f => f.status === 'uploading');
+      const desc = inc.income_source_name || `Income entry ${i + 1}`;
+      if (!uploaded.length) {
+        if (uploading.length) {
+          errs.push(`Income — "${desc}": file is still uploading. Please wait for it to finish, then submit.`);
+        } else {
+          errs.push(`Income — "${desc}": at least one supporting document is required.`);
+        }
       }
     });
     return errs;
@@ -1154,5 +1212,19 @@
     return String(s ?? '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // V78d — Formatters for the Accepted Offer Terms summary
+  function fmtCurrency(n) {
+    if (n == null || n === '') return '—';
+    const num = typeof n === 'number' ? n : parseFloat(String(n).replace(/[^0-9.]/g, ''));
+    if (isNaN(num) || num <= 0) return '—';
+    return '$' + Math.round(num).toLocaleString('en-AU');
+  }
+  function fmtDate(s) {
+    if (!s) return '—';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 })();
