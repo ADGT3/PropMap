@@ -148,6 +148,16 @@
             <div class="params-loading">Loading…</div>
           </div>
         </div>
+
+        <div class="params-section" data-section="boards">
+          <div class="params-section-header">
+            <h2>Boards</h2>
+            <p class="settings-section-sub">Default score (interest_level, 0–100) applied to new cards added to each board. Used by the default kanban sort. Higher means the card ranks higher in its column on first add.</p>
+          </div>
+          <div class="params-table-wrap" data-table-wrap="boards">
+            <div class="params-loading">Loading…</div>
+          </div>
+        </div>
       </div>
     `;
 
@@ -169,6 +179,7 @@
       renderRolesTable(),
       renderSourcesTable(),
       renderTypesTable(),
+      renderBoardsTable(),
     ]);
   }
 
@@ -782,6 +793,142 @@
     } catch (err) {
       alert('Delete failed: ' + err.message);
     }
+  }
+
+  // ── Boards table (V78g: per-board default score editor) ──────────────────
+
+  // Boards section is read+edit only on default_score. Boards themselves are
+  // created/edited/deleted from the kanban toolbar — this page only configures
+  // the score that new cards get when added via addToPipeline.
+  async function renderBoardsTable() {
+    const wrap = _container.querySelector('[data-table-wrap="boards"]');
+    if (!wrap) return;
+    wrap.innerHTML = '<div class="params-loading">Loading…</div>';
+
+    let boards, settings;
+    try {
+      const [boardsRes, settingsRes] = await Promise.all([
+        fetch('/api/boards'),
+        fetch('/api/system-settings?category=boards'),
+      ]);
+      if (!boardsRes.ok) throw new Error('Boards: ' + boardsRes.status);
+      if (!settingsRes.ok) throw new Error('Settings: ' + settingsRes.status);
+      boards = await boardsRes.json();
+      settings = await settingsRes.json();
+    } catch (err) {
+      wrap.innerHTML = '<div class="params-empty">Could not load boards: ' + esc(err.message) + '</div>';
+      return;
+    }
+
+    // Build settings lookup keyed by board_id
+    const scoreByBoardId = {};
+    settings.forEach(s => {
+      const m = String(s.key || '').match(/^board_default_score_(.+)$/);
+      if (m) scoreByBoardId[m[1]] = s.value;
+    });
+
+    // Boards-table is sorted: system boards first (by sort_order), then user
+    // boards alphabetical. Action boards excluded — they don't use interest_level.
+    const eligibleBoards = boards
+      .filter(b => b.board_type !== 'action')
+      .sort((a, b) => {
+        if (a.is_system !== b.is_system) return a.is_system ? -1 : 1;
+        if (a.is_system) return (a.sort_order || 0) - (b.sort_order || 0);
+        return String(a.name).toLowerCase().localeCompare(String(b.name).toLowerCase());
+      });
+
+    if (!eligibleBoards.length) {
+      wrap.innerHTML = '<div class="params-empty">No boards configured.</div>';
+      return;
+    }
+
+    wrap.innerHTML = `
+      <table class="params-table">
+        <thead>
+          <tr>
+            <th>Board</th>
+            <th>Type</th>
+            <th style="width:140px">Default Score</th>
+            <th style="width:90px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${eligibleBoards.map(b => `
+            <tr data-board-id="${esc(b.id)}">
+              <td>${esc(b.name)}${b.is_system ? ' <span class="params-system-badge">system</span>' : ''}</td>
+              <td>${b.is_system ? 'System' : 'Custom'}</td>
+              <td>
+                <input type="number" min="0" max="100" step="1" class="params-board-score-input"
+                       value="${esc(scoreByBoardId[b.id] != null ? scoreByBoardId[b.id] : '40')}"
+                       data-board-id="${esc(b.id)}"
+                       data-original="${esc(scoreByBoardId[b.id] != null ? scoreByBoardId[b.id] : '40')}">
+                <span class="params-board-score-status" data-board-id="${esc(b.id)}"></span>
+              </td>
+              <td>
+                <button class="params-save-btn params-board-save-btn" type="button" data-board-id="${esc(b.id)}" disabled>Save</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+
+    // Wire inputs — enable Save when changed, disable when reverted
+    wrap.querySelectorAll('.params-board-score-input').forEach(inp => {
+      const boardId = inp.getAttribute('data-board-id');
+      const saveBtn = wrap.querySelector(`.params-board-save-btn[data-board-id="${cssEscape(boardId)}"]`);
+      const statusEl = wrap.querySelector(`.params-board-score-status[data-board-id="${cssEscape(boardId)}"]`);
+      inp.addEventListener('input', () => {
+        const dirty = inp.value !== inp.getAttribute('data-original');
+        saveBtn.disabled = !dirty;
+        statusEl.textContent = '';
+      });
+    });
+
+    // Wire Save buttons
+    wrap.querySelectorAll('.params-board-save-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const boardId = btn.getAttribute('data-board-id');
+        const inp = wrap.querySelector(`.params-board-score-input[data-board-id="${cssEscape(boardId)}"]`);
+        const statusEl = wrap.querySelector(`.params-board-score-status[data-board-id="${cssEscape(boardId)}"]`);
+        const v = String(inp.value).trim();
+        // Client-side validation matching server pattern in api/system-settings.js
+        if (!/^\d+$/.test(v)) { statusEl.textContent = 'Must be a whole number'; statusEl.className = 'params-board-score-status params-err'; return; }
+        const n = parseInt(v, 10);
+        if (n < 0 || n > 100) { statusEl.textContent = 'Must be 0–100'; statusEl.className = 'params-board-score-status params-err'; return; }
+
+        btn.disabled = true;
+        statusEl.textContent = 'Saving…';
+        statusEl.className = 'params-board-score-status';
+        try {
+          const res = await fetch('/api/system-settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ['board_default_score_' + boardId]: v }),
+          });
+          if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            const errMsg = errBody?.errors?.['board_default_score_' + boardId] || errBody?.error || res.status;
+            throw new Error(errMsg);
+          }
+          inp.setAttribute('data-original', v);
+          statusEl.textContent = 'Saved';
+          statusEl.className = 'params-board-score-status params-ok';
+          setTimeout(() => { statusEl.textContent = ''; }, 2000);
+        } catch (err) {
+          statusEl.textContent = 'Save failed: ' + err.message;
+          statusEl.className = 'params-board-score-status params-err';
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  // CSS-escape an attribute value for use inside [data-attr="..."] selectors.
+  // Board ids contain underscores and lowercase only, but defensive.
+  function cssEscape(s) {
+    if (window.CSS && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/["\\]/g, '\\$&');
   }
 
   // ── Expose ────────────────────────────────────────────────────────────────

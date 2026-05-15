@@ -3960,6 +3960,91 @@ body:not([data-route="mapping"]) .leaflet-control-container {
 .params-save-btn:hover { filter: brightness(1.05); }
 .params-cancel-btn:hover { background: var(--border); }
 
+/* V78g — Boards parameters sub-section: per-board default-score editor */
+.params-board-score-input {
+  width: 70px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text);
+}
+.params-board-score-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.params-board-score-status {
+  margin-left: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.params-board-score-status.params-ok  { color: #15803d; }
+.params-board-score-status.params-err { color: var(--red); }
+
+/* V78g — Board picker dialog (shown by addToPipeline before creating a new card) */
+.kb-board-picker-help {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.kb-board-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kb-board-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--surface, #fff);
+}
+.kb-board-picker-row:hover { background: var(--surface2, #f8fafc); }
+.kb-board-picker-row input[type="radio"] { margin: 0; }
+.kb-board-picker-name {
+  flex: 1 1 auto;
+  font-weight: 500;
+  font-size: 14px;
+}
+.kb-board-picker-tag {
+  display: inline-block;
+  padding: 2px 6px;
+  background: rgba(0,0,0,0.06);
+  color: var(--muted);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.kb-board-picker-cancel-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.kb-board-picker-cancel-btn:hover { background: var(--surface2); }
+.kb-board-picker-confirm-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: auto;
+}
+.kb-board-picker-confirm-btn:hover { filter: brightness(1.05); }
+
 /* ════════════════════════════════════════════════════════════════════════════
    V77.1 — Note form (extended Type+Source dropdowns)
    Added now even though note-form.js ships in 3.2 — having styles ready means

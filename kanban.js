@@ -36,6 +36,11 @@ const STAGES = [
 let boards         = [];           // [{ id, name, is_system, columns: [...] }]
 let currentBoardId = 'sys_acquisition'; // default to system Acquisition
 let userDealOrder  = {};           // { dealId: column_order } per-user, per current board
+// V78g — Per-board default score (interest_level) used when a new card is
+// added via addToPipeline. Loaded from system_settings (category=boards)
+// during init. Falls back to 40 if a board has no row (matches the seed).
+let boardDefaultScores = {};       // { board_id: number 0-100 }
+const BOARD_DEFAULT_SCORE_FALLBACK = 40;
 
 // Returns the STAGES-like array for the current board. Falls back to the
 // static STAGES constant if no boards are loaded yet. Each returned entry
@@ -703,6 +708,29 @@ async function loadBoards() {
   }
 }
 
+// V78g — Load per-board default scores from system_settings (category=boards).
+// Keys are 'board_default_score_<board_id>'; values parsed as int 0-100.
+// Called during init alongside loadBoards(). Failure is non-fatal — falls
+// back to BOARD_DEFAULT_SCORE_FALLBACK per board.
+async function loadBoardDefaultScores() {
+  try {
+    const res = await fetch('/api/system-settings?category=boards');
+    if (!res.ok) throw new Error(res.status);
+    const rows = await res.json();
+    const map = {};
+    for (const row of rows) {
+      const m = String(row.key || '').match(/^board_default_score_(.+)$/);
+      if (!m) continue;
+      const n = parseInt(row.value, 10);
+      if (Number.isFinite(n)) map[m[1]] = n;
+    }
+    boardDefaultScores = map;
+  } catch (err) {
+    console.warn('[kanban] loadBoardDefaultScores failed, falling back to 40:', err.message);
+    boardDefaultScores = {};
+  }
+}
+
 // V75.6: load per-user card order for the current board
 async function loadUserDealOrder() {
   try {
@@ -905,6 +933,9 @@ async function initPipeline() {
   }
 
   phase1Promises.push(loadBoards());
+  // V78g — Per-board default scores. Used by addToPipeline to stamp
+  // interest_level on new cards. Independent of boards loading, so parallel.
+  phase1Promises.push(loadBoardDefaultScores());
 
   await Promise.all(phase1Promises);
 
@@ -1036,6 +1067,79 @@ function newDealId() {
   return 'deal_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 }
 
+// V78g — Board picker shown before adding a property to the pipeline. The
+// agent chooses which board the new deal lands on, regardless of which board
+// they're currently viewing. Returns a Promise resolving to the chosen
+// board id, or null if cancelled.
+//
+// Eligible boards are deal-type boards visible to the user — system boards
+// (Acquisition, Sales Listings, Lease Listings) plus any custom owned boards.
+// Enquiry boards (sys_sales_enquiry, sys_lease_enquiry) are excluded — those
+// represent inbound buyer/tenant enquiries on existing listings, not somewhere
+// a fresh map-discovered property should land. Action boards are excluded too.
+function pickBoardForNewDeal(listingAddress) {
+  return new Promise(resolve => {
+    const eligible = boards.filter(b => {
+      if (b.board_type === 'action') return false;
+      // Exclude Enquiry boards (per above).
+      if (b.id === 'sys_sales_enquiry' || b.id === 'sys_lease_enquiry') return false;
+      return true;
+    });
+
+    // If nothing's eligible (shouldn't happen in practice — Acquisition is
+    // always seeded as a system board), fall back to Acquisition silently.
+    if (!eligible.length) {
+      resolve('sys_acquisition');
+      return;
+    }
+
+    // System boards first (sort_order ascending), then user boards.
+    eligible.sort((a, b) => {
+      if (a.is_system !== b.is_system) return a.is_system ? -1 : 1;
+      return (a.sort_order || 0) - (b.sort_order || 0);
+    });
+
+    const wrap = document.createElement('div');
+    wrap.className = 'kb-modal-overlay kb-board-picker-overlay';
+    wrap.innerHTML = `
+      <div class="kb-modal" role="dialog" aria-modal="true" style="max-width:520px">
+        <div class="kb-modal-header">
+          <h2>Add to which board?</h2>
+          <button class="kb-modal-close" title="Close" type="button">✕</button>
+        </div>
+        <div class="kb-modal-body">
+          <div class="kb-board-picker-help">${listingAddress ? escapeHtml(listingAddress) + ' &middot; ' : ''}Choose the board this property should be added to.</div>
+          <div class="kb-board-picker-list">
+            ${eligible.map((b, i) => `
+              <label class="kb-board-picker-row">
+                <input type="radio" name="kb-board-pick" value="${escapeHtml(b.id)}" ${i === 0 ? 'checked' : ''}>
+                <span class="kb-board-picker-name">${escapeHtml(b.name)}</span>
+                ${b.is_system ? '<span class="kb-board-picker-tag">system</span>' : ''}
+              </label>
+            `).join('')}
+          </div>
+        </div>
+        <div class="kb-modal-footer">
+          <button type="button" class="kb-board-picker-cancel-btn">Cancel</button>
+          <button type="button" class="kb-board-picker-confirm-btn">Add</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(wrap);
+
+    function close(result) {
+      if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      resolve(result);
+    }
+    wrap.querySelector('.kb-modal-close').addEventListener('click', () => close(null));
+    wrap.querySelector('.kb-board-picker-cancel-btn').addEventListener('click', () => close(null));
+    wrap.querySelector('.kb-board-picker-confirm-btn').addEventListener('click', () => {
+      const checked = wrap.querySelector('input[name="kb-board-pick"]:checked');
+      close(checked ? checked.value : null);
+    });
+  });
+}
+
 // V76.5 — addToPipeline rewritten:
 //   - If the listing's domain id is already linked to an existing property
 //     (because the user manually linked them via the CRM Property modal),
@@ -1065,6 +1169,12 @@ async function addToPipeline(listing) {
     }
   }
 
+  // V78g — Agent picks which board this lands on. Don't default to
+  // currentBoardId — that produced the bug where adding from the map while
+  // viewing Lease Listings landed the property on the Lease board.
+  const targetBoardId = await pickBoardForNewDeal(listing?.address);
+  if (!targetBoardId) return; // user cancelled
+
   // Server-side check: maybe a property already exists with this Domain
   // listing id (e.g. user linked it before adding to pipeline). If so, reuse
   // it; if not, we'll create a new property below.
@@ -1081,10 +1191,20 @@ async function addToPipeline(listing) {
     ? listing._parcels
     : [{ lat: listing.lat, lng: listing.lng, label: `${listing.address}, ${listing.suburb}` }];
 
+  // V78g — Resolve default score for the chosen board. Falls back to 40 if
+  // the board has no setting row (shouldn't happen post-migration but stays
+  // defensive — same value as the v78g seed).
+  const defaultScore = (boardDefaultScores[targetBoardId] != null)
+    ? boardDefaultScores[targetBoardId]
+    : BOARD_DEFAULT_SCORE_FALLBACK;
+
   pipeline[dealId] = {
     stage:   'shortlisted',
     note:    '',
     addedAt: Date.now(),
+    // V78g — Stamp the chosen board so internalToDealPayload doesn't
+    // fall back to currentBoardId.
+    _boardId: targetBoardId,
     property: {
       id:          propertyId,
       address:     existingProperty?.address || listing.address,
@@ -1105,6 +1225,9 @@ async function addToPipeline(listing) {
       // synthetic ids (e.g. "property-1234567890" from map clicks) leave it null.
       domain_id:      domainId,
     },
+    // V78g — Apply per-board default score so the new card ranks correctly
+    // when sorted by interest_level (the default kanban sort mode).
+    data: { interest_level: defaultScore },
     dd: {}
   };
   const savedPromise = savePipeline(dealId);
