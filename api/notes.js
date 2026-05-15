@@ -48,6 +48,7 @@
 import { neon } from '@neondatabase/serverless';
 import { requireSession } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
+import { titleForParcel } from '../lib/parcel-title.js';
 const sql = neon(getDatabaseUrl());
 
 // Resolve author_id/author_name from a session object. Handles the fallback
@@ -122,8 +123,13 @@ async function enrichNotes(rows) {
     propRows.forEach(r => { propMap[r.id] = { address: r.address, suburb: r.suburb }; });
   }
   if (parcelIds.length) {
-    const parcelRows = await sql`SELECT id, name FROM parcels WHERE id = ANY(${parcelIds})`;
-    parcelRows.forEach(r => { parcelMap[r.id] = { name: r.name }; });
+    // V78i.4 — Use the shared formatter for parcel source labels so they
+    // match the deal modal / popup display. Previously read stale parcels.name.
+    const parcelRows = await sql`SELECT id FROM parcels WHERE id = ANY(${parcelIds})`;
+    for (const r of parcelRows) {
+      const title = await titleForParcel(sql, r.id);
+      parcelMap[r.id] = { name: title };
+    }
   }
 
   return rows.map(r => {

@@ -17,6 +17,7 @@ import { neon } from '@neondatabase/serverless';
 import { put, del as blobDel, get as blobGet } from '@vercel/blob';
 import { requireSession } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
+import { titleForParcel } from '../lib/parcel-title.js';
 
 const sql = neon(getDatabaseUrl());
 
@@ -73,14 +74,16 @@ export default async function handler(req, res) {
 
       // Resolve a context heading. Try to look up the property address for the
       // deal so the header reads like "Zoning · 49 - 57 Catherine Fields Rd".
+      // V78i.4 — Use the shared formatter (titleForParcel) for parcel deals
+      // so this matches the deal modal / popup. Previously we read the stale
+      // parcels.name snapshot.
       let propertyLabel = '';
       try {
         const dealRows = await sql`
           SELECT property_id, parcel_id FROM deals WHERE id = ${att.deal_id} LIMIT 1`;
         const d = dealRows[0];
         if (d?.parcel_id) {
-          const pa = await sql`SELECT name FROM parcels WHERE id = ${d.parcel_id} LIMIT 1`;
-          propertyLabel = pa[0]?.name || '';
+          propertyLabel = await titleForParcel(sql, d.parcel_id);
         } else if (d?.property_id) {
           const pr = await sql`SELECT address, suburb FROM properties WHERE id = ${d.property_id} LIMIT 1`;
           if (pr[0]) propertyLabel = [pr[0].address, pr[0].suburb].filter(Boolean).join(', ');
