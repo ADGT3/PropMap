@@ -69,7 +69,16 @@ export default async function handler(req, res) {
         return res.status(404).json({ error: 'File not found in storage' });
       }
       res.setHeader('Content-Type', att.mime_type || result.blob?.contentType || 'application/octet-stream');
-      res.setHeader('Content-Disposition', `inline; filename="${att.filename.replace(/"/g, '')}"`);
+      // V78i — Content-Disposition can only contain ASCII; sanitise the filename
+      // for the header. Keep the original filename in the DB/UI; just the
+      // header gets the safe version. Use RFC 5987 filename* for full
+      // unicode support via UTF-8 percent-encoding.
+      const asciiName = att.filename
+        .replace(/[^\x20-\x7e]/g, '_')   // non-printable / non-ASCII → underscore
+        .replace(/["\\]/g, '_');         // quotes / backslashes
+      const utf8Name  = encodeURIComponent(att.filename);
+      res.setHeader('Content-Disposition',
+        `inline; filename="${asciiName}"; filename*=UTF-8''${utf8Name}`);
       const len = result.blob?.size;
       if (len) res.setHeader('Content-Length', String(len));
       result.stream.pipe(res);
