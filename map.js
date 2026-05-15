@@ -588,7 +588,7 @@ function priceCellHtml(listing) {
 }
 
 
-function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null) {
+function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null, pipelineIdOverride = null) {
   const dl = listing && window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(listing.id) : null;
 
   // Price only — no house type line, no agent line
@@ -609,7 +609,11 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
   // V74.8: detect whether this location corresponds to an existing pipeline
   // item. If so, swap the "+ Pipeline" add button for an "Open in Pipeline"
   // link that jumps straight to that pipeline card.
-  const matchedPipelineId = findPipelineMatchForClick(listing);
+  // V78i.5 — pipelineIdOverride: callers that already know the pipeline id
+  // (e.g. the parcel pipeline-pin click handler — item.id is in scope) can
+  // skip the listing-based match heuristic and tell us directly. Falls back
+  // to the existing match logic for all other call sites.
+  const matchedPipelineId = pipelineIdOverride || findPipelineMatchForClick(listing);
 
   // V76.7+ — "+ Property" button always available (creates property without a
   // deal — for not-suitable tracking, agency listings, linking to known
@@ -4626,7 +4630,10 @@ window._renderPipelinePins = function () {
       // Build with the SAME buildPopupInner function used for single-property
       // popups. Same fields, same UI style. The only difference for parcels
       // is that the overlay block area is height-constrained with scroll.
-      const inner = buildPopupInner(aggLabel, aggLga, aggLotDP, aggArea, aggZoneCode, aggOverlay, null);
+      // V78i.5 — Pass item.id so buildPopupInner shows the "★ Open in Pipeline"
+      // button (the listing-based match heuristic can't find a parcel deal
+      // since parcels have no domain_id).
+      const inner = buildPopupInner(aggLabel, aggLga, aggLotDP, aggArea, aggZoneCode, aggOverlay, null, item.id);
       const popupHtml = `<div style="${popupStyle}">${_wrapPopupForParcel(inner)}</div>`;
       marker.getPopup().setContent(popupHtml);
       // V78i.3 — Force our combined popup on top. selectPropertyAtPoint
