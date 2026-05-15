@@ -38,6 +38,12 @@ function safeFilename(name) {
     .replace(/^-|-$/g, '');
 }
 
+function escHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 async function readJsonBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
   const chunks = [];
@@ -51,6 +57,164 @@ export default async function handler(req, res) {
   if (!session) return;
 
   try {
+    // ── View (HTML wrapper around the file, matches evidence-view standard) ──
+    if (req.method === 'GET' && req.query?.action === 'view') {
+      const id = parseInt(req.query.id, 10);
+      if (!id) return res.status(400).send('id required');
+
+      const rows = await sql`
+        SELECT a.id, a.deal_id, a.dd_key, a.filename, a.mime_type, a.uploaded_at,
+               d.id AS deal_id_check
+        FROM dd_attachments a
+        LEFT JOIN deals d ON d.id = a.deal_id
+        WHERE a.id = ${id} LIMIT 1`;
+      if (!rows.length) return res.status(404).send('Attachment not found');
+      const att = rows[0];
+
+      // Resolve a context heading. Try to look up the property address for the
+      // deal so the header reads like "Zoning · 49 - 57 Catherine Fields Rd".
+      let propertyLabel = '';
+      try {
+        const dealRows = await sql`
+          SELECT property_id, parcel_id FROM deals WHERE id = ${att.deal_id} LIMIT 1`;
+        const d = dealRows[0];
+        if (d?.parcel_id) {
+          const pa = await sql`SELECT name FROM parcels WHERE id = ${d.parcel_id} LIMIT 1`;
+          propertyLabel = pa[0]?.name || '';
+        } else if (d?.property_id) {
+          const pr = await sql`SELECT address, suburb FROM properties WHERE id = ${d.property_id} LIMIT 1`;
+          if (pr[0]) propertyLabel = [pr[0].address, pr[0].suburb].filter(Boolean).join(', ');
+        }
+      } catch (_) { /* non-fatal */ }
+
+      // Pretty-case the dd_key for the heading (e.g. "zoning" → "Zoning")
+      const niceKey = att.dd_key.charAt(0).toUpperCase() + att.dd_key.slice(1);
+      const contextHeading = propertyLabel
+        ? `DD: ${niceKey} · ${propertyLabel}`
+        : `DD: ${niceKey}`;
+
+      const downloadUrl = `/api/dd-attachments?id=${id}&action=download`;
+      const mime = String(att.mime_type || '').toLowerCase();
+      const isImage = mime.startsWith('image/');
+      const isPdf   = mime === 'application/pdf';
+
+      let viewerHtml;
+      if (isImage) {
+        viewerHtml = `<img src="${downloadUrl}" alt="${escHtml(att.filename)}">`;
+      } else if (isPdf) {
+        viewerHtml = `<iframe src="${downloadUrl}#view=FitH" title="${escHtml(att.filename)}"></iframe>`;
+      } else {
+        viewerHtml = `
+          <div class="ev-fallback">
+            <p>This file type can't be previewed in the browser.</p>
+            <p><a class="ev-download-btn" href="${downloadUrl}">Download ${escHtml(att.filename)}</a></p>
+          </div>`;
+      }
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>${escHtml(contextHeading)} · PropMap</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1410;
+      color: #f7f4ec;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    .ev-header {
+      background: #2a221a;
+      border-bottom: 1px solid #3d3128;
+      padding: 14px 20px;
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .ev-context {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f7f4ec;
+      flex: 1;
+      min-width: 0;
+    }
+    .ev-filename {
+      font-size: 12px;
+      color: #c4841a;
+      font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+    }
+    .ev-download {
+      font-size: 12px;
+      color: #fff;
+      background: #c4841a;
+      text-decoration: none;
+      padding: 5px 12px;
+      border-radius: 3px;
+      font-weight: 500;
+    }
+    .ev-download:hover { background: #a26d14; }
+    .ev-viewer {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      overflow: auto;
+    }
+    .ev-viewer img {
+      max-width: 100%;
+      max-height: calc(100vh - 80px);
+      object-fit: contain;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      background: #fff;
+    }
+    .ev-viewer iframe {
+      width: 100%;
+      height: calc(100vh - 70px);
+      border: 0;
+      background: #fff;
+    }
+    .ev-fallback {
+      text-align: center;
+      padding: 40px;
+    }
+    .ev-download-btn {
+      display: inline-block;
+      background: #c4841a;
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 4px;
+      text-decoration: none;
+      font-weight: 600;
+      margin-top: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header class="ev-header">
+    <div style="flex:1;min-width:0">
+      <div class="ev-context">${escHtml(contextHeading)}</div>
+      <div class="ev-filename">${escHtml(att.filename)}</div>
+    </div>
+    <a class="ev-download" href="${downloadUrl}" download="${escHtml(att.filename)}">Download</a>
+  </header>
+  <div class="ev-viewer">${viewerHtml}</div>
+</body>
+</html>`;
+
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.status(200).send(html);
+    }
+
     // ── Download (stream a single file) ────────────────────────────────
     if (req.method === 'GET' && req.query?.action === 'download') {
       const id = parseInt(req.query.id, 10);
