@@ -4459,6 +4459,21 @@ window._renderPipelinePins = function () {
   // Remove existing pipeline pin layer
   if (_pipelinePinLayer) { map.removeLayer(_pipelinePinLayer); _pipelinePinLayer = null; }
 
+  // V78i.1 — Ensure the pipeline-pin pane exists. Custom pane with a
+  // z-index above markerPane (600) so gold-star pipeline pins always render
+  // AND receive clicks ahead of blue lot pins added later by
+  // selectPropertyAtPoint via reSelectParcels. Without this, the blue pins
+  // (added to markerPane after the gold star) capture clicks at overlapping
+  // coordinates because they're later in the DOM.
+  if (!map.getPane('pipelinePinPane')) {
+    const pane = map.createPane('pipelinePinPane');
+    pane.style.zIndex = 700;            // markerPane is 600, popupPane is 700;
+                                         // 700 here keeps us above markers but
+                                         // below popups themselves (so popup
+                                         // content can still cover the pin)
+    pane.style.pointerEvents = 'auto';   // ensure clicks land
+  }
+
   const pipelineData = window.getPipelineData ? window.getPipelineData() : null;
   console.log('[pipeline pins] pipelineData:', pipelineData);
   if (!pipelineData) return;
@@ -4510,7 +4525,7 @@ window._renderPipelinePins = function () {
       className: 'pipeline-map-pin',
     });
 
-    const marker = L.marker([pinLat, pinLng], { icon, zIndexOffset: 1500 });
+    const marker = L.marker([pinLat, pinLng], { icon, zIndexOffset: 1500, pane: 'pipelinePinPane' });
 
     marker.on('click', async () => {
       const srlupEntry  = overlayRegistry['nsw-srlup'];
