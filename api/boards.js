@@ -118,6 +118,23 @@ async function handlePost(req, res, userId, admin) {
     INSERT INTO boards (id, name, owner_id, is_system, sort_order, board_type)
     VALUES (${id}, ${name.trim()}, ${is_system ? null : userId}, ${is_system}, ${sort_order}, ${board_type})`;
 
+  // V78g — Seed the per-board default-score setting so the new board appears
+  // in the Parameters → Boards admin list and so addToPipeline() has a value
+  // to read when an agent picks this board for a new card. Default '40'
+  // matches the v78g migration seed.
+  if (board_type === 'deal') {
+    try {
+      await sql`
+        INSERT INTO system_settings (key, value, category, label, description)
+        VALUES (${'board_default_score_' + id}, '40', 'boards',
+                ${'Default Score \u2014 ' + name.trim()},
+                ${'Default interest_level (0\u2013100) for new cards added to this board.'})
+        ON CONFLICT (key) DO NOTHING`;
+    } catch (err) {
+      console.warn('[boards POST] failed to seed default-score setting:', err);
+    }
+  }
+
   // V75.6.2: new boards start with NO columns by default. The user adds
   // columns via "Edit Columns". Callers can still supply columns[] in the
   // POST body (used e.g. by a future "clone board" feature).
@@ -238,6 +255,13 @@ async function handleDelete(req, res, userId, admin) {
     }
   }
   await sql`DELETE FROM boards WHERE id = ${id}`;  // cascades to board_columns
+  // V78g — Clean up the per-board default-score setting too. Fail-soft: the
+  // board is already deleted, so swallow any error from this side-effect.
+  try {
+    await sql`DELETE FROM system_settings WHERE key = ${'board_default_score_' + id}`;
+  } catch (err) {
+    console.warn('[boards DELETE] failed to remove default-score setting:', err);
+  }
   return res.status(200).json({ ok: true });
 }
 
