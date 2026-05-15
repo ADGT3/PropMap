@@ -4512,60 +4512,80 @@ window._renderPipelinePins = function () {
 
     const marker = L.marker([pinLat, pinLng], { icon, zIndexOffset: 500 });
 
-    // V78h.3 — Pipeline-pin popup mirrors the deal modal header. Same data
-    // shape for both single-property and parcel deals — p.address is already
-    // the aggregated title for parcels (formatted by formatParcelTitle in
-    // dealRowToInternal), p._lotDPs is the joined "121//DP27602, 122//DP27602"
-    // string, and p._areaSqm is the combined area. No per-row breakdown.
-    {
-      const escHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-      const areaM2 = (typeof p._areaSqm === 'number' && p._areaSqm > 0) ? p._areaSqm : 0;
-      const acres = areaM2 / 4046.8564224;
-      const acreStr = acres >= 10 ? acres.toFixed(1) + ' ac' : acres.toFixed(2) + ' ac';
-      const areaLine = areaM2 > 0
-        ? `<div style="font-size:12px;color:#555;margin-top:4px"><strong>Area:</strong> ${Math.round(areaM2).toLocaleString()} m² (${acreStr})</div>`
-        : '';
-      const lotLine = p._lotDPs
-        ? `<div style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${escHtml(p._lotDPs)}</div>`
-        : '';
-      const addressLine = `<div style="font-size:14px;font-weight:600;color:#222">📍 ${escHtml(p.address || '')}${p.suburb ? ', ' + escHtml(p.suburb) : ''}${p.state ? ' ' + escHtml(p.state) : ''}</div>`;
-      const openBtn = `
-        <div style="margin-top:10px">
-          <button type="button"
-            onclick="window.openPipelineItem && window.openPipelineItem('${String(item.id).replace(/'/g, "\\'")}')"
-            style="display:block;width:100%;padding:7px 10px;background:#c4841a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
-            ★ Open in Pipeline
-          </button>
-        </div>`;
-      const popupInner = `<div style="${popupStyle}">${addressLine}${lotLine}${areaLine}${openBtn}</div>`;
-      marker.bindPopup(popupInner, { minWidth: 240, maxWidth: 320, autoPan: true });
-    }
-
-    marker.on('click', () => {
-      // V78h.4 — For parcel pins, draw outlines for each child polygon but
-      // do NOT call reSelectParcels (which adds numbered blue pins and opens
-      // a popup per parcel, racing with our bound combined popup and winning
-      // because it opens last). Draw outlines directly here so the gold-star
-      // pin's bound popup is the only one that opens.
-      if (isParcel && Array.isArray(p._parcels) && p._parcels.length) {
-        _drawParcelOutlines(p._parcels);
-        // marker.bindPopup above will auto-open via Leaflet's default click
-        // handler on the marker. Don't double-open here.
-        return;
-      }
-
+    marker.on('click', async () => {
       const srlupEntry  = overlayRegistry['nsw-srlup'];
       const zoningEntry = overlayRegistry['nsw-land-zoning'];
       const floodEntry  = overlayRegistry['nsw-flood'];
       const roadsEntry  = overlayRegistry['nsw-future-roads'];
-      selectPropertyAtPoint(
-        { lat: pinLat, lng: pinLng },
-        !!(srlupEntry  && srlupEntry.def.enabled),
-        !!(zoningEntry && zoningEntry.def.enabled),
-        !!(floodEntry  && floodEntry.def.enabled),
-        !!(roadsEntry  && roadsEntry.def.enabled),
-        null
+      const includeSrlup  = !!(srlupEntry  && srlupEntry.def.enabled);
+      const includeZoning = !!(zoningEntry && zoningEntry.def.enabled);
+      const includeFlood  = !!(floodEntry  && floodEntry.def.enabled);
+      const includeRoads  = !!(roadsEntry  && roadsEntry.def.enabled);
+
+      // ── SINGLE PROPERTY ────────────────────────────────────────────────
+      // Unchanged: existing single-point selection flow.
+      if (!isParcel || !Array.isArray(p._parcels) || !p._parcels.length) {
+        selectPropertyAtPoint(
+          { lat: pinLat, lng: pinLng },
+          includeSrlup, includeZoning, includeFlood, includeRoads, null
+        );
+        return;
+      }
+
+      // ── PARCEL ─────────────────────────────────────────────────────────
+      // V78h.5 — Parcel popup uses the SAME buildPopupInner function as
+      // single-property popups, with aggregated inputs across all child
+      // lots. Outlines + numbered blue pins are drawn by the existing
+      // reSelectParcels flow (same as the deal modal's address click).
+      //
+      // Open a placeholder popup immediately so the agent sees feedback
+      // while the per-lot overlay queries are in flight.
+      marker.unbindPopup();
+      marker.bindPopup(
+        `<div style="${popupStyle}"><span style="color:#888;font-size:12px">Loading parcel details…</span></div>`,
+        { minWidth: 240, maxWidth: 360, autoPan: true }
+      ).openPopup();
+
+      // Run reSelectParcels to render outlines + numbered blue pins. Same
+      // function the deal modal uses — don't reinvent it.
+      if (typeof window.reSelectParcels === 'function') {
+        window.reSelectParcels(p._parcels);
+      }
+
+      // Fetch overlay data per child lot in parallel.
+      const perLotResults = await Promise.all(
+        p._parcels.map(par => _fetchOverlaysForPoint(
+          par.lat, par.lng, includeSrlup, includeZoning, includeFlood, includeRoads, map
+        ))
       );
+
+      // Aggregate cross-lot values:
+      //   - lga:       union of distinct LGA names (usually one)
+      //   - zoneCode:  unique SYM_CODE values joined " · "
+      //   - overlay blocks: union from all lots
+      const lgas      = new Set();
+      const zoneCodes = new Set();
+      for (const r of perLotResults) {
+        if (r.lga) lgas.add(r.lga);
+        if (r.zoneCode) zoneCodes.add(r.zoneCode);
+      }
+      const aggLga       = [...lgas].join(' · ');
+      const aggZoneCode  = [...zoneCodes].join(' · ') || null;
+      const aggOverlay   = _aggregateOverlayBlocks(perLotResults,
+        includeSrlup, includeZoning, includeFlood, includeRoads);
+
+      // Aggregated address/Lot+DP/area come from dealRowToInternal — already
+      // computed there.
+      const aggLabel  = [p.address, p.suburb].filter(Boolean).join(', ');
+      const aggLotDP  = p._lotDPs || 'Not found';
+      const aggArea   = (typeof p._areaSqm === 'number' && p._areaSqm > 0) ? p._areaSqm : null;
+
+      // Build with the SAME buildPopupInner function used for single-property
+      // popups. Same fields, same UI style. The only difference for parcels
+      // is that the overlay block area is height-constrained with scroll.
+      const inner = buildPopupInner(aggLabel, aggLga, aggLotDP, aggArea, aggZoneCode, aggOverlay, null);
+      const popupHtml = `<div style="${popupStyle}">${_wrapPopupForParcel(inner)}</div>`;
+      marker.getPopup().setContent(popupHtml);
     });
 
     markers.push(marker);
@@ -4575,6 +4595,238 @@ window._renderPipelinePins = function () {
     _pipelinePinLayer = L.layerGroup(markers).addTo(map);
   }
 };
+
+// V78h.5 — Per-point overlay fetcher used by parcel pipeline-pin click.
+// Mirrors the slowFetches block in selectPropertyAtPoint, but extracted so
+// it can be called per child lot in parallel from the parcel handler.
+// Returns { lga, zoneCode, srlupJson, zoningJson, floodJson, roadsJson }.
+async function _fetchOverlaysForPoint(lat, lng, includeSrlup, includeZoning, includeFlood, includeRoads, mapRef) {
+  const fetches = [];
+
+  if (includeSrlup) {
+    const size = mapRef.getSize();
+    const b    = mapRef.getBounds();
+    const params = new URLSearchParams({
+      f: 'json',
+      geometry: `${lng},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      sr: '4326',
+      layers: 'all:1',
+      tolerance: '6',
+      mapExtent: `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`,
+      imageDisplay: `${size.x},${size.y},96`,
+      returnGeometry: 'false',
+    });
+    fetches.push(fetch(`${SRLUP_BASE}/identify?${params}`).then(r => r.json()).catch(() => null));
+  } else {
+    fetches.push(Promise.resolve(null));
+  }
+
+  // Always fetch zoning so zone code appears even when overlay is off
+  {
+    const zp = new URLSearchParams({
+      f: 'json',
+      geometry: `${lng},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      outFields: 'SYM_CODE,LAY_CLASS,EPI_NAME,LGA_NAME,PURPOSE',
+      returnGeometry: 'false',
+      resultRecordCount: '1',
+    });
+    fetches.push(fetch(`${ZONING_BASE}/2/query?${zp}`).then(r => r.json()).catch(() => null));
+  }
+
+  if (includeFlood) {
+    const fp = new URLSearchParams({
+      f: 'json',
+      geometry: `${lng},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      outFields: 'LAY_CLASS,EPI_NAME,SYM_CODE',
+      returnGeometry: 'false',
+      resultRecordCount: '1',
+    });
+    fetches.push(fetch(`${FLOOD_BASE}/1/query?${fp}`).then(r => r.json()).catch(() => null));
+  } else {
+    fetches.push(Promise.resolve(null));
+  }
+
+  if (includeRoads) {
+    const rp = new URLSearchParams({
+      f: 'json',
+      geometry: `${lng},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      outFields: '*',
+      returnGeometry: 'false',
+      resultRecordCount: '1',
+    });
+    fetches.push(fetch(`${ROADS_BASE}/10/query?${rp}`).then(r => r.json()).catch(() => null));
+  } else {
+    fetches.push(Promise.resolve(null));
+  }
+
+  const [srlupJson, zoningJson, floodJson, roadsJson] = await Promise.all(fetches);
+
+  // Extract LGA + zone code from zoning result for header use
+  const zFeat = zoningJson && ((zoningJson.features || [])[0] || (zoningJson.results || [])[0]);
+  const zAttrs = zFeat ? (zFeat.attributes || zFeat) : null;
+  const lga = zAttrs && zAttrs.LGA_NAME ? zAttrs.LGA_NAME : '';
+  const zoneCode = zAttrs && zAttrs.SYM_CODE ? zAttrs.SYM_CODE : null;
+
+  return { lga, zoneCode, srlupJson, zoningJson, floodJson, roadsJson };
+}
+
+// V78h.5 — Aggregate the four overlay blocks across child lots. Output is a
+// single HTML string in the same shape selectPropertyAtPoint builds for a
+// single point — exactly what buildPopupInner expects as overlayBlock.
+//
+// Aggregation rules (locked with user):
+//   - SRLUP: dedupe attribute key/value rows across all lots producing a hit
+//   - Zoning: unique SYM_CODE / LAY_CLASS / EPI_NAME joined with " · "
+//   - Flood: unique LAY_CLASS / EPI_NAME joined; "No affectation" if all empty
+//   - Roads: union of all reservation rows from all lots
+function _aggregateOverlayBlocks(perLotResults, includeSrlup, includeZoning, includeFlood, includeRoads) {
+  const SKIP = ['OBJECTID','Shape','Shape_Area','Shape_Length','FID'];
+  let out = '';
+
+  // SRLUP
+  if (includeSrlup) {
+    const seen = new Map(); // key -> Set of distinct values
+    for (const r of perLotResults) {
+      const results = r.srlupJson && Array.isArray(r.srlupJson.results) ? r.srlupJson.results : [];
+      for (const res of results) {
+        const attrs = res.attributes || {};
+        for (const [k, v] of Object.entries(attrs)) {
+          if (SKIP.includes(k) || v === null || v === '') continue;
+          if (!seen.has(k)) seen.set(k, new Set());
+          seen.get(k).add(v);
+        }
+      }
+    }
+    if (seen.size) {
+      const rows = [...seen.entries()].map(([k, vs]) => `
+        <tr>
+          <td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">${k.replace(/_/g,' ')}</td>
+          <td style="font-size:12px;padding:3px 0">${[...vs].join(' · ')}</td>
+        </tr>`).join('');
+      out += `
+        <div style="border-top:2px solid #e67e22;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#e67e22;margin-bottom:4px">NSW Planning Zone</div>
+          <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">${rows}</table>
+        </div>`;
+    }
+  }
+
+  // Zoning (only when the overlay is enabled — same rule as the single-property flow)
+  if (includeZoning) {
+    const zones = new Set();
+    const purposes = new Set();
+    const epis = new Set();
+    for (const r of perLotResults) {
+      const f = r.zoningJson && ((r.zoningJson.features || [])[0] || (r.zoningJson.results || [])[0]);
+      if (!f) continue;
+      const a = f.attributes || f;
+      if (a.SYM_CODE) zones.add(a.SYM_CODE);
+      const purpose = a.LAY_CLASS || a.PURPOSE;
+      if (purpose) purposes.add(purpose);
+      if (a.EPI_NAME) epis.add(a.EPI_NAME);
+    }
+    if (zones.size || purposes.size || epis.size) {
+      out += `
+        <div style="border-top:2px solid #8B0000;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#8B0000;margin-bottom:4px">Land Zoning (LEP)</div>
+          <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">
+            ${zones.size    ? '<tr><td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">Zone</td><td style="font-size:12px;padding:3px 0;font-weight:600">' + [...zones].join(' · ') + '</td></tr>'    : ''}
+            ${purposes.size ? '<tr><td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">Land Use</td><td style="font-size:12px;padding:3px 0">' + [...purposes].join(' · ') + '</td></tr>' : ''}
+            ${epis.size     ? '<tr><td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">LEP</td><td style="font-size:12px;padding:3px 0">' + [...epis].join(' · ') + '</td></tr>'         : ''}
+          </table>
+        </div>`;
+    }
+  }
+
+  // Flood
+  if (includeFlood) {
+    const classes = new Set();
+    const epis = new Set();
+    let anyQueried = false;
+    for (const r of perLotResults) {
+      if (r.floodJson) anyQueried = true;
+      const f = r.floodJson && ((r.floodJson.features || [])[0]);
+      if (!f) continue;
+      const a = f.attributes || {};
+      if (a.LAY_CLASS) classes.add(a.LAY_CLASS);
+      if (a.EPI_NAME)  epis.add(a.EPI_NAME);
+    }
+    if (classes.size || epis.size) {
+      out += `
+        <div style="border-top:2px solid #2471a3;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#2471a3;margin-bottom:4px">Flood Planning (EPI)</div>
+          <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">
+            ${classes.size ? '<tr><td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">Classification</td><td style="font-size:12px;padding:3px 0;font-weight:600">' + [...classes].join(' · ') + '</td></tr>' : ''}
+            ${epis.size    ? '<tr><td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">LEP</td><td style="font-size:12px;padding:3px 0">' + [...epis].join(' · ') + '</td></tr>'         : ''}
+          </table>
+        </div>`;
+    } else if (anyQueried) {
+      out += `
+        <div style="border-top:2px solid #2471a3;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#2471a3;margin-bottom:4px">Flood Planning (EPI)</div>
+          <div style="font-size:12px;color:#666">No flood planning affectation</div>
+        </div>`;
+    }
+  }
+
+  // Future roads — union rows across lots, deduped by key
+  if (includeRoads) {
+    const seen = new Map();
+    let anyQueried = false;
+    for (const r of perLotResults) {
+      if (r.roadsJson) anyQueried = true;
+      const f = r.roadsJson && ((r.roadsJson.features || [])[0]);
+      if (!f) continue;
+      const attrs = f.attributes || {};
+      for (const [k, v] of Object.entries(attrs)) {
+        if (SKIP.includes(k) || v === null || v === '' || v === ' ') continue;
+        if (!seen.has(k)) seen.set(k, new Set());
+        seen.get(k).add(v);
+      }
+    }
+    if (seen.size) {
+      const rows = [...seen.entries()].map(([k, vs]) => `
+        <tr>
+          <td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">${k.replace(/_/g,' ')}</td>
+          <td style="font-size:12px;padding:3px 0">${[...vs].join(' · ')}</td>
+        </tr>`).join('');
+      out += `
+        <div style="border-top:2px solid #922b21;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#922b21;margin-bottom:4px">⚠ Future Road Reservation</div>
+          <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">${rows}</table>
+        </div>`;
+    } else if (anyQueried) {
+      out += `
+        <div style="border-top:2px solid #922b21;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#922b21;margin-bottom:4px">Future Road Reservations</div>
+          <div style="font-size:12px;color:#666">No road reservation on this parcel</div>
+        </div>`;
+    }
+  }
+
+  return out;
+}
+
+// V78h.5 — Constrain parcel popup to ~9 lines of content. Single-property
+// popups already fit in 8 lines naturally; this adds a max-height container
+// with internal scroll so a parcel popup can't blow up the screen. The
+// content from buildPopupInner is inserted as-is — we only wrap the outer
+// container with a max-height + overflow:auto.
+function _wrapPopupForParcel(innerHtml) {
+  // 9 lines * ~22px per line ≈ 200px. Inner already has its own padding/
+  // line-height; just clip to height and let it scroll.
+  return `<div style="max-height:200px;overflow-y:auto;overflow-x:hidden">${innerHtml}</div>`;
+}
 
 // V75.4d: multi-polygon outline for parcel pipeline pins. Draws green
 // outlines around every constituent property's polygon that has rings
@@ -4628,61 +4880,6 @@ function _highlightParcelChildren(parcelsArr, item) {
 
   if (!layers.length) return;
   _parcelHighlightLayer = L.layerGroup(layers).addTo(map);
-  if (bounds.isValid()) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 });
-}
-
-// V78h.4 — Outlines-only counterpart to _highlightParcelChildren. Used by
-// parcel pipeline-pin clicks where the gold-star pin already shows a bound
-// combined popup, so we DON'T want numbered blue pins / per-lot popups
-// fighting with it (that was the behaviour of reSelectParcels). Just paint
-// the polygon outlines on the map and fit the view.
-//
-// Cached rings on each parcel record render immediately. Parcels missing
-// rings get their cadastre fetched async and added to the same layer as
-// each response returns. No fallback circles — if a fetch fails the parcel
-// simply isn't outlined (matches the user's expectation that outlines are
-// always polygons, never dots).
-function _drawParcelOutlines(parcelsArr) {
-  if (_parcelHighlightLayer) {
-    map.removeLayer(_parcelHighlightLayer);
-    _parcelHighlightLayer = null;
-  }
-  if (parcelLayer) { map.removeLayer(parcelLayer); parcelLayer = null; }
-  if (clickMarker) { map.removeLayer(clickMarker); clickMarker = null; clickMarkerData = null; }
-
-  const layerGroup = L.layerGroup().addTo(map);
-  _parcelHighlightLayer = layerGroup;
-  const bounds = L.latLngBounds([]);
-
-  const POLY_STYLE = {
-    color:       '#1a6b3a',
-    weight:      2.5,
-    opacity:     1,
-    fillColor:   '#1a6b3a',
-    fillOpacity: 0.08,
-    interactive: false,
-  };
-
-  for (const par of parcelsArr) {
-    if (!par) continue;
-
-    if (Array.isArray(par.rings) && par.rings.length) {
-      // Cached rings — source is [lng, lat], Leaflet wants [lat, lng]
-      const leafletRings = par.rings.map(ring => ring.map(([lng, lat]) => [lat, lng]));
-      L.polygon(leafletRings, POLY_STYLE).addTo(layerGroup);
-      leafletRings.forEach(r => r.forEach(([lat, lng]) => bounds.extend([lat, lng])));
-    } else if (typeof par.lat === 'number' && typeof par.lng === 'number') {
-      // Rings missing — fetch from cadastre. Add to bounds immediately so
-      // the fit-bounds is roughly correct even before the async returns.
-      bounds.extend([par.lat, par.lng]);
-      fetchLotDP(par.lat, par.lng).then(cadastre => {
-        if (!cadastre || !cadastre.rings) return;
-        // fetchLotDP already returns rings in [lat, lng] Leaflet order
-        L.polygon(cadastre.rings, POLY_STYLE).addTo(layerGroup);
-      }).catch(() => {});
-    }
-  }
-
   if (bounds.isValid()) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 });
 }
 
