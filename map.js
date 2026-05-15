@@ -5424,6 +5424,169 @@ window.reSelectParcels = function(parcels, opts) {
 })();
 
 
+// ─── Right-click overlay identify ─────────────────────────────────────────────
+// V80.1 — Right-click anywhere on the map to identify all currently-enabled
+// WMS / ArcGIS-MapServer overlays at that point. Each overlay's `wms.url`
+// points at the `/export` endpoint (which renders coloured tiles); the same
+// MapServer's `/identify` endpoint returns the underlying feature attributes
+// at a given lat/lng. We derive the identify URL by stripping `/export`,
+// and pass the visible-layer id from `wms.layers` ("show:N" → "all:N").
+//
+// Tile-only overlays (where `wms.tiled === true` or the URL points at a
+// non-MapServer tile pattern like /{z}/{x}/{y}) are skipped — their tiles
+// are pre-rendered so no identify endpoint exists.
+//
+// GeoJSON vector overlays already have their own per-feature contextmenu
+// handler (see line 1754); Leaflet's event bubbling stops there so this
+// map-level handler doesn't fire when right-clicking a GeoJSON polygon.
+(function () {
+  const SKIP_ATTR_FIELDS = new Set([
+    'OBJECTID', 'Shape', 'Shape_Area', 'Shape_Length', 'FID',
+    'Shape.STArea()', 'Shape.STLength()', 'Shape_Length_', 'Shape_Area_',
+  ]);
+
+  // Convert overlay's wms.url + wms.layers into an identify URL + layer spec.
+  // Returns null for overlays that can't be identified (tiled rasters etc.).
+  function _identifyEndpointFor(def) {
+    if (!def.wms || !def.wms.url) return null;
+    if (def.wms.tiled) return null;                  // pre-rendered tile sets
+    const url = String(def.wms.url);
+    // Only ArcGIS MapServer /export URLs are identifiable here
+    if (!/MapServer\/export(\?|$)/.test(url) && !/MapServer\/export$/.test(url)) {
+      if (!/MapServer\/export/.test(url)) return null;
+    }
+    const base = url.replace(/\/export(\?.*)?$/, '');
+    // wms.layers shape: "show:N" or "show:N,M" — take the first id for identify
+    const layers = String(def.wms.layers || '');
+    const m = layers.match(/show:(\d+)/);
+    const layerId = m ? m[1] : '0';
+    return { base, layerId };
+  }
+
+  // Query one overlay's identify endpoint at (lat, lng).
+  // Uses ArcGIS REST identify with all:<layer> so we get a uniform shape.
+  async function _identifyOverlay(def, lat, lng) {
+    const ep = _identifyEndpointFor(def);
+    if (!ep) return { def, ok: false, reason: 'not-identifiable' };
+
+    const size = map.getSize();
+    const b    = map.getBounds();
+    const params = new URLSearchParams({
+      f:             'json',
+      geometry:      `${lng},${lat}`,
+      geometryType:  'esriGeometryPoint',
+      sr:            '4326',
+      layers:        `all:${ep.layerId}`,
+      tolerance:     '6',
+      mapExtent:     `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`,
+      imageDisplay:  `${size.x},${size.y},96`,
+      returnGeometry:'false',
+    });
+
+    try {
+      const res  = await fetch(`${ep.base}/identify?${params}`);
+      if (!res.ok) return { def, ok: false, reason: 'http-' + res.status };
+      const json = await res.json();
+      const results = (json && json.results) || [];
+      if (!results.length) return { def, ok: true, attrs: null };
+      return { def, ok: true, attrs: results[0].attributes || {} };
+    } catch (err) {
+      return { def, ok: false, reason: err.message };
+    }
+  }
+
+  // Render a single overlay's identify result as one block. Mirrors the
+  // visual style used by selectPropertyAtPoint's srlupBlock / roadsBlock.
+  function _renderIdentifyBlock(def, attrs) {
+    const colour = '#1a4a8a';
+    const labelHtml = def.label || def.id;
+
+    if (!attrs) {
+      return `
+        <div style="border-top:2px solid ${colour};margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:${colour};margin-bottom:4px">${labelHtml}</div>
+          <div style="font-size:12px;color:#666">No affectation at this point</div>
+        </div>`;
+    }
+
+    const rows = Object.entries(attrs)
+      .filter(([k, v]) => !SKIP_ATTR_FIELDS.has(k) && v !== null && v !== '' && v !== ' ' && String(v).toLowerCase() !== 'null')
+      .map(([k, v]) => `<tr>
+        <td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">${k.replace(/_/g, ' ')}</td>
+        <td style="font-size:12px;padding:3px 0">${v}</td>
+      </tr>`).join('');
+
+    if (!rows) {
+      return `
+        <div style="border-top:2px solid ${colour};margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:${colour};margin-bottom:4px">${labelHtml}</div>
+          <div style="font-size:12px;color:#666">No affectation at this point</div>
+        </div>`;
+    }
+
+    return `
+      <div style="border-top:2px solid ${colour};margin-top:8px;padding-top:6px">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:${colour};margin-bottom:4px">${labelHtml}</div>
+        <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">${rows}</table>
+      </div>`;
+  }
+
+  async function _onMapContextMenu(e) {
+    // Don't fire while the measure tool is active — right-click during
+    // measure should fall through to its own behaviour (currently no
+    // contextmenu binding, but be defensive).
+    if (window._measureActive) return;
+
+    const { lat, lng } = e.latlng;
+
+    // Pick up enabled WMS overlays that are identifiable.
+    const targets = Object.values(overlayRegistry)
+      .filter(({ def, isWms }) => isWms && def.enabled && _identifyEndpointFor(def));
+
+    if (!targets.length) {
+      // Nothing to identify — give a small hint popup so the agent knows
+      // the right-click registered but there's no overlay to query.
+      L.popup({ minWidth: 220, maxWidth: 320, autoPan: true })
+        .setLatLng(e.latlng)
+        .setContent(`<div style="${popupStyle}"><div style="font-size:12px;color:#888">No identifiable overlays enabled. Turn on an overlay (e.g. NSW Land Zoning) then right-click again.</div></div>`)
+        .openOn(map);
+      return;
+    }
+
+    // Loading placeholder.
+    const loadingPopup = L.popup({ minWidth: 240, maxWidth: 360, autoPan: true })
+      .setLatLng(e.latlng)
+      .setContent(`<div style="${popupStyle}"><div style="font-size:12px;color:#888">Identifying ${targets.length} overlay${targets.length === 1 ? '' : 's'} at this point…</div></div>`)
+      .openOn(map);
+
+    const results = await Promise.all(targets.map(({ def }) => _identifyOverlay(def, lat, lng)));
+
+    const blocks = results
+      .filter(r => r.ok)
+      .map(r => _renderIdentifyBlock(r.def, r.attrs))
+      .join('');
+
+    const failed = results.filter(r => !r.ok);
+    const failNote = failed.length
+      ? `<div style="font-size:11px;color:#999;margin-top:8px;padding-top:6px;border-top:1px solid #eee">Couldn't query ${failed.length} overlay${failed.length === 1 ? '' : 's'} (tiled or unsupported)</div>`
+      : '';
+
+    const header = `<div style="font-size:13px;font-weight:600;color:#222">Overlay info at this point</div>
+      <div style="font-size:10px;color:#888;margin-top:2px">${lat.toFixed(6)}, ${lng.toFixed(6)}</div>`;
+
+    const inner = `<div style="${popupStyle}">${header}${blocks}${failNote}</div>`;
+
+    // Re-open at the same lat/lng so the popup tracks the cursor click point
+    L.popup({ minWidth: 240, maxWidth: 380, autoPan: true })
+      .setLatLng(e.latlng)
+      .setContent(inner)
+      .openOn(map);
+  }
+
+  map.on('contextmenu', _onMapContextMenu);
+})();
+
+
 // ─── Deferred pipeline pin render ────────────────────────────────────────────
 // kanban.js may load and call refreshPipelinePins before map.js registers
 // _renderPipelinePins. Poll briefly after load to catch that case.
