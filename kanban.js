@@ -1175,6 +1175,21 @@ async function addToPipeline(listing) {
   const targetBoardId = await pickBoardForNewDeal(listing?.address);
   if (!targetBoardId) return; // user cancelled
 
+  // V78g — Resolve the first column of the target board. New cards always
+  // land in the leftmost column (sort_order 0) of whatever board the agent
+  // picked. Without this, internalToDealPayload's fallback stageToColumnId
+  // would try to resolve 'shortlisted' against the chosen board, which only
+  // exists on Acquisition — every other board would return the literal string
+  // 'shortlisted' and trigger an FK violation on deals_column_id_fkey.
+  const targetBoard = boards.find(x => x.id === targetBoardId);
+  const firstCol = (targetBoard?.columns || []).slice().sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))[0];
+  if (!firstCol) {
+    alert('Cannot add to this board — it has no columns. Edit the board to add a column first.');
+    return;
+  }
+  const targetColumnId = firstCol.id;
+  const targetStageSlug = firstCol.stage_slug || firstCol.id;
+
   // Server-side check: maybe a property already exists with this Domain
   // listing id (e.g. user linked it before adding to pipeline). If so, reuse
   // it; if not, we'll create a new property below.
@@ -1199,12 +1214,14 @@ async function addToPipeline(listing) {
     : BOARD_DEFAULT_SCORE_FALLBACK;
 
   pipeline[dealId] = {
-    stage:   'shortlisted',
+    stage:   targetStageSlug,
     note:    '',
     addedAt: Date.now(),
-    // V78g — Stamp the chosen board so internalToDealPayload doesn't
-    // fall back to currentBoardId.
-    _boardId: targetBoardId,
+    // V78g — Stamp the chosen board + first column so internalToDealPayload
+    // doesn't fall back to currentBoardId or to a column-id that doesn't
+    // exist for this board.
+    _boardId:  targetBoardId,
+    _columnId: targetColumnId,
     property: {
       id:          propertyId,
       address:     existingProperty?.address || listing.address,
