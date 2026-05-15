@@ -4181,6 +4181,9 @@ ${rows.join('')}`;
                   ${DD_RISK_OPTIONS.map(o => `<option value="${o.value}" ${o.value === status ? 'selected' : ''}>${o.label}</option>`).join('')}
                 </select>
                 <input class="kb-input kb-dd-note" type="text" placeholder="Note…" value="${note}" data-key="${key}">
+                <button type="button" class="kb-dd-attach-btn" data-key="${key}" data-deal-id="${id}" title="Attach files to this risk">
+                  📎<span class="kb-dd-attach-count" data-key="${key}"></span>
+                </button>
               </div>`;
           }).join('')}
         </div>
@@ -4803,7 +4806,179 @@ ${rows.join('')}`;
       dd[key].note = e.target.value;
       saveDd(id, dd);
     });
+    // V78i — paperclip click opens the attachments dialog for this DD risk
+    modal.querySelector('.kb-dd').addEventListener('click', e => {
+      const btn = e.target.closest('.kb-dd-attach-btn');
+      if (!btn) return;
+      const ddKey  = btn.dataset.key;
+      const dealId = btn.dataset.dealId;
+      openDdAttachmentsDialog(dealId, ddKey, modal);
+    });
+    // V78i — Load and render attachment counts for this deal so the badges
+    // reflect existing files when the modal opens.
+    refreshDdAttachmentCounts(id, modal);
   }
+}
+
+// V78i — Load DD attachment counts for a deal and stamp the badges in the modal.
+// Called on modal open and after any upload/delete that changes counts.
+async function refreshDdAttachmentCounts(dealId, modal) {
+  try {
+    const res = await fetch(`/api/dd-attachments?deal_id=${encodeURIComponent(dealId)}`);
+    if (!res.ok) return;
+    const rows = await res.json();
+    const counts = {};
+    for (const r of rows) {
+      counts[r.dd_key] = (counts[r.dd_key] || 0) + 1;
+    }
+    modal.querySelectorAll('.kb-dd-attach-count').forEach(span => {
+      const key = span.dataset.key;
+      const n = counts[key] || 0;
+      span.textContent = n > 0 ? ` ${n}` : '';
+      const btn = span.closest('.kb-dd-attach-btn');
+      if (btn) btn.classList.toggle('kb-dd-attach-has-files', n > 0);
+    });
+  } catch (err) {
+    console.warn('[dd-attachments] count refresh failed:', err);
+  }
+}
+
+// V78i — Modal dialog listing files for a given DD risk, with upload + delete.
+// Uses the existing kb-modal-overlay pattern (same as the v78c contact picker
+// and v78g board picker).
+function openDdAttachmentsDialog(dealId, ddKey, parentModal) {
+  const wrap = document.createElement('div');
+  wrap.className = 'kb-modal-overlay kb-dd-attach-overlay';
+  // Pretty-case the dd_key for the heading (e.g. "zoning" → "Zoning")
+  const niceKey = ddKey.charAt(0).toUpperCase() + ddKey.slice(1);
+  wrap.innerHTML = `
+    <div class="kb-modal" role="dialog" aria-modal="true" style="max-width:560px">
+      <div class="kb-modal-header">
+        <h2>Attachments — ${escapeHtml(niceKey)}</h2>
+        <button class="kb-modal-close" title="Close" type="button">✕</button>
+      </div>
+      <div class="kb-modal-body">
+        <div class="kb-dd-attach-list" data-list>
+          <div class="kb-dd-attach-loading">Loading…</div>
+        </div>
+        <div class="kb-dd-attach-upload">
+          <input type="file" class="kb-dd-attach-file-input" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,application/pdf,image/jpeg,image/png,image/heic,image/heif">
+          <span class="kb-dd-attach-upload-help">PDF, JPEG, PNG, HEIC. Max 10 MB.</span>
+        </div>
+        <div class="kb-dd-attach-error" data-error style="display:none"></div>
+      </div>
+      <div class="kb-modal-footer">
+        <button type="button" class="kb-dd-attach-done-btn">Done</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+
+  const listEl  = wrap.querySelector('[data-list]');
+  const errEl   = wrap.querySelector('[data-error]');
+  const fileInp = wrap.querySelector('.kb-dd-attach-file-input');
+
+  function showError(msg) {
+    errEl.textContent = msg || '';
+    errEl.style.display = msg ? '' : 'none';
+  }
+
+  async function loadList() {
+    listEl.innerHTML = '<div class="kb-dd-attach-loading">Loading…</div>';
+    try {
+      const res = await fetch(`/api/dd-attachments?deal_id=${encodeURIComponent(dealId)}&dd_key=${encodeURIComponent(ddKey)}`);
+      if (!res.ok) throw new Error('Load failed: ' + res.status);
+      const rows = await res.json();
+      renderList(rows);
+    } catch (err) {
+      listEl.innerHTML = `<div class="kb-dd-attach-empty">Could not load: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderList(rows) {
+    if (!rows.length) {
+      listEl.innerHTML = '<div class="kb-dd-attach-empty">No files attached yet.</div>';
+      return;
+    }
+    listEl.innerHTML = rows.map(r => {
+      const sizeKb = r.size_bytes ? Math.round(r.size_bytes / 1024) + ' KB' : '';
+      const when = r.uploaded_at ? new Date(r.uploaded_at).toLocaleString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+      return `
+        <div class="kb-dd-attach-row" data-id="${r.id}">
+          <span class="kb-dd-attach-icon">📄</span>
+          <a class="kb-dd-attach-name" href="/api/dd-attachments?id=${r.id}&action=download" target="_blank" rel="noopener" title="${escapeHtml(r.filename)}">${escapeHtml(r.filename)}</a>
+          <span class="kb-dd-attach-meta">${sizeKb}${when ? ' · ' + when : ''}</span>
+          <button type="button" class="kb-dd-attach-remove" data-id="${r.id}" title="Remove">Remove</button>
+        </div>`;
+    }).join('');
+    listEl.querySelectorAll('.kb-dd-attach-remove').forEach(btn => {
+      btn.addEventListener('click', () => removeOne(btn.dataset.id));
+    });
+  }
+
+  async function removeOne(id) {
+    if (!confirm('Remove this file?')) return;
+    showError('');
+    try {
+      const res = await fetch(`/api/dd-attachments?id=${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || ('Delete failed: ' + res.status));
+      }
+      await loadList();
+      if (parentModal) refreshDdAttachmentCounts(dealId, parentModal);
+    } catch (err) {
+      showError('Remove failed: ' + err.message);
+    }
+  }
+
+  fileInp.addEventListener('change', async () => {
+    const file = fileInp.files && fileInp.files[0];
+    if (!file) return;
+    showError('');
+    if (file.size > 10 * 1024 * 1024) {
+      showError('File too large. Max 10 MB.');
+      fileInp.value = '';
+      return;
+    }
+    try {
+      const base64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload  = () => res(String(r.result).split(',')[1] || '');
+        r.onerror = () => rej(new Error('File read failed'));
+        r.readAsDataURL(file);
+      });
+      const res = await fetch('/api/dd-attachments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deal_id:    dealId,
+          dd_key:     ddKey,
+          filename:   file.name,
+          mime_type:  file.type,
+          size:       file.size,
+          body_base64: base64,
+        }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || ('Upload failed: ' + res.status));
+      }
+      fileInp.value = '';
+      await loadList();
+      if (parentModal) refreshDdAttachmentCounts(dealId, parentModal);
+    } catch (err) {
+      showError('Upload failed: ' + err.message);
+    }
+  });
+
+  function close() {
+    if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+  }
+  wrap.querySelector('.kb-modal-close').addEventListener('click', close);
+  wrap.querySelector('.kb-dd-attach-done-btn').addEventListener('click', close);
+
+  loadList();
 }
 
 // V76.9: ─── Board sync framework ─────────────────────────────────────────────
