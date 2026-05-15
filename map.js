@@ -4510,7 +4510,7 @@ window._renderPipelinePins = function () {
       className: 'pipeline-map-pin',
     });
 
-    const marker = L.marker([pinLat, pinLng], { icon, zIndexOffset: 500 });
+    const marker = L.marker([pinLat, pinLng], { icon, zIndexOffset: 1500 });
 
     marker.on('click', async () => {
       const srlupEntry  = overlayRegistry['nsw-srlup'];
@@ -4552,7 +4552,10 @@ window._renderPipelinePins = function () {
         window.reSelectParcels(p._parcels);
       }
 
-      // Fetch overlay data per child lot in parallel.
+      // Fetch overlay + cadastre data per child lot in parallel.
+      // V78h.6 — Also pull cadastre per lot so we can sum the measured polygon
+      // areas authoritatively (p._areaSqm from the DB can be stale or
+      // missing some lots). The cadastre area is what the user trusts.
       const perLotResults = await Promise.all(
         p._parcels.map(par => _fetchOverlaysForPoint(
           par.lat, par.lng, includeSrlup, includeZoning, includeFlood, includeRoads, map
@@ -4563,22 +4566,30 @@ window._renderPipelinePins = function () {
       //   - lga:       union of distinct LGA names (usually one)
       //   - zoneCode:  unique SYM_CODE values joined " · "
       //   - overlay blocks: union from all lots
+      //   - area: sum of cadastre-measured polygon areas across lots
       const lgas      = new Set();
       const zoneCodes = new Set();
+      let cadastreAreaSum = 0;
       for (const r of perLotResults) {
         if (r.lga) lgas.add(r.lga);
         if (r.zoneCode) zoneCodes.add(r.zoneCode);
+        if (typeof r.cadastreArea === 'number' && r.cadastreArea > 0) {
+          cadastreAreaSum += r.cadastreArea;
+        }
       }
       const aggLga       = [...lgas].join(' · ');
       const aggZoneCode  = [...zoneCodes].join(' · ') || null;
       const aggOverlay   = _aggregateOverlayBlocks(perLotResults,
         includeSrlup, includeZoning, includeFlood, includeRoads);
 
-      // Aggregated address/Lot+DP/area come from dealRowToInternal — already
-      // computed there.
+      // Aggregated address/Lot+DP come from dealRowToInternal — already computed.
+      // V78h.6 — Area comes from summed cadastre fetches (authoritative);
+      // fall back to p._areaSqm only if every cadastre lookup failed.
       const aggLabel  = [p.address, p.suburb].filter(Boolean).join(', ');
       const aggLotDP  = p._lotDPs || 'Not found';
-      const aggArea   = (typeof p._areaSqm === 'number' && p._areaSqm > 0) ? p._areaSqm : null;
+      const aggArea   = cadastreAreaSum > 0
+        ? cadastreAreaSum
+        : ((typeof p._areaSqm === 'number' && p._areaSqm > 0) ? p._areaSqm : null);
 
       // Build with the SAME buildPopupInner function used for single-property
       // popups. Same fields, same UI style. The only difference for parcels
@@ -4605,6 +4616,12 @@ window._renderPipelinePins = function () {
 // Returns { lga, zoneCode, srlupJson, zoningJson, floodJson, roadsJson }.
 async function _fetchOverlaysForPoint(lat, lng, includeSrlup, includeZoning, includeFlood, includeRoads, mapRef) {
   const fetches = [];
+
+  // V78h.6 — Always fetch the cadastre per lot so we can sum measured areas
+  // for the aggregated popup. Authoritative source (the same polygon area
+  // shown for single-property popups), avoids relying on potentially stale
+  // p._areaSqm from the DB.
+  fetches.push(fetchLotDP(lat, lng).catch(() => null));
 
   if (includeSrlup) {
     const size = mapRef.getSize();
@@ -4672,7 +4689,7 @@ async function _fetchOverlaysForPoint(lat, lng, includeSrlup, includeZoning, inc
     fetches.push(Promise.resolve(null));
   }
 
-  const [srlupJson, zoningJson, floodJson, roadsJson] = await Promise.all(fetches);
+  const [cadastre, srlupJson, zoningJson, floodJson, roadsJson] = await Promise.all(fetches);
 
   // Extract LGA + zone code from zoning result for header use
   const zFeat = zoningJson && ((zoningJson.features || [])[0] || (zoningJson.results || [])[0]);
@@ -4680,7 +4697,10 @@ async function _fetchOverlaysForPoint(lat, lng, includeSrlup, includeZoning, inc
   const lga = zAttrs && zAttrs.LGA_NAME ? zAttrs.LGA_NAME : '';
   const zoneCode = zAttrs && zAttrs.SYM_CODE ? zAttrs.SYM_CODE : null;
 
-  return { lga, zoneCode, srlupJson, zoningJson, floodJson, roadsJson };
+  // V78h.6 — cadastre.areaSqm is the measured polygon area in m²
+  const cadastreArea = (cadastre && typeof cadastre.areaSqm === 'number') ? cadastre.areaSqm : null;
+
+  return { lga, zoneCode, cadastreArea, srlupJson, zoningJson, floodJson, roadsJson };
 }
 
 // V78h.5 — Aggregate the four overlay blocks across child lots. Output is a
@@ -4820,15 +4840,15 @@ function _aggregateOverlayBlocks(perLotResults, includeSrlup, includeZoning, inc
   return out;
 }
 
-// V78h.5 — Constrain parcel popup to ~9 lines of content. Single-property
+// V78h.5 — Constrain parcel popup to ~10 lines of content. Single-property
 // popups already fit in 8 lines naturally; this adds a max-height container
 // with internal scroll so a parcel popup can't blow up the screen. The
 // content from buildPopupInner is inserted as-is — we only wrap the outer
 // container with a max-height + overflow:auto.
 function _wrapPopupForParcel(innerHtml) {
-  // 9 lines * ~22px per line ≈ 200px. Inner already has its own padding/
+  // 10 lines * ~22px per line ≈ 220px. Inner already has its own padding/
   // line-height; just clip to height and let it scroll.
-  return `<div style="max-height:200px;overflow-y:auto;overflow-x:hidden">${innerHtml}</div>`;
+  return `<div style="max-height:220px;overflow-y:auto;overflow-x:hidden">${innerHtml}</div>`;
 }
 
 // V75.4d: multi-polygon outline for parcel pipeline pins. Draws green
