@@ -2590,11 +2590,57 @@ function buildMergedAddress(parcels) {
 
 
 function renderMultiSelectBar() {
-  // V74.7: Add-to-Pipeline moved from sidebar bar into the map popup.
-  // This function is retained as a no-op cleanup so legacy call sites
-  // keep working; if a stale bar exists from a previous session, drop it.
-  const bar = document.getElementById('multi-select-bar');
-  if (bar) bar.remove();
+  // V78h.3 — Resurrected for the combined-area display. When 2+ parcels are
+  // selected (typically via reSelectParcels from a parcel pin or the deal
+  // modal's address link), show a compact pill at the top of the map with
+  // the count + summed area. Cleared automatically when selection drops
+  // below 2 or is cleared entirely.
+  const existing = document.getElementById('multi-select-bar');
+
+  const n = _selectedParcels.length;
+  if (n < 2) {
+    if (existing) existing.remove();
+    return;
+  }
+
+  // Sum only the parcels whose area has resolved. Cadastre lookups are async,
+  // so the first render may have 0 or partial areas; subsequent renders pick
+  // up the rest as each lookup completes.
+  let total = 0;
+  let withArea = 0;
+  for (const p of _selectedParcels) {
+    if (typeof p.areaSqm === 'number' && p.areaSqm > 0) {
+      total += p.areaSqm;
+      withArea++;
+    }
+  }
+
+  const acres = total / 4046.8564224;
+  const acreStr = acres >= 10 ? acres.toFixed(1) + ' ac' : acres.toFixed(2) + ' ac';
+  const areaStr = total > 0
+    ? Math.round(total).toLocaleString() + ' m² (' + acreStr + ')'
+    : 'measuring…';
+  const partial = (total > 0 && withArea < n) ? ' <span style="opacity:0.7">(' + withArea + '/' + n + ')</span>' : '';
+
+  const html = `
+    <div style="background:rgba(26,74,138,0.92);color:#fff;padding:7px 14px;border-radius:6px;
+                font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;
+                box-shadow:0 2px 8px rgba(0,0,0,0.25);display:flex;gap:14px;align-items:center;">
+      <span>${n} parcels selected</span>
+      <span style="opacity:0.75">·</span>
+      <span><strong>Total area:</strong> ${areaStr}${partial}</span>
+    </div>`;
+
+  if (existing) {
+    existing.innerHTML = html;
+  } else {
+    const bar = document.createElement('div');
+    bar.id = 'multi-select-bar';
+    bar.style.cssText = 'position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:600;pointer-events:none';
+    bar.innerHTML = html;
+    const mapContainer = map.getContainer();
+    mapContainer.appendChild(bar);
+  }
 }
 
 // Central helper used by the popup "+ Pipeline" button. Constructs the
