@@ -2590,57 +2590,11 @@ function buildMergedAddress(parcels) {
 
 
 function renderMultiSelectBar() {
-  // V78h.3 — Resurrected for the combined-area display. When 2+ parcels are
-  // selected (typically via reSelectParcels from a parcel pin or the deal
-  // modal's address link), show a compact pill at the top of the map with
-  // the count + summed area. Cleared automatically when selection drops
-  // below 2 or is cleared entirely.
-  const existing = document.getElementById('multi-select-bar');
-
-  const n = _selectedParcels.length;
-  if (n < 2) {
-    if (existing) existing.remove();
-    return;
-  }
-
-  // Sum only the parcels whose area has resolved. Cadastre lookups are async,
-  // so the first render may have 0 or partial areas; subsequent renders pick
-  // up the rest as each lookup completes.
-  let total = 0;
-  let withArea = 0;
-  for (const p of _selectedParcels) {
-    if (typeof p.areaSqm === 'number' && p.areaSqm > 0) {
-      total += p.areaSqm;
-      withArea++;
-    }
-  }
-
-  const acres = total / 4046.8564224;
-  const acreStr = acres >= 10 ? acres.toFixed(1) + ' ac' : acres.toFixed(2) + ' ac';
-  const areaStr = total > 0
-    ? Math.round(total).toLocaleString() + ' m² (' + acreStr + ')'
-    : 'measuring…';
-  const partial = (total > 0 && withArea < n) ? ' <span style="opacity:0.7">(' + withArea + '/' + n + ')</span>' : '';
-
-  const html = `
-    <div style="background:rgba(26,74,138,0.92);color:#fff;padding:7px 14px;border-radius:6px;
-                font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;
-                box-shadow:0 2px 8px rgba(0,0,0,0.25);display:flex;gap:14px;align-items:center;">
-      <span>${n} parcels selected</span>
-      <span style="opacity:0.75">·</span>
-      <span><strong>Total area:</strong> ${areaStr}${partial}</span>
-    </div>`;
-
-  if (existing) {
-    existing.innerHTML = html;
-  } else {
-    const bar = document.createElement('div');
-    bar.id = 'multi-select-bar';
-    bar.style.cssText = 'position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:600;pointer-events:none';
-    bar.innerHTML = html;
-    const mapContainer = map.getContainer();
-    mapContainer.appendChild(bar);
-  }
+  // V74.7: Add-to-Pipeline moved from sidebar bar into the map popup.
+  // This function is retained as a no-op cleanup so legacy call sites
+  // keep working; if a stale bar exists from a previous session, drop it.
+  const bar = document.getElementById('multi-select-bar');
+  if (bar) bar.remove();
 }
 
 // Central helper used by the popup "+ Pipeline" button. Constructs the
@@ -4557,6 +4511,35 @@ window._renderPipelinePins = function () {
     });
 
     const marker = L.marker([pinLat, pinLng], { icon, zIndexOffset: 500 });
+
+    // V78h.3 — Pipeline-pin popup mirrors the deal modal header. Same data
+    // shape for both single-property and parcel deals — p.address is already
+    // the aggregated title for parcels (formatted by formatParcelTitle in
+    // dealRowToInternal), p._lotDPs is the joined "121//DP27602, 122//DP27602"
+    // string, and p._areaSqm is the combined area. No per-row breakdown.
+    {
+      const escHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const areaM2 = (typeof p._areaSqm === 'number' && p._areaSqm > 0) ? p._areaSqm : 0;
+      const acres = areaM2 / 4046.8564224;
+      const acreStr = acres >= 10 ? acres.toFixed(1) + ' ac' : acres.toFixed(2) + ' ac';
+      const areaLine = areaM2 > 0
+        ? `<div style="font-size:12px;color:#555;margin-top:4px"><strong>Area:</strong> ${Math.round(areaM2).toLocaleString()} m² (${acreStr})</div>`
+        : '';
+      const lotLine = p._lotDPs
+        ? `<div style="font-size:11px;color:#888;margin-top:3px;letter-spacing:0.02em">${escHtml(p._lotDPs)}</div>`
+        : '';
+      const addressLine = `<div style="font-size:14px;font-weight:600;color:#222">📍 ${escHtml(p.address || '')}${p.suburb ? ', ' + escHtml(p.suburb) : ''}${p.state ? ' ' + escHtml(p.state) : ''}</div>`;
+      const openBtn = `
+        <div style="margin-top:10px">
+          <button type="button"
+            onclick="window.openPipelineItem && window.openPipelineItem('${String(item.id).replace(/'/g, "\\'")}')"
+            style="display:block;width:100%;padding:7px 10px;background:#c4841a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+            ★ Open in Pipeline
+          </button>
+        </div>`;
+      const popupInner = `<div style="${popupStyle}">${addressLine}${lotLine}${areaLine}${openBtn}</div>`;
+      marker.bindPopup(popupInner, { minWidth: 240, maxWidth: 320, autoPan: true });
+    }
 
     marker.on('click', () => {
       const srlupEntry  = overlayRegistry['nsw-srlup'];
