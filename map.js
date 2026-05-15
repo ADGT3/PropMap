@@ -4518,10 +4518,14 @@ window._renderPipelinePins = function () {
       const floodEntry  = overlayRegistry['nsw-flood'];
       const roadsEntry  = overlayRegistry['nsw-future-roads'];
 
-      // V75.4d: for parcels, highlight ALL child polygons at once. Fall back
-      // to single-point selection for children missing rings.
-      if (isParcel && Array.isArray(p._parcels) && p._parcels.length) {
-        _highlightParcelChildren(p._parcels, item);
+      // V78h.2 — Route parcel pins through the same flow as a pipeline-address
+      // click: reSelectParcels() per-parcel fetches the cadastre (and so the
+      // ring geometry) and renders outlines + numbered pins. Previously the
+      // pin-click took a shortcut via _highlightParcelChildren which only used
+      // ring data already cached on the parcel record — and many parcels added
+      // via map-click never had rings cached, so the user saw plain circles.
+      if (isParcel && Array.isArray(p._parcels) && p._parcels.length && typeof window.reSelectParcels === 'function') {
+        window.reSelectParcels(p._parcels);
       } else {
         selectPropertyAtPoint(
           { lat: pinLat, lng: pinLng },
@@ -4942,6 +4946,22 @@ window.reSelectParcels = function(parcels) {
       stagingLayers.push(lbl);
 
       const areaM2 = polygonArea(points);
+
+      // V78h.1 — Per-polygon area label at the polygon's centroid. Visible
+      // for the lifetime of this shape (until Clear). Distinct class so we
+      // can style larger / bolder than segment labels.
+      const polyBounds = poly.getBounds();
+      const center = polyBounds.getCenter();
+      const areaLbl = L.tooltip({
+        permanent: true, direction: 'center',
+        className: 'measure-tooltip measure-area-label',
+        interactive: false,
+      })
+        .setContent(formatArea(areaM2))
+        .setLatLng(center)
+        .addTo(map);
+      stagingLayers.push(areaLbl);
+
       completed.push({
         kind:    'polygon',
         layers:  stagingLayers.slice(),
