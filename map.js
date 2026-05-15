@@ -4486,7 +4486,13 @@ window._renderPipelinePins = function () {
   if (!map.getPane('pipelinePinPane')) {
     const pane = map.createPane('pipelinePinPane');
     pane.style.zIndex = 650;
-    pane.style.pointerEvents = 'auto';
+    // V80.1 — pointer-events on the PANE must be `none` so the empty space
+    // around pin icons (the pane is a full-size <div> covering the map) lets
+    // events fall through to the overlay polygons in panes below (e.g. NSW
+    // zoning right-click contextmenu). Individual marker icons inside this
+    // pane still receive events because their own DOM elements get
+    // pointer-events:auto via Leaflet's marker styling.
+    pane.style.pointerEvents = 'none';
   }
 
   const pipelineData = window.getPipelineData ? window.getPipelineData() : null;

@@ -2282,6 +2282,15 @@ header {
   background: rgba(231, 76, 60, 0.92) !important;
 }
 
+/* V80.1 — pipeline pin (gold star) sits in a custom pane (pipelinePinPane,
+   z 650) that has pointer-events: none at the pane level, so right-clicks
+   on the empty space around pins fall through to overlay polygons (NSW
+   zoning, SRLUP, etc. in overlayPane z 400). The pin icon itself must
+   re-enable pointer-events so clicks on the pin still register. */
+.pipeline-map-pin {
+  pointer-events: auto;
+}
+
 /* ─── Domain API error state ─────────────────────────────────────────────── */
 .domain-error {
   display: flex;
