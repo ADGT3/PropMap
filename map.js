@@ -911,6 +911,9 @@ function clearParcelSelection() {
   if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; clickMarkerData = null; }
   if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
   if (_parcelHighlightLayer) { map.removeLayer(_parcelHighlightLayer); _parcelHighlightLayer = null; }
+  // V78i.3 — Reset the parcel-pin popup suppression flag so the next
+  // ordinary map click / single-property selection can open its popup normally.
+  window._suppressBluePinPopups = false;
   renderMultiSelectBar();
 }
 
@@ -939,6 +942,13 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
     ? `<div class="search-pin" style="background:${pinColor};display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">${pinNum}</span></div>`
     : `<div class="search-pin" style="background:${pinColor}"></div>`;
 
+  // V78i.3 — When triggered via a parcel-pipeline-pin click, blue lot pins
+  // shouldn't auto-open popups (they'd race with and overwrite the combined
+  // parcel popup). The parcel-pin handler sets this flag before calling
+  // reSelectParcels and we honour it for addToSelection calls (the case
+  // where multiple lots are being added at once).
+  const suppressPopup = !!window._suppressBluePinPopups && addToSelection;
+
   const newMarker = L.marker([lat, lng], {
     icon: L.divIcon({
       className: '',
@@ -949,8 +959,8 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
     })
   })
   .bindPopup(popupHtml('<span style="color:#888;font-size:12px">Loading…</span>'), { minWidth: 210, autoPan: false })
-  .addTo(map)
-  .openPopup();
+  .addTo(map);
+  if (!suppressPopup) newMarker.openPopup();
 
   if (addToSelection) {
     const entry = { lat, lng, label: '', lotDP: null, areaSqm: null, zoneCode: null, listing, marker: newMarker, parcelLayer: null };
@@ -978,7 +988,7 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   
   if (activeMarker) {
     activeMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, 'Loading…', null, null, '', listing)));
-    activeMarker.openPopup();
+    if (!suppressPopup) activeMarker.openPopup();
   }
 
   // Show in sidebar immediately with address (Lot/DP updates below).
@@ -1220,7 +1230,7 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   // Final popup update
   if (activeMarker) {
     activeMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, lotDP || 'Not found', areaSqm, zoneCode, srlupBlock + zoningBlock + floodBlock + roadsBlock, listing)));
-    activeMarker.openPopup();
+    if (!suppressPopup) activeMarker.openPopup();
   }
 }
 
@@ -4564,6 +4574,12 @@ window._renderPipelinePins = function () {
 
       // Run reSelectParcels to render outlines + numbered blue pins. Same
       // function the deal modal uses — don't reinvent it.
+      // V78i.3 — Set a module-level flag so the selectPropertyAtPoint calls
+      // inside reSelectParcels don't auto-open their per-lot popups (which
+      // would race with our combined popup and win because of async cadastre
+      // fetch timing). The flag is read inside selectPropertyAtPoint and
+      // cleared automatically once the agent moves on (next clearParcelSelection).
+      window._suppressBluePinPopups = true;
       if (typeof window.reSelectParcels === 'function') {
         window.reSelectParcels(p._parcels);
       }
@@ -4613,8 +4629,10 @@ window._renderPipelinePins = function () {
       const inner = buildPopupInner(aggLabel, aggLga, aggLotDP, aggArea, aggZoneCode, aggOverlay, null);
       const popupHtml = `<div style="${popupStyle}">${_wrapPopupForParcel(inner)}</div>`;
       marker.getPopup().setContent(popupHtml);
-      // V78h.5 — reSelectParcels opens a popup per child lot. The last one
-      // to open wins, hiding our combined popup. Force ours back on top.
+      // V78i.3 — Force our combined popup on top. selectPropertyAtPoint
+      // popups from reSelectParcels (called above) are suppressed via the
+      // _suppressBluePinPopups flag we set just before reSelectParcels —
+      // see below.
       marker.openPopup();
     });
 
