@@ -588,7 +588,7 @@ function priceCellHtml(listing) {
 }
 
 
-function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null) {
+function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, listing = null, pipelineIdOverride = null) {
   const dl = listing && window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(listing.id) : null;
 
   // Price only — no house type line, no agent line
@@ -609,7 +609,11 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
   // V74.8: detect whether this location corresponds to an existing pipeline
   // item. If so, swap the "+ Pipeline" add button for an "Open in Pipeline"
   // link that jumps straight to that pipeline card.
-  const matchedPipelineId = findPipelineMatchForClick(listing);
+  // V78i.5 — pipelineIdOverride: callers that already know the pipeline id
+  // (e.g. the parcel pipeline-pin click handler — item.id is in scope) can
+  // skip the listing-based match heuristic and tell us directly. Falls back
+  // to the existing match logic for all other call sites.
+  const matchedPipelineId = pipelineIdOverride || findPipelineMatchForClick(listing);
 
   // V76.7+ — "+ Property" button always available (creates property without a
   // deal — for not-suitable tracking, agency listings, linking to known
@@ -911,6 +915,9 @@ function clearParcelSelection() {
   if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; clickMarkerData = null; }
   if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
   if (_parcelHighlightLayer) { map.removeLayer(_parcelHighlightLayer); _parcelHighlightLayer = null; }
+  // V78i.3 — Reset the parcel-pin popup suppression flag so the next
+  // ordinary map click / single-property selection can open its popup normally.
+  window._suppressBluePinPopups = false;
   renderMultiSelectBar();
 }
 
@@ -939,6 +946,13 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
     ? `<div class="search-pin" style="background:${pinColor};display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700;width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg)"><span style="transform:rotate(45deg)">${pinNum}</span></div>`
     : `<div class="search-pin" style="background:${pinColor}"></div>`;
 
+  // V78i.3 — When triggered via a parcel-pipeline-pin click, blue lot pins
+  // shouldn't auto-open popups (they'd race with and overwrite the combined
+  // parcel popup). The parcel-pin handler sets this flag before calling
+  // reSelectParcels and we honour it for addToSelection calls (the case
+  // where multiple lots are being added at once).
+  const suppressPopup = !!window._suppressBluePinPopups && addToSelection;
+
   const newMarker = L.marker([lat, lng], {
     icon: L.divIcon({
       className: '',
@@ -949,8 +963,8 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
     })
   })
   .bindPopup(popupHtml('<span style="color:#888;font-size:12px">Loading…</span>'), { minWidth: 210, autoPan: false })
-  .addTo(map)
-  .openPopup();
+  .addTo(map);
+  if (!suppressPopup) newMarker.openPopup();
 
   if (addToSelection) {
     const entry = { lat, lng, label: '', lotDP: null, areaSqm: null, zoneCode: null, listing, marker: newMarker, parcelLayer: null };
@@ -978,7 +992,7 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   
   if (activeMarker) {
     activeMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, 'Loading…', null, null, '', listing)));
-    activeMarker.openPopup();
+    if (!suppressPopup) activeMarker.openPopup();
   }
 
   // Show in sidebar immediately with address (Lot/DP updates below).
@@ -1220,7 +1234,7 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   // Final popup update
   if (activeMarker) {
     activeMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, lotDP || 'Not found', areaSqm, zoneCode, srlupBlock + zoningBlock + floodBlock + roadsBlock, listing)));
-    activeMarker.openPopup();
+    if (!suppressPopup) activeMarker.openPopup();
   }
 }
 
@@ -4459,6 +4473,22 @@ window._renderPipelinePins = function () {
   // Remove existing pipeline pin layer
   if (_pipelinePinLayer) { map.removeLayer(_pipelinePinLayer); _pipelinePinLayer = null; }
 
+  // V78i.1 — Ensure the pipeline-pin pane exists. Custom pane with a
+  // z-index above markerPane (600) so gold-star pipeline pins always render
+  // AND receive clicks ahead of blue lot pins added later by
+  // selectPropertyAtPoint via reSelectParcels. Without this, the blue pins
+  // (added to markerPane after the gold star) capture clicks at overlapping
+  // coordinates because they're later in the DOM.
+  //
+  // V78i.2 — Use 650 (not 700). The Leaflet default popupPane sits at 700;
+  // putting our pin pane at 700 caused popups to render BEHIND pins. 650
+  // keeps pins above all standard markers but below popups.
+  if (!map.getPane('pipelinePinPane')) {
+    const pane = map.createPane('pipelinePinPane');
+    pane.style.zIndex = 650;
+    pane.style.pointerEvents = 'auto';
+  }
+
   const pipelineData = window.getPipelineData ? window.getPipelineData() : null;
   console.log('[pipeline pins] pipelineData:', pipelineData);
   if (!pipelineData) return;
@@ -4510,28 +4540,109 @@ window._renderPipelinePins = function () {
       className: 'pipeline-map-pin',
     });
 
-    const marker = L.marker([pinLat, pinLng], { icon, zIndexOffset: 500 });
+    const marker = L.marker([pinLat, pinLng], { icon, zIndexOffset: 1500, pane: 'pipelinePinPane' });
 
-    marker.on('click', () => {
+    marker.on('click', async () => {
       const srlupEntry  = overlayRegistry['nsw-srlup'];
       const zoningEntry = overlayRegistry['nsw-land-zoning'];
       const floodEntry  = overlayRegistry['nsw-flood'];
       const roadsEntry  = overlayRegistry['nsw-future-roads'];
+      const includeSrlup  = !!(srlupEntry  && srlupEntry.def.enabled);
+      const includeZoning = !!(zoningEntry && zoningEntry.def.enabled);
+      const includeFlood  = !!(floodEntry  && floodEntry.def.enabled);
+      const includeRoads  = !!(roadsEntry  && roadsEntry.def.enabled);
 
-      // V75.4d: for parcels, highlight ALL child polygons at once. Fall back
-      // to single-point selection for children missing rings.
-      if (isParcel && Array.isArray(p._parcels) && p._parcels.length) {
-        _highlightParcelChildren(p._parcels, item);
-      } else {
+      // ── SINGLE PROPERTY ────────────────────────────────────────────────
+      // Unchanged: existing single-point selection flow.
+      if (!isParcel || !Array.isArray(p._parcels) || !p._parcels.length) {
         selectPropertyAtPoint(
           { lat: pinLat, lng: pinLng },
-          !!(srlupEntry  && srlupEntry.def.enabled),
-          !!(zoningEntry && zoningEntry.def.enabled),
-          !!(floodEntry  && floodEntry.def.enabled),
-          !!(roadsEntry  && roadsEntry.def.enabled),
-          null
+          includeSrlup, includeZoning, includeFlood, includeRoads, null
         );
+        return;
       }
+
+      // ── PARCEL ─────────────────────────────────────────────────────────
+      // V78h.5 — Parcel popup uses the SAME buildPopupInner function as
+      // single-property popups, with aggregated inputs across all child
+      // lots. Outlines + numbered blue pins are drawn by the existing
+      // reSelectParcels flow (same as the deal modal's address click).
+      //
+      // Open a placeholder popup immediately so the agent sees feedback
+      // while the per-lot overlay queries are in flight.
+      marker.unbindPopup();
+      marker.bindPopup(
+        `<div style="${popupStyle}"><span style="color:#888;font-size:12px">Loading parcel details…</span></div>`,
+        { minWidth: 210, autoPan: true }
+      ).openPopup();
+
+      // Run reSelectParcels to render outlines + numbered blue pins. Same
+      // function the deal modal uses — don't reinvent it.
+      // V78i.5 — Pass suppressPopups so the per-lot selectPropertyAtPoint
+      // calls don't auto-open popups. (Previously we set the flag here
+      // before calling reSelectParcels, but reSelectParcels' first action
+      // is clearParcelSelection which wiped the flag — so blue-pin popups
+      // opened anyway and won the race against our combined popup. Setting
+      // the option here means reSelectParcels sets the flag AFTER its clear.)
+      if (typeof window.reSelectParcels === 'function') {
+        window.reSelectParcels(p._parcels, { suppressPopups: true });
+      }
+
+      // Fetch overlay + cadastre data per child lot in parallel.
+      // V78h.6 — Also pull cadastre per lot so we can sum the measured polygon
+      // areas authoritatively (p._areaSqm from the DB can be stale or
+      // missing some lots). The cadastre area is what the user trusts.
+      const perLotResults = await Promise.all(
+        p._parcels.map(par => _fetchOverlaysForPoint(
+          par.lat, par.lng, includeSrlup, includeZoning, includeFlood, includeRoads, map
+        ))
+      );
+
+      // Aggregate cross-lot values:
+      //   - lga:       union of distinct LGA names (usually one)
+      //   - zoneCode:  unique SYM_CODE values joined " · "
+      //   - overlay blocks: union from all lots
+      //   - area: sum of cadastre-measured polygon areas across lots
+      const lgas      = new Set();
+      const zoneCodes = new Set();
+      let cadastreAreaSum = 0;
+      for (const r of perLotResults) {
+        if (r.lga) lgas.add(r.lga);
+        if (r.zoneCode) zoneCodes.add(r.zoneCode);
+        if (typeof r.cadastreArea === 'number' && r.cadastreArea > 0) {
+          cadastreAreaSum += r.cadastreArea;
+        }
+      }
+      const aggLga       = [...lgas].join(' · ');
+      const aggZoneCode  = [...zoneCodes].join(' · ') || null;
+      const aggOverlay   = _aggregateOverlayBlocks(perLotResults,
+        includeSrlup, includeZoning, includeFlood, includeRoads);
+
+      // V78h.7 — p.address for parcels is the aggregated title produced by
+      // formatParcelTitle, which already includes the suburb. Don't append
+      // p.suburb again or we double it ("Catherine Field, Catherine Field").
+      const aggLabel  = p.address || '';
+      const aggLotDP  = p._lotDPs || 'Not found';
+      const aggArea   = cadastreAreaSum > 0
+        ? cadastreAreaSum
+        : ((typeof p._areaSqm === 'number' && p._areaSqm > 0) ? p._areaSqm : null);
+
+      // Build with the SAME buildPopupInner function used for single-property
+      // popups. Same fields, same UI style. The only difference for parcels
+      // is that the overlay block area is height-constrained with scroll.
+      // V78i.5 — Pass the pipeline entry key (id from the forEach) as the
+      // pipelineIdOverride so buildPopupInner shows "★ Open in Pipeline"
+      // instead of "+ Pipeline". (item.id is undefined — deal records from
+      // dealRowToInternal don't have a top-level .id; the deal id is the
+      // dict key.)
+      const inner = buildPopupInner(aggLabel, aggLga, aggLotDP, aggArea, aggZoneCode, aggOverlay, null, id);
+      const popupHtml = `<div style="${popupStyle}">${_wrapPopupForParcel(inner)}</div>`;
+      marker.getPopup().setContent(popupHtml);
+      // V78i.3 — Force our combined popup on top. selectPropertyAtPoint
+      // popups from reSelectParcels (called above) are suppressed via the
+      // _suppressBluePinPopups flag we set just before reSelectParcels —
+      // see below.
+      marker.openPopup();
     });
 
     markers.push(marker);
@@ -4541,6 +4652,247 @@ window._renderPipelinePins = function () {
     _pipelinePinLayer = L.layerGroup(markers).addTo(map);
   }
 };
+
+// V78h.5 — Per-point overlay fetcher used by parcel pipeline-pin click.
+// Mirrors the slowFetches block in selectPropertyAtPoint, but extracted so
+// it can be called per child lot in parallel from the parcel handler.
+// Returns { lga, zoneCode, srlupJson, zoningJson, floodJson, roadsJson }.
+async function _fetchOverlaysForPoint(lat, lng, includeSrlup, includeZoning, includeFlood, includeRoads, mapRef) {
+  const fetches = [];
+
+  // V78h.6 — Always fetch the cadastre per lot so we can sum measured areas
+  // for the aggregated popup. Authoritative source (the same polygon area
+  // shown for single-property popups), avoids relying on potentially stale
+  // p._areaSqm from the DB.
+  fetches.push(fetchLotDP(lat, lng).catch(() => null));
+
+  if (includeSrlup) {
+    const size = mapRef.getSize();
+    const b    = mapRef.getBounds();
+    const params = new URLSearchParams({
+      f: 'json',
+      geometry: `${lng},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      sr: '4326',
+      layers: 'all:1',
+      tolerance: '6',
+      mapExtent: `${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}`,
+      imageDisplay: `${size.x},${size.y},96`,
+      returnGeometry: 'false',
+    });
+    fetches.push(fetch(`${SRLUP_BASE}/identify?${params}`).then(r => r.json()).catch(() => null));
+  } else {
+    fetches.push(Promise.resolve(null));
+  }
+
+  // Always fetch zoning so zone code appears even when overlay is off
+  {
+    const zp = new URLSearchParams({
+      f: 'json',
+      geometry: `${lng},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      outFields: 'SYM_CODE,LAY_CLASS,EPI_NAME,LGA_NAME,PURPOSE',
+      returnGeometry: 'false',
+      resultRecordCount: '1',
+    });
+    fetches.push(fetch(`${ZONING_BASE}/2/query?${zp}`).then(r => r.json()).catch(() => null));
+  }
+
+  if (includeFlood) {
+    const fp = new URLSearchParams({
+      f: 'json',
+      geometry: `${lng},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      outFields: 'LAY_CLASS,EPI_NAME,SYM_CODE',
+      returnGeometry: 'false',
+      resultRecordCount: '1',
+    });
+    fetches.push(fetch(`${FLOOD_BASE}/1/query?${fp}`).then(r => r.json()).catch(() => null));
+  } else {
+    fetches.push(Promise.resolve(null));
+  }
+
+  if (includeRoads) {
+    const rp = new URLSearchParams({
+      f: 'json',
+      geometry: `${lng},${lat}`,
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      outFields: '*',
+      returnGeometry: 'false',
+      resultRecordCount: '1',
+    });
+    fetches.push(fetch(`${ROADS_BASE}/10/query?${rp}`).then(r => r.json()).catch(() => null));
+  } else {
+    fetches.push(Promise.resolve(null));
+  }
+
+  const [cadastre, srlupJson, zoningJson, floodJson, roadsJson] = await Promise.all(fetches);
+
+  // Extract LGA + zone code from zoning result for header use
+  const zFeat = zoningJson && ((zoningJson.features || [])[0] || (zoningJson.results || [])[0]);
+  const zAttrs = zFeat ? (zFeat.attributes || zFeat) : null;
+  const lga = zAttrs && zAttrs.LGA_NAME ? zAttrs.LGA_NAME : '';
+  const zoneCode = zAttrs && zAttrs.SYM_CODE ? zAttrs.SYM_CODE : null;
+
+  // V78h.6 — cadastre.areaSqm is the measured polygon area in m²
+  const cadastreArea = (cadastre && typeof cadastre.areaSqm === 'number') ? cadastre.areaSqm : null;
+
+  return { lga, zoneCode, cadastreArea, srlupJson, zoningJson, floodJson, roadsJson };
+}
+
+// V78h.5 — Aggregate the four overlay blocks across child lots. Output is a
+// single HTML string in the same shape selectPropertyAtPoint builds for a
+// single point — exactly what buildPopupInner expects as overlayBlock.
+//
+// Aggregation rules (locked with user):
+//   - SRLUP: dedupe attribute key/value rows across all lots producing a hit
+//   - Zoning: unique SYM_CODE / LAY_CLASS / EPI_NAME joined with " · "
+//   - Flood: unique LAY_CLASS / EPI_NAME joined; "No affectation" if all empty
+//   - Roads: union of all reservation rows from all lots
+function _aggregateOverlayBlocks(perLotResults, includeSrlup, includeZoning, includeFlood, includeRoads) {
+  const SKIP = ['OBJECTID','Shape','Shape_Area','Shape_Length','FID'];
+  let out = '';
+
+  // SRLUP
+  if (includeSrlup) {
+    const seen = new Map(); // key -> Set of distinct values
+    for (const r of perLotResults) {
+      const results = r.srlupJson && Array.isArray(r.srlupJson.results) ? r.srlupJson.results : [];
+      for (const res of results) {
+        const attrs = res.attributes || {};
+        for (const [k, v] of Object.entries(attrs)) {
+          if (SKIP.includes(k) || v === null || v === '') continue;
+          if (!seen.has(k)) seen.set(k, new Set());
+          seen.get(k).add(v);
+        }
+      }
+    }
+    if (seen.size) {
+      const rows = [...seen.entries()].map(([k, vs]) => `
+        <tr>
+          <td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">${k.replace(/_/g,' ')}</td>
+          <td style="font-size:12px;padding:3px 0">${[...vs].join(' · ')}</td>
+        </tr>`).join('');
+      out += `
+        <div style="border-top:2px solid #e67e22;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#e67e22;margin-bottom:4px">NSW Planning Zone</div>
+          <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">${rows}</table>
+        </div>`;
+    }
+  }
+
+  // Zoning (only when the overlay is enabled — same rule as the single-property flow)
+  if (includeZoning) {
+    const zones = new Set();
+    const purposes = new Set();
+    const epis = new Set();
+    for (const r of perLotResults) {
+      const f = r.zoningJson && ((r.zoningJson.features || [])[0] || (r.zoningJson.results || [])[0]);
+      if (!f) continue;
+      const a = f.attributes || f;
+      if (a.SYM_CODE) zones.add(a.SYM_CODE);
+      const purpose = a.LAY_CLASS || a.PURPOSE;
+      if (purpose) purposes.add(purpose);
+      if (a.EPI_NAME) epis.add(a.EPI_NAME);
+    }
+    if (zones.size || purposes.size || epis.size) {
+      out += `
+        <div style="border-top:2px solid #8B0000;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#8B0000;margin-bottom:4px">Land Zoning (LEP)</div>
+          <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">
+            ${zones.size    ? '<tr><td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">Zone</td><td style="font-size:12px;padding:3px 0;font-weight:600">' + [...zones].join(' · ') + '</td></tr>'    : ''}
+            ${purposes.size ? '<tr><td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">Land Use</td><td style="font-size:12px;padding:3px 0">' + [...purposes].join(' · ') + '</td></tr>' : ''}
+            ${epis.size     ? '<tr><td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">LEP</td><td style="font-size:12px;padding:3px 0">' + [...epis].join(' · ') + '</td></tr>'         : ''}
+          </table>
+        </div>`;
+    }
+  }
+
+  // Flood
+  if (includeFlood) {
+    const classes = new Set();
+    const epis = new Set();
+    let anyQueried = false;
+    for (const r of perLotResults) {
+      if (r.floodJson) anyQueried = true;
+      const f = r.floodJson && ((r.floodJson.features || [])[0]);
+      if (!f) continue;
+      const a = f.attributes || {};
+      if (a.LAY_CLASS) classes.add(a.LAY_CLASS);
+      if (a.EPI_NAME)  epis.add(a.EPI_NAME);
+    }
+    if (classes.size || epis.size) {
+      out += `
+        <div style="border-top:2px solid #2471a3;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#2471a3;margin-bottom:4px">Flood Planning (EPI)</div>
+          <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">
+            ${classes.size ? '<tr><td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">Classification</td><td style="font-size:12px;padding:3px 0;font-weight:600">' + [...classes].join(' · ') + '</td></tr>' : ''}
+            ${epis.size    ? '<tr><td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">LEP</td><td style="font-size:12px;padding:3px 0">' + [...epis].join(' · ') + '</td></tr>'         : ''}
+          </table>
+        </div>`;
+    } else if (anyQueried) {
+      out += `
+        <div style="border-top:2px solid #2471a3;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#2471a3;margin-bottom:4px">Flood Planning (EPI)</div>
+          <div style="font-size:12px;color:#666">No flood planning affectation</div>
+        </div>`;
+    }
+  }
+
+  // Future roads — union rows across lots, deduped by key
+  if (includeRoads) {
+    const seen = new Map();
+    let anyQueried = false;
+    for (const r of perLotResults) {
+      if (r.roadsJson) anyQueried = true;
+      const f = r.roadsJson && ((r.roadsJson.features || [])[0]);
+      if (!f) continue;
+      const attrs = f.attributes || {};
+      for (const [k, v] of Object.entries(attrs)) {
+        if (SKIP.includes(k) || v === null || v === '' || v === ' ') continue;
+        if (!seen.has(k)) seen.set(k, new Set());
+        seen.get(k).add(v);
+      }
+    }
+    if (seen.size) {
+      const rows = [...seen.entries()].map(([k, vs]) => `
+        <tr>
+          <td style="color:#666;padding:3px 8px 3px 0;font-size:11px;white-space:nowrap">${k.replace(/_/g,' ')}</td>
+          <td style="font-size:12px;padding:3px 0">${[...vs].join(' · ')}</td>
+        </tr>`).join('');
+      out += `
+        <div style="border-top:2px solid #922b21;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#922b21;margin-bottom:4px">⚠ Future Road Reservation</div>
+          <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">${rows}</table>
+        </div>`;
+    } else if (anyQueried) {
+      out += `
+        <div style="border-top:2px solid #922b21;margin-top:8px;padding-top:6px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:#922b21;margin-bottom:4px">Future Road Reservations</div>
+          <div style="font-size:12px;color:#666">No road reservation on this parcel</div>
+        </div>`;
+    }
+  }
+
+  return out;
+}
+
+// V78h.5 — Constrain parcel popup to ~10 lines of content. Single-property
+// popups already fit in 8 lines naturally; this adds a max-height container
+// with internal scroll so a parcel popup can't blow up the screen. The
+// content from buildPopupInner is inserted as-is — we only wrap the outer
+// container with a max-height + overflow:auto.
+function _wrapPopupForParcel(innerHtml) {
+  // 10 lines * ~22px per line ≈ 220px. Inner already has its own padding/
+  // line-height; just clip to height and let it scroll.
+  return `<div style="max-height:220px;overflow-y:auto;overflow-x:hidden">${innerHtml}</div>`;
+}
 
 // V75.4d: multi-polygon outline for parcel pipeline pins. Draws green
 // outlines around every constituent property's polygon that has rings
@@ -4604,9 +4956,18 @@ window.runDomainSearchAt = runDomainSearchAt;
 window.getListings = () => listings;
 window.fetchLotDP = fetchLotDP;
 
-window.reSelectParcels = function(parcels) {
+window.reSelectParcels = function(parcels, opts) {
   if (!parcels || parcels.length === 0) return;
   clearParcelSelection();
+  // V78i.5 — Set the popup-suppression flag AFTER clearParcelSelection, not
+  // before. clearParcelSelection resets the flag to false, so any flag set
+  // by the caller before invoking reSelectParcels gets wiped out and the
+  // blue lot pins open their popups anyway (winning the race against the
+  // gold-pin's combined popup). Setting it here, post-clear, means the
+  // suppression actually reaches the selectPropertyAtPoint calls below.
+  if (opts && opts.suppressPopups) {
+    window._suppressBluePinPopups = true;
+  }
 
   const srlupEntry  = overlayRegistry['nsw-srlup'];
   const zoningEntry = overlayRegistry['nsw-land-zoning'];
@@ -4657,66 +5018,65 @@ window.reSelectParcels = function(parcels) {
 })();
 
 // ─── Measurement Tool ─────────────────────────────────────────────────────────
+// V78h — Unified Measure (replaces separate Distance / Area items).
+// While active: each click adds a vertex; double-click closes the current
+// shape. A shape with ≥3 points becomes a polygon (counted toward the running
+// total area). A shape with 2 points stays as a distance-only line. After
+// closing one, the tool stays active so the agent can draw another shape —
+// click "📐 Measure" in the tools menu again (or press Escape) to stop,
+// which leaves all results visible on the map until Clear.
 
 (function () {
   let measureActive = false;
-  let measureMode   = null; // 'distance' | 'area'
+  // In-progress shape state
   let points        = [];
-  let polyline      = null;
-  let polygon       = null;
-  let markers       = [];
-  let tooltip       = null;
-  let segmentLabels = [];
+  let polyline      = null;            // working polyline (during draw)
+  let liveSegLabels = [];               // segment labels for the in-progress shape,
+                                        // shown immediately after each click
+  let tooltip       = null;             // running-total tooltip at cursor
 
-  // ── Wire up tools dropdown items directly ──
-  // measureBtn opens a sub-picker; instead we replace it with direct distance/area
-  // buttons injected into the tools dropdown menu.
+  // Completed shapes — kept on the map until Clear. Each entry:
+  //   { kind: 'polygon'|'line', layers: [...], areaM2: number, vertices: [latlng] }
+  let completed     = [];
+
+  // ── Wire up tools dropdown item directly ──
   (function wireToolsMenu() {
     const menu = document.getElementById('toolsDropdownMenu');
     if (!menu) return;
-
-    // Replace the measureBtn item with two direct action items
     const measureItem = document.getElementById('measureBtn');
-    if (measureItem) {
-      const distBtn = document.createElement('button');
-      distBtn.className = 'tools-dropdown-item';
-      distBtn.id = 'measureDistanceBtn';
-      distBtn.innerHTML = '📏 Measure Distance';
+    if (!measureItem) return;
 
-      const areaBtn = document.createElement('button');
-      areaBtn.className = 'tools-dropdown-item';
-      areaBtn.id = 'measureAreaBtn';
-      areaBtn.innerHTML = '⬡ Measure Area';
+    // Single unified Measure button replaces the separate Distance/Area items.
+    const measureBtn = document.createElement('button');
+    measureBtn.className = 'tools-dropdown-item';
+    measureBtn.id = 'measureToolBtn';
+    measureBtn.innerHTML = '📐 Measure';
 
-      const clearBtn = document.createElement('button');
-      clearBtn.className = 'tools-dropdown-item';
-      clearBtn.id = 'measureClearBtn';
-      clearBtn.style.color = '#c0392b';
-      clearBtn.innerHTML = '✕ Clear Measurement';
-      clearBtn.style.display = 'none';
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'tools-dropdown-item';
+    clearBtn.id = 'measureClearBtn';
+    clearBtn.style.color = '#c0392b';
+    clearBtn.innerHTML = '✕ Clear Measurement';
+    clearBtn.style.display = 'none';
 
-      measureItem.replaceWith(distBtn);
-      distBtn.insertAdjacentElement('afterend', areaBtn);
-      areaBtn.insertAdjacentElement('afterend', clearBtn);
+    measureItem.replaceWith(measureBtn);
+    measureBtn.insertAdjacentElement('afterend', clearBtn);
 
-      distBtn.addEventListener('click', () => {
-        menu.classList.remove('open');
-        startMeasure('distance');
-      });
-      areaBtn.addEventListener('click', () => {
-        menu.classList.remove('open');
-        startMeasure('area');
-      });
-      clearBtn.addEventListener('click', () => {
-        menu.classList.remove('open');
-        clearMeasure();
-      });
+    measureBtn.addEventListener('click', () => {
+      menu.classList.remove('open');
+      // Toggle: clicking while active stops the tool (keeps results on map).
+      if (measureActive) stopMeasure();
+      else startMeasure();
+    });
+    clearBtn.addEventListener('click', () => {
+      menu.classList.remove('open');
+      clearMeasure();
+    });
 
-      // Show/hide clear button based on active state
-      window._updateMeasureClearBtn = function(active) {
-        clearBtn.style.display = active ? '' : 'none';
-      };
-    }
+    // Show/hide clear button based on whether anything is on the map
+    window._updateMeasureClearBtn = function(visible) {
+      clearBtn.style.display = visible ? '' : 'none';
+    };
   })();
 
   // ── Haversine distance between two latlngs (metres) ──
@@ -4742,24 +5102,16 @@ window.reSelectParcels = function(parcels) {
   function polygonArea(pts) {
     const n = pts.length;
     if (n < 3) return 0;
-
-    // 1) Find centroid (simple average — fine for projection anchor)
     let sumLat = 0, sumLng = 0;
     for (const p of pts) { sumLat += p.lat; sumLng += p.lng; }
     const cLat = sumLat / n;
     const cLng = sumLng / n;
-
-    // 2) Project each vertex to metres relative to the centroid.
-    //    x = (lng - cLng) * metresPerDegLng(cLat)
-    //    y = (lat - cLat) * metresPerDegLat
     const mPerLat = 111320;
     const mPerLng = Math.cos(cLat * Math.PI / 180) * 111320;
     const xy = pts.map(p => ({
       x: (p.lng - cLng) * mPerLng,
       y: (p.lat - cLat) * mPerLat,
     }));
-
-    // 3) Shoelace in planar coordinates
     let area = 0;
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n;
@@ -4783,44 +5135,72 @@ window.reSelectParcels = function(parcels) {
     return Math.round(m2).toLocaleString() + ' m² (' + acreStr + ')';
   }
 
-  function startMeasure(mode) {
-    clearMeasure();
-    measureMode   = mode;
+  // Running total area across completed polygons.
+  function totalAreaM2() {
+    return completed.reduce((sum, c) => sum + (c.areaM2 || 0), 0);
+  }
+  function polygonCount() {
+    return completed.filter(c => c.kind === 'polygon').length;
+  }
+
+  // Build the cursor tooltip content for the live shape.
+  // When ≥3 points and we have completed polygons too, show "this shape /
+  // running total" so the agent sees both. When ≥3 points and no completed
+  // polygons yet, just show this shape's area. When <3 points, show
+  // running distance of the line so far (single distance measurement).
+  function liveTooltipContent(allPts) {
+    if (allPts.length < 2) {
+      return polygonCount() > 0
+        ? 'Total: ' + formatArea(totalAreaM2()) + ' · ' + polygonCount() + ' area' + (polygonCount() === 1 ? '' : 's')
+        : 'Click to start measuring';
+    }
+    if (allPts.length === 2) {
+      // Single segment — distance measurement
+      const d = haversine(allPts[0], allPts[1]);
+      const base = formatDist(d);
+      return polygonCount() > 0
+        ? base + ' · Total area: ' + formatArea(totalAreaM2())
+        : base + ' · double-click to finish';
+    }
+    // 3+ points — area mode
+    const a = polygonArea(allPts);
+    const thisShape = 'This: ' + formatArea(a);
+    if (polygonCount() > 0) {
+      const grand = totalAreaM2() + a;
+      return thisShape + ' · Total: ' + formatArea(grand) + ' · ' + (polygonCount() + 1) + ' areas';
+    }
+    return thisShape + ' · double-click to finish';
+  }
+
+  function startMeasure() {
+    // V78h — preserves any existing completed shapes (unlike Clear). Just
+    // re-enters draw mode so the agent can add more polygons after stopping.
     measureActive = true;
     window._measureActive = true;
     map.getContainer().style.cursor = 'crosshair';
     if (window._updateMeasureClearBtn) window._updateMeasureClearBtn(true);
 
-    // Tooltip
     tooltip = L.tooltip({ permanent: true, direction: 'top', className: 'measure-tooltip' })
-      .setContent(mode === 'distance' ? 'Click to start measuring' : 'Click to start drawing area')
+      .setContent(liveTooltipContent([]))
       .setLatLng(map.getCenter())
       .addTo(map);
 
     map.on('mousemove', onMouseMove);
     map.on('click',     onMapClick);
     map.on('dblclick',  onDblClick);
+    // V78h — Escape stops the tool (keeps results).
+    document.addEventListener('keydown', onKeyDown);
+  }
+
+  function onKeyDown(e) {
+    if (e.key === 'Escape' && measureActive) stopMeasure();
   }
 
   function onMouseMove(e) {
-    if (!measureActive || points.length === 0) return;
-    const allPts = [...points, e.latlng];
-
-    if (measureMode === 'distance') {
-      let total = 0;
-      for (let i = 1; i < allPts.length; i++) total += haversine(allPts[i-1], allPts[i]);
-      polyline.setLatLngs(allPts);
-      tooltip.setLatLng(e.latlng).setContent(formatDist(total));
-    } else {
-      if (polygon) polygon.setLatLngs(allPts);
-      else polyline.setLatLngs(allPts);
-      if (allPts.length >= 3) {
-        const area = polygonArea(allPts);
-        tooltip.setLatLng(e.latlng).setContent(formatArea(area));
-      } else {
-        tooltip.setLatLng(e.latlng).setContent('Click to add points');
-      }
-    }
+    if (!measureActive) return;
+    const allPts = points.length ? [...points, e.latlng] : [];
+    if (points.length >= 1 && polyline) polyline.setLatLngs(allPts);
+    tooltip.setLatLng(e.latlng).setContent(liveTooltipContent(allPts));
   }
 
   function onMapClick(e) {
@@ -4829,106 +5209,214 @@ window.reSelectParcels = function(parcels) {
 
     points.push(e.latlng);
 
-    // Place a small dot marker
+    // Small vertex marker for the in-progress shape — these don't get cleared
+    // when the shape is closed (they're absorbed into the completed shape's
+    // layers), so we push them straight into a per-shape staging array.
     const dot = L.circleMarker(e.latlng, {
       radius: 4, color: '#e74c3c', fillColor: '#e74c3c',
-      fillOpacity: 1, weight: 2, interactive: false
+      fillOpacity: 1, weight: 2, interactive: false,
     }).addTo(map);
-    markers.push(dot);
+    stagingLayers.push(dot);
 
     if (points.length === 1) {
-      // First point — create line/polygon
-      if (measureMode === 'distance') {
-        polyline = L.polyline([e.latlng], {
-          color: '#e74c3c', weight: 2.5, dashArray: '6,4', interactive: false
-        }).addTo(map);
-      } else {
-        polyline = L.polyline([e.latlng], {
-          color: '#e74c3c', weight: 2, dashArray: '4,3', interactive: false
-        }).addTo(map);
-      }
-      tooltip.setLatLng(e.latlng).setContent('Click to continue, double-click to finish');
+      polyline = L.polyline([e.latlng], {
+        color: '#e74c3c', weight: 2.5, dashArray: '6,4', interactive: false,
+      }).addTo(map);
+      stagingLayers.push(polyline);
+    } else {
+      // V78h — Add a segment-length label immediately when the segment is
+      // committed (between the previous point and this one). Previously these
+      // only appeared after the polygon closed; surfacing them on each click
+      // gives the agent live segment lengths as they trace.
+      const a = points[points.length - 2];
+      const b = points[points.length - 1];
+      const midLat = (a.lat + b.lat) / 2;
+      const midLng = (a.lng + b.lng) / 2;
+      const dist = haversine(a, b);
+      const lbl = L.tooltip({
+        permanent: true, direction: 'center',
+        className: 'measure-tooltip measure-seg-label',
+        interactive: false,
+      })
+        .setContent(formatDist(dist))
+        .setLatLng([midLat, midLng])
+        .addTo(map);
+      liveSegLabels.push(lbl);
+      stagingLayers.push(lbl);
     }
   }
+
+  // Staging — layers belonging to the current in-progress shape. On
+  // dblclick (or stop) these get absorbed into the completed[] entry.
+  let stagingLayers = [];
 
   function onDblClick(e) {
     if (!measureActive || points.length < 2) return;
     L.DomEvent.stopPropagation(e);
     L.DomEvent.preventDefault(e);
 
-    // Remove the last point added by the click that fired before dblclick
+    // Remove the duplicate point added by the click that fires before
+    // dblclick. Also remove the staging marker + segment label that came
+    // with that click (always the last two pushed: marker, then segment
+    // label — except the very first point has no segment label).
     points.pop();
-    markers[markers.length - 1].remove();
-    markers.pop();
+    // The last layer pushed for that click was either a segment label
+    // (if there had already been a point) or a marker (for first point,
+    // but dblclick guards points.length < 2 so we always have a label here).
+    const lastLayer = stagingLayers.pop();
+    if (lastLayer) map.removeLayer(lastLayer);
+    const lblIdx = liveSegLabels.indexOf(lastLayer);
+    if (lblIdx >= 0) liveSegLabels.splice(lblIdx, 1);
+    // And the marker for that aborted click
+    const markerLayer = stagingLayers.pop();
+    if (markerLayer) map.removeLayer(markerLayer);
 
-    if (measureMode === 'distance') {
-      let total = 0;
-      for (let i = 1; i < points.length; i++) total += haversine(points[i-1], points[i]);
-      polyline.setLatLngs(points);
-      tooltip.setLatLng(points[points.length - 1])
-        .setContent('Total: ' + formatDist(total));
-    } else {
-      if (points.length >= 3) {
-        if (polyline) { map.removeLayer(polyline); polyline = null; }
-        polygon = L.polygon(points, {
-          color: '#e74c3c', weight: 2, fillColor: '#e74c3c',
-          fillOpacity: 0.15, interactive: false
-        }).addTo(map);
-        const area = polygonArea(points);
-        tooltip.setLatLng(polygon.getBounds().getCenter())
-          .setContent('Area: ' + formatArea(area));
-
-        // Add segment length labels on each side (including closing side)
-        const closed = [...points, points[0]];
-        for (let i = 0; i < closed.length - 1; i++) {
-          const a = closed[i];
-          const b = closed[i + 1];
-          const midLat = (a.lat + b.lat) / 2;
-          const midLng = (a.lng + b.lng) / 2;
-          const dist = haversine(a, b);
-          const lbl = L.tooltip({
-            permanent: true, direction: 'center',
-            className: 'measure-tooltip measure-seg-label',
-            interactive: false
-          })
-            .setContent(formatDist(dist))
-            .setLatLng([midLat, midLng])
-            .addTo(map);
-          segmentLabels.push(lbl);
-        }
+    if (points.length >= 3) {
+      // Close into a polygon: remove the open polyline, add the filled poly.
+      if (polyline) {
+        map.removeLayer(polyline);
+        const plIdx = stagingLayers.indexOf(polyline);
+        if (plIdx >= 0) stagingLayers.splice(plIdx, 1);
+        polyline = null;
       }
+      const poly = L.polygon(points, {
+        color: '#e74c3c', weight: 2, fillColor: '#e74c3c',
+        fillOpacity: 0.15, interactive: false,
+      }).addTo(map);
+      stagingLayers.push(poly);
+
+      // Add the closing-edge segment label (last point back to first).
+      const a = points[points.length - 1];
+      const b = points[0];
+      const midLat = (a.lat + b.lat) / 2;
+      const midLng = (a.lng + b.lng) / 2;
+      const dist = haversine(a, b);
+      const lbl = L.tooltip({
+        permanent: true, direction: 'center',
+        className: 'measure-tooltip measure-seg-label',
+        interactive: false,
+      })
+        .setContent(formatDist(dist))
+        .setLatLng([midLat, midLng])
+        .addTo(map);
+      liveSegLabels.push(lbl);
+      stagingLayers.push(lbl);
+
+      const areaM2 = polygonArea(points);
+
+      // V78h.1 — Per-polygon area label at the polygon's centroid. Visible
+      // for the lifetime of this shape (until Clear). Distinct class so we
+      // can style larger / bolder than segment labels.
+      const polyBounds = poly.getBounds();
+      const center = polyBounds.getCenter();
+      const areaLbl = L.tooltip({
+        permanent: true, direction: 'center',
+        className: 'measure-tooltip measure-area-label',
+        interactive: false,
+      })
+        .setContent(formatArea(areaM2))
+        .setLatLng(center)
+        .addTo(map);
+      stagingLayers.push(areaLbl);
+
+      completed.push({
+        kind:    'polygon',
+        layers:  stagingLayers.slice(),
+        areaM2,
+        vertices: points.slice(),
+      });
+    } else {
+      // 2-point case = distance-only line. Keep it as-is.
+      if (polyline) polyline.setLatLngs(points);
+      completed.push({
+        kind:    'line',
+        layers:  stagingLayers.slice(),
+        areaM2:  0,
+        vertices: points.slice(),
+      });
     }
 
-    // Stop capturing — leave result on map
+    // Reset in-progress state for the next shape (tool stays active).
+    points        = [];
+    polyline      = null;
+    liveSegLabels = [];
+    stagingLayers = [];
+
+    // Update tooltip to reflect the new running total at the dblclick spot.
+    tooltip.setLatLng(e.latlng).setContent(liveTooltipContent([]));
+  }
+
+  // V78h — stop draw mode but keep all completed shapes on the map.
+  function stopMeasure() {
     map.off('mousemove', onMouseMove);
     map.off('click',     onMapClick);
     map.off('dblclick',  onDblClick);
+    document.removeEventListener('keydown', onKeyDown);
     map.getContainer().style.cursor = '';
+
+    // Abort any in-progress shape — discard its staging layers.
+    stagingLayers.forEach(l => { try { map.removeLayer(l); } catch (_) {} });
+    stagingLayers = [];
+    points = [];
+    polyline = null;
+    liveSegLabels = [];
+
+    if (tooltip) {
+      // Replace the moving cursor tooltip with a parked one near map centre
+      // showing the final total, so the result stays visible after the tool
+      // is dismissed.
+      if (completed.length) {
+        const grand = totalAreaM2();
+        const n = polygonCount();
+        const content = n > 0
+          ? 'Total: ' + formatArea(grand) + ' · ' + n + ' area' + (n === 1 ? '' : 's')
+          : 'Measurement complete';
+        tooltip.setContent(content);
+        // Park it at the centroid of the last completed shape so it doesn't
+        // float over the map centre disconnected from the result.
+        const last = completed[completed.length - 1];
+        if (last && last.vertices.length) {
+          const lats = last.vertices.map(p => p.lat);
+          const lngs = last.vertices.map(p => p.lng);
+          const cLat = lats.reduce((a, b) => a + b, 0) / lats.length;
+          const cLng = lngs.reduce((a, b) => a + b, 0) / lngs.length;
+          tooltip.setLatLng([cLat, cLng]);
+        }
+      } else {
+        map.removeLayer(tooltip);
+        tooltip = null;
+      }
+    }
+
     measureActive = false;
     window._measureActive = false;
-    // V75.5.3: keep Clear button visible while a measurement result is still
-    // drawn on the map — only hide when clearMeasure() actually removes it.
+    if (window._updateMeasureClearBtn) window._updateMeasureClearBtn(completed.length > 0);
   }
 
   function clearMeasure() {
     map.off('mousemove', onMouseMove);
     map.off('click',     onMapClick);
     map.off('dblclick',  onDblClick);
+    document.removeEventListener('keydown', onKeyDown);
     map.getContainer().style.cursor = '';
-    if (polyline) { map.removeLayer(polyline); polyline = null; }
-    if (polygon)  { map.removeLayer(polygon);  polygon  = null; }
-    if (tooltip)  { map.removeLayer(tooltip);  tooltip  = null; }
-    segmentLabels.forEach(l => map.removeLayer(l));
-    segmentLabels = [];
-    markers.forEach(m => map.removeLayer(m));
-    markers = [];
-    points  = [];
+
+    // Drop all completed shapes' layers
+    completed.forEach(c => c.layers.forEach(l => { try { map.removeLayer(l); } catch (_) {} }));
+    completed = [];
+    // Drop in-progress shape
+    stagingLayers.forEach(l => { try { map.removeLayer(l); } catch (_) {} });
+    stagingLayers = [];
+    points        = [];
+    polyline      = null;
+    liveSegLabels = [];
+    if (tooltip)  { try { map.removeLayer(tooltip); } catch (_) {} tooltip = null; }
+
     measureActive = false;
-    measureMode   = null;
     window._measureActive = false;
     if (window._updateMeasureClearBtn) window._updateMeasureClearBtn(false);
   }
 })();
+
 
 // ─── Deferred pipeline pin render ────────────────────────────────────────────
 // kanban.js may load and call refreshPipelinePins before map.js registers

@@ -47,6 +47,29 @@ const VALIDATION = {
   },
 };
 
+// V78g — Pattern-based validators (matched by regex against key). Used in
+// addition to the per-key VALIDATION map above. Applied for any key matching
+// the pattern.
+const VALIDATION_PATTERNS = [
+  {
+    pattern: /^board_default_score_/,
+    validate: (v) => {
+      if (!/^\d+$/.test(v)) return 'Must be a whole number';
+      const n = parseInt(v, 10);
+      if (n < 0 || n > 100) return 'Must be between 0 and 100';
+      return null;
+    },
+  },
+];
+
+function getValidator(key) {
+  if (VALIDATION[key]) return VALIDATION[key];
+  for (const p of VALIDATION_PATTERNS) {
+    if (p.pattern.test(key)) return p.validate;
+  }
+  return null;
+}
+
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
   if (!session) return;
@@ -90,7 +113,7 @@ export default async function handler(req, res) {
           errors[key] = 'Value cannot be empty';
           continue;
         }
-        const fn = VALIDATION[key];
+        const fn = getValidator(key);
         if (fn) {
           const err = fn(trimmed, merged);
           if (err) errors[key] = err;
