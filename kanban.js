@@ -4906,7 +4906,7 @@ function openDdAttachmentsDialog(dealId, ddKey, parentModal) {
       return `
         <div class="kb-dd-attach-row" data-id="${r.id}">
           <span class="kb-dd-attach-icon">📄</span>
-          <a class="kb-dd-attach-name" href="/api/dd-attachments?id=${r.id}&action=download" target="_blank" rel="noopener" title="${escapeHtml(r.filename)}">${escapeHtml(r.filename)}</a>
+          <a class="kb-dd-attach-name" href="/api/dd-attachments?id=${r.id}&action=view" target="_blank" rel="noopener" title="${escapeHtml(r.filename)}">${escapeHtml(r.filename)}</a>
           <span class="kb-dd-attach-meta">${sizeKb}${when ? ' · ' + when : ''}</span>
           <button type="button" class="kb-dd-attach-remove" data-id="${r.id}" title="Remove">Remove</button>
         </div>`;
