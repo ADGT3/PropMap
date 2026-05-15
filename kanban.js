@@ -510,11 +510,13 @@ function dealRowToInternal(row) {
   if (isParcel) {
     const pa     = row.parcel || {};
     const kids   = Array.isArray(row.parcel_properties) ? row.parcel_properties : [];
-    // Merged title — parcel.name is the snapshot at creation; if missing,
-    // compute from kids using the formatter utility.
-    const title = pa.name || (typeof window !== 'undefined' && window.formatParcelTitle
-      ? window.formatParcelTitle(kids.map(k => ({ address: k.address, suburb: k.suburb })))
-      : kids.map(k => k.address).join(' & '));
+    // Merged title — V78h.7: always compute from kids when we have them and
+    // the formatter is available. The stale pa.name snapshot was the source
+    // of "Catherine Field, Catherine Field" duplication and never reflected
+    // updates to the lot-contiguity rules.
+    const title = (kids.length && typeof window !== 'undefined' && window.formatParcelTitle)
+      ? window.formatParcelTitle(kids.map(k => ({ address: k.address, suburb: k.suburb, lot_dps: k.lot_dps })))
+      : (pa.name || kids.map(k => k.address).join(' & '));
     // Aggregate area + centroid
     const totalArea = kids.reduce((s, k) => s + (k.area_sqm || 0), 0);
     const avgLat = kids.length ? kids.reduce((s, k) => s + (k.lat ?? 0), 0) / kids.length : null;

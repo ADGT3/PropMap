@@ -4543,7 +4543,7 @@ window._renderPipelinePins = function () {
       marker.unbindPopup();
       marker.bindPopup(
         `<div style="${popupStyle}"><span style="color:#888;font-size:12px">Loading parcel details…</span></div>`,
-        { minWidth: 240, maxWidth: 360, autoPan: true }
+        { minWidth: 210, autoPan: true }
       ).openPopup();
 
       // Run reSelectParcels to render outlines + numbered blue pins. Same
@@ -4582,10 +4582,10 @@ window._renderPipelinePins = function () {
       const aggOverlay   = _aggregateOverlayBlocks(perLotResults,
         includeSrlup, includeZoning, includeFlood, includeRoads);
 
-      // Aggregated address/Lot+DP come from dealRowToInternal — already computed.
-      // V78h.6 — Area comes from summed cadastre fetches (authoritative);
-      // fall back to p._areaSqm only if every cadastre lookup failed.
-      const aggLabel  = [p.address, p.suburb].filter(Boolean).join(', ');
+      // V78h.7 — p.address for parcels is the aggregated title produced by
+      // formatParcelTitle, which already includes the suburb. Don't append
+      // p.suburb again or we double it ("Catherine Field, Catherine Field").
+      const aggLabel  = p.address || '';
       const aggLotDP  = p._lotDPs || 'Not found';
       const aggArea   = cadastreAreaSum > 0
         ? cadastreAreaSum
