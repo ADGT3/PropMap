@@ -4586,6 +4586,9 @@ window._renderPipelinePins = function () {
       const inner = buildPopupInner(aggLabel, aggLga, aggLotDP, aggArea, aggZoneCode, aggOverlay, null);
       const popupHtml = `<div style="${popupStyle}">${_wrapPopupForParcel(inner)}</div>`;
       marker.getPopup().setContent(popupHtml);
+      // V78h.5 — reSelectParcels opens a popup per child lot. The last one
+      // to open wins, hiding our combined popup. Force ours back on top.
+      marker.openPopup();
     });
 
     markers.push(marker);
