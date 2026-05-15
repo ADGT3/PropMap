@@ -2290,11 +2290,35 @@ function saveTerms(id, terms) {
 // Falls back to termsPrice if listing price is unavailable.
 
 function formatKbPrice(price, termsPrice) {
+  // Format a single numeric value as whole dollars with $ + thousands separators.
+  const fmtOne = (numStr) => {
+    const num = parseFloat(numStr);
+    return isNaN(num) ? null : '$' + Math.round(num).toLocaleString();
+  };
+
+  // Detect a price-range string like "$629,950 - $649,950" or "629950-649950"
+  // or with en-dash/em-dash. Splits on the first dash that sits between digits,
+  // not on minus signs in front of a single number. Returns [lo, hi] strings
+  // of digits-and-decimal-only, or null if it's not a range.
+  const splitRange = (s) => {
+    const cleaned = String(s).replace(/[$,\s]/g, ''); // keep digits, dot, dashes
+    const m = cleaned.match(/^(\d+(?:\.\d+)?)[-\u2013\u2014](\d+(?:\.\d+)?)$/);
+    return m ? [m[1], m[2]] : null;
+  };
+
   const fmt = v => {
     if (!v && v !== 0) return null;
     // Already a formatted string with $ — return as-is if it has digits
     if (typeof v === 'string' && /\d/.test(v)) {
-      // Strip non-numeric except decimal, reformat as whole dollars
+      // V78h — Range detection. If the string is a two-number range
+      // (e.g. "$629,950-649,950"), format each side and join with en-dash.
+      // Otherwise strip non-numeric and reformat as a single value.
+      const range = splitRange(v);
+      if (range) {
+        const lo = fmtOne(range[0]);
+        const hi = fmtOne(range[1]);
+        if (lo && hi) return lo + ' – ' + hi;
+      }
       const num = parseFloat(v.replace(/[^0-9.]/g, ''));
       return isNaN(num) ? v : '$' + Math.round(num).toLocaleString();
     }
@@ -2304,6 +2328,12 @@ function formatKbPrice(price, termsPrice) {
       const { display, from, to } = v;
       const hasNum = display && /\d/.test(display);
       if (hasNum) {
+        const range = splitRange(display);
+        if (range) {
+          const lo = fmtOne(range[0]);
+          const hi = fmtOne(range[1]);
+          if (lo && hi) return lo + ' – ' + hi;
+        }
         const num = parseFloat(display.replace(/[^0-9.]/g, ''));
         return isNaN(num) ? display : '$' + Math.round(num).toLocaleString();
       }
