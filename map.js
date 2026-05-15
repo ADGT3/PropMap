@@ -4657,66 +4657,65 @@ window.reSelectParcels = function(parcels) {
 })();
 
 // ─── Measurement Tool ─────────────────────────────────────────────────────────
+// V78h — Unified Measure (replaces separate Distance / Area items).
+// While active: each click adds a vertex; double-click closes the current
+// shape. A shape with ≥3 points becomes a polygon (counted toward the running
+// total area). A shape with 2 points stays as a distance-only line. After
+// closing one, the tool stays active so the agent can draw another shape —
+// click "📐 Measure" in the tools menu again (or press Escape) to stop,
+// which leaves all results visible on the map until Clear.
 
 (function () {
   let measureActive = false;
-  let measureMode   = null; // 'distance' | 'area'
+  // In-progress shape state
   let points        = [];
-  let polyline      = null;
-  let polygon       = null;
-  let markers       = [];
-  let tooltip       = null;
-  let segmentLabels = [];
+  let polyline      = null;            // working polyline (during draw)
+  let liveSegLabels = [];               // segment labels for the in-progress shape,
+                                        // shown immediately after each click
+  let tooltip       = null;             // running-total tooltip at cursor
 
-  // ── Wire up tools dropdown items directly ──
-  // measureBtn opens a sub-picker; instead we replace it with direct distance/area
-  // buttons injected into the tools dropdown menu.
+  // Completed shapes — kept on the map until Clear. Each entry:
+  //   { kind: 'polygon'|'line', layers: [...], areaM2: number, vertices: [latlng] }
+  let completed     = [];
+
+  // ── Wire up tools dropdown item directly ──
   (function wireToolsMenu() {
     const menu = document.getElementById('toolsDropdownMenu');
     if (!menu) return;
-
-    // Replace the measureBtn item with two direct action items
     const measureItem = document.getElementById('measureBtn');
-    if (measureItem) {
-      const distBtn = document.createElement('button');
-      distBtn.className = 'tools-dropdown-item';
-      distBtn.id = 'measureDistanceBtn';
-      distBtn.innerHTML = '📏 Measure Distance';
+    if (!measureItem) return;
 
-      const areaBtn = document.createElement('button');
-      areaBtn.className = 'tools-dropdown-item';
-      areaBtn.id = 'measureAreaBtn';
-      areaBtn.innerHTML = '⬡ Measure Area';
+    // Single unified Measure button replaces the separate Distance/Area items.
+    const measureBtn = document.createElement('button');
+    measureBtn.className = 'tools-dropdown-item';
+    measureBtn.id = 'measureToolBtn';
+    measureBtn.innerHTML = '📐 Measure';
 
-      const clearBtn = document.createElement('button');
-      clearBtn.className = 'tools-dropdown-item';
-      clearBtn.id = 'measureClearBtn';
-      clearBtn.style.color = '#c0392b';
-      clearBtn.innerHTML = '✕ Clear Measurement';
-      clearBtn.style.display = 'none';
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'tools-dropdown-item';
+    clearBtn.id = 'measureClearBtn';
+    clearBtn.style.color = '#c0392b';
+    clearBtn.innerHTML = '✕ Clear Measurement';
+    clearBtn.style.display = 'none';
 
-      measureItem.replaceWith(distBtn);
-      distBtn.insertAdjacentElement('afterend', areaBtn);
-      areaBtn.insertAdjacentElement('afterend', clearBtn);
+    measureItem.replaceWith(measureBtn);
+    measureBtn.insertAdjacentElement('afterend', clearBtn);
 
-      distBtn.addEventListener('click', () => {
-        menu.classList.remove('open');
-        startMeasure('distance');
-      });
-      areaBtn.addEventListener('click', () => {
-        menu.classList.remove('open');
-        startMeasure('area');
-      });
-      clearBtn.addEventListener('click', () => {
-        menu.classList.remove('open');
-        clearMeasure();
-      });
+    measureBtn.addEventListener('click', () => {
+      menu.classList.remove('open');
+      // Toggle: clicking while active stops the tool (keeps results on map).
+      if (measureActive) stopMeasure();
+      else startMeasure();
+    });
+    clearBtn.addEventListener('click', () => {
+      menu.classList.remove('open');
+      clearMeasure();
+    });
 
-      // Show/hide clear button based on active state
-      window._updateMeasureClearBtn = function(active) {
-        clearBtn.style.display = active ? '' : 'none';
-      };
-    }
+    // Show/hide clear button based on whether anything is on the map
+    window._updateMeasureClearBtn = function(visible) {
+      clearBtn.style.display = visible ? '' : 'none';
+    };
   })();
 
   // ── Haversine distance between two latlngs (metres) ──
@@ -4742,24 +4741,16 @@ window.reSelectParcels = function(parcels) {
   function polygonArea(pts) {
     const n = pts.length;
     if (n < 3) return 0;
-
-    // 1) Find centroid (simple average — fine for projection anchor)
     let sumLat = 0, sumLng = 0;
     for (const p of pts) { sumLat += p.lat; sumLng += p.lng; }
     const cLat = sumLat / n;
     const cLng = sumLng / n;
-
-    // 2) Project each vertex to metres relative to the centroid.
-    //    x = (lng - cLng) * metresPerDegLng(cLat)
-    //    y = (lat - cLat) * metresPerDegLat
     const mPerLat = 111320;
     const mPerLng = Math.cos(cLat * Math.PI / 180) * 111320;
     const xy = pts.map(p => ({
       x: (p.lng - cLng) * mPerLng,
       y: (p.lat - cLat) * mPerLat,
     }));
-
-    // 3) Shoelace in planar coordinates
     let area = 0;
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n;
@@ -4783,44 +4774,72 @@ window.reSelectParcels = function(parcels) {
     return Math.round(m2).toLocaleString() + ' m² (' + acreStr + ')';
   }
 
-  function startMeasure(mode) {
-    clearMeasure();
-    measureMode   = mode;
+  // Running total area across completed polygons.
+  function totalAreaM2() {
+    return completed.reduce((sum, c) => sum + (c.areaM2 || 0), 0);
+  }
+  function polygonCount() {
+    return completed.filter(c => c.kind === 'polygon').length;
+  }
+
+  // Build the cursor tooltip content for the live shape.
+  // When ≥3 points and we have completed polygons too, show "this shape /
+  // running total" so the agent sees both. When ≥3 points and no completed
+  // polygons yet, just show this shape's area. When <3 points, show
+  // running distance of the line so far (single distance measurement).
+  function liveTooltipContent(allPts) {
+    if (allPts.length < 2) {
+      return polygonCount() > 0
+        ? 'Total: ' + formatArea(totalAreaM2()) + ' · ' + polygonCount() + ' area' + (polygonCount() === 1 ? '' : 's')
+        : 'Click to start measuring';
+    }
+    if (allPts.length === 2) {
+      // Single segment — distance measurement
+      const d = haversine(allPts[0], allPts[1]);
+      const base = formatDist(d);
+      return polygonCount() > 0
+        ? base + ' · Total area: ' + formatArea(totalAreaM2())
+        : base + ' · double-click to finish';
+    }
+    // 3+ points — area mode
+    const a = polygonArea(allPts);
+    const thisShape = 'This: ' + formatArea(a);
+    if (polygonCount() > 0) {
+      const grand = totalAreaM2() + a;
+      return thisShape + ' · Total: ' + formatArea(grand) + ' · ' + (polygonCount() + 1) + ' areas';
+    }
+    return thisShape + ' · double-click to finish';
+  }
+
+  function startMeasure() {
+    // V78h — preserves any existing completed shapes (unlike Clear). Just
+    // re-enters draw mode so the agent can add more polygons after stopping.
     measureActive = true;
     window._measureActive = true;
     map.getContainer().style.cursor = 'crosshair';
     if (window._updateMeasureClearBtn) window._updateMeasureClearBtn(true);
 
-    // Tooltip
     tooltip = L.tooltip({ permanent: true, direction: 'top', className: 'measure-tooltip' })
-      .setContent(mode === 'distance' ? 'Click to start measuring' : 'Click to start drawing area')
+      .setContent(liveTooltipContent([]))
       .setLatLng(map.getCenter())
       .addTo(map);
 
     map.on('mousemove', onMouseMove);
     map.on('click',     onMapClick);
     map.on('dblclick',  onDblClick);
+    // V78h — Escape stops the tool (keeps results).
+    document.addEventListener('keydown', onKeyDown);
+  }
+
+  function onKeyDown(e) {
+    if (e.key === 'Escape' && measureActive) stopMeasure();
   }
 
   function onMouseMove(e) {
-    if (!measureActive || points.length === 0) return;
-    const allPts = [...points, e.latlng];
-
-    if (measureMode === 'distance') {
-      let total = 0;
-      for (let i = 1; i < allPts.length; i++) total += haversine(allPts[i-1], allPts[i]);
-      polyline.setLatLngs(allPts);
-      tooltip.setLatLng(e.latlng).setContent(formatDist(total));
-    } else {
-      if (polygon) polygon.setLatLngs(allPts);
-      else polyline.setLatLngs(allPts);
-      if (allPts.length >= 3) {
-        const area = polygonArea(allPts);
-        tooltip.setLatLng(e.latlng).setContent(formatArea(area));
-      } else {
-        tooltip.setLatLng(e.latlng).setContent('Click to add points');
-      }
-    }
+    if (!measureActive) return;
+    const allPts = points.length ? [...points, e.latlng] : [];
+    if (points.length >= 1 && polyline) polyline.setLatLngs(allPts);
+    tooltip.setLatLng(e.latlng).setContent(liveTooltipContent(allPts));
   }
 
   function onMapClick(e) {
@@ -4829,106 +4848,198 @@ window.reSelectParcels = function(parcels) {
 
     points.push(e.latlng);
 
-    // Place a small dot marker
+    // Small vertex marker for the in-progress shape — these don't get cleared
+    // when the shape is closed (they're absorbed into the completed shape's
+    // layers), so we push them straight into a per-shape staging array.
     const dot = L.circleMarker(e.latlng, {
       radius: 4, color: '#e74c3c', fillColor: '#e74c3c',
-      fillOpacity: 1, weight: 2, interactive: false
+      fillOpacity: 1, weight: 2, interactive: false,
     }).addTo(map);
-    markers.push(dot);
+    stagingLayers.push(dot);
 
     if (points.length === 1) {
-      // First point — create line/polygon
-      if (measureMode === 'distance') {
-        polyline = L.polyline([e.latlng], {
-          color: '#e74c3c', weight: 2.5, dashArray: '6,4', interactive: false
-        }).addTo(map);
-      } else {
-        polyline = L.polyline([e.latlng], {
-          color: '#e74c3c', weight: 2, dashArray: '4,3', interactive: false
-        }).addTo(map);
-      }
-      tooltip.setLatLng(e.latlng).setContent('Click to continue, double-click to finish');
+      polyline = L.polyline([e.latlng], {
+        color: '#e74c3c', weight: 2.5, dashArray: '6,4', interactive: false,
+      }).addTo(map);
+      stagingLayers.push(polyline);
+    } else {
+      // V78h — Add a segment-length label immediately when the segment is
+      // committed (between the previous point and this one). Previously these
+      // only appeared after the polygon closed; surfacing them on each click
+      // gives the agent live segment lengths as they trace.
+      const a = points[points.length - 2];
+      const b = points[points.length - 1];
+      const midLat = (a.lat + b.lat) / 2;
+      const midLng = (a.lng + b.lng) / 2;
+      const dist = haversine(a, b);
+      const lbl = L.tooltip({
+        permanent: true, direction: 'center',
+        className: 'measure-tooltip measure-seg-label',
+        interactive: false,
+      })
+        .setContent(formatDist(dist))
+        .setLatLng([midLat, midLng])
+        .addTo(map);
+      liveSegLabels.push(lbl);
+      stagingLayers.push(lbl);
     }
   }
+
+  // Staging — layers belonging to the current in-progress shape. On
+  // dblclick (or stop) these get absorbed into the completed[] entry.
+  let stagingLayers = [];
 
   function onDblClick(e) {
     if (!measureActive || points.length < 2) return;
     L.DomEvent.stopPropagation(e);
     L.DomEvent.preventDefault(e);
 
-    // Remove the last point added by the click that fired before dblclick
+    // Remove the duplicate point added by the click that fires before
+    // dblclick. Also remove the staging marker + segment label that came
+    // with that click (always the last two pushed: marker, then segment
+    // label — except the very first point has no segment label).
     points.pop();
-    markers[markers.length - 1].remove();
-    markers.pop();
+    // The last layer pushed for that click was either a segment label
+    // (if there had already been a point) or a marker (for first point,
+    // but dblclick guards points.length < 2 so we always have a label here).
+    const lastLayer = stagingLayers.pop();
+    if (lastLayer) map.removeLayer(lastLayer);
+    const lblIdx = liveSegLabels.indexOf(lastLayer);
+    if (lblIdx >= 0) liveSegLabels.splice(lblIdx, 1);
+    // And the marker for that aborted click
+    const markerLayer = stagingLayers.pop();
+    if (markerLayer) map.removeLayer(markerLayer);
 
-    if (measureMode === 'distance') {
-      let total = 0;
-      for (let i = 1; i < points.length; i++) total += haversine(points[i-1], points[i]);
-      polyline.setLatLngs(points);
-      tooltip.setLatLng(points[points.length - 1])
-        .setContent('Total: ' + formatDist(total));
-    } else {
-      if (points.length >= 3) {
-        if (polyline) { map.removeLayer(polyline); polyline = null; }
-        polygon = L.polygon(points, {
-          color: '#e74c3c', weight: 2, fillColor: '#e74c3c',
-          fillOpacity: 0.15, interactive: false
-        }).addTo(map);
-        const area = polygonArea(points);
-        tooltip.setLatLng(polygon.getBounds().getCenter())
-          .setContent('Area: ' + formatArea(area));
-
-        // Add segment length labels on each side (including closing side)
-        const closed = [...points, points[0]];
-        for (let i = 0; i < closed.length - 1; i++) {
-          const a = closed[i];
-          const b = closed[i + 1];
-          const midLat = (a.lat + b.lat) / 2;
-          const midLng = (a.lng + b.lng) / 2;
-          const dist = haversine(a, b);
-          const lbl = L.tooltip({
-            permanent: true, direction: 'center',
-            className: 'measure-tooltip measure-seg-label',
-            interactive: false
-          })
-            .setContent(formatDist(dist))
-            .setLatLng([midLat, midLng])
-            .addTo(map);
-          segmentLabels.push(lbl);
-        }
+    if (points.length >= 3) {
+      // Close into a polygon: remove the open polyline, add the filled poly.
+      if (polyline) {
+        map.removeLayer(polyline);
+        const plIdx = stagingLayers.indexOf(polyline);
+        if (plIdx >= 0) stagingLayers.splice(plIdx, 1);
+        polyline = null;
       }
+      const poly = L.polygon(points, {
+        color: '#e74c3c', weight: 2, fillColor: '#e74c3c',
+        fillOpacity: 0.15, interactive: false,
+      }).addTo(map);
+      stagingLayers.push(poly);
+
+      // Add the closing-edge segment label (last point back to first).
+      const a = points[points.length - 1];
+      const b = points[0];
+      const midLat = (a.lat + b.lat) / 2;
+      const midLng = (a.lng + b.lng) / 2;
+      const dist = haversine(a, b);
+      const lbl = L.tooltip({
+        permanent: true, direction: 'center',
+        className: 'measure-tooltip measure-seg-label',
+        interactive: false,
+      })
+        .setContent(formatDist(dist))
+        .setLatLng([midLat, midLng])
+        .addTo(map);
+      liveSegLabels.push(lbl);
+      stagingLayers.push(lbl);
+
+      const areaM2 = polygonArea(points);
+      completed.push({
+        kind:    'polygon',
+        layers:  stagingLayers.slice(),
+        areaM2,
+        vertices: points.slice(),
+      });
+    } else {
+      // 2-point case = distance-only line. Keep it as-is.
+      if (polyline) polyline.setLatLngs(points);
+      completed.push({
+        kind:    'line',
+        layers:  stagingLayers.slice(),
+        areaM2:  0,
+        vertices: points.slice(),
+      });
     }
 
-    // Stop capturing — leave result on map
+    // Reset in-progress state for the next shape (tool stays active).
+    points        = [];
+    polyline      = null;
+    liveSegLabels = [];
+    stagingLayers = [];
+
+    // Update tooltip to reflect the new running total at the dblclick spot.
+    tooltip.setLatLng(e.latlng).setContent(liveTooltipContent([]));
+  }
+
+  // V78h — stop draw mode but keep all completed shapes on the map.
+  function stopMeasure() {
     map.off('mousemove', onMouseMove);
     map.off('click',     onMapClick);
     map.off('dblclick',  onDblClick);
+    document.removeEventListener('keydown', onKeyDown);
     map.getContainer().style.cursor = '';
+
+    // Abort any in-progress shape — discard its staging layers.
+    stagingLayers.forEach(l => { try { map.removeLayer(l); } catch (_) {} });
+    stagingLayers = [];
+    points = [];
+    polyline = null;
+    liveSegLabels = [];
+
+    if (tooltip) {
+      // Replace the moving cursor tooltip with a parked one near map centre
+      // showing the final total, so the result stays visible after the tool
+      // is dismissed.
+      if (completed.length) {
+        const grand = totalAreaM2();
+        const n = polygonCount();
+        const content = n > 0
+          ? 'Total: ' + formatArea(grand) + ' · ' + n + ' area' + (n === 1 ? '' : 's')
+          : 'Measurement complete';
+        tooltip.setContent(content);
+        // Park it at the centroid of the last completed shape so it doesn't
+        // float over the map centre disconnected from the result.
+        const last = completed[completed.length - 1];
+        if (last && last.vertices.length) {
+          const lats = last.vertices.map(p => p.lat);
+          const lngs = last.vertices.map(p => p.lng);
+          const cLat = lats.reduce((a, b) => a + b, 0) / lats.length;
+          const cLng = lngs.reduce((a, b) => a + b, 0) / lngs.length;
+          tooltip.setLatLng([cLat, cLng]);
+        }
+      } else {
+        map.removeLayer(tooltip);
+        tooltip = null;
+      }
+    }
+
     measureActive = false;
     window._measureActive = false;
-    // V75.5.3: keep Clear button visible while a measurement result is still
-    // drawn on the map — only hide when clearMeasure() actually removes it.
+    if (window._updateMeasureClearBtn) window._updateMeasureClearBtn(completed.length > 0);
   }
 
   function clearMeasure() {
     map.off('mousemove', onMouseMove);
     map.off('click',     onMapClick);
     map.off('dblclick',  onDblClick);
+    document.removeEventListener('keydown', onKeyDown);
     map.getContainer().style.cursor = '';
-    if (polyline) { map.removeLayer(polyline); polyline = null; }
-    if (polygon)  { map.removeLayer(polygon);  polygon  = null; }
-    if (tooltip)  { map.removeLayer(tooltip);  tooltip  = null; }
-    segmentLabels.forEach(l => map.removeLayer(l));
-    segmentLabels = [];
-    markers.forEach(m => map.removeLayer(m));
-    markers = [];
-    points  = [];
+
+    // Drop all completed shapes' layers
+    completed.forEach(c => c.layers.forEach(l => { try { map.removeLayer(l); } catch (_) {} }));
+    completed = [];
+    // Drop in-progress shape
+    stagingLayers.forEach(l => { try { map.removeLayer(l); } catch (_) {} });
+    stagingLayers = [];
+    points        = [];
+    polyline      = null;
+    liveSegLabels = [];
+    if (tooltip)  { try { map.removeLayer(tooltip); } catch (_) {} tooltip = null; }
+
     measureActive = false;
-    measureMode   = null;
     window._measureActive = false;
     if (window._updateMeasureClearBtn) window._updateMeasureClearBtn(false);
   }
 })();
+
 
 // ─── Deferred pipeline pin render ────────────────────────────────────────────
 // kanban.js may load and call refreshPipelinePins before map.js registers
