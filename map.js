@@ -4574,14 +4574,14 @@ window._renderPipelinePins = function () {
 
       // Run reSelectParcels to render outlines + numbered blue pins. Same
       // function the deal modal uses — don't reinvent it.
-      // V78i.3 — Set a module-level flag so the selectPropertyAtPoint calls
-      // inside reSelectParcels don't auto-open their per-lot popups (which
-      // would race with our combined popup and win because of async cadastre
-      // fetch timing). The flag is read inside selectPropertyAtPoint and
-      // cleared automatically once the agent moves on (next clearParcelSelection).
-      window._suppressBluePinPopups = true;
+      // V78i.5 — Pass suppressPopups so the per-lot selectPropertyAtPoint
+      // calls don't auto-open popups. (Previously we set the flag here
+      // before calling reSelectParcels, but reSelectParcels' first action
+      // is clearParcelSelection which wiped the flag — so blue-pin popups
+      // opened anyway and won the race against our combined popup. Setting
+      // the option here means reSelectParcels sets the flag AFTER its clear.)
       if (typeof window.reSelectParcels === 'function') {
-        window.reSelectParcels(p._parcels);
+        window.reSelectParcels(p._parcels, { suppressPopups: true });
       }
 
       // Fetch overlay + cadastre data per child lot in parallel.
@@ -4947,9 +4947,18 @@ window.runDomainSearchAt = runDomainSearchAt;
 window.getListings = () => listings;
 window.fetchLotDP = fetchLotDP;
 
-window.reSelectParcels = function(parcels) {
+window.reSelectParcels = function(parcels, opts) {
   if (!parcels || parcels.length === 0) return;
   clearParcelSelection();
+  // V78i.5 — Set the popup-suppression flag AFTER clearParcelSelection, not
+  // before. clearParcelSelection resets the flag to false, so any flag set
+  // by the caller before invoking reSelectParcels gets wiped out and the
+  // blue lot pins open their popups anyway (winning the race against the
+  // gold-pin's combined popup). Setting it here, post-clear, means the
+  // suppression actually reaches the selectPropertyAtPoint calls below.
+  if (opts && opts.suppressPopups) {
+    window._suppressBluePinPopups = true;
+  }
 
   const srlupEntry  = overlayRegistry['nsw-srlup'];
   const zoningEntry = overlayRegistry['nsw-land-zoning'];
