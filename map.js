@@ -4542,29 +4542,30 @@ window._renderPipelinePins = function () {
     }
 
     marker.on('click', () => {
+      // V78h.4 — For parcel pins, draw outlines for each child polygon but
+      // do NOT call reSelectParcels (which adds numbered blue pins and opens
+      // a popup per parcel, racing with our bound combined popup and winning
+      // because it opens last). Draw outlines directly here so the gold-star
+      // pin's bound popup is the only one that opens.
+      if (isParcel && Array.isArray(p._parcels) && p._parcels.length) {
+        _drawParcelOutlines(p._parcels);
+        // marker.bindPopup above will auto-open via Leaflet's default click
+        // handler on the marker. Don't double-open here.
+        return;
+      }
+
       const srlupEntry  = overlayRegistry['nsw-srlup'];
       const zoningEntry = overlayRegistry['nsw-land-zoning'];
       const floodEntry  = overlayRegistry['nsw-flood'];
       const roadsEntry  = overlayRegistry['nsw-future-roads'];
-
-      // V78h.2 — Route parcel pins through the same flow as a pipeline-address
-      // click: reSelectParcels() per-parcel fetches the cadastre (and so the
-      // ring geometry) and renders outlines + numbered pins. Previously the
-      // pin-click took a shortcut via _highlightParcelChildren which only used
-      // ring data already cached on the parcel record — and many parcels added
-      // via map-click never had rings cached, so the user saw plain circles.
-      if (isParcel && Array.isArray(p._parcels) && p._parcels.length && typeof window.reSelectParcels === 'function') {
-        window.reSelectParcels(p._parcels);
-      } else {
-        selectPropertyAtPoint(
-          { lat: pinLat, lng: pinLng },
-          !!(srlupEntry  && srlupEntry.def.enabled),
-          !!(zoningEntry && zoningEntry.def.enabled),
-          !!(floodEntry  && floodEntry.def.enabled),
-          !!(roadsEntry  && roadsEntry.def.enabled),
-          null
-        );
-      }
+      selectPropertyAtPoint(
+        { lat: pinLat, lng: pinLng },
+        !!(srlupEntry  && srlupEntry.def.enabled),
+        !!(zoningEntry && zoningEntry.def.enabled),
+        !!(floodEntry  && floodEntry.def.enabled),
+        !!(roadsEntry  && roadsEntry.def.enabled),
+        null
+      );
     });
 
     markers.push(marker);
@@ -4627,6 +4628,61 @@ function _highlightParcelChildren(parcelsArr, item) {
 
   if (!layers.length) return;
   _parcelHighlightLayer = L.layerGroup(layers).addTo(map);
+  if (bounds.isValid()) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 });
+}
+
+// V78h.4 — Outlines-only counterpart to _highlightParcelChildren. Used by
+// parcel pipeline-pin clicks where the gold-star pin already shows a bound
+// combined popup, so we DON'T want numbered blue pins / per-lot popups
+// fighting with it (that was the behaviour of reSelectParcels). Just paint
+// the polygon outlines on the map and fit the view.
+//
+// Cached rings on each parcel record render immediately. Parcels missing
+// rings get their cadastre fetched async and added to the same layer as
+// each response returns. No fallback circles — if a fetch fails the parcel
+// simply isn't outlined (matches the user's expectation that outlines are
+// always polygons, never dots).
+function _drawParcelOutlines(parcelsArr) {
+  if (_parcelHighlightLayer) {
+    map.removeLayer(_parcelHighlightLayer);
+    _parcelHighlightLayer = null;
+  }
+  if (parcelLayer) { map.removeLayer(parcelLayer); parcelLayer = null; }
+  if (clickMarker) { map.removeLayer(clickMarker); clickMarker = null; clickMarkerData = null; }
+
+  const layerGroup = L.layerGroup().addTo(map);
+  _parcelHighlightLayer = layerGroup;
+  const bounds = L.latLngBounds([]);
+
+  const POLY_STYLE = {
+    color:       '#1a6b3a',
+    weight:      2.5,
+    opacity:     1,
+    fillColor:   '#1a6b3a',
+    fillOpacity: 0.08,
+    interactive: false,
+  };
+
+  for (const par of parcelsArr) {
+    if (!par) continue;
+
+    if (Array.isArray(par.rings) && par.rings.length) {
+      // Cached rings — source is [lng, lat], Leaflet wants [lat, lng]
+      const leafletRings = par.rings.map(ring => ring.map(([lng, lat]) => [lat, lng]));
+      L.polygon(leafletRings, POLY_STYLE).addTo(layerGroup);
+      leafletRings.forEach(r => r.forEach(([lat, lng]) => bounds.extend([lat, lng])));
+    } else if (typeof par.lat === 'number' && typeof par.lng === 'number') {
+      // Rings missing — fetch from cadastre. Add to bounds immediately so
+      // the fit-bounds is roughly correct even before the async returns.
+      bounds.extend([par.lat, par.lng]);
+      fetchLotDP(par.lat, par.lng).then(cadastre => {
+        if (!cadastre || !cadastre.rings) return;
+        // fetchLotDP already returns rings in [lat, lng] Leaflet order
+        L.polygon(cadastre.rings, POLY_STYLE).addTo(layerGroup);
+      }).catch(() => {});
+    }
+  }
+
   if (bounds.isValid()) map.fitBounds(bounds, { padding: [50, 50], maxZoom: 18 });
 }
 
