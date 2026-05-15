@@ -81,7 +81,11 @@ export default async function handler(req, res) {
         `inline; filename="${asciiName}"; filename*=UTF-8''${utf8Name}`);
       const len = result.blob?.size;
       if (len) res.setHeader('Content-Length', String(len));
-      result.stream.pipe(res);
+      // V78i — @vercel/blob's get() returns a Web ReadableStream (Fetch API),
+      // not a Node Readable. Buffer the body then write to res. Files are
+      // capped at 10MB by upload validation so this is bounded.
+      const ab = await new Response(result.stream).arrayBuffer();
+      res.end(Buffer.from(ab));
       return;
     }
 
