@@ -4465,13 +4465,14 @@ window._renderPipelinePins = function () {
   // selectPropertyAtPoint via reSelectParcels. Without this, the blue pins
   // (added to markerPane after the gold star) capture clicks at overlapping
   // coordinates because they're later in the DOM.
+  //
+  // V78i.2 — Use 650 (not 700). The Leaflet default popupPane sits at 700;
+  // putting our pin pane at 700 caused popups to render BEHIND pins. 650
+  // keeps pins above all standard markers but below popups.
   if (!map.getPane('pipelinePinPane')) {
     const pane = map.createPane('pipelinePinPane');
-    pane.style.zIndex = 700;            // markerPane is 600, popupPane is 700;
-                                         // 700 here keeps us above markers but
-                                         // below popups themselves (so popup
-                                         // content can still cover the pin)
-    pane.style.pointerEvents = 'auto';   // ensure clicks land
+    pane.style.zIndex = 650;
+    pane.style.pointerEvents = 'auto';
   }
 
   const pipelineData = window.getPipelineData ? window.getPipelineData() : null;
