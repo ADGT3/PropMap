@@ -4630,10 +4630,12 @@ window._renderPipelinePins = function () {
       // Build with the SAME buildPopupInner function used for single-property
       // popups. Same fields, same UI style. The only difference for parcels
       // is that the overlay block area is height-constrained with scroll.
-      // V78i.5 — Pass item.id so buildPopupInner shows the "★ Open in Pipeline"
-      // button (the listing-based match heuristic can't find a parcel deal
-      // since parcels have no domain_id).
-      const inner = buildPopupInner(aggLabel, aggLga, aggLotDP, aggArea, aggZoneCode, aggOverlay, null, item.id);
+      // V78i.5 — Pass the pipeline entry key (id from the forEach) as the
+      // pipelineIdOverride so buildPopupInner shows "★ Open in Pipeline"
+      // instead of "+ Pipeline". (item.id is undefined — deal records from
+      // dealRowToInternal don't have a top-level .id; the deal id is the
+      // dict key.)
+      const inner = buildPopupInner(aggLabel, aggLga, aggLotDP, aggArea, aggZoneCode, aggOverlay, null, id);
       const popupHtml = `<div style="${popupStyle}">${_wrapPopupForParcel(inner)}</div>`;
       marker.getPopup().setContent(popupHtml);
       // V78i.3 — Force our combined popup on top. selectPropertyAtPoint
