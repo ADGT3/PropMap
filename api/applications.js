@@ -142,7 +142,8 @@ async function fetchChildren(applicationId) {
       ORDER BY sort_order, id`,
     sql`
       SELECT id, applicant_contact_id, category, doc_type, filename, mime_type, size_bytes,
-             url, points_value, uploaded_at
+             url, points_value, uploaded_at,
+             uploaded_by_role, uploaded_by
       FROM application_evidence
       WHERE application_id = ${applicationId}
       ORDER BY uploaded_at`,

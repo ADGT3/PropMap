@@ -5933,6 +5933,72 @@ body:not([data-route="mapping"]) .leaflet-control-container {
   margin-top: 4px;
 }
 
+/* V81.4 — Lease document slot styles. Each slot row in the agent review
+   "Lease Documents" section: an entry-head with the slot label + "+ Upload"
+   button, a list of files each carrying an origin badge (applicant/agent)
+   and (for agent uploads) a Delete button. */
+.lo-review-doc-slot .lo-review-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lo-review-doc-upload-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-review-doc-upload-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+.lo-review-doc-upload-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.lo-review-doc-origin {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.lo-review-doc-origin-applicant {
+  background: rgba(196, 132, 26, 0.12);
+  color: #8a5a0e;
+}
+.lo-review-doc-origin-agent {
+  background: rgba(21, 128, 61, 0.12);
+  color: #15803d;
+}
+.lo-review-doc-delete-btn {
+  flex-shrink: 0;
+  background: transparent;
+  color: #b91c1c;
+  border: 1px solid #b91c1c;
+  border-radius: 3px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-review-doc-delete-btn:hover:not(:disabled) {
+  background: #b91c1c;
+  color: #fff;
+}
+.lo-review-doc-delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .lo-review-actions {
   display: flex;
   gap: 8px;
