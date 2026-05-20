@@ -503,34 +503,16 @@
       }
       html += '</div>';
 
-      // Lease documents
-      const sc = evByCat.leasedoc['signed-contract'] || [];
-      const cr = evByCat.leasedoc['condition-report'] || [];
-      if (sc.length || cr.length) {
-        html += '<div class="lo-review-section">';
-        html += '<div class="lo-review-section-title">Lease Documents</div>';
-        html += '<div class="lo-review-entry">';
-        html += '<div class="lo-review-entry-head"><strong>Signed Lease Agreement</strong></div>';
-        if (sc.length) {
-          html += '<ul class="lo-review-files">';
-          sc.forEach(f => { html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${renderViewLink(f)}</li>`; });
-          html += '</ul>';
-        } else {
-          html += '<div class="lo-review-empty">Not yet uploaded.</div>';
-        }
-        html += '</div>';
-        html += '<div class="lo-review-entry">';
-        html += '<div class="lo-review-entry-head"><strong>Accepted Condition Report</strong></div>';
-        if (cr.length) {
-          html += '<ul class="lo-review-files">';
-          cr.forEach(f => { html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${renderViewLink(f)}</li>`; });
-          html += '</ul>';
-        } else {
-          html += '<div class="lo-review-empty">Not yet uploaded.</div>';
-        }
-        html += '</div>';
-        html += '</div>';
-      }
+      // Lease documents — V81.4: always rendered, with agent upload + delete-own
+      // controls. Applicant uploads are the source of record and intentionally
+      // immutable from the agent UI (no edit, no delete, no replace). Agents
+      // can add additional files (e.g. countersigned lease, revised condition
+      // report) and delete only files they themselves uploaded.
+      html += '<div class="lo-review-section">';
+      html += '<div class="lo-review-section-title">Lease Documents</div>';
+      html += renderLeaseDocSlot('signed-contract',  'Signed Lease Agreement',     evByCat.leasedoc['signed-contract']  || [], offer.id);
+      html += renderLeaseDocSlot('condition-report', 'Accepted Condition Report',  evByCat.leasedoc['condition-report'] || [], offer.id);
+      html += '</div>';
 
       // Validation checklist (moved from per-deal Validation section)
       const checklist = [
@@ -581,6 +563,38 @@
 
     function renderViewLink(f) {
       return `<a class="lo-review-view-link" href="/api/applications/evidence/${esc(f.id)}/view" target="_blank" rel="noopener">View</a>`;
+    }
+
+    // V81.4 — Lease document slot renderer. Shared by both lease-doc slots
+    // (signed-contract, accepted condition report). Applicant uploads render
+    // with an "From applicant" badge and View only; agent uploads render with
+    // a "From agent" badge plus a Delete button. After the file list, a
+    // hidden file input + click-to-pick button lets the agent add more files.
+    function renderLeaseDocSlot(slotKey, label, files, applicationId) {
+      let html = '<div class="lo-review-entry lo-review-doc-slot" data-slot="' + esc(slotKey) + '" data-application-id="' + esc(applicationId) + '">';
+      html += '<div class="lo-review-entry-head">';
+      html += '  <strong>' + esc(label) + '</strong>';
+      html += '  <button type="button" class="lo-review-doc-upload-btn" data-slot="' + esc(slotKey) + '" data-application-id="' + esc(applicationId) + '" title="Upload another file to this slot. PDF/JPG/PNG/HEIC, max 10 MB.">+ Upload</button>';
+      html += '  <input type="file" class="lo-review-doc-file-input" data-slot="' + esc(slotKey) + '" data-application-id="' + esc(applicationId) + '" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" hidden>';
+      html += '</div>';
+      if (files.length) {
+        html += '<ul class="lo-review-files">';
+        files.forEach(f => {
+          const isAgent = f.uploaded_by_role === 'agent';
+          const originBadge = isAgent
+            ? '<span class="lo-review-doc-origin lo-review-doc-origin-agent">From agent</span>'
+            : '<span class="lo-review-doc-origin lo-review-doc-origin-applicant">From applicant</span>';
+          const deleteBtn = isAgent
+            ? `<button type="button" class="lo-review-doc-delete-btn" data-evidence-id="${esc(f.id)}" title="Delete this file (only files you uploaded can be deleted).">Delete</button>`
+            : '';
+          html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${originBadge} ${renderViewLink(f)} ${deleteBtn}</li>`;
+        });
+        html += '</ul>';
+      } else {
+        html += '<div class="lo-review-empty">Not yet uploaded.</div>';
+      }
+      html += '</div>';
+      return html;
     }
 
     function renderList() {
@@ -1113,7 +1127,106 @@
           }
         });
       });
+
+      // V81.4 — Lease document agent uploads (shared for both slots).
+      // Clicking "+ Upload" opens the file picker bound to the same slot;
+      // file input change handler reads the file, base64-encodes, POSTs
+      // to /api/applications-evidence, then reloads the list.
+      listEl.querySelectorAll('.lo-review-doc-upload-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const slot = btn.getAttribute('data-slot');
+          const applicationId = btn.getAttribute('data-application-id');
+          // Find the sibling hidden file input in the same slot row
+          const input = listEl.querySelector(`.lo-review-doc-file-input[data-slot="${slot}"][data-application-id="${applicationId}"]`);
+          if (input) {
+            input.value = ''; // reset so picking the same file twice still fires change
+            input.click();
+          }
+        });
+      });
+
+      listEl.querySelectorAll('.lo-review-doc-file-input').forEach(input => {
+        input.addEventListener('change', async () => {
+          const file = input.files && input.files[0];
+          if (!file) return;
+          const slot = input.getAttribute('data-slot');
+          const applicationId = parseInt(input.getAttribute('data-application-id'), 10);
+          if (file.size > 10 * 1024 * 1024) {
+            alert('File too large. Maximum 10 MB.');
+            return;
+          }
+          const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];
+          if (file.type && !allowedTypes.includes(file.type.toLowerCase())) {
+            alert('Unsupported file type. Allowed: PDF, JPG, PNG, HEIC.');
+            return;
+          }
+          // Find the slot's upload button to use as a busy indicator
+          const slotBtn = listEl.querySelector(`.lo-review-doc-upload-btn[data-slot="${slot}"][data-application-id="${applicationId}"]`);
+          if (slotBtn) { slotBtn.disabled = true; slotBtn.textContent = 'Uploading…'; }
+          try {
+            const base64 = await fileToBase64(file);
+            const r = await fetch('/api/applications-evidence', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                application_id: applicationId,
+                category: `lease-doc:${slot}`,
+                filename: file.name,
+                mime_type: file.type || 'application/octet-stream',
+                size: file.size,
+                body_base64: base64,
+              }),
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              throw new Error(err.error || r.status);
+            }
+            await load();
+          } catch (err) {
+            alert('Could not upload: ' + err.message);
+            if (slotBtn) { slotBtn.disabled = false; slotBtn.textContent = '+ Upload'; }
+          }
+        });
+      });
+
+      listEl.querySelectorAll('.lo-review-doc-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const evidenceId = btn.getAttribute('data-evidence-id');
+          if (!evidenceId) return;
+          if (!confirm('Delete this file? This only removes the agent-uploaded copy. The applicant\'s submission stays intact.')) return;
+          btn.disabled = true;
+          try {
+            const r = await fetch(`/api/applications-evidence?id=${encodeURIComponent(evidenceId)}`, {
+              method: 'DELETE',
+            });
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}));
+              throw new Error(err.error || r.status);
+            }
+            await load();
+          } catch (err) {
+            alert('Could not delete: ' + err.message);
+            btn.disabled = false;
+          }
+        });
+      });
     }
+  }
+
+  // V81.4 — base64 helper, mirrors lease-offer/step-2.js#fileToBase64.
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result || '';
+        const base64 = String(result).split(',')[1] || '';
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   }
 
   window.LeaseOfferSection = { mount };
