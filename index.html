@@ -1318,7 +1318,9 @@
     }
     window.toggleSettings = toggleSettings;
     document.getElementById('settingsClose')?.addEventListener('click', () => {
-      if (window.Router) Router.navigate('/mapping');
+      // V81.3 — back to previous screen instead of unconditional /mapping
+      if (window.Router && typeof window.Router.back === 'function') Router.back();
+      else if (window.Router) Router.navigate('/mapping');
       else toggleSettings(false);
     });
 
@@ -1712,16 +1714,30 @@
     };
     document.getElementById('elevationQuotaBannerClose')?.addEventListener('click', window.hideElevationQuotaBanner);
 
-    // ── Close buttons on existing views now return to Mapping via router ───
-    // (was: directly flipping the .visible class)
+    // ── Close buttons on existing views now back-navigate via the Router ───
+    // (was: directly flipping the .visible class; then unconditional /mapping;
+    // now V81.3 — back to whichever screen the user came from)
     document.getElementById('kanbanClose')?.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
-      if (window.Router) Router.navigate('/mapping');
+      if (window.Router && typeof window.Router.back === 'function') Router.back();
+      else if (window.Router) Router.navigate('/mapping');
     }, true); // capture so we run before kanban.js's own handler
 
     document.getElementById('financeClose')?.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
-      if (window.Router) Router.navigate('/mapping');
+      console.log('[fin-nav] X clicked (capture-phase listener in index.html)');
+      console.log('[fin-nav]   window.FinanceModule exists?', !!window.FinanceModule);
+      console.log('[fin-nav]   window.FinanceModule.close exists?', !!(window.FinanceModule && window.FinanceModule.close));
+      if (window.FinanceModule && typeof window.FinanceModule.close === 'function') {
+        console.log('[fin-nav]   → calling FinanceModule.close()');
+        window.FinanceModule.close();
+      } else if (window.Router && typeof window.Router.back === 'function') {
+        console.log('[fin-nav]   → FALLBACK Router.back()');
+        Router.back();
+      } else if (window.Router) {
+        console.log('[fin-nav]   → FALLBACK Router.navigate(/mapping)');
+        Router.navigate('/mapping');
+      }
     }, true);
   </script>
 

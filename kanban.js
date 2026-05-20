@@ -5279,8 +5279,9 @@ function showKanbanToast(msg) {
 
 document.getElementById('kanbanToggleBtn').addEventListener('click', () => toggleKanban());
 document.getElementById('kanbanClose').addEventListener('click', () => {
-  // V75.5.6: route through Router so body[data-route] updates to 'mapping'
-  if (window.Router?.navigate) window.Router.navigate('/');
+  // V81.3: back-navigate to previous screen (was: always /mapping)
+  if (window.Router?.back) window.Router.back();
+  else if (window.Router?.navigate) window.Router.navigate('/');
   else toggleKanban(false);
 });
 
@@ -5309,8 +5310,9 @@ if (crmNavBtn) crmNavBtn.addEventListener('click', () => toggleCRM());
 
 const crmClose = document.getElementById('crmClose');
 if (crmClose) crmClose.addEventListener('click', () => {
-  // V75.5.6: route through Router so body[data-route] updates to 'mapping'
-  if (window.Router?.navigate) window.Router.navigate('/');
+  // V81.3: back-navigate to previous screen (was: always /mapping)
+  if (window.Router?.back) window.Router.back();
+  else if (window.Router?.navigate) window.Router.navigate('/');
   else toggleCRM(false);
 });
 
