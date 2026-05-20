@@ -762,7 +762,6 @@ function extractPrice(entry) {
 
 function toggleFinance(show) {
   const willShow = show !== undefined ? show : !_financeVisible;
-  console.log('[fin-nav] toggleFinance(show=' + show + ') willShow=' + willShow + ' was=' + _financeVisible);
   _financeVisible = willShow;
   document.getElementById('financeView')?.classList.toggle('visible', _financeVisible);
   document.getElementById('financeNavBtn')?.classList.toggle('active', _financeVisible);
@@ -779,10 +778,8 @@ function toggleFinance(show) {
 //   change; we stay on /finance)
 // - On list view → Router.back() — same shared back stack every X uses
 function handleFinanceClose() {
-  console.log('[fin-nav] handleFinanceClose: _current=' + (_current ? _current.pipelineId : 'null') + ' _entryFromKanban=' + _entryFromKanban);
   // Case A: deal view AND opened from a kanban deal modal → Router.back()
   if (_current && _entryFromKanban) {
-    console.log('[fin-nav]   → Case A: deal-from-kanban, Router.back()');
     _current = null;
     _entryFromKanban = false;
     if (window.Router && typeof window.Router.back === 'function') {
@@ -794,13 +791,11 @@ function handleFinanceClose() {
   }
   // Case B: deal view opened from in-module list → step back to the list
   if (_current && !_entryFromKanban) {
-    console.log('[fin-nav]   → Case B: deal-from-list, step back to list');
     _current = null;
     renderFinanceView();
     return;
   }
   // Case C: on the list view → close module via shared back stack
-  console.log('[fin-nav]   → Case C: list view, closeFinanceModule()');
   closeFinanceModule();
 }
 
@@ -808,7 +803,6 @@ function handleFinanceClose() {
 // back stack and navigates to wherever the user came from. Same mechanism
 // every other X close button uses.
 function closeFinanceModule() {
-  console.log('[fin-nav] closeFinanceModule: Router.back()');
   _current = null;
   _entryFromKanban = false;
   if (window.Router && typeof window.Router.back === 'function') {
@@ -835,7 +829,6 @@ async function openFinanceForProperty(pipelineId, pipelineEntry, offeredPrice) {
   // kanban deal modal (URL=/pipeline; modal layered on top with no URL change).
   // Push the virtual screen URL onto Router's back stack so X can return to it.
   if (wasExternal && window.Router && typeof window.Router.pushHistory === 'function') {
-    console.log('[fin-nav] openFinanceForProperty: external call — pushHistory /pipeline/deal/' + pipelineId);
     window.Router.pushHistory('/pipeline/deal/' + pipelineId);
   }
 
