@@ -70,6 +70,16 @@ let _financeInitDone   = false;  // guard against duplicate initFinance() calls
 let _saveTimer         = null;   // debounce timer for auto-save
 let _costsInCashflow   = true;   // whether Funds to Complete costs are included in cashflow
 
+// ─── Navigation tracking (V81.3) ─────────────────────────────────────────────
+// _entryFromKanban: true if the CURRENT deal view was opened from the kanban
+//   "Model" button (external call). False if opened by clicking a property in
+//   the in-module finance list. Drives X-button back-navigation.
+// _kanbanWasVisible: true if window.kanbanVisible was true when finance opened.
+//   On full-close of finance we restore the kanban view so the user lands back
+//   where they were instead of always falling through to the map.
+let _entryFromKanban   = false;
+let _kanbanWasVisible  = false;
+
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
 async function finDbLoad(id) {
@@ -753,7 +763,13 @@ function extractPrice(entry) {
 // ─── View toggle ──────────────────────────────────────────────────────────────
 
 function toggleFinance(show) {
-  _financeVisible = show !== undefined ? show : !_financeVisible;
+  const willShow = show !== undefined ? show : !_financeVisible;
+  // Capture pre-open context so X-back can restore the kanban view rather than
+  // always falling through to the map (V81.3).
+  if (willShow && !_financeVisible) {
+    _kanbanWasVisible = !!window.kanbanVisible;
+  }
+  _financeVisible = willShow;
   document.getElementById('financeView')?.classList.toggle('visible', _financeVisible);
   document.getElementById('financeNavBtn')?.classList.toggle('active', _financeVisible);
   if (!_financeVisible) setExportBtnVisible(false);
@@ -761,11 +777,58 @@ function toggleFinance(show) {
   if (_financeVisible && typeof toggleKanban === 'function') toggleKanban(false);
 }
 
+// Contextual X-button close (V81.3).
+// - On deal view: go back one level — either to the in-module property list,
+//   or to the kanban modal that opened the deal.
+// - On list view: close finance entirely and restore the previous screen.
+function handleFinanceClose() {
+  // Case A: deal view AND opened from the kanban "Model" button — back to the kanban modal
+  if (_current && _entryFromKanban) {
+    const id = _current.pipelineId;
+    _current = null;
+    _entryFromKanban = false;
+    _financeVisible = false;
+    document.getElementById('financeView')?.classList.remove('visible');
+    document.getElementById('financeNavBtn')?.classList.remove('active');
+    setExportBtnVisible(false);
+    const alreadyOpen = window.kanbanVisible;
+    if (typeof toggleKanban === 'function' && !alreadyOpen) toggleKanban(true);
+    setTimeout(() => {
+      if (typeof openCardModal === 'function') openCardModal(id);
+    }, alreadyOpen ? 0 : 300);
+    return;
+  }
+  // Case B: deal view opened from the in-module list — step back to the list
+  if (_current && !_entryFromKanban) {
+    _current = null;
+    renderFinanceView();
+    return;
+  }
+  // Case C: on the list view — close finance entirely
+  closeFinanceModule();
+}
+
+// Full module close — used by the nav button (when already open) and by
+// handleFinanceClose on the list view. Restores the prior screen (kanban if
+// it was visible when finance opened; otherwise the map shows through).
+function closeFinanceModule() {
+  _current = null;
+  _entryFromKanban = false;
+  toggleFinance(false);
+  if (_kanbanWasVisible && typeof toggleKanban === 'function') toggleKanban(true);
+  _kanbanWasVisible = false;
+}
+
 // offeredPrice: numeric price from the most recent offer or vendor terms (passed from kanban).
 // If a saved model already exists, ALL its variables are preserved and only
 // acquisitionPrice is updated (if the offered price differs and user hasn't already
 // customised it away from the listing price). New models are seeded from offeredPrice.
 async function openFinanceForProperty(pipelineId, pipelineEntry, offeredPrice) {
+  // Entry source: if finance view is NOT yet visible, this call came from
+  // outside the module (kanban "Model" button). If it IS visible, the user
+  // clicked a property in the in-module list. Drives X-button back-navigation.
+  _entryFromKanban = !_financeVisible;
+
   const p = pipelineEntry?.property || {};
 
   // Load existing model or fall back to null
@@ -2178,11 +2241,18 @@ async function initFinance() {
     _financeInitDone = true;
 
     document.getElementById('financeNavBtn')?.addEventListener('click', () => {
-      if (!_financeVisible) renderFinanceView();
-      toggleFinance();
+      if (_financeVisible) {
+        // Nav button is a module toggle — close the whole module, not in-module back
+        closeFinanceModule();
+      } else {
+        // Always open to the property-selector list, not the last viewed deal (V81.3)
+        _current = null;
+        renderFinanceView();
+        toggleFinance(true);
+      }
     });
 
-    document.getElementById('financeClose')?.addEventListener('click', () => toggleFinance(false));
+    document.getElementById('financeClose')?.addEventListener('click', () => handleFinanceClose());
 
     document.getElementById('financeExportBtn')?.addEventListener('click', () => {
       try { exportToExcel(); }
