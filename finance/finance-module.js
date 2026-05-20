@@ -690,6 +690,7 @@ function toggleFinance(show) {
   _financeVisible = show !== undefined ? show : !_financeVisible;
   document.getElementById('financeView')?.classList.toggle('visible', _financeVisible);
   document.getElementById('financeNavBtn')?.classList.toggle('active', _financeVisible);
+  if (!_financeVisible) setExportBtnVisible(false);
   // Close kanban when finance opens (they occupy the same full-screen layer)
   if (_financeVisible && typeof toggleKanban === 'function') toggleKanban(false);
 }
@@ -763,6 +764,7 @@ function renderFinanceView() {
   if (!_current) {
     container.innerHTML = renderPropertySelector();
     bindSelectorEvents();
+    setExportBtnVisible(false);
     return;
   }
 
@@ -783,6 +785,7 @@ function renderFinanceView() {
   if (sidebarNew) sidebarNew.scrollTop = sidebarScroll;
   if (mainNew)    mainNew.scrollTop    = mainScroll;
 
+  setExportBtnVisible(true);
   bindInputs(r);
 }
 
@@ -1364,6 +1367,315 @@ function renderComparableValues(d, r) {
   </div>`;
 }
 
+// ─── Export to Excel (V81.3) ──────────────────────────────────────────────────
+
+// Format codes — applied via cell.z so values stay as live Excel numbers
+const FMT_DOLLAR    = '$#,##0;($#,##0)';
+const FMT_DOLLAR_K  = '$#,##0,"k";($#,##0,"k")';
+const FMT_PCT2      = '0.00%;(0.00%)';
+const FMT_INT       = '#,##0';
+const FMT_NUM3      = '0.000';
+const FMT_DATE      = 'dd-mmm-yyyy';
+
+// Build a single cell descriptor for SheetJS aoa_to_sheet via _cells override.
+// Returns { v, t, z, s } object that SheetJS recognises.
+function $n(v, fmt) {
+  if (v == null || isNaN(v) || !isFinite(v)) return { v: '', t: 's' };
+  return { v: Number(v), t: 'n', z: fmt || FMT_DOLLAR };
+}
+function $s(v) { return { v: v == null ? '' : String(v), t: 's' }; }
+function $b(v) { return { v: String(v), t: 's', s: { font: { bold: true } } }; }
+
+function exportToExcel() {
+  if (!_current || typeof XLSX === 'undefined') {
+    if (typeof XLSX === 'undefined') {
+      console.error('[finance export] SheetJS (XLSX) not loaded');
+      alert('Export library failed to load — refresh the page and try again.');
+    }
+    return;
+  }
+
+  const d = _current.data;
+  const r = runModel(d);
+  const years   = r.years || [];
+  const holdYrs = years.filter(y => y.yr > 0);
+  const avg     = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+  const lag     = Math.round(d.settlementLag || 0);
+  const exit    = years[years.length - 1] || {};
+  const propAddr   = _current.address || 'Property';
+  const propSuburb = _current.suburb  || '';
+
+  const wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: Summary ──────────────────────────────────────────────────────
+  {
+    const aoa = [];
+    aoa.push([$b('Financial Model')]);
+    aoa.push([$s('Property'),       $s(propAddr + (propSuburb ? ', ' + propSuburb : ''))]);
+    aoa.push([$s('State (duty)'),   $s(d._state || 'NSW')]);
+    aoa.push([$s('Generated'),      { v: new Date(), t: 'd', z: FMT_DATE }]);
+    aoa.push([]);
+    aoa.push([$b('Key Metrics')]);
+    aoa.push([$s('Metric'), $s('Value')]);
+    aoa.push([$s('Acquisition Price'),         $n(d.acquisitionPrice)]);
+    const cmpMean = comparableMean(d, r);
+    aoa.push([$s('Comparable Value (mean)'),   cmpMean != null ? $n(cmpMean) : $s('—')]);
+    aoa.push([$s('Total Loan'),                $n(r.loan)]);
+    aoa.push([$s('Cash Required (Upfront)'),   $n(r.upfront)]);
+    aoa.push([$s('Cash Required (Settlement)'),$n(r.cashAtSettlement)]);
+    aoa.push([$s('Cash Required (Total)'),     $n(r.upfront + r.cashAtSettlement)]);
+    aoa.push([$s('Net Income (Yr 1)'),         $n(r.netIncomeYr1)]);
+    aoa.push([$s('Asset Value (Exit)'),        $n(exit.assetValue)]);
+    aoa.push([$s('NPV at Exit'),               $n(exit.npvAssetValue)]);
+    aoa.push([]);
+    aoa.push([$b('Run Parameters')]);
+    aoa.push([$s('Term of Ownership (yrs)'),   $n(d.termOfOwnership, FMT_INT)]);
+    aoa.push([$s('Settlement Lag (yrs)'),      $n(d.settlementLag,   FMT_NUM3)]);
+    aoa.push([$s('Hold to Revaluation (yrs)'), $n(d.holdDurationPreReval, FMT_INT)]);
+    aoa.push([$s('LVR'),                       $n(d.lvr, FMT_PCT2)]);
+    aoa.push([$s('Interest Rate'),             $n(d.interestRate, FMT_PCT2)]);
+    aoa.push([$s('Rental Growth'),             $n(d.rentalGrowth, FMT_PCT2)]);
+    aoa.push([$s('Capital Growth'),            $n(d.capitalGrowth, FMT_PCT2)]);
+    aoa.push([$s('Cost of Capital'),           $n(d.costOfCapital, FMT_PCT2)]);
+
+    const ws = aoaToSheet(aoa);
+    ws['!cols'] = [{ wch: 32 }, { wch: 22 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Summary');
+  }
+
+  // ── Sheet 2: Cashflow ─────────────────────────────────────────────────────
+  // Year columns + Avg (over hold years). Funds to Complete rows first (matching
+  // on-screen layout), then the metric rows.
+  {
+    const aoa = [];
+    // Header row
+    const yrHeader = [$s('')].concat(years.map(y => $s('Yr ' + y.yr)));
+    if (holdYrs.length) yrHeader.push($s('Avg'));
+    aoa.push(yrHeader);
+
+    // ── Funds to Complete ───────────────────────────────────────────────
+    // Read selected offer to surface deposit tranches in their year
+    const _lp = window.getPipelineData ? window.getPipelineData() : {};
+    const entry = _lp[_current.pipelineId] || _current.pipelineEntry;
+    const offers = entry?.offers || [];
+    const _offeredPrice = _current.offeredPrice;
+    const selOffer = _offeredPrice
+      ? offers.find(o => { const n = parseFloat(String(o.price||'').replace(/[^0-9.]/g,'')); return Math.abs(n - _offeredPrice) < 1; })
+      : offers[0];
+    const deps = (selOffer?.deposits || entry?.terms?.deposits || []).filter(dep => dep.amount);
+
+    // Section header
+    const fundsHeader = [$b('Funds to Complete')].concat(years.map(() => $s('')));
+    if (holdYrs.length) fundsHeader.push($s(''));
+    aoa.push(fundsHeader);
+
+    const settlementYr = r.settlementYr;
+    function singleYearRow(label, yr, amt) {
+      const row = [$s(label)];
+      years.forEach(y => row.push(y.yr === yr ? $n(-Math.abs(amt)) : $s('')));
+      if (holdYrs.length) row.push($s(''));
+      return row;
+    }
+
+    if (d.stampDuty)           aoa.push(singleYearRow('Stamp Duty',          settlementYr, d.stampDuty));
+    if (d.valuationCost)       aoa.push(singleYearRow('Valuation',           settlementYr, d.valuationCost));
+    if (d.solicitorCost)       aoa.push(singleYearRow('Solicitor',           settlementYr, d.solicitorCost));
+    if (d.inspections)         aoa.push(singleYearRow('Inspections',         settlementYr, d.inspections));
+    if (r.commission)          aoa.push(singleYearRow('Commission',          settlementYr, r.commission));
+    if (r.bankDepositRequired) aoa.push(singleYearRow('Equity Contribution', settlementYr, r.bankDepositRequired));
+
+    let cumulativeDays = 0;
+    deps.forEach((dep, i) => {
+      const amt = parseDepositAmount(dep.amount, d.acquisitionPrice);
+      if (isNaN(amt) || !amt || amt <= 0) return;
+      const dueDays = parseDueDays(dep.due);
+      cumulativeDays += dueDays !== null ? dueDays : 0;
+      const dueYear = Math.floor(cumulativeDays / 365);
+      const pct = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(1) + '%' : '';
+      const dueStr = typeof dep.due === 'number' ? dep.due + ' days' : (dep.due || '');
+      const label = 'Deposit ' + (i + 1) + (pct ? ' (' + pct + (dueStr ? ' · ' + dueStr : '') + ')' : '');
+      aoa.push(singleYearRow(label, dueYear, amt));
+    });
+
+    // Spacer
+    aoa.push([]);
+
+    // ── Metrics ─────────────────────────────────────────────────────────
+    function metricRow(label, valFn, fmt, avgFn) {
+      const row = [$s(label)];
+      years.forEach(y => {
+        const v = valFn(y);
+        row.push(v == null ? $s('—') : $n(v, fmt));
+      });
+      if (holdYrs.length) {
+        const a = avgFn ? avgFn() : avg(holdYrs.map(valFn).filter(v => v != null && isFinite(v)));
+        row.push(a == null ? $s('—') : $n(a, fmt));
+      }
+      return row;
+    }
+
+    aoa.push(metricRow('Net Rent',        y => y.rent, FMT_DOLLAR));
+    aoa.push(metricRow('Yield',           y => d.acquisitionPrice ? y.rent / d.acquisitionPrice : null, FMT_PCT2,
+      () => d.acquisitionPrice ? avg(holdYrs.map(y => y.rent)) / d.acquisitionPrice : null));
+    aoa.push(metricRow('Principal (Start)', y => y.principalStart, FMT_DOLLAR, () => null));
+    aoa.push(metricRow('Principal Paid',  y => y.principalPaid, FMT_DOLLAR));
+    aoa.push(metricRow('Interest Paid',   y => y.interest, FMT_DOLLAR));
+    aoa.push(metricRow('Principal (End)', y => y.principalEnd, FMT_DOLLAR, () => null));
+    aoa.push(metricRow('Cashflow',        y => y.cashflow, FMT_DOLLAR));
+    aoa.push(metricRow('CoC (Rolling)',   y => y.cashEquityStart > 0 ? y.coc : null, FMT_PCT2,
+      () => { const arr = holdYrs.filter(y => y.cashEquityStart > 0).map(y => y.coc); return arr.length ? avg(arr) : null; }));
+    aoa.push(metricRow('ROE',             y => y.cashEquityStart > 0 ? y.roe : null, FMT_PCT2,
+      () => { const arr = holdYrs.filter(y => y.cashEquityStart > 0).map(y => y.roe); return arr.length ? avg(arr) : null; }));
+    aoa.push(metricRow('Asset Value',     y => y.assetValue, FMT_DOLLAR));
+    aoa.push(metricRow('Cost of Funds',   y => y.costOfFunds, FMT_DOLLAR, () => null));
+    aoa.push(metricRow('NPV (Asset Val)', y => y.npvAssetValue, FMT_DOLLAR, () => null));
+
+    const ws = aoaToSheet(aoa);
+    // First col 24ch, year cols 13ch
+    const cols = [{ wch: 24 }].concat(years.map(() => ({ wch: 13 })));
+    if (holdYrs.length) cols.push({ wch: 13 });
+    ws['!cols'] = cols;
+    ws['!freeze'] = { xSplit: 1, ySplit: 1 };
+    XLSX.utils.book_append_sheet(wb, ws, 'Cashflow');
+  }
+
+  // ── Sheet 3: Inputs ───────────────────────────────────────────────────────
+  {
+    const aoa = [];
+    aoa.push([$b('Variable'), $b('Value'), $b('Unit')]);
+
+    function section(title) { aoa.push([]); aoa.push([$b(title)]); }
+    function rowD(label, val, fmt, unit) { aoa.push([$s(label), $n(val, fmt || FMT_DOLLAR), $s(unit || '')]); }
+
+    section('Acquisition & Loan');
+    rowD('Acquisition Price',       d.acquisitionPrice, FMT_DOLLAR, '$');
+    rowD('LVR',                     d.lvr,              FMT_PCT2,   '%');
+    rowD('Interest Rate',           d.interestRate,     FMT_PCT2,   '% p.a.');
+    rowD('Deposit %',               d.depositPct,       FMT_PCT2,   '%');
+    rowD('Sales Commission %',      d.salesCommissionPct, FMT_PCT2, '%');
+
+    section('Growth & Time');
+    rowD('Rental Growth',           d.rentalGrowth,     FMT_PCT2,   '% p.a.');
+    rowD('Capital Growth',          d.capitalGrowth,    FMT_PCT2,   '% p.a.');
+    rowD('Cost of Capital',         d.costOfCapital,    FMT_PCT2,   '% p.a.');
+    rowD('Term of Ownership',       d.termOfOwnership,  FMT_INT,    'yrs');
+    rowD('Hold to Revaluation',     d.holdDurationPreReval, FMT_INT,'yrs');
+    rowD('Settlement Lag',          d.settlementLag,    FMT_NUM3,   'yrs');
+    rowD('Project Duration',        d.projectDuration,  FMT_INT,    'yrs');
+    rowD('% Profit → Debt Reduction', d.profitUsedForDebt, FMT_PCT2,'%');
+    rowD('Retained Earnings %',     d.retainedEarningsPct, FMT_PCT2,'%');
+
+    section('Purchase Costs');
+    rowD('Stamp Duty',              d.stampDuty,        FMT_DOLLAR, '$');
+    rowD('Valuation',               d.valuationCost,    FMT_DOLLAR, '$');
+    rowD('Solicitor',               d.solicitorCost,    FMT_DOLLAR, '$');
+    rowD('Inspections',             d.inspections,      FMT_DOLLAR, '$');
+
+    section('Operating Expenses (annual)');
+    rowD('Council',                 d.council,          FMT_DOLLAR, '$');
+    rowD('Water',                   d.water,            FMT_DOLLAR, '$');
+    rowD('Cleaning',                d.cleaning,         FMT_DOLLAR, '$');
+    rowD('Insurance',               d.insurance,        FMT_DOLLAR, '$');
+    rowD('Land Tax',                d.landTax,          FMT_DOLLAR, '$');
+    rowD('Common Power',            d.commonPower,      FMT_DOLLAR, '$');
+    rowD('Fire Services',           d.fireServices,     FMT_DOLLAR, '$');
+    rowD('Maintenance',             d.maintenance,      FMT_DOLLAR, '$');
+    rowD('Other',                   d.other,            FMT_DOLLAR, '$');
+    rowD('Management Fee %',        d.managementFeePct, FMT_PCT2,   '%');
+    rowD('Sinking Fund %',          d.sinkingFundPct,   FMT_PCT2,   '%');
+
+    section('Revenue (annual)');
+    rowD('Gross Rent',              d.weeklyRent,       FMT_DOLLAR, '$');
+    rowD('Other Revenue',           d.revenueOther,     FMT_DOLLAR, '$');
+
+    section('Comparable Inputs');
+    rowD('NDA (Acres)',                 d.netDevelopableAreaAcres, FMT_NUM3, 'acres');
+    rowD('Comparable Value ($/NDA)',    d.comparableValuePerNDA,   FMT_DOLLAR, '$');
+    rowD('Residual Land Val',           d.residualLandVal,         FMT_DOLLAR, '$');
+    rowD('Lots',                        d.lots,                    FMT_INT, '');
+    rowD('Av Lot Size',                 d.avLotSizeSqm,            FMT_INT, 'sqm');
+    rowD('Rate per sqm',                d.ratePerSqm,              FMT_DOLLAR, '$');
+    rowD('Profit Margin %',             d.profitMarginPct,         FMT_PCT2, '%');
+    rowD('TDC per Lot',                 d.tdcPerLot,               FMT_DOLLAR, '$');
+    rowD('Target Yield %',              d.targetYieldPct,          FMT_PCT2, '% p.a.');
+
+    const ws = aoaToSheet(aoa);
+    ws['!cols'] = [{ wch: 30 }, { wch: 16 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Inputs');
+  }
+
+  // ── Sheet 4: Comparables ──────────────────────────────────────────────────
+  {
+    const aoa = [];
+    aoa.push([$b('Method'), $b('Detail'), $b('Value'), $b('Included')]);
+    aoa.push([
+      $s('Method 1: Gross Area'),
+      $s(`${(d.netDevelopableAreaAcres||0).toFixed(3)} NDA acres × $${(d.comparableValuePerNDA||0).toLocaleString()}/NDA + residual`),
+      $n(r.m1), $s(d.includeM1 !== false ? 'Yes' : 'No'),
+    ]);
+    aoa.push([
+      $s('Method 2: 30% of GRV'),
+      $s(`GRV ${fmtDollar(r.grv)} ÷ 3 · NSA ${(r.nsa||0).toLocaleString()} sqm`),
+      $n(r.m2), $s(d.includeM2 !== false ? 'Yes' : 'No'),
+    ]);
+    aoa.push([
+      $s('Method 3: Development Estimate (TDC $/lot)'),
+      $s('GRV − TDC − holding cost − interest − profit margin'),
+      $n(r.m3), $s(d.includeM3 !== false ? 'Yes' : 'No'),
+    ]);
+    aoa.push([
+      $s('Method 5: Derived from Yield'),
+      $s(`Net Income ${fmtDollar(r.netIncomeYr1)} ÷ ${fmtPct(d.targetYieldPct)} target yield`),
+      $n(r.m5), $s(d.includeM5 !== false ? 'Yes' : 'No'),
+    ]);
+    aoa.push([]);
+    const cmpMean = comparableMean(d, r);
+    aoa.push([$b('Mean (included only)'), $s(''), cmpMean != null ? $n(cmpMean) : $s('—'), $s('')]);
+    aoa.push([]);
+    aoa.push([$b('Reference')]);
+    aoa.push([$s('GRV (ex GST)'),    $s(''), $n(r.grv)]);
+    aoa.push([$s('Net Sellable Area'), $s(''), $n(r.nsa, FMT_INT)]);
+    aoa.push([$s('Acquisition Price'), $s(''), $n(d.acquisitionPrice)]);
+
+    const ws = aoaToSheet(aoa);
+    ws['!cols'] = [{ wch: 42 }, { wch: 56 }, { wch: 16 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Comparables');
+  }
+
+  // Write file — filename includes property address (sanitised)
+  const safeAddr = (propAddr || 'Property').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const filename = `Financial Model - ${safeAddr}.xlsx`;
+  XLSX.writeFile(wb, filename, { compression: true });
+}
+
+// Convert an array-of-arrays where each cell is either a string or a cell-descriptor
+// object ({v, t, z, ...}) into a SheetJS worksheet, applying types/formats.
+function aoaToSheet(aoa) {
+  const ws = {};
+  let maxR = 0, maxC = 0;
+  aoa.forEach((row, R) => {
+    if (!row || !row.length) return;
+    row.forEach((cell, C) => {
+      if (cell == null) return;
+      const addr = XLSX.utils.encode_cell({ r: R, c: C });
+      if (typeof cell === 'object' && 't' in cell) {
+        ws[addr] = cell;
+      } else {
+        ws[addr] = { v: cell, t: typeof cell === 'number' ? 'n' : 's' };
+      }
+      if (R > maxR) maxR = R;
+      if (C > maxC) maxC = C;
+    });
+  });
+  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
+  return ws;
+}
+
+function setExportBtnVisible(visible) {
+  const btn = document.getElementById('financeExportBtn');
+  if (btn) btn.style.display = visible ? '' : 'none';
+}
+
 // ─── Input binding ────────────────────────────────────────────────────────────
 
 function autoSave() {
@@ -1538,6 +1850,11 @@ async function initFinance() {
     });
 
     document.getElementById('financeClose')?.addEventListener('click', () => toggleFinance(false));
+
+    document.getElementById('financeExportBtn')?.addEventListener('click', () => {
+      try { exportToExcel(); }
+      catch (err) { console.error('[finance export]', err); alert('Excel export failed: ' + (err.message || err)); }
+    });
   }
 
   // Always (re)load saved models — safe to call multiple times
@@ -1548,6 +1865,7 @@ window.FinanceModule = {
   open:   openFinanceForProperty,
   toggle: toggleFinance,
   init:   initFinance,
+  export: exportToExcel,
 };
 
 initFinance();

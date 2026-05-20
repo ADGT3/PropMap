@@ -946,3 +946,35 @@
   margin-bottom: 2px;
   opacity: 0.8;
 }
+
+/* ─── Export-to-Excel button (V81.3) ──────────────────────────────────────── */
+.fin-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.fin-export-btn:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: var(--accent);
+}
+.fin-export-btn:active {
+  transform: translateY(1px);
+}
+.fin-export-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.fin-export-icon {
+  font-size: 14px;
+  line-height: 1;
+}
