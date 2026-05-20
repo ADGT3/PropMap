@@ -1725,17 +1725,11 @@
 
     document.getElementById('financeClose')?.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
-      console.log('[fin-nav] X clicked (capture-phase listener in index.html)');
-      console.log('[fin-nav]   window.FinanceModule exists?', !!window.FinanceModule);
-      console.log('[fin-nav]   window.FinanceModule.close exists?', !!(window.FinanceModule && window.FinanceModule.close));
       if (window.FinanceModule && typeof window.FinanceModule.close === 'function') {
-        console.log('[fin-nav]   → calling FinanceModule.close()');
         window.FinanceModule.close();
       } else if (window.Router && typeof window.Router.back === 'function') {
-        console.log('[fin-nav]   → FALLBACK Router.back()');
         Router.back();
       } else if (window.Router) {
-        console.log('[fin-nav]   → FALLBACK Router.navigate(/mapping)');
         Router.navigate('/mapping');
       }
     }, true);
