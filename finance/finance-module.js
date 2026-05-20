@@ -73,12 +73,10 @@ let _costsInCashflow   = true;   // whether Funds to Complete costs are included
 // ─── Navigation tracking (V81.3) ─────────────────────────────────────────────
 // _entryFromKanban: true if the CURRENT deal view was opened from the kanban
 //   "Model" button (external call). False if opened by clicking a property in
-//   the in-module finance list. Drives X-button back-navigation.
-// _kanbanWasVisible: true if window.kanbanVisible was true when finance opened.
-//   On full-close of finance we restore the kanban view so the user lands back
-//   where they were instead of always falling through to the map.
+//   the in-module finance list. Drives X-button back-navigation (Case A vs B).
+// Module-level back navigation (Case C) goes through Router.back() which uses
+// the Router's shared back stack — same mechanism every other close button.
 let _entryFromKanban   = false;
-let _kanbanWasVisible  = false;
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
@@ -764,11 +762,7 @@ function extractPrice(entry) {
 
 function toggleFinance(show) {
   const willShow = show !== undefined ? show : !_financeVisible;
-  // Capture pre-open context so X-back can restore the kanban view rather than
-  // always falling through to the map (V81.3).
-  if (willShow && !_financeVisible) {
-    _kanbanWasVisible = !!window.kanbanVisible;
-  }
+  console.log('[fin-nav] toggleFinance(show=' + show + ') willShow=' + willShow + ' was=' + _financeVisible);
   _financeVisible = willShow;
   document.getElementById('financeView')?.classList.toggle('visible', _financeVisible);
   document.getElementById('financeNavBtn')?.classList.toggle('active', _financeVisible);
@@ -777,46 +771,53 @@ function toggleFinance(show) {
   if (_financeVisible && typeof toggleKanban === 'function') toggleKanban(false);
 }
 
-// Contextual X-button close (V81.3).
-// - On deal view: go back one level — either to the in-module property list,
-//   or to the kanban modal that opened the deal.
-// - On list view: close finance entirely and restore the previous screen.
+// Contextual X-button close (V81.3). Exposed as FinanceModule.close so the
+// capture-phase listener in index.html can delegate to it.
+// - On deal view opened from kanban → Router.back() (the /pipeline/deal/<id>
+//   was pushed onto the back stack at open time, so back pops to the modal)
+// - On deal view opened from in-module list → step back to the list (no URL
+//   change; we stay on /finance)
+// - On list view → Router.back() — same shared back stack every X uses
 function handleFinanceClose() {
-  // Case A: deal view AND opened from the kanban "Model" button — back to the kanban modal
+  console.log('[fin-nav] handleFinanceClose: _current=' + (_current ? _current.pipelineId : 'null') + ' _entryFromKanban=' + _entryFromKanban);
+  // Case A: deal view AND opened from a kanban deal modal → Router.back()
   if (_current && _entryFromKanban) {
-    const id = _current.pipelineId;
+    console.log('[fin-nav]   → Case A: deal-from-kanban, Router.back()');
     _current = null;
     _entryFromKanban = false;
-    _financeVisible = false;
-    document.getElementById('financeView')?.classList.remove('visible');
-    document.getElementById('financeNavBtn')?.classList.remove('active');
-    setExportBtnVisible(false);
-    const alreadyOpen = window.kanbanVisible;
-    if (typeof toggleKanban === 'function' && !alreadyOpen) toggleKanban(true);
-    setTimeout(() => {
-      if (typeof openCardModal === 'function') openCardModal(id);
-    }, alreadyOpen ? 0 : 300);
+    if (window.Router && typeof window.Router.back === 'function') {
+      window.Router.back();
+    } else if (window.Router && typeof window.Router.navigate === 'function') {
+      window.Router.navigate('/pipeline');
+    }
     return;
   }
-  // Case B: deal view opened from the in-module list — step back to the list
+  // Case B: deal view opened from in-module list → step back to the list
   if (_current && !_entryFromKanban) {
+    console.log('[fin-nav]   → Case B: deal-from-list, step back to list');
     _current = null;
     renderFinanceView();
     return;
   }
-  // Case C: on the list view — close finance entirely
+  // Case C: on the list view → close module via shared back stack
+  console.log('[fin-nav]   → Case C: list view, closeFinanceModule()');
   closeFinanceModule();
 }
 
-// Full module close — used by the nav button (when already open) and by
-// handleFinanceClose on the list view. Restores the prior screen (kanban if
-// it was visible when finance opened; otherwise the map shows through).
+// Full module close — delegates to Router.back() which pops the shared in-app
+// back stack and navigates to wherever the user came from. Same mechanism
+// every other X close button uses.
 function closeFinanceModule() {
+  console.log('[fin-nav] closeFinanceModule: Router.back()');
   _current = null;
   _entryFromKanban = false;
-  toggleFinance(false);
-  if (_kanbanWasVisible && typeof toggleKanban === 'function') toggleKanban(true);
-  _kanbanWasVisible = false;
+  if (window.Router && typeof window.Router.back === 'function') {
+    window.Router.back();
+  } else if (window.Router && typeof window.Router.navigate === 'function') {
+    window.Router.navigate('/mapping');
+  } else {
+    toggleFinance(false);
+  }
 }
 
 // offeredPrice: numeric price from the most recent offer or vendor terms (passed from kanban).
@@ -827,7 +828,16 @@ async function openFinanceForProperty(pipelineId, pipelineEntry, offeredPrice) {
   // Entry source: if finance view is NOT yet visible, this call came from
   // outside the module (kanban "Model" button). If it IS visible, the user
   // clicked a property in the in-module list. Drives X-button back-navigation.
-  _entryFromKanban = !_financeVisible;
+  const wasExternal = !_financeVisible;
+  _entryFromKanban = wasExternal;
+
+  // When opened externally from kanban Model button, the user was looking at a
+  // kanban deal modal (URL=/pipeline; modal layered on top with no URL change).
+  // Push the virtual screen URL onto Router's back stack so X can return to it.
+  if (wasExternal && window.Router && typeof window.Router.pushHistory === 'function') {
+    console.log('[fin-nav] openFinanceForProperty: external call — pushHistory /pipeline/deal/' + pipelineId);
+    window.Router.pushHistory('/pipeline/deal/' + pipelineId);
+  }
 
   const p = pipelineEntry?.property || {};
 
@@ -2252,7 +2262,18 @@ async function initFinance() {
       }
     });
 
-    document.getElementById('financeClose')?.addEventListener('click', () => handleFinanceClose());
+    // X close button — CAPTURE PHASE + stopImmediatePropagation so we preempt
+    // the legacy capture-phase handler in index.html that hardcodes
+    // Router.navigate('/mapping'). This was the root cause of the back-nav
+    // bug: even after handleFinanceClose was correct, the index.html handler
+    // ran first and stopped propagation, so our logic never executed.
+    // Attaching first in capture phase + stopImmediatePropagation blocks the
+    // legacy listener entirely.
+    document.getElementById('financeClose')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      handleFinanceClose();
+    }, true);
 
     document.getElementById('financeExportBtn')?.addEventListener('click', () => {
       try { exportToExcel(); }
@@ -2266,6 +2287,7 @@ async function initFinance() {
 
 window.FinanceModule = {
   open:   openFinanceForProperty,
+  close:  handleFinanceClose,
   toggle: toggleFinance,
   init:   initFinance,
   export: exportToExcel,
