@@ -373,6 +373,72 @@ function fmtAnnualDisplay(annualVal) {
   return fmtDollar(annualVal) + '/y';
 }
 
+// ─── Formula evaluator (V81.3) ───────────────────────────────────────────────
+// Safe recursive-descent parser for left-pane inputs. NO eval/Function().
+// Triggered when input value starts with '='. Supports +, -, *, /, parentheses,
+// decimals, and the natural-language operators x / X / × (multiply) and ÷ (divide).
+// Returns a finite number, or NaN if the expression is malformed.
+function evalFormula(input) {
+  if (input == null) return NaN;
+  let s = String(input).trim();
+  if (s.startsWith('=')) s = s.slice(1);
+  // Normalise: strip commas/dollar/percent/whitespace, fold x/×/÷ to */
+  s = s.replace(/[\s,$]/g, '').replace(/[xX×]/g, '*').replace(/÷/g, '/');
+  if (!s) return NaN;
+  // Whitelist: only digits, dot, parens, operators. Reject anything else outright.
+  if (!/^[\d.+\-*/()]+$/.test(s)) return NaN;
+
+  let pos = 0;
+  function peek()    { return s[pos]; }
+  function consume() { return s[pos++]; }
+  // expr → term (('+'|'-') term)*
+  function parseExpr() {
+    let v = parseTerm();
+    while (peek() === '+' || peek() === '-') {
+      const op = consume();
+      const rhs = parseTerm();
+      v = op === '+' ? v + rhs : v - rhs;
+    }
+    return v;
+  }
+  // term → factor (('*'|'/') factor)*
+  function parseTerm() {
+    let v = parseFactor();
+    while (peek() === '*' || peek() === '/') {
+      const op = consume();
+      const rhs = parseFactor();
+      v = op === '*' ? v * rhs : v / rhs;
+    }
+    return v;
+  }
+  // factor → number | '(' expr ')' | unary +/- factor
+  function parseFactor() {
+    if (peek() === '+') { consume(); return parseFactor(); }
+    if (peek() === '-') { consume(); return -parseFactor(); }
+    if (peek() === '(') {
+      consume();
+      const v = parseExpr();
+      if (consume() !== ')') throw new Error('mismatched paren');
+      return v;
+    }
+    // number — digits with optional decimal
+    let num = '';
+    while (pos < s.length && /[\d.]/.test(s[pos])) num += consume();
+    if (num === '' || num === '.') throw new Error('expected number');
+    const n = parseFloat(num);
+    if (!isFinite(n)) throw new Error('bad number');
+    return n;
+  }
+
+  try {
+    const result = parseExpr();
+    if (pos !== s.length) return NaN; // trailing junk
+    return isFinite(result) ? result : NaN;
+  } catch (_) {
+    return NaN;
+  }
+}
+
 function runModel(d) {
   const price = d.acquisitionPrice || 0;
 
@@ -829,10 +895,12 @@ function bindSelectorEvents() {
 
 // type: 'dollar' | 'pct' | 'int' | 'num'
 // calc: true = calculated (display only), false/undefined = input (editable)
-function ff(key, label, display, type, hint, calc) {
-  return `<div class="fin-field${calc ? ' fin-field-calc' : ''}" data-key="${key}" data-type="${type}">
+// actionHtml: optional HTML rendered as a sibling button next to the value (e.g. refresh icon)
+function ff(key, label, display, type, hint, calc, actionHtml) {
+  return `<div class="fin-field${calc ? ' fin-field-calc' : ''}${actionHtml ? ' fin-field-with-action' : ''}" data-key="${key}" data-type="${type}">
     <span class="fin-field-label">${label}${hint ? `<span class="fin-field-hint">${hint}</span>` : ''}</span>
     <span class="${calc ? 'fin-calc-val' : 'fin-editable'}" data-key="${key}">${display}</span>
+    ${actionHtml || ''}
   </div>`;
 }
 
@@ -942,7 +1010,8 @@ function renderSidebar(d, r) {
               + '</div>';
           }).join('');
         })()}
-        ${ff('stampDuty',        'Stamp Duty',          fmtDollar(d.stampDuty),          'dollar', (d._state||'NSW') + ' transfer duty')}
+        ${ff('stampDuty',        'Stamp Duty',          fmtDollar(d.stampDuty),          'dollar', (d._state||'NSW') + ' transfer duty', false,
+              `<button type="button" class="fin-field-action" id="finStampRefresh" title="Recalculate from acquisition price + ${d._state||'NSW'} rates">↻</button>`)}
         ${ff('valuationCost',    'Valuation',            fmtDollar(d.valuationCost),      'dollar')}
         ${ff('solicitorCost',    'Solicitor',            fmtDollar(d.solicitorCost),      'dollar')}
         ${ff('inspections',      'Inspections',          fmtDollar(d.inspections),        'dollar')}
@@ -1954,11 +2023,25 @@ function bindInputs(r) {
       this.appendChild(input);
       input.focus();
       input.select();
+      // Tooltip + live formula-mode visual cue (V81.3)
+      input.title = 'Tip: start with = for a formula (e.g. =2*400, =(600+800)*2, =120/6)';
+      const updateFormulaCue = () => {
+        input.classList.toggle('fin-input-formula', input.value.trim().startsWith('='));
+      };
+      input.addEventListener('input', updateFormulaCue);
+      updateFormulaCue();
       const commit = () => {
         const annualFields = ['council','water','cleaning','insurance','landTax',
           'commonPower','fireServices','maintenance','other','weeklyRent','revenueOther'];
+        const rawInput = input.value.trim();
+        const isFormula = rawInput.startsWith('=');
         let val;
-        if (annualFields.includes(key)) {
+        if (isFormula) {
+          // Formula mode — evaluate as a plain number (no /w /m /y interpretation).
+          // For pct fields the result is the displayed percent (divided by 100 below).
+          val = evalFormula(rawInput);
+          if (!isFinite(val)) val = _current.data[key] || 0;
+        } else if (annualFields.includes(key)) {
           val = parseAnnual(input.value);
         } else {
           val = parseFloat(input.value.replace(/[^0-9.-]/g, ''));
@@ -2001,6 +2084,19 @@ function bindInputs(r) {
   document.getElementById('finCostsInCashflow')?.addEventListener('change', e => {
     _costsInCashflow = e.target.checked;
     renderFinanceView();
+  });
+
+  // Stamp Duty — recalculate from current acquisition price + state
+  document.getElementById('finStampRefresh')?.addEventListener('click', e => {
+    e.stopPropagation(); // don't trigger the .fin-editable click that opens the input
+    if (!_current) return;
+    const d = _current.data;
+    const recalc = calcStampDuty(d.acquisitionPrice || 0, d._state || 'NSW');
+    d.stampDuty = recalc;
+    d.updatedAt = Date.now();
+    _allModels[_current.pipelineId] = d;
+    renderFinanceView();
+    autoSave();
   });
 
   // Funds to Complete — chevron toggles row visibility (don't fire when clicking checkbox)
