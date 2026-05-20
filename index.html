@@ -919,6 +919,9 @@
         </div>
       </div>
       <div class="finance-header-right">
+        <button class="fin-export-btn" id="financeExportBtn" title="Export to Excel" style="display:none">
+          <span class="fin-export-icon">⬇</span> Export to Excel
+        </button>
         <button class="panel-close" id="financeClose" title="Close">✕</button>
       </div>
     </div>
@@ -1187,6 +1190,7 @@
   <script src="crm.js"></script>
   <script src="map.js"></script>
   <script src="kanban.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <script src="finance/finance-module.js"></script>
   <script src="router.js"></script>
   <!-- V78 — mobile/tablet responsive shell. Must load AFTER kanban.js so it
@@ -1314,7 +1318,9 @@
     }
     window.toggleSettings = toggleSettings;
     document.getElementById('settingsClose')?.addEventListener('click', () => {
-      if (window.Router) Router.navigate('/mapping');
+      // V81.3 — back to previous screen instead of unconditional /mapping
+      if (window.Router && typeof window.Router.back === 'function') Router.back();
+      else if (window.Router) Router.navigate('/mapping');
       else toggleSettings(false);
     });
 
@@ -1708,16 +1714,24 @@
     };
     document.getElementById('elevationQuotaBannerClose')?.addEventListener('click', window.hideElevationQuotaBanner);
 
-    // ── Close buttons on existing views now return to Mapping via router ───
-    // (was: directly flipping the .visible class)
+    // ── Close buttons on existing views now back-navigate via the Router ───
+    // (was: directly flipping the .visible class; then unconditional /mapping;
+    // now V81.3 — back to whichever screen the user came from)
     document.getElementById('kanbanClose')?.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
-      if (window.Router) Router.navigate('/mapping');
+      if (window.Router && typeof window.Router.back === 'function') Router.back();
+      else if (window.Router) Router.navigate('/mapping');
     }, true); // capture so we run before kanban.js's own handler
 
     document.getElementById('financeClose')?.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation();
-      if (window.Router) Router.navigate('/mapping');
+      if (window.FinanceModule && typeof window.FinanceModule.close === 'function') {
+        window.FinanceModule.close();
+      } else if (window.Router && typeof window.Router.back === 'function') {
+        Router.back();
+      } else if (window.Router) {
+        Router.navigate('/mapping');
+      }
     }, true);
   </script>
 

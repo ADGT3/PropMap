@@ -135,16 +135,54 @@
     window.dispatchEvent(new CustomEvent('modulechange', { detail: route }));
   }
 
+  // ── In-app back stack (V81.3) ──────────────────────────────────────────────
+  // Tracks the in-app routes the user has visited so any close (X) button can
+  // return to the previous screen instead of unconditionally /mapping. Distinct
+  // from browser history so we control behaviour cleanly (e.g. can't navigate
+  // off-site when stack is empty — we fall back to /mapping).
+  const _backStack = [];
+  const _BACK_STACK_CAP = 30;
+
   // Public navigation API — pushes a new history entry and renders.
-  function navigate(path, replace = false) {
+  // _isBackNav (internal) is set when called from back() so we don't re-push
+  // the route we're leaving and create an oscillation loop.
+  function navigate(path, replace = false, _isBackNav = false) {
     const route = parsePath(path);
     const url = buildUrl(route);
     if (replace) {
       history.replaceState({ route }, '', url);
     } else {
+      // Record the route we're leaving on the back stack (unless we're
+      // explicitly going back, or it's the same URL — no-op nav).
+      const cur = location.pathname || '/';
+      if (!_isBackNav && cur !== url) {
+        _backStack.push(cur);
+        if (_backStack.length > _BACK_STACK_CAP) _backStack.shift();
+      }
       history.pushState({ route }, '', url);
     }
     render(route);
+  }
+
+  // Pop the previous in-app route and navigate to it. Falls back to /mapping
+  // if the stack is empty (e.g. deep-link load). Used by every X close button.
+  function back() {
+    if (_backStack.length > 0) {
+      const prev = _backStack.pop();
+      navigate(prev, false, true);
+    } else {
+      navigate('/mapping', false, true);
+    }
+  }
+
+  // Manually push a path onto the back stack without navigating. Used by
+  // modules whose internal state changes don't correspond to URL changes
+  // (e.g. kanban deal modal layered on /pipeline, finance deal layered on
+  // /finance). Lets back() return to that virtual screen.
+  function pushHistory(path) {
+    if (!path) return;
+    _backStack.push(path);
+    if (_backStack.length > _BACK_STACK_CAP) _backStack.shift();
   }
 
   function buildUrl(route) {
@@ -172,6 +210,8 @@
   // Public API
   window.Router = {
     navigate,
+    back,
+    pushHistory,
     parsePath,
     current: () => parsePath(location.pathname),
     init,

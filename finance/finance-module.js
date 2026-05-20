@@ -70,6 +70,14 @@ let _financeInitDone   = false;  // guard against duplicate initFinance() calls
 let _saveTimer         = null;   // debounce timer for auto-save
 let _costsInCashflow   = true;   // whether Funds to Complete costs are included in cashflow
 
+// ─── Navigation tracking (V81.3) ─────────────────────────────────────────────
+// _entryFromKanban: true if the CURRENT deal view was opened from the kanban
+//   "Model" button (external call). False if opened by clicking a property in
+//   the in-module finance list. Drives X-button back-navigation (Case A vs B).
+// Module-level back navigation (Case C) goes through Router.back() which uses
+// the Router's shared back stack — same mechanism every other close button.
+let _entryFromKanban   = false;
+
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
 async function finDbLoad(id) {
@@ -371,6 +379,72 @@ function parseAnnual(val) {
 function fmtAnnualDisplay(annualVal) {
   if (!annualVal) return fmtDollar(0);
   return fmtDollar(annualVal) + '/y';
+}
+
+// ─── Formula evaluator (V81.3) ───────────────────────────────────────────────
+// Safe recursive-descent parser for left-pane inputs. NO eval/Function().
+// Triggered when input value starts with '='. Supports +, -, *, /, parentheses,
+// decimals, and the natural-language operators x / X / × (multiply) and ÷ (divide).
+// Returns a finite number, or NaN if the expression is malformed.
+function evalFormula(input) {
+  if (input == null) return NaN;
+  let s = String(input).trim();
+  if (s.startsWith('=')) s = s.slice(1);
+  // Normalise: strip commas/dollar/percent/whitespace, fold x/×/÷ to */
+  s = s.replace(/[\s,$]/g, '').replace(/[xX×]/g, '*').replace(/÷/g, '/');
+  if (!s) return NaN;
+  // Whitelist: only digits, dot, parens, operators. Reject anything else outright.
+  if (!/^[\d.+\-*/()]+$/.test(s)) return NaN;
+
+  let pos = 0;
+  function peek()    { return s[pos]; }
+  function consume() { return s[pos++]; }
+  // expr → term (('+'|'-') term)*
+  function parseExpr() {
+    let v = parseTerm();
+    while (peek() === '+' || peek() === '-') {
+      const op = consume();
+      const rhs = parseTerm();
+      v = op === '+' ? v + rhs : v - rhs;
+    }
+    return v;
+  }
+  // term → factor (('*'|'/') factor)*
+  function parseTerm() {
+    let v = parseFactor();
+    while (peek() === '*' || peek() === '/') {
+      const op = consume();
+      const rhs = parseFactor();
+      v = op === '*' ? v * rhs : v / rhs;
+    }
+    return v;
+  }
+  // factor → number | '(' expr ')' | unary +/- factor
+  function parseFactor() {
+    if (peek() === '+') { consume(); return parseFactor(); }
+    if (peek() === '-') { consume(); return -parseFactor(); }
+    if (peek() === '(') {
+      consume();
+      const v = parseExpr();
+      if (consume() !== ')') throw new Error('mismatched paren');
+      return v;
+    }
+    // number — digits with optional decimal
+    let num = '';
+    while (pos < s.length && /[\d.]/.test(s[pos])) num += consume();
+    if (num === '' || num === '.') throw new Error('expected number');
+    const n = parseFloat(num);
+    if (!isFinite(n)) throw new Error('bad number');
+    return n;
+  }
+
+  try {
+    const result = parseExpr();
+    if (pos !== s.length) return NaN; // trailing junk
+    return isFinite(result) ? result : NaN;
+  } catch (_) {
+    return NaN;
+  }
 }
 
 function runModel(d) {
@@ -687,11 +761,57 @@ function extractPrice(entry) {
 // ─── View toggle ──────────────────────────────────────────────────────────────
 
 function toggleFinance(show) {
-  _financeVisible = show !== undefined ? show : !_financeVisible;
+  const willShow = show !== undefined ? show : !_financeVisible;
+  _financeVisible = willShow;
   document.getElementById('financeView')?.classList.toggle('visible', _financeVisible);
   document.getElementById('financeNavBtn')?.classList.toggle('active', _financeVisible);
+  if (!_financeVisible) setExportBtnVisible(false);
   // Close kanban when finance opens (they occupy the same full-screen layer)
   if (_financeVisible && typeof toggleKanban === 'function') toggleKanban(false);
+}
+
+// Contextual X-button close (V81.3). Exposed as FinanceModule.close so the
+// capture-phase listener in index.html can delegate to it.
+// - On deal view opened from kanban → Router.back() (the /pipeline/deal/<id>
+//   was pushed onto the back stack at open time, so back pops to the modal)
+// - On deal view opened from in-module list → step back to the list (no URL
+//   change; we stay on /finance)
+// - On list view → Router.back() — same shared back stack every X uses
+function handleFinanceClose() {
+  // Case A: deal view AND opened from a kanban deal modal → Router.back()
+  if (_current && _entryFromKanban) {
+    _current = null;
+    _entryFromKanban = false;
+    if (window.Router && typeof window.Router.back === 'function') {
+      window.Router.back();
+    } else if (window.Router && typeof window.Router.navigate === 'function') {
+      window.Router.navigate('/pipeline');
+    }
+    return;
+  }
+  // Case B: deal view opened from in-module list → step back to the list
+  if (_current && !_entryFromKanban) {
+    _current = null;
+    renderFinanceView();
+    return;
+  }
+  // Case C: on the list view → close module via shared back stack
+  closeFinanceModule();
+}
+
+// Full module close — delegates to Router.back() which pops the shared in-app
+// back stack and navigates to wherever the user came from. Same mechanism
+// every other X close button uses.
+function closeFinanceModule() {
+  _current = null;
+  _entryFromKanban = false;
+  if (window.Router && typeof window.Router.back === 'function') {
+    window.Router.back();
+  } else if (window.Router && typeof window.Router.navigate === 'function') {
+    window.Router.navigate('/mapping');
+  } else {
+    toggleFinance(false);
+  }
 }
 
 // offeredPrice: numeric price from the most recent offer or vendor terms (passed from kanban).
@@ -699,6 +819,19 @@ function toggleFinance(show) {
 // acquisitionPrice is updated (if the offered price differs and user hasn't already
 // customised it away from the listing price). New models are seeded from offeredPrice.
 async function openFinanceForProperty(pipelineId, pipelineEntry, offeredPrice) {
+  // Entry source: if finance view is NOT yet visible, this call came from
+  // outside the module (kanban "Model" button). If it IS visible, the user
+  // clicked a property in the in-module list. Drives X-button back-navigation.
+  const wasExternal = !_financeVisible;
+  _entryFromKanban = wasExternal;
+
+  // When opened externally from kanban Model button, the user was looking at a
+  // kanban deal modal (URL=/pipeline; modal layered on top with no URL change).
+  // Push the virtual screen URL onto Router's back stack so X can return to it.
+  if (wasExternal && window.Router && typeof window.Router.pushHistory === 'function') {
+    window.Router.pushHistory('/pipeline/deal/' + pipelineId);
+  }
+
   const p = pipelineEntry?.property || {};
 
   // Load existing model or fall back to null
@@ -763,6 +896,7 @@ function renderFinanceView() {
   if (!_current) {
     container.innerHTML = renderPropertySelector();
     bindSelectorEvents();
+    setExportBtnVisible(false);
     return;
   }
 
@@ -783,6 +917,7 @@ function renderFinanceView() {
   if (sidebarNew) sidebarNew.scrollTop = sidebarScroll;
   if (mainNew)    mainNew.scrollTop    = mainScroll;
 
+  setExportBtnVisible(true);
   bindInputs(r);
 }
 
@@ -826,10 +961,12 @@ function bindSelectorEvents() {
 
 // type: 'dollar' | 'pct' | 'int' | 'num'
 // calc: true = calculated (display only), false/undefined = input (editable)
-function ff(key, label, display, type, hint, calc) {
-  return `<div class="fin-field${calc ? ' fin-field-calc' : ''}" data-key="${key}" data-type="${type}">
+// actionHtml: optional HTML rendered as a sibling button next to the value (e.g. refresh icon)
+function ff(key, label, display, type, hint, calc, actionHtml) {
+  return `<div class="fin-field${calc ? ' fin-field-calc' : ''}${actionHtml ? ' fin-field-with-action' : ''}" data-key="${key}" data-type="${type}">
     <span class="fin-field-label">${label}${hint ? `<span class="fin-field-hint">${hint}</span>` : ''}</span>
     <span class="${calc ? 'fin-calc-val' : 'fin-editable'}" data-key="${key}">${display}</span>
+    ${actionHtml || ''}
   </div>`;
 }
 
@@ -939,7 +1076,8 @@ function renderSidebar(d, r) {
               + '</div>';
           }).join('');
         })()}
-        ${ff('stampDuty',        'Stamp Duty',          fmtDollar(d.stampDuty),          'dollar', (d._state||'NSW') + ' transfer duty')}
+        ${ff('stampDuty',        'Stamp Duty',          fmtDollar(d.stampDuty),          'dollar', (d._state||'NSW') + ' transfer duty', false,
+              `<button type="button" class="fin-field-action" id="finStampRefresh" title="Recalculate from acquisition price + ${d._state||'NSW'} rates">↻</button>`)}
         ${ff('valuationCost',    'Valuation',            fmtDollar(d.valuationCost),      'dollar')}
         ${ff('solicitorCost',    'Solicitor',            fmtDollar(d.solicitorCost),      'dollar')}
         ${ff('inspections',      'Inspections',          fmtDollar(d.inspections),        'dollar')}
@@ -1364,6 +1502,552 @@ function renderComparableValues(d, r) {
   </div>`;
 }
 
+// ─── Export to Excel (V81.3) ──────────────────────────────────────────────────
+// Styled to match the PropMap finance module UI — warm cream backgrounds,
+// gold accent, muted-grey labels, green/red for pos/neg. Cell styling requires
+// xlsx-js-style (loaded via CDN in index.html), which is a drop-in for the
+// SheetJS community edition and writes styles that Excel renders.
+
+// ── Palette (mirrors CSS vars in styles.css / finance-styles.css) ──
+const X_BG       = 'F5F4F0'; // --bg (page)
+const X_SURFACE  = 'FFFFFF'; // --surface (cards, table body)
+const X_SURFACE2 = 'F0EEEA'; // --surface2 (headers, averages, hover)
+const X_BORDER   = 'E6E6E6'; // --border solid equivalent
+const X_TEXT     = '1A1A1A'; // --text
+const X_MUTED    = '666666'; // --muted
+const X_ACCENT   = 'C4841A'; // --accent (gold)
+const X_RED      = 'C0392B'; // --red
+const X_GREEN    = '27AE60'; // --green
+
+// Number formats
+const FMT_DOLLAR = '$#,##0;[Red]($#,##0)';
+const FMT_PCT2   = '0.00%;[Red](0.00%)';
+const FMT_INT    = '#,##0';
+const FMT_NUM3   = '0.000';
+const FMT_DATE   = 'dd-mmm-yyyy';
+
+// ── Style presets ───────────────────────────────────────────────────────────
+const S = {
+  title: {
+    font: { name: 'Calibri', sz: 16, bold: true, color: { rgb: X_ACCENT } },
+    alignment: { vertical: 'center' },
+  },
+  metaLabel: {
+    font: { name: 'Calibri', sz: 10, color: { rgb: X_MUTED } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+  },
+  metaValue: {
+    font: { name: 'Calibri', sz: 11, color: { rgb: X_TEXT } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+  },
+  sectionHdr: {
+    font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: X_ACCENT } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE2 } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    border: {
+      top:    { style: 'thin', color: { rgb: X_BORDER } },
+      bottom: { style: 'thin', color: { rgb: X_BORDER } },
+    },
+  },
+  colHdr: {
+    font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: X_MUTED } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE2 } },
+    alignment: { horizontal: 'right', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  colHdrLeft: {
+    font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: X_MUTED } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE2 } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  rowLabel: {
+    font: { name: 'Calibri', sz: 11, color: { rgb: X_MUTED } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  rowLabelCost: {
+    font: { name: 'Calibri', sz: 11, color: { rgb: X_RED } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  data: {
+    font: { name: 'Calibri', sz: 11, color: { rgb: X_TEXT } },
+    alignment: { horizontal: 'right', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  dataMuted: {
+    font: { name: 'Calibri', sz: 11, color: { rgb: X_MUTED } },
+    alignment: { horizontal: 'right', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  dataAvg: {
+    font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: X_TEXT } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE2 } },
+    alignment: { horizontal: 'right', vertical: 'center' },
+    border: {
+      top:    { style: 'medium', color: { rgb: X_BORDER } },
+      bottom: { style: 'thin',   color: { rgb: X_BORDER } },
+      left:   { style: 'medium', color: { rgb: X_BORDER } },
+    },
+  },
+  kpiLabel: {
+    font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: X_MUTED } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  kpiValue: {
+    font: { name: 'Calibri', sz: 12, bold: true, color: { rgb: X_TEXT } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE } },
+    alignment: { horizontal: 'right', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+};
+
+// Helper: clone a base style and overlay a font color (for pos/neg signalling)
+function styleColor(base, rgb) {
+  return Object.assign({}, base, {
+    font: Object.assign({}, base.font, { color: { rgb } }),
+  });
+}
+
+// Cell builders — each returns a SheetJS cell object with type, format, and style.
+function cellText(v, style)   { return { v: v == null ? '' : String(v), t: 's', s: style || S.data }; }
+function cellNum(v, fmt, style) {
+  if (v == null || isNaN(v) || !isFinite(v)) {
+    return { v: '—', t: 's', s: style || S.dataMuted };
+  }
+  return { v: Number(v), t: 'n', z: fmt || FMT_DOLLAR, s: style || S.data };
+}
+function cellDate(d, style) {
+  return { v: d, t: 'd', z: FMT_DATE, s: style || S.metaValue };
+}
+// Auto-tint a numeric cell red for negative / green for positive (used in
+// metric rows where the on-screen module colours cashflow/yield/CoC/ROE).
+function cellSignedNum(v, fmt, baseStyle) {
+  if (v == null || isNaN(v) || !isFinite(v)) {
+    return { v: '—', t: 's', s: baseStyle || S.dataMuted };
+  }
+  const styled = v < 0 ? styleColor(baseStyle || S.data, X_RED)
+                       : (v > 0 ? styleColor(baseStyle || S.data, X_GREEN) : (baseStyle || S.data));
+  return { v: Number(v), t: 'n', z: fmt || FMT_DOLLAR, s: styled };
+}
+
+function exportToExcel() {
+  if (!_current || typeof XLSX === 'undefined') {
+    if (typeof XLSX === 'undefined') {
+      console.error('[finance export] XLSX library not loaded');
+      alert('Export library failed to load — refresh the page and try again.');
+    }
+    return;
+  }
+
+  const d = _current.data;
+  const r = runModel(d);
+  const years   = r.years || [];
+  const holdYrs = years.filter(y => y.yr > 0);
+  const avg     = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+  const exit    = years[years.length - 1] || {};
+  const propAddr   = _current.address || 'Property';
+  const propSuburb = _current.suburb  || '';
+
+  const wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: Summary ──────────────────────────────────────────────────────
+  {
+    const aoa = [];
+    // Title (merged across cols 0-1)
+    aoa.push([cellText('Financial Model', S.title), null]);
+    aoa.push([
+      cellText('Property',     S.metaLabel),
+      cellText(propAddr + (propSuburb ? ', ' + propSuburb : ''), S.metaValue),
+    ]);
+    aoa.push([cellText('State (duty)', S.metaLabel), cellText(d._state || 'NSW', S.metaValue)]);
+    aoa.push([cellText('Generated',    S.metaLabel), cellDate(new Date(), S.metaValue)]);
+    aoa.push([null, null]);
+
+    aoa.push([cellText('KEY METRICS', S.sectionHdr), cellText('', S.sectionHdr)]);
+    const cmpMean = comparableMean(d, r);
+    const kpis = [
+      ['Acquisition Price',          d.acquisitionPrice,        FMT_DOLLAR, null],
+      ['Comparable Value (mean)',    cmpMean,                   FMT_DOLLAR, null],
+      ['Total Loan',                 r.loan,                    FMT_DOLLAR, null],
+      ['Cash Required (Upfront)',    r.upfront,                 FMT_DOLLAR, null],
+      ['Cash Required (Settlement)', r.cashAtSettlement,        FMT_DOLLAR, null],
+      ['Cash Required (Total)',      r.upfront + r.cashAtSettlement, FMT_DOLLAR, null],
+      ['Net Income (Yr 1)',          r.netIncomeYr1,            FMT_DOLLAR, 'signed'],
+      ['Asset Value (Exit)',         exit.assetValue,           FMT_DOLLAR, null],
+      ['NPV at Exit',                exit.npvAssetValue,        FMT_DOLLAR, 'signed'],
+    ];
+    kpis.forEach(([label, val, fmt, tint]) => {
+      aoa.push([
+        cellText(label, S.kpiLabel),
+        tint === 'signed' ? cellSignedNum(val, fmt, S.kpiValue) : cellNum(val, fmt, S.kpiValue),
+      ]);
+    });
+    aoa.push([null, null]);
+
+    aoa.push([cellText('RUN PARAMETERS', S.sectionHdr), cellText('', S.sectionHdr)]);
+    const params = [
+      ['Term of Ownership (yrs)',    d.termOfOwnership,      FMT_INT],
+      ['Settlement Lag (yrs)',       d.settlementLag,        FMT_NUM3],
+      ['Hold to Revaluation (yrs)',  d.holdDurationPreReval, FMT_INT],
+      ['LVR',                        d.lvr,                  FMT_PCT2],
+      ['Interest Rate',              d.interestRate,         FMT_PCT2],
+      ['Rental Growth',              d.rentalGrowth,         FMT_PCT2],
+      ['Capital Growth',             d.capitalGrowth,        FMT_PCT2],
+      ['Cost of Capital',            d.costOfCapital,        FMT_PCT2],
+    ];
+    params.forEach(([label, val, fmt]) => {
+      aoa.push([cellText(label, S.rowLabel), cellNum(val, fmt, S.data)]);
+    });
+
+    const ws = aoaToSheet(aoa);
+    ws['!cols']   = [{ wch: 32 }, { wch: 22 }];
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }, // Title merge across both cols
+      { s: { r: 5, c: 0 }, e: { r: 5, c: 1 } }, // KEY METRICS hdr
+      { s: { r: 5 + kpis.length + 2, c: 0 }, e: { r: 5 + kpis.length + 2, c: 1 } }, // RUN PARAMS hdr
+    ];
+    // Title row taller
+    ws['!rows'] = [{ hpt: 26 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Summary');
+  }
+
+  // ── Sheet 2: Cashflow ─────────────────────────────────────────────────────
+  {
+    const aoa = [];
+    // Title row
+    const titleRow = [cellText('Cashflow Projection', S.title)];
+    for (let i = 0; i < years.length + (holdYrs.length ? 1 : 0); i++) titleRow.push(null);
+    aoa.push(titleRow);
+    aoa.push([]); // spacer
+
+    // Column headers
+    const yrHeader = [cellText('', S.colHdrLeft)].concat(
+      years.map(y => cellText('Yr ' + y.yr, S.colHdr))
+    );
+    if (holdYrs.length) yrHeader.push(cellText('Avg', S.colHdr));
+    aoa.push(yrHeader);
+
+    // ── Funds to Complete section header (spans all cols visually) ──────
+    const ftcHeaderRow = [cellText('FUNDS TO COMPLETE', S.sectionHdr)];
+    years.forEach(() => ftcHeaderRow.push(cellText('', S.sectionHdr)));
+    if (holdYrs.length) ftcHeaderRow.push(cellText('', S.sectionHdr));
+    aoa.push(ftcHeaderRow);
+
+    // Read selected offer for deposit tranches
+    const _lp = window.getPipelineData ? window.getPipelineData() : {};
+    const entry = _lp[_current.pipelineId] || _current.pipelineEntry;
+    const offers = entry?.offers || [];
+    const _offeredPrice = _current.offeredPrice;
+    const selOffer = _offeredPrice
+      ? offers.find(o => { const n = parseFloat(String(o.price||'').replace(/[^0-9.]/g,'')); return Math.abs(n - _offeredPrice) < 1; })
+      : offers[0];
+    const deps = (selOffer?.deposits || entry?.terms?.deposits || []).filter(dep => dep.amount);
+
+    const settlementYr = r.settlementYr;
+    function fundsRow(label, yr, amt) {
+      const row = [cellText(label, S.rowLabelCost)];
+      years.forEach(y => {
+        if (y.yr === yr) {
+          row.push(cellNum(-Math.abs(amt), FMT_DOLLAR, styleColor(S.data, X_RED)));
+        } else {
+          row.push(cellText('', S.data));
+        }
+      });
+      if (holdYrs.length) row.push(cellText('', S.dataAvg));
+      return row;
+    }
+
+    if (d.stampDuty)           aoa.push(fundsRow('Stamp Duty',          settlementYr, d.stampDuty));
+    if (d.valuationCost)       aoa.push(fundsRow('Valuation',           settlementYr, d.valuationCost));
+    if (d.solicitorCost)       aoa.push(fundsRow('Solicitor',           settlementYr, d.solicitorCost));
+    if (d.inspections)         aoa.push(fundsRow('Inspections',         settlementYr, d.inspections));
+    if (r.commission)          aoa.push(fundsRow('Commission',          settlementYr, r.commission));
+    if (r.bankDepositRequired) aoa.push(fundsRow('Equity Contribution', settlementYr, r.bankDepositRequired));
+
+    let cumulativeDays = 0;
+    deps.forEach((dep, i) => {
+      const amt = parseDepositAmount(dep.amount, d.acquisitionPrice);
+      if (isNaN(amt) || !amt || amt <= 0) return;
+      const dueDays = parseDueDays(dep.due);
+      cumulativeDays += dueDays !== null ? dueDays : 0;
+      const dueYear = Math.floor(cumulativeDays / 365);
+      const pct = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(1) + '%' : '';
+      const dueStr = typeof dep.due === 'number' ? dep.due + ' days' : (dep.due || '');
+      const label = 'Deposit ' + (i + 1) + (pct ? ' (' + pct + (dueStr ? ' · ' + dueStr : '') + ')' : '');
+      aoa.push(fundsRow(label, dueYear, amt));
+    });
+
+    // ── Metrics section ────────────────────────────────────────────────
+    const metricsHdr = [cellText('METRICS', S.sectionHdr)];
+    years.forEach(() => metricsHdr.push(cellText('', S.sectionHdr)));
+    if (holdYrs.length) metricsHdr.push(cellText('', S.sectionHdr));
+    aoa.push(metricsHdr);
+
+    // Tint flag: 'signed' = green/red based on sign, 'muted' = muted style, null = standard
+    function metricRow(label, valFn, fmt, opts) {
+      opts = opts || {};
+      const dataStyle = opts.muted ? S.dataMuted : S.data;
+      const avgStyle  = opts.muted
+        ? Object.assign({}, S.dataAvg, { font: Object.assign({}, S.dataAvg.font, { color: { rgb: X_MUTED } }) })
+        : S.dataAvg;
+      const row = [cellText(label, S.rowLabel)];
+      years.forEach(y => {
+        const v = valFn(y);
+        if (opts.tint === 'signed') row.push(cellSignedNum(v, fmt, dataStyle));
+        else                        row.push(cellNum(v, fmt, dataStyle));
+      });
+      if (holdYrs.length) {
+        let a;
+        if (opts.avgFn) a = opts.avgFn();
+        else            a = avg(holdYrs.map(valFn).filter(v => v != null && isFinite(v)));
+        if (opts.tint === 'signed') row.push(cellSignedNum(a, fmt, avgStyle));
+        else                        row.push(cellNum(a, fmt, avgStyle));
+      }
+      return row;
+    }
+
+    aoa.push(metricRow('Net Rent',        y => y.rent, FMT_DOLLAR, { tint: 'signed' }));
+    aoa.push(metricRow('Yield',           y => d.acquisitionPrice ? y.rent / d.acquisitionPrice : null, FMT_PCT2,
+      { muted: true, avgFn: () => d.acquisitionPrice ? avg(holdYrs.map(y => y.rent)) / d.acquisitionPrice : null }));
+    aoa.push(metricRow('Principal (Start)', y => y.principalStart, FMT_DOLLAR, { avgFn: () => null }));
+    aoa.push(metricRow('Principal Paid',  y => y.principalPaid, FMT_DOLLAR));
+    aoa.push(metricRow('Interest Paid',   y => y.interest,      FMT_DOLLAR));
+    aoa.push(metricRow('Principal (End)', y => y.principalEnd, FMT_DOLLAR, { avgFn: () => null }));
+    aoa.push(metricRow('Cashflow',        y => y.cashflow, FMT_DOLLAR, { tint: 'signed' }));
+    aoa.push(metricRow('CoC (Rolling)',   y => y.cashEquityStart > 0 ? y.coc : null, FMT_PCT2, {
+      tint: 'signed', muted: true,
+      avgFn: () => { const arr = holdYrs.filter(y => y.cashEquityStart > 0).map(y => y.coc); return arr.length ? avg(arr) : null; },
+    }));
+    aoa.push(metricRow('ROE',             y => y.cashEquityStart > 0 ? y.roe : null, FMT_PCT2, {
+      tint: 'signed', muted: true,
+      avgFn: () => { const arr = holdYrs.filter(y => y.cashEquityStart > 0).map(y => y.roe); return arr.length ? avg(arr) : null; },
+    }));
+    aoa.push(metricRow('Asset Value',     y => y.assetValue, FMT_DOLLAR));
+    aoa.push(metricRow('Cost of Funds',   y => y.costOfFunds, FMT_DOLLAR, { muted: true, avgFn: () => null }));
+    aoa.push(metricRow('NPV (Asset Val)', y => y.npvAssetValue, FMT_DOLLAR, { tint: 'signed', avgFn: () => null }));
+
+    const ws = aoaToSheet(aoa);
+    const cols = [{ wch: 28 }].concat(years.map(() => ({ wch: 14 })));
+    if (holdYrs.length) cols.push({ wch: 14 });
+    ws['!cols'] = cols;
+    // Title spans all columns; height taller
+    const totalCols = 1 + years.length + (holdYrs.length ? 1 : 0);
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } },
+      // Section headers (full-width visual band)
+      { s: { r: 3, c: 0 }, e: { r: 3, c: totalCols - 1 } }, // FUNDS TO COMPLETE
+    ];
+    // Find METRICS section row index to merge
+    const metricsRowIdx = aoa.findIndex(row => row && row[0] && row[0].v === 'METRICS');
+    if (metricsRowIdx > 0) {
+      ws['!merges'].push({ s: { r: metricsRowIdx, c: 0 }, e: { r: metricsRowIdx, c: totalCols - 1 } });
+    }
+    ws['!rows'] = [{ hpt: 26 }]; // title row tall
+    // Freeze the header row + the first column
+    ws['!freeze'] = { xSplit: 1, ySplit: 3 };
+    XLSX.utils.book_append_sheet(wb, ws, 'Cashflow');
+  }
+
+  // ── Sheet 3: Inputs ───────────────────────────────────────────────────────
+  {
+    const aoa = [];
+    aoa.push([cellText('Model Inputs', S.title), null, null]);
+    aoa.push([]);
+    aoa.push([
+      cellText('Variable', S.colHdrLeft),
+      cellText('Value',    S.colHdr),
+      cellText('Unit',     S.colHdrLeft),
+    ]);
+
+    function section(title) {
+      aoa.push([
+        cellText(title.toUpperCase(), S.sectionHdr),
+        cellText('', S.sectionHdr),
+        cellText('', S.sectionHdr),
+      ]);
+    }
+    function rowD(label, val, fmt, unit) {
+      aoa.push([
+        cellText(label, S.rowLabel),
+        cellNum(val, fmt || FMT_DOLLAR, S.data),
+        cellText(unit || '', S.dataMuted),
+      ]);
+    }
+
+    section('Acquisition & Loan');
+    rowD('Acquisition Price',       d.acquisitionPrice, FMT_DOLLAR, '$');
+    rowD('LVR',                     d.lvr,              FMT_PCT2,   '%');
+    rowD('Interest Rate',           d.interestRate,     FMT_PCT2,   '% p.a.');
+    rowD('Deposit %',               d.depositPct,       FMT_PCT2,   '%');
+    rowD('Sales Commission %',      d.salesCommissionPct, FMT_PCT2, '%');
+
+    section('Growth & Time');
+    rowD('Rental Growth',           d.rentalGrowth,     FMT_PCT2,   '% p.a.');
+    rowD('Capital Growth',          d.capitalGrowth,    FMT_PCT2,   '% p.a.');
+    rowD('Cost of Capital',         d.costOfCapital,    FMT_PCT2,   '% p.a.');
+    rowD('Term of Ownership',       d.termOfOwnership,  FMT_INT,    'yrs');
+    rowD('Hold to Revaluation',     d.holdDurationPreReval, FMT_INT,'yrs');
+    rowD('Settlement Lag',          d.settlementLag,    FMT_NUM3,   'yrs');
+    rowD('Project Duration',        d.projectDuration,  FMT_INT,    'yrs');
+    rowD('% Profit → Debt Reduction', d.profitUsedForDebt, FMT_PCT2,'%');
+    rowD('Retained Earnings %',     d.retainedEarningsPct, FMT_PCT2,'%');
+
+    section('Purchase Costs');
+    rowD('Stamp Duty',              d.stampDuty,        FMT_DOLLAR, '$');
+    rowD('Valuation',               d.valuationCost,    FMT_DOLLAR, '$');
+    rowD('Solicitor',               d.solicitorCost,    FMT_DOLLAR, '$');
+    rowD('Inspections',             d.inspections,      FMT_DOLLAR, '$');
+
+    section('Operating Expenses (annual)');
+    rowD('Council',                 d.council,          FMT_DOLLAR, '$');
+    rowD('Water',                   d.water,            FMT_DOLLAR, '$');
+    rowD('Cleaning',                d.cleaning,         FMT_DOLLAR, '$');
+    rowD('Insurance',               d.insurance,        FMT_DOLLAR, '$');
+    rowD('Land Tax',                d.landTax,          FMT_DOLLAR, '$');
+    rowD('Common Power',            d.commonPower,      FMT_DOLLAR, '$');
+    rowD('Fire Services',           d.fireServices,     FMT_DOLLAR, '$');
+    rowD('Maintenance',             d.maintenance,      FMT_DOLLAR, '$');
+    rowD('Other',                   d.other,            FMT_DOLLAR, '$');
+    rowD('Management Fee %',        d.managementFeePct, FMT_PCT2,   '%');
+    rowD('Sinking Fund %',          d.sinkingFundPct,   FMT_PCT2,   '%');
+
+    section('Revenue (annual)');
+    rowD('Gross Rent',              d.weeklyRent,       FMT_DOLLAR, '$');
+    rowD('Other Revenue',           d.revenueOther,     FMT_DOLLAR, '$');
+
+    section('Comparable Inputs');
+    rowD('NDA (Acres)',                 d.netDevelopableAreaAcres, FMT_NUM3, 'acres');
+    rowD('Comparable Value ($/NDA)',    d.comparableValuePerNDA,   FMT_DOLLAR, '$');
+    rowD('Residual Land Val',           d.residualLandVal,         FMT_DOLLAR, '$');
+    rowD('Lots',                        d.lots,                    FMT_INT, '');
+    rowD('Av Lot Size',                 d.avLotSizeSqm,            FMT_INT, 'sqm');
+    rowD('Rate per sqm',                d.ratePerSqm,              FMT_DOLLAR, '$');
+    rowD('Profit Margin %',             d.profitMarginPct,         FMT_PCT2, '%');
+    rowD('TDC per Lot',                 d.tdcPerLot,               FMT_DOLLAR, '$');
+    rowD('Target Yield %',              d.targetYieldPct,          FMT_PCT2, '% p.a.');
+
+    const ws = aoaToSheet(aoa);
+    ws['!cols']   = [{ wch: 32 }, { wch: 18 }, { wch: 10 }];
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 2 } }]; // title across 3 cols
+    // Also merge each section header across all 3 cols — find them by content
+    aoa.forEach((row, i) => {
+      if (row && row[0] && row[0].s === S.sectionHdr) {
+        ws['!merges'].push({ s: { r: i, c: 0 }, e: { r: i, c: 2 } });
+      }
+    });
+    ws['!rows'] = [{ hpt: 26 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Inputs');
+  }
+
+  // ── Sheet 4: Comparables ──────────────────────────────────────────────────
+  {
+    const aoa = [];
+    aoa.push([cellText('Comparable Value Analysis', S.title), null, null, null]);
+    aoa.push([]);
+    aoa.push([
+      cellText('Method',   S.colHdrLeft),
+      cellText('Detail',   S.colHdrLeft),
+      cellText('Value',    S.colHdr),
+      cellText('Included', S.colHdrLeft),
+    ]);
+
+    const methods = [
+      ['Method 1: Gross Area',
+       `${(d.netDevelopableAreaAcres||0).toFixed(3)} NDA acres × $${(d.comparableValuePerNDA||0).toLocaleString()}/NDA + residual`,
+       r.m1, d.includeM1 !== false],
+      ['Method 2: 30% of GRV',
+       `GRV ${fmtDollar(r.grv)} ÷ 3 · NSA ${(r.nsa||0).toLocaleString()} sqm`,
+       r.m2, d.includeM2 !== false],
+      ['Method 3: Development Estimate (TDC $/lot)',
+       'GRV − TDC − holding cost − interest − profit margin',
+       r.m3, d.includeM3 !== false],
+      ['Method 5: Derived from Yield',
+       `Net Income ${fmtDollar(r.netIncomeYr1)} ÷ ${fmtPct(d.targetYieldPct)} target yield`,
+       r.m5, d.includeM5 !== false],
+    ];
+    methods.forEach(([label, detail, val, included]) => {
+      const incStyle = included
+        ? S.data
+        : styleColor(S.data, X_MUTED);
+      aoa.push([
+        cellText(label,  S.rowLabel),
+        cellText(detail, S.dataMuted),
+        cellSignedNum(val, FMT_DOLLAR, S.data),
+        cellText(included ? 'Yes' : 'No', incStyle),
+      ]);
+    });
+
+    aoa.push([]);
+    const cmpMean = comparableMean(d, r);
+    aoa.push([
+      cellText('Mean (included methods only)', styleColor(S.rowLabel, X_ACCENT)),
+      cellText('', S.data),
+      cellNum(cmpMean, FMT_DOLLAR, Object.assign({}, S.kpiValue, {
+        font: { name: 'Calibri', sz: 12, bold: true, color: { rgb: X_ACCENT } },
+      })),
+      cellText('', S.data),
+    ]);
+    aoa.push([]);
+
+    aoa.push([cellText('REFERENCE', S.sectionHdr),
+              cellText('', S.sectionHdr),
+              cellText('', S.sectionHdr),
+              cellText('', S.sectionHdr)]);
+    aoa.push([cellText('GRV (ex GST)',      S.rowLabel), cellText('', S.data), cellNum(r.grv, FMT_DOLLAR), cellText('', S.data)]);
+    aoa.push([cellText('Net Sellable Area', S.rowLabel), cellText('', S.data), cellNum(r.nsa, FMT_INT),    cellText('', S.data)]);
+    aoa.push([cellText('Acquisition Price', S.rowLabel), cellText('', S.data), cellNum(d.acquisitionPrice, FMT_DOLLAR), cellText('', S.data)]);
+
+    const ws = aoaToSheet(aoa);
+    ws['!cols']   = [{ wch: 42 }, { wch: 56 }, { wch: 18 }, { wch: 10 }];
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } }];
+    // Merge any section header rows across all 4 cols
+    aoa.forEach((row, i) => {
+      if (row && row[0] && row[0].s === S.sectionHdr && i !== 0) {
+        ws['!merges'].push({ s: { r: i, c: 0 }, e: { r: i, c: 3 } });
+      }
+    });
+    ws['!rows'] = [{ hpt: 26 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Comparables');
+  }
+
+  // Write file — filename includes property address (sanitised)
+  const safeAddr = (propAddr || 'Property').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const filename = `Financial Model - ${safeAddr}.xlsx`;
+  XLSX.writeFile(wb, filename, { compression: true, bookType: 'xlsx' });
+}
+
+// Convert an aoa where each cell is either null (skip) or a cell-descriptor
+// object ({v, t, z, s, ...}) into a SheetJS worksheet, preserving styles.
+function aoaToSheet(aoa) {
+  const ws = {};
+  let maxR = 0, maxC = 0;
+  aoa.forEach((row, R) => {
+    if (!row || !row.length) return;
+    row.forEach((cell, C) => {
+      if (cell == null) return;
+      const addr = XLSX.utils.encode_cell({ r: R, c: C });
+      if (typeof cell === 'object' && 't' in cell) {
+        ws[addr] = cell;
+      } else {
+        ws[addr] = { v: cell, t: typeof cell === 'number' ? 'n' : 's' };
+      }
+      if (R > maxR) maxR = R;
+      if (C > maxC) maxC = C;
+    });
+  });
+  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
+  return ws;
+}
+
+function setExportBtnVisible(visible) {
+  const btn = document.getElementById('financeExportBtn');
+  if (btn) btn.style.display = visible ? '' : 'none';
+}
+
 // ─── Input binding ────────────────────────────────────────────────────────────
 
 function autoSave() {
@@ -1405,11 +2089,25 @@ function bindInputs(r) {
       this.appendChild(input);
       input.focus();
       input.select();
+      // Tooltip + live formula-mode visual cue (V81.3)
+      input.title = 'Tip: start with = for a formula (e.g. =2*400, =(600+800)*2, =120/6)';
+      const updateFormulaCue = () => {
+        input.classList.toggle('fin-input-formula', input.value.trim().startsWith('='));
+      };
+      input.addEventListener('input', updateFormulaCue);
+      updateFormulaCue();
       const commit = () => {
         const annualFields = ['council','water','cleaning','insurance','landTax',
           'commonPower','fireServices','maintenance','other','weeklyRent','revenueOther'];
+        const rawInput = input.value.trim();
+        const isFormula = rawInput.startsWith('=');
         let val;
-        if (annualFields.includes(key)) {
+        if (isFormula) {
+          // Formula mode — evaluate as a plain number (no /w /m /y interpretation).
+          // For pct fields the result is the displayed percent (divided by 100 below).
+          val = evalFormula(rawInput);
+          if (!isFinite(val)) val = _current.data[key] || 0;
+        } else if (annualFields.includes(key)) {
           val = parseAnnual(input.value);
         } else {
           val = parseFloat(input.value.replace(/[^0-9.-]/g, ''));
@@ -1452,6 +2150,19 @@ function bindInputs(r) {
   document.getElementById('finCostsInCashflow')?.addEventListener('change', e => {
     _costsInCashflow = e.target.checked;
     renderFinanceView();
+  });
+
+  // Stamp Duty — recalculate from current acquisition price + state
+  document.getElementById('finStampRefresh')?.addEventListener('click', e => {
+    e.stopPropagation(); // don't trigger the .fin-editable click that opens the input
+    if (!_current) return;
+    const d = _current.data;
+    const recalc = calcStampDuty(d.acquisitionPrice || 0, d._state || 'NSW');
+    d.stampDuty = recalc;
+    d.updatedAt = Date.now();
+    _allModels[_current.pipelineId] = d;
+    renderFinanceView();
+    autoSave();
   });
 
   // Funds to Complete — chevron toggles row visibility (don't fire when clicking checkbox)
@@ -1533,11 +2244,34 @@ async function initFinance() {
     _financeInitDone = true;
 
     document.getElementById('financeNavBtn')?.addEventListener('click', () => {
-      if (!_financeVisible) renderFinanceView();
-      toggleFinance();
+      if (_financeVisible) {
+        // Nav button is a module toggle — close the whole module, not in-module back
+        closeFinanceModule();
+      } else {
+        // Always open to the property-selector list, not the last viewed deal (V81.3)
+        _current = null;
+        renderFinanceView();
+        toggleFinance(true);
+      }
     });
 
-    document.getElementById('financeClose')?.addEventListener('click', () => toggleFinance(false));
+    // X close button — CAPTURE PHASE + stopImmediatePropagation so we preempt
+    // the legacy capture-phase handler in index.html that hardcodes
+    // Router.navigate('/mapping'). This was the root cause of the back-nav
+    // bug: even after handleFinanceClose was correct, the index.html handler
+    // ran first and stopped propagation, so our logic never executed.
+    // Attaching first in capture phase + stopImmediatePropagation blocks the
+    // legacy listener entirely.
+    document.getElementById('financeClose')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      handleFinanceClose();
+    }, true);
+
+    document.getElementById('financeExportBtn')?.addEventListener('click', () => {
+      try { exportToExcel(); }
+      catch (err) { console.error('[finance export]', err); alert('Excel export failed: ' + (err.message || err)); }
+    });
   }
 
   // Always (re)load saved models — safe to call multiple times
@@ -1546,8 +2280,10 @@ async function initFinance() {
 
 window.FinanceModule = {
   open:   openFinanceForProperty,
+  close:  handleFinanceClose,
   toggle: toggleFinance,
   init:   initFinance,
+  export: exportToExcel,
 };
 
 initFinance();
