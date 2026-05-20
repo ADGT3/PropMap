@@ -1195,7 +1195,7 @@
           e.stopPropagation();
           const evidenceId = btn.getAttribute('data-evidence-id');
           if (!evidenceId) return;
-          if (!confirm('Delete this file? This only removes the agent-uploaded copy. The applicant\'s submission stays intact.')) return;
+          if (!confirm("Delete this file? This only removes the agent-uploaded copy. The applicant's submission stays intact.")) return;
           btn.disabled = true;
           try {
             const r = await fetch(`/api/applications-evidence?id=${encodeURIComponent(evidenceId)}`, {
