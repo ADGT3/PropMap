@@ -1368,28 +1368,141 @@ function renderComparableValues(d, r) {
 }
 
 // ─── Export to Excel (V81.3) ──────────────────────────────────────────────────
+// Styled to match the PropMap finance module UI — warm cream backgrounds,
+// gold accent, muted-grey labels, green/red for pos/neg. Cell styling requires
+// xlsx-js-style (loaded via CDN in index.html), which is a drop-in for the
+// SheetJS community edition and writes styles that Excel renders.
 
-// Format codes — applied via cell.z so values stay as live Excel numbers
-const FMT_DOLLAR    = '$#,##0;($#,##0)';
-const FMT_DOLLAR_K  = '$#,##0,"k";($#,##0,"k")';
-const FMT_PCT2      = '0.00%;(0.00%)';
-const FMT_INT       = '#,##0';
-const FMT_NUM3      = '0.000';
-const FMT_DATE      = 'dd-mmm-yyyy';
+// ── Palette (mirrors CSS vars in styles.css / finance-styles.css) ──
+const X_BG       = 'F5F4F0'; // --bg (page)
+const X_SURFACE  = 'FFFFFF'; // --surface (cards, table body)
+const X_SURFACE2 = 'F0EEEA'; // --surface2 (headers, averages, hover)
+const X_BORDER   = 'E6E6E6'; // --border solid equivalent
+const X_TEXT     = '1A1A1A'; // --text
+const X_MUTED    = '666666'; // --muted
+const X_ACCENT   = 'C4841A'; // --accent (gold)
+const X_RED      = 'C0392B'; // --red
+const X_GREEN    = '27AE60'; // --green
 
-// Build a single cell descriptor for SheetJS aoa_to_sheet via _cells override.
-// Returns { v, t, z, s } object that SheetJS recognises.
-function $n(v, fmt) {
-  if (v == null || isNaN(v) || !isFinite(v)) return { v: '', t: 's' };
-  return { v: Number(v), t: 'n', z: fmt || FMT_DOLLAR };
+// Number formats
+const FMT_DOLLAR = '$#,##0;[Red]($#,##0)';
+const FMT_PCT2   = '0.00%;[Red](0.00%)';
+const FMT_INT    = '#,##0';
+const FMT_NUM3   = '0.000';
+const FMT_DATE   = 'dd-mmm-yyyy';
+
+// ── Style presets ───────────────────────────────────────────────────────────
+const S = {
+  title: {
+    font: { name: 'Calibri', sz: 16, bold: true, color: { rgb: X_ACCENT } },
+    alignment: { vertical: 'center' },
+  },
+  metaLabel: {
+    font: { name: 'Calibri', sz: 10, color: { rgb: X_MUTED } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+  },
+  metaValue: {
+    font: { name: 'Calibri', sz: 11, color: { rgb: X_TEXT } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+  },
+  sectionHdr: {
+    font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: X_ACCENT } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE2 } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    border: {
+      top:    { style: 'thin', color: { rgb: X_BORDER } },
+      bottom: { style: 'thin', color: { rgb: X_BORDER } },
+    },
+  },
+  colHdr: {
+    font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: X_MUTED } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE2 } },
+    alignment: { horizontal: 'right', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  colHdrLeft: {
+    font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: X_MUTED } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE2 } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  rowLabel: {
+    font: { name: 'Calibri', sz: 11, color: { rgb: X_MUTED } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  rowLabelCost: {
+    font: { name: 'Calibri', sz: 11, color: { rgb: X_RED } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  data: {
+    font: { name: 'Calibri', sz: 11, color: { rgb: X_TEXT } },
+    alignment: { horizontal: 'right', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  dataMuted: {
+    font: { name: 'Calibri', sz: 11, color: { rgb: X_MUTED } },
+    alignment: { horizontal: 'right', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  dataAvg: {
+    font: { name: 'Calibri', sz: 11, bold: true, color: { rgb: X_TEXT } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE2 } },
+    alignment: { horizontal: 'right', vertical: 'center' },
+    border: {
+      top:    { style: 'medium', color: { rgb: X_BORDER } },
+      bottom: { style: 'thin',   color: { rgb: X_BORDER } },
+      left:   { style: 'medium', color: { rgb: X_BORDER } },
+    },
+  },
+  kpiLabel: {
+    font: { name: 'Calibri', sz: 10, bold: true, color: { rgb: X_MUTED } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+  kpiValue: {
+    font: { name: 'Calibri', sz: 12, bold: true, color: { rgb: X_TEXT } },
+    fill: { patternType: 'solid', fgColor: { rgb: X_SURFACE } },
+    alignment: { horizontal: 'right', vertical: 'center' },
+    border: { bottom: { style: 'thin', color: { rgb: X_BORDER } } },
+  },
+};
+
+// Helper: clone a base style and overlay a font color (for pos/neg signalling)
+function styleColor(base, rgb) {
+  return Object.assign({}, base, {
+    font: Object.assign({}, base.font, { color: { rgb } }),
+  });
 }
-function $s(v) { return { v: v == null ? '' : String(v), t: 's' }; }
-function $b(v) { return { v: String(v), t: 's', s: { font: { bold: true } } }; }
+
+// Cell builders — each returns a SheetJS cell object with type, format, and style.
+function cellText(v, style)   { return { v: v == null ? '' : String(v), t: 's', s: style || S.data }; }
+function cellNum(v, fmt, style) {
+  if (v == null || isNaN(v) || !isFinite(v)) {
+    return { v: '—', t: 's', s: style || S.dataMuted };
+  }
+  return { v: Number(v), t: 'n', z: fmt || FMT_DOLLAR, s: style || S.data };
+}
+function cellDate(d, style) {
+  return { v: d, t: 'd', z: FMT_DATE, s: style || S.metaValue };
+}
+// Auto-tint a numeric cell red for negative / green for positive (used in
+// metric rows where the on-screen module colours cashflow/yield/CoC/ROE).
+function cellSignedNum(v, fmt, baseStyle) {
+  if (v == null || isNaN(v) || !isFinite(v)) {
+    return { v: '—', t: 's', s: baseStyle || S.dataMuted };
+  }
+  const styled = v < 0 ? styleColor(baseStyle || S.data, X_RED)
+                       : (v > 0 ? styleColor(baseStyle || S.data, X_GREEN) : (baseStyle || S.data));
+  return { v: Number(v), t: 'n', z: fmt || FMT_DOLLAR, s: styled };
+}
 
 function exportToExcel() {
   if (!_current || typeof XLSX === 'undefined') {
     if (typeof XLSX === 'undefined') {
-      console.error('[finance export] SheetJS (XLSX) not loaded');
+      console.error('[finance export] XLSX library not loaded');
       alert('Export library failed to load — refresh the page and try again.');
     }
     return;
@@ -1400,7 +1513,6 @@ function exportToExcel() {
   const years   = r.years || [];
   const holdYrs = years.filter(y => y.yr > 0);
   const avg     = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-  const lag     = Math.round(d.settlementLag || 0);
   const exit    = years[years.length - 1] || {};
   const propAddr   = _current.address || 'Property';
   const propSuburb = _current.suburb  || '';
@@ -1410,51 +1522,87 @@ function exportToExcel() {
   // ── Sheet 1: Summary ──────────────────────────────────────────────────────
   {
     const aoa = [];
-    aoa.push([$b('Financial Model')]);
-    aoa.push([$s('Property'),       $s(propAddr + (propSuburb ? ', ' + propSuburb : ''))]);
-    aoa.push([$s('State (duty)'),   $s(d._state || 'NSW')]);
-    aoa.push([$s('Generated'),      { v: new Date(), t: 'd', z: FMT_DATE }]);
-    aoa.push([]);
-    aoa.push([$b('Key Metrics')]);
-    aoa.push([$s('Metric'), $s('Value')]);
-    aoa.push([$s('Acquisition Price'),         $n(d.acquisitionPrice)]);
+    // Title (merged across cols 0-1)
+    aoa.push([cellText('Financial Model', S.title), null]);
+    aoa.push([
+      cellText('Property',     S.metaLabel),
+      cellText(propAddr + (propSuburb ? ', ' + propSuburb : ''), S.metaValue),
+    ]);
+    aoa.push([cellText('State (duty)', S.metaLabel), cellText(d._state || 'NSW', S.metaValue)]);
+    aoa.push([cellText('Generated',    S.metaLabel), cellDate(new Date(), S.metaValue)]);
+    aoa.push([null, null]);
+
+    aoa.push([cellText('KEY METRICS', S.sectionHdr), cellText('', S.sectionHdr)]);
     const cmpMean = comparableMean(d, r);
-    aoa.push([$s('Comparable Value (mean)'),   cmpMean != null ? $n(cmpMean) : $s('—')]);
-    aoa.push([$s('Total Loan'),                $n(r.loan)]);
-    aoa.push([$s('Cash Required (Upfront)'),   $n(r.upfront)]);
-    aoa.push([$s('Cash Required (Settlement)'),$n(r.cashAtSettlement)]);
-    aoa.push([$s('Cash Required (Total)'),     $n(r.upfront + r.cashAtSettlement)]);
-    aoa.push([$s('Net Income (Yr 1)'),         $n(r.netIncomeYr1)]);
-    aoa.push([$s('Asset Value (Exit)'),        $n(exit.assetValue)]);
-    aoa.push([$s('NPV at Exit'),               $n(exit.npvAssetValue)]);
-    aoa.push([]);
-    aoa.push([$b('Run Parameters')]);
-    aoa.push([$s('Term of Ownership (yrs)'),   $n(d.termOfOwnership, FMT_INT)]);
-    aoa.push([$s('Settlement Lag (yrs)'),      $n(d.settlementLag,   FMT_NUM3)]);
-    aoa.push([$s('Hold to Revaluation (yrs)'), $n(d.holdDurationPreReval, FMT_INT)]);
-    aoa.push([$s('LVR'),                       $n(d.lvr, FMT_PCT2)]);
-    aoa.push([$s('Interest Rate'),             $n(d.interestRate, FMT_PCT2)]);
-    aoa.push([$s('Rental Growth'),             $n(d.rentalGrowth, FMT_PCT2)]);
-    aoa.push([$s('Capital Growth'),            $n(d.capitalGrowth, FMT_PCT2)]);
-    aoa.push([$s('Cost of Capital'),           $n(d.costOfCapital, FMT_PCT2)]);
+    const kpis = [
+      ['Acquisition Price',          d.acquisitionPrice,        FMT_DOLLAR, null],
+      ['Comparable Value (mean)',    cmpMean,                   FMT_DOLLAR, null],
+      ['Total Loan',                 r.loan,                    FMT_DOLLAR, null],
+      ['Cash Required (Upfront)',    r.upfront,                 FMT_DOLLAR, null],
+      ['Cash Required (Settlement)', r.cashAtSettlement,        FMT_DOLLAR, null],
+      ['Cash Required (Total)',      r.upfront + r.cashAtSettlement, FMT_DOLLAR, null],
+      ['Net Income (Yr 1)',          r.netIncomeYr1,            FMT_DOLLAR, 'signed'],
+      ['Asset Value (Exit)',         exit.assetValue,           FMT_DOLLAR, null],
+      ['NPV at Exit',                exit.npvAssetValue,        FMT_DOLLAR, 'signed'],
+    ];
+    kpis.forEach(([label, val, fmt, tint]) => {
+      aoa.push([
+        cellText(label, S.kpiLabel),
+        tint === 'signed' ? cellSignedNum(val, fmt, S.kpiValue) : cellNum(val, fmt, S.kpiValue),
+      ]);
+    });
+    aoa.push([null, null]);
+
+    aoa.push([cellText('RUN PARAMETERS', S.sectionHdr), cellText('', S.sectionHdr)]);
+    const params = [
+      ['Term of Ownership (yrs)',    d.termOfOwnership,      FMT_INT],
+      ['Settlement Lag (yrs)',       d.settlementLag,        FMT_NUM3],
+      ['Hold to Revaluation (yrs)',  d.holdDurationPreReval, FMT_INT],
+      ['LVR',                        d.lvr,                  FMT_PCT2],
+      ['Interest Rate',              d.interestRate,         FMT_PCT2],
+      ['Rental Growth',              d.rentalGrowth,         FMT_PCT2],
+      ['Capital Growth',             d.capitalGrowth,        FMT_PCT2],
+      ['Cost of Capital',            d.costOfCapital,        FMT_PCT2],
+    ];
+    params.forEach(([label, val, fmt]) => {
+      aoa.push([cellText(label, S.rowLabel), cellNum(val, fmt, S.data)]);
+    });
 
     const ws = aoaToSheet(aoa);
-    ws['!cols'] = [{ wch: 32 }, { wch: 22 }];
+    ws['!cols']   = [{ wch: 32 }, { wch: 22 }];
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }, // Title merge across both cols
+      { s: { r: 5, c: 0 }, e: { r: 5, c: 1 } }, // KEY METRICS hdr
+      { s: { r: 5 + kpis.length + 2, c: 0 }, e: { r: 5 + kpis.length + 2, c: 1 } }, // RUN PARAMS hdr
+    ];
+    // Title row taller
+    ws['!rows'] = [{ hpt: 26 }];
     XLSX.utils.book_append_sheet(wb, ws, 'Summary');
   }
 
   // ── Sheet 2: Cashflow ─────────────────────────────────────────────────────
-  // Year columns + Avg (over hold years). Funds to Complete rows first (matching
-  // on-screen layout), then the metric rows.
   {
     const aoa = [];
-    // Header row
-    const yrHeader = [$s('')].concat(years.map(y => $s('Yr ' + y.yr)));
-    if (holdYrs.length) yrHeader.push($s('Avg'));
+    // Title row
+    const titleRow = [cellText('Cashflow Projection', S.title)];
+    for (let i = 0; i < years.length + (holdYrs.length ? 1 : 0); i++) titleRow.push(null);
+    aoa.push(titleRow);
+    aoa.push([]); // spacer
+
+    // Column headers
+    const yrHeader = [cellText('', S.colHdrLeft)].concat(
+      years.map(y => cellText('Yr ' + y.yr, S.colHdr))
+    );
+    if (holdYrs.length) yrHeader.push(cellText('Avg', S.colHdr));
     aoa.push(yrHeader);
 
-    // ── Funds to Complete ───────────────────────────────────────────────
-    // Read selected offer to surface deposit tranches in their year
+    // ── Funds to Complete section header (spans all cols visually) ──────
+    const ftcHeaderRow = [cellText('FUNDS TO COMPLETE', S.sectionHdr)];
+    years.forEach(() => ftcHeaderRow.push(cellText('', S.sectionHdr)));
+    if (holdYrs.length) ftcHeaderRow.push(cellText('', S.sectionHdr));
+    aoa.push(ftcHeaderRow);
+
+    // Read selected offer for deposit tranches
     const _lp = window.getPipelineData ? window.getPipelineData() : {};
     const entry = _lp[_current.pipelineId] || _current.pipelineEntry;
     const offers = entry?.offers || [];
@@ -1464,25 +1612,26 @@ function exportToExcel() {
       : offers[0];
     const deps = (selOffer?.deposits || entry?.terms?.deposits || []).filter(dep => dep.amount);
 
-    // Section header
-    const fundsHeader = [$b('Funds to Complete')].concat(years.map(() => $s('')));
-    if (holdYrs.length) fundsHeader.push($s(''));
-    aoa.push(fundsHeader);
-
     const settlementYr = r.settlementYr;
-    function singleYearRow(label, yr, amt) {
-      const row = [$s(label)];
-      years.forEach(y => row.push(y.yr === yr ? $n(-Math.abs(amt)) : $s('')));
-      if (holdYrs.length) row.push($s(''));
+    function fundsRow(label, yr, amt) {
+      const row = [cellText(label, S.rowLabelCost)];
+      years.forEach(y => {
+        if (y.yr === yr) {
+          row.push(cellNum(-Math.abs(amt), FMT_DOLLAR, styleColor(S.data, X_RED)));
+        } else {
+          row.push(cellText('', S.data));
+        }
+      });
+      if (holdYrs.length) row.push(cellText('', S.dataAvg));
       return row;
     }
 
-    if (d.stampDuty)           aoa.push(singleYearRow('Stamp Duty',          settlementYr, d.stampDuty));
-    if (d.valuationCost)       aoa.push(singleYearRow('Valuation',           settlementYr, d.valuationCost));
-    if (d.solicitorCost)       aoa.push(singleYearRow('Solicitor',           settlementYr, d.solicitorCost));
-    if (d.inspections)         aoa.push(singleYearRow('Inspections',         settlementYr, d.inspections));
-    if (r.commission)          aoa.push(singleYearRow('Commission',          settlementYr, r.commission));
-    if (r.bankDepositRequired) aoa.push(singleYearRow('Equity Contribution', settlementYr, r.bankDepositRequired));
+    if (d.stampDuty)           aoa.push(fundsRow('Stamp Duty',          settlementYr, d.stampDuty));
+    if (d.valuationCost)       aoa.push(fundsRow('Valuation',           settlementYr, d.valuationCost));
+    if (d.solicitorCost)       aoa.push(fundsRow('Solicitor',           settlementYr, d.solicitorCost));
+    if (d.inspections)         aoa.push(fundsRow('Inspections',         settlementYr, d.inspections));
+    if (r.commission)          aoa.push(fundsRow('Commission',          settlementYr, r.commission));
+    if (r.bankDepositRequired) aoa.push(fundsRow('Equity Contribution', settlementYr, r.bankDepositRequired));
 
     let cumulativeDays = 0;
     deps.forEach((dep, i) => {
@@ -1494,58 +1643,105 @@ function exportToExcel() {
       const pct = d.acquisitionPrice > 0 ? ((amt / d.acquisitionPrice) * 100).toFixed(1) + '%' : '';
       const dueStr = typeof dep.due === 'number' ? dep.due + ' days' : (dep.due || '');
       const label = 'Deposit ' + (i + 1) + (pct ? ' (' + pct + (dueStr ? ' · ' + dueStr : '') + ')' : '');
-      aoa.push(singleYearRow(label, dueYear, amt));
+      aoa.push(fundsRow(label, dueYear, amt));
     });
 
-    // Spacer
-    aoa.push([]);
+    // ── Metrics section ────────────────────────────────────────────────
+    const metricsHdr = [cellText('METRICS', S.sectionHdr)];
+    years.forEach(() => metricsHdr.push(cellText('', S.sectionHdr)));
+    if (holdYrs.length) metricsHdr.push(cellText('', S.sectionHdr));
+    aoa.push(metricsHdr);
 
-    // ── Metrics ─────────────────────────────────────────────────────────
-    function metricRow(label, valFn, fmt, avgFn) {
-      const row = [$s(label)];
+    // Tint flag: 'signed' = green/red based on sign, 'muted' = muted style, null = standard
+    function metricRow(label, valFn, fmt, opts) {
+      opts = opts || {};
+      const dataStyle = opts.muted ? S.dataMuted : S.data;
+      const avgStyle  = opts.muted
+        ? Object.assign({}, S.dataAvg, { font: Object.assign({}, S.dataAvg.font, { color: { rgb: X_MUTED } }) })
+        : S.dataAvg;
+      const row = [cellText(label, S.rowLabel)];
       years.forEach(y => {
         const v = valFn(y);
-        row.push(v == null ? $s('—') : $n(v, fmt));
+        if (opts.tint === 'signed') row.push(cellSignedNum(v, fmt, dataStyle));
+        else                        row.push(cellNum(v, fmt, dataStyle));
       });
       if (holdYrs.length) {
-        const a = avgFn ? avgFn() : avg(holdYrs.map(valFn).filter(v => v != null && isFinite(v)));
-        row.push(a == null ? $s('—') : $n(a, fmt));
+        let a;
+        if (opts.avgFn) a = opts.avgFn();
+        else            a = avg(holdYrs.map(valFn).filter(v => v != null && isFinite(v)));
+        if (opts.tint === 'signed') row.push(cellSignedNum(a, fmt, avgStyle));
+        else                        row.push(cellNum(a, fmt, avgStyle));
       }
       return row;
     }
 
-    aoa.push(metricRow('Net Rent',        y => y.rent, FMT_DOLLAR));
+    aoa.push(metricRow('Net Rent',        y => y.rent, FMT_DOLLAR, { tint: 'signed' }));
     aoa.push(metricRow('Yield',           y => d.acquisitionPrice ? y.rent / d.acquisitionPrice : null, FMT_PCT2,
-      () => d.acquisitionPrice ? avg(holdYrs.map(y => y.rent)) / d.acquisitionPrice : null));
-    aoa.push(metricRow('Principal (Start)', y => y.principalStart, FMT_DOLLAR, () => null));
+      { muted: true, avgFn: () => d.acquisitionPrice ? avg(holdYrs.map(y => y.rent)) / d.acquisitionPrice : null }));
+    aoa.push(metricRow('Principal (Start)', y => y.principalStart, FMT_DOLLAR, { avgFn: () => null }));
     aoa.push(metricRow('Principal Paid',  y => y.principalPaid, FMT_DOLLAR));
-    aoa.push(metricRow('Interest Paid',   y => y.interest, FMT_DOLLAR));
-    aoa.push(metricRow('Principal (End)', y => y.principalEnd, FMT_DOLLAR, () => null));
-    aoa.push(metricRow('Cashflow',        y => y.cashflow, FMT_DOLLAR));
-    aoa.push(metricRow('CoC (Rolling)',   y => y.cashEquityStart > 0 ? y.coc : null, FMT_PCT2,
-      () => { const arr = holdYrs.filter(y => y.cashEquityStart > 0).map(y => y.coc); return arr.length ? avg(arr) : null; }));
-    aoa.push(metricRow('ROE',             y => y.cashEquityStart > 0 ? y.roe : null, FMT_PCT2,
-      () => { const arr = holdYrs.filter(y => y.cashEquityStart > 0).map(y => y.roe); return arr.length ? avg(arr) : null; }));
+    aoa.push(metricRow('Interest Paid',   y => y.interest,      FMT_DOLLAR));
+    aoa.push(metricRow('Principal (End)', y => y.principalEnd, FMT_DOLLAR, { avgFn: () => null }));
+    aoa.push(metricRow('Cashflow',        y => y.cashflow, FMT_DOLLAR, { tint: 'signed' }));
+    aoa.push(metricRow('CoC (Rolling)',   y => y.cashEquityStart > 0 ? y.coc : null, FMT_PCT2, {
+      tint: 'signed', muted: true,
+      avgFn: () => { const arr = holdYrs.filter(y => y.cashEquityStart > 0).map(y => y.coc); return arr.length ? avg(arr) : null; },
+    }));
+    aoa.push(metricRow('ROE',             y => y.cashEquityStart > 0 ? y.roe : null, FMT_PCT2, {
+      tint: 'signed', muted: true,
+      avgFn: () => { const arr = holdYrs.filter(y => y.cashEquityStart > 0).map(y => y.roe); return arr.length ? avg(arr) : null; },
+    }));
     aoa.push(metricRow('Asset Value',     y => y.assetValue, FMT_DOLLAR));
-    aoa.push(metricRow('Cost of Funds',   y => y.costOfFunds, FMT_DOLLAR, () => null));
-    aoa.push(metricRow('NPV (Asset Val)', y => y.npvAssetValue, FMT_DOLLAR, () => null));
+    aoa.push(metricRow('Cost of Funds',   y => y.costOfFunds, FMT_DOLLAR, { muted: true, avgFn: () => null }));
+    aoa.push(metricRow('NPV (Asset Val)', y => y.npvAssetValue, FMT_DOLLAR, { tint: 'signed', avgFn: () => null }));
 
     const ws = aoaToSheet(aoa);
-    // First col 24ch, year cols 13ch
-    const cols = [{ wch: 24 }].concat(years.map(() => ({ wch: 13 })));
-    if (holdYrs.length) cols.push({ wch: 13 });
+    const cols = [{ wch: 28 }].concat(years.map(() => ({ wch: 14 })));
+    if (holdYrs.length) cols.push({ wch: 14 });
     ws['!cols'] = cols;
-    ws['!freeze'] = { xSplit: 1, ySplit: 1 };
+    // Title spans all columns; height taller
+    const totalCols = 1 + years.length + (holdYrs.length ? 1 : 0);
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } },
+      // Section headers (full-width visual band)
+      { s: { r: 3, c: 0 }, e: { r: 3, c: totalCols - 1 } }, // FUNDS TO COMPLETE
+    ];
+    // Find METRICS section row index to merge
+    const metricsRowIdx = aoa.findIndex(row => row && row[0] && row[0].v === 'METRICS');
+    if (metricsRowIdx > 0) {
+      ws['!merges'].push({ s: { r: metricsRowIdx, c: 0 }, e: { r: metricsRowIdx, c: totalCols - 1 } });
+    }
+    ws['!rows'] = [{ hpt: 26 }]; // title row tall
+    // Freeze the header row + the first column
+    ws['!freeze'] = { xSplit: 1, ySplit: 3 };
     XLSX.utils.book_append_sheet(wb, ws, 'Cashflow');
   }
 
   // ── Sheet 3: Inputs ───────────────────────────────────────────────────────
   {
     const aoa = [];
-    aoa.push([$b('Variable'), $b('Value'), $b('Unit')]);
+    aoa.push([cellText('Model Inputs', S.title), null, null]);
+    aoa.push([]);
+    aoa.push([
+      cellText('Variable', S.colHdrLeft),
+      cellText('Value',    S.colHdr),
+      cellText('Unit',     S.colHdrLeft),
+    ]);
 
-    function section(title) { aoa.push([]); aoa.push([$b(title)]); }
-    function rowD(label, val, fmt, unit) { aoa.push([$s(label), $n(val, fmt || FMT_DOLLAR), $s(unit || '')]); }
+    function section(title) {
+      aoa.push([
+        cellText(title.toUpperCase(), S.sectionHdr),
+        cellText('', S.sectionHdr),
+        cellText('', S.sectionHdr),
+      ]);
+    }
+    function rowD(label, val, fmt, unit) {
+      aoa.push([
+        cellText(label, S.rowLabel),
+        cellNum(val, fmt || FMT_DOLLAR, S.data),
+        cellText(unit || '', S.dataMuted),
+      ]);
+    }
 
     section('Acquisition & Loan');
     rowD('Acquisition Price',       d.acquisitionPrice, FMT_DOLLAR, '$');
@@ -1600,56 +1796,97 @@ function exportToExcel() {
     rowD('Target Yield %',              d.targetYieldPct,          FMT_PCT2, '% p.a.');
 
     const ws = aoaToSheet(aoa);
-    ws['!cols'] = [{ wch: 30 }, { wch: 16 }, { wch: 10 }];
+    ws['!cols']   = [{ wch: 32 }, { wch: 18 }, { wch: 10 }];
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 2 } }]; // title across 3 cols
+    // Also merge each section header across all 3 cols — find them by content
+    aoa.forEach((row, i) => {
+      if (row && row[0] && row[0].s === S.sectionHdr) {
+        ws['!merges'].push({ s: { r: i, c: 0 }, e: { r: i, c: 2 } });
+      }
+    });
+    ws['!rows'] = [{ hpt: 26 }];
     XLSX.utils.book_append_sheet(wb, ws, 'Inputs');
   }
 
   // ── Sheet 4: Comparables ──────────────────────────────────────────────────
   {
     const aoa = [];
-    aoa.push([$b('Method'), $b('Detail'), $b('Value'), $b('Included')]);
+    aoa.push([cellText('Comparable Value Analysis', S.title), null, null, null]);
+    aoa.push([]);
     aoa.push([
-      $s('Method 1: Gross Area'),
-      $s(`${(d.netDevelopableAreaAcres||0).toFixed(3)} NDA acres × $${(d.comparableValuePerNDA||0).toLocaleString()}/NDA + residual`),
-      $n(r.m1), $s(d.includeM1 !== false ? 'Yes' : 'No'),
+      cellText('Method',   S.colHdrLeft),
+      cellText('Detail',   S.colHdrLeft),
+      cellText('Value',    S.colHdr),
+      cellText('Included', S.colHdrLeft),
     ]);
-    aoa.push([
-      $s('Method 2: 30% of GRV'),
-      $s(`GRV ${fmtDollar(r.grv)} ÷ 3 · NSA ${(r.nsa||0).toLocaleString()} sqm`),
-      $n(r.m2), $s(d.includeM2 !== false ? 'Yes' : 'No'),
-    ]);
-    aoa.push([
-      $s('Method 3: Development Estimate (TDC $/lot)'),
-      $s('GRV − TDC − holding cost − interest − profit margin'),
-      $n(r.m3), $s(d.includeM3 !== false ? 'Yes' : 'No'),
-    ]);
-    aoa.push([
-      $s('Method 5: Derived from Yield'),
-      $s(`Net Income ${fmtDollar(r.netIncomeYr1)} ÷ ${fmtPct(d.targetYieldPct)} target yield`),
-      $n(r.m5), $s(d.includeM5 !== false ? 'Yes' : 'No'),
-    ]);
+
+    const methods = [
+      ['Method 1: Gross Area',
+       `${(d.netDevelopableAreaAcres||0).toFixed(3)} NDA acres × $${(d.comparableValuePerNDA||0).toLocaleString()}/NDA + residual`,
+       r.m1, d.includeM1 !== false],
+      ['Method 2: 30% of GRV',
+       `GRV ${fmtDollar(r.grv)} ÷ 3 · NSA ${(r.nsa||0).toLocaleString()} sqm`,
+       r.m2, d.includeM2 !== false],
+      ['Method 3: Development Estimate (TDC $/lot)',
+       'GRV − TDC − holding cost − interest − profit margin',
+       r.m3, d.includeM3 !== false],
+      ['Method 5: Derived from Yield',
+       `Net Income ${fmtDollar(r.netIncomeYr1)} ÷ ${fmtPct(d.targetYieldPct)} target yield`,
+       r.m5, d.includeM5 !== false],
+    ];
+    methods.forEach(([label, detail, val, included]) => {
+      const incStyle = included
+        ? S.data
+        : styleColor(S.data, X_MUTED);
+      aoa.push([
+        cellText(label,  S.rowLabel),
+        cellText(detail, S.dataMuted),
+        cellSignedNum(val, FMT_DOLLAR, S.data),
+        cellText(included ? 'Yes' : 'No', incStyle),
+      ]);
+    });
+
     aoa.push([]);
     const cmpMean = comparableMean(d, r);
-    aoa.push([$b('Mean (included only)'), $s(''), cmpMean != null ? $n(cmpMean) : $s('—'), $s('')]);
+    aoa.push([
+      cellText('Mean (included methods only)', styleColor(S.rowLabel, X_ACCENT)),
+      cellText('', S.data),
+      cellNum(cmpMean, FMT_DOLLAR, Object.assign({}, S.kpiValue, {
+        font: { name: 'Calibri', sz: 12, bold: true, color: { rgb: X_ACCENT } },
+      })),
+      cellText('', S.data),
+    ]);
     aoa.push([]);
-    aoa.push([$b('Reference')]);
-    aoa.push([$s('GRV (ex GST)'),    $s(''), $n(r.grv)]);
-    aoa.push([$s('Net Sellable Area'), $s(''), $n(r.nsa, FMT_INT)]);
-    aoa.push([$s('Acquisition Price'), $s(''), $n(d.acquisitionPrice)]);
+
+    aoa.push([cellText('REFERENCE', S.sectionHdr),
+              cellText('', S.sectionHdr),
+              cellText('', S.sectionHdr),
+              cellText('', S.sectionHdr)]);
+    aoa.push([cellText('GRV (ex GST)',      S.rowLabel), cellText('', S.data), cellNum(r.grv, FMT_DOLLAR), cellText('', S.data)]);
+    aoa.push([cellText('Net Sellable Area', S.rowLabel), cellText('', S.data), cellNum(r.nsa, FMT_INT),    cellText('', S.data)]);
+    aoa.push([cellText('Acquisition Price', S.rowLabel), cellText('', S.data), cellNum(d.acquisitionPrice, FMT_DOLLAR), cellText('', S.data)]);
 
     const ws = aoaToSheet(aoa);
-    ws['!cols'] = [{ wch: 42 }, { wch: 56 }, { wch: 16 }, { wch: 10 }];
+    ws['!cols']   = [{ wch: 42 }, { wch: 56 }, { wch: 18 }, { wch: 10 }];
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } }];
+    // Merge any section header rows across all 4 cols
+    aoa.forEach((row, i) => {
+      if (row && row[0] && row[0].s === S.sectionHdr && i !== 0) {
+        ws['!merges'].push({ s: { r: i, c: 0 }, e: { r: i, c: 3 } });
+      }
+    });
+    ws['!rows'] = [{ hpt: 26 }];
     XLSX.utils.book_append_sheet(wb, ws, 'Comparables');
   }
 
   // Write file — filename includes property address (sanitised)
   const safeAddr = (propAddr || 'Property').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
   const filename = `Financial Model - ${safeAddr}.xlsx`;
-  XLSX.writeFile(wb, filename, { compression: true });
+  XLSX.writeFile(wb, filename, { compression: true, bookType: 'xlsx' });
 }
 
-// Convert an array-of-arrays where each cell is either a string or a cell-descriptor
-// object ({v, t, z, ...}) into a SheetJS worksheet, applying types/formats.
+// Convert an aoa where each cell is either null (skip) or a cell-descriptor
+// object ({v, t, z, s, ...}) into a SheetJS worksheet, preserving styles.
 function aoaToSheet(aoa) {
   const ws = {};
   let maxR = 0, maxC = 0;
