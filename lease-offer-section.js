@@ -432,7 +432,7 @@
             html += '<ul class="lo-review-files">';
             files.forEach(f => {
               const docTypeLabel = ID_DOC_LABELS[f.doc_type] || f.doc_type || 'No type set';
-              html += `<li><span class="lo-review-file-text">${esc(f.filename)} <span class="lo-review-file-meta">— ${esc(docTypeLabel)}</span></span> ${renderViewLink(f)}</li>`;
+              html += `<li><span class="lo-review-file-text">${esc(f.filename)} <span class="lo-review-file-meta">— ${esc(docTypeLabel)}</span></span> ${renderViewLink(f)}${renderFileMeta(f)}</li>`;
             });
             html += '</ul>';
           } else {
@@ -463,7 +463,7 @@
           }
           if (files.length) {
             html += '<ul class="lo-review-files">';
-            files.forEach(f => { html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${renderViewLink(f)}</li>`; });
+            files.forEach(f => { html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${renderViewLink(f)}${renderFileMeta(f)}</li>`; });
             html += '</ul>';
           } else {
             html += '<div class="lo-review-empty">No supporting documents.</div>';
@@ -493,7 +493,7 @@
           }
           if (files.length) {
             html += '<ul class="lo-review-files">';
-            files.forEach(f => { html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${renderViewLink(f)}</li>`; });
+            files.forEach(f => { html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${renderViewLink(f)}${renderFileMeta(f)}</li>`; });
             html += '</ul>';
           } else {
             html += '<div class="lo-review-empty">No supporting documents.</div>';
@@ -565,6 +565,42 @@
       return `<a class="lo-review-view-link" href="/api/applications/evidence/${esc(f.id)}/view" target="_blank" rel="noopener">View</a>`;
     }
 
+    // V81.4b — System-wide audit decoration for any file row sourced from
+    // application_evidence. Renders an inline trailing line:
+    //   — Ella Messina (#42) on 18 May 2026, 15:42 AEST
+    // Used by all four evidence blocks (ID, housing, income, lease docs).
+    //
+    // Fields come from api/applications.js evidence SELECT (V81.4b):
+    //   uploaded_by (int contact id, may be NULL)
+    //   uploaded_by_name (string from contacts join, may be NULL/empty)
+    //   uploaded_at (ISO timestamp)
+    //
+    // When uploaded_by is NULL (rare — happens only if an applicant_contact_id
+    // was also NULL on the original row), shows "Unknown" rather than hiding
+    // the line — keeps visual consistency across the list.
+    //
+    // Timezone is fixed to Australia/Sydney; label is "AEST" per spec. Note
+    // that during summer the wall-clock is technically AEDT (UTC+11); the
+    // formatter still produces the correct local time, just labelled AEST.
+    function renderFileMeta(f) {
+      const name = (f.uploaded_by_name && String(f.uploaded_by_name).trim()) || 'Unknown';
+      const id = f.uploaded_by != null ? `#${f.uploaded_by}` : '#—';
+      let when = '';
+      if (f.uploaded_at) {
+        try {
+          const d = new Date(f.uploaded_at);
+          // en-AU with explicit timezone — "18 May 2026, 15:42"
+          when = d.toLocaleString('en-AU', {
+            timeZone: 'Australia/Sydney',
+            day: '2-digit', month: 'short', year: 'numeric',
+            hour: '2-digit', minute: '2-digit', hour12: false,
+          });
+        } catch (_) { when = ''; }
+      }
+      const whenPart = when ? ` on ${esc(when)} AEST` : '';
+      return `<span class="lo-review-file-meta"> — ${esc(name)} (${esc(id)})${whenPart}</span>`;
+    }
+
     // V81.4 — Lease document slot renderer. Shared by both lease-doc slots
     // (signed-contract, accepted condition report). Applicant uploads render
     // with an "From applicant" badge and View only; agent uploads render with
@@ -587,7 +623,7 @@
           const deleteBtn = isAgent
             ? `<button type="button" class="lo-review-doc-delete-btn" data-evidence-id="${esc(f.id)}" title="Delete this file (only files you uploaded can be deleted).">Delete</button>`
             : '';
-          html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${originBadge} ${renderViewLink(f)} ${deleteBtn}</li>`;
+          html += `<li><span class="lo-review-file-text">${esc(f.filename)}</span> ${originBadge} ${renderViewLink(f)} ${deleteBtn}${renderFileMeta(f)}</li>`;
         });
         html += '</ul>';
       } else {
