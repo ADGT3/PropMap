@@ -143,10 +143,8 @@ async function fetchChildren(applicationId) {
     sql`
       SELECT ev.id, ev.applicant_contact_id, ev.category, ev.doc_type, ev.filename,
              ev.mime_type, ev.size_bytes, ev.url, ev.points_value, ev.uploaded_at,
-             ev.uploaded_by_role, ev.uploaded_by,
-             NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)), '') AS uploaded_by_name
+             ev.uploaded_by_role, ev.uploaded_by
       FROM application_evidence ev
-      LEFT JOIN contacts c ON c.id = ev.uploaded_by
       WHERE ev.application_id = ${applicationId}
       ORDER BY ev.uploaded_at`,
   ]);

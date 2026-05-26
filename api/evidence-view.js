@@ -1,9 +1,11 @@
 /**
- * api/evidence-view.js — V77.2e
+ * api/evidence-view.js — V81.5
  *
- * Agent-only HTML wrapper around an evidence file. Fetches the evidence row,
- * looks up its context (category, applicant name, housing/income entry it
- * belongs to), renders a small heading above an embedded viewer.
+ * Agent-only viewer for an application/lease evidence file. Fetches the evidence
+ * row, looks up its context (category, applicant name, housing/income entry it
+ * belongs to) and the uploader, then renders via the single system-wide viewer
+ * (lib/attachment-viewer.js) — the same renderer DD attachments use, so the page
+ * and the "Uploaded by …" audit line stay identical everywhere.
  *
  * Routing: Vercel rewrites /api/applications/evidence/:id/view → this file.
  *   GET /api/applications/evidence/{id}/view
@@ -15,6 +17,7 @@
 import { neon } from '@neondatabase/serverless';
 import { requireSession } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
+import { renderAttachmentViewerPage } from '../lib/attachment-viewer.js';
 
 const sql = neon(getDatabaseUrl());
 
@@ -29,12 +32,6 @@ const ID_DOC_LABELS = {
   rates_notice:         'Rates notice (25 pts)',
   other:                'Other (10 pts)',
 };
-
-function escHtml(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
 
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
@@ -52,9 +49,12 @@ export default async function handler(req, res) {
     const rows = await sql`
       SELECT e.id, e.application_id, e.applicant_contact_id, e.category, e.doc_type,
              e.filename, e.mime_type, e.points_value,
-             c.first_name, c.last_name
+             e.uploaded_by, e.uploaded_by_role, e.uploaded_at,
+             c.first_name, c.last_name,
+             NULLIF(TRIM(CONCAT_WS(' ', up.first_name, up.last_name)), '') AS uploaded_by_name
       FROM application_evidence e
-      LEFT JOIN contacts c ON c.id = e.applicant_contact_id
+      LEFT JOIN contacts c  ON c.id  = e.applicant_contact_id
+      LEFT JOIN contacts up ON up.id = e.uploaded_by
       WHERE e.id = ${id}
       LIMIT 1`;
     if (!rows.length) return res.status(404).send('Evidence not found');
@@ -95,120 +95,26 @@ export default async function handler(req, res) {
     }
 
     const downloadUrl = `/api/applications/evidence/${id}/download`;
-    const isImage = (ev.mime_type || '').startsWith('image/');
-    const isPdf   = (ev.mime_type || '') === 'application/pdf';
 
-    let viewerHtml;
-    if (isImage) {
-      viewerHtml = `<img src="${downloadUrl}" alt="${escHtml(ev.filename)}">`;
-    } else if (isPdf) {
-      viewerHtml = `<iframe src="${downloadUrl}#view=FitH" title="${escHtml(ev.filename)}"></iframe>`;
-    } else {
-      // Fallback for HEIC etc — let the browser try to render or offer a link
-      viewerHtml = `
-        <div class="ev-fallback">
-          <p>This file type can't be previewed in the browser.</p>
-          <p><a class="ev-download-btn" href="${downloadUrl}">Download ${escHtml(ev.filename)}</a></p>
-        </div>`;
+    // ── Resolve uploader name for the audit line ──────────────────────────
+    // 1. uploaded_by contact join (agent uploads + populated applicant rows)
+    // 2. applicant-role rows with no uploaded_by → the applicant's own name
+    // 3. otherwise "Unknown" (rendered by the shared module)
+    const applicantName = [ev.first_name, ev.last_name].filter(Boolean).join(' ').trim();
+    let uploadedByName = (ev.uploaded_by_name && String(ev.uploaded_by_name).trim()) || '';
+    if (!uploadedByName && ev.uploaded_by_role === 'applicant' && applicantName) {
+      uploadedByName = applicantName;
     }
 
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="robots" content="noindex, nofollow">
-  <title>${escHtml(contextHeading)} · PropMap</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #1a1410;
-      color: #f7f4ec;
-      display: flex;
-      flex-direction: column;
-      min-height: 100vh;
-    }
-    .ev-header {
-      background: #2a221a;
-      border-bottom: 1px solid #3d3128;
-      padding: 14px 20px;
-      display: flex;
-      align-items: baseline;
-      gap: 14px;
-      flex-wrap: wrap;
-    }
-    .ev-context {
-      font-size: 14px;
-      font-weight: 600;
-      color: #f7f4ec;
-      flex: 1;
-      min-width: 0;
-    }
-    .ev-filename {
-      font-size: 12px;
-      color: #c4841a;
-      font-family: ui-monospace, 'SF Mono', Monaco, monospace;
-    }
-    .ev-download {
-      font-size: 12px;
-      color: #fff;
-      background: #c4841a;
-      text-decoration: none;
-      padding: 5px 12px;
-      border-radius: 3px;
-      font-weight: 500;
-    }
-    .ev-download:hover { background: #a26d14; }
-    .ev-viewer {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-      overflow: auto;
-    }
-    .ev-viewer img {
-      max-width: 100%;
-      max-height: calc(100vh - 80px);
-      object-fit: contain;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
-      background: #fff;
-    }
-    .ev-viewer iframe {
-      width: 100%;
-      height: calc(100vh - 70px);
-      border: 0;
-      background: #fff;
-    }
-    .ev-fallback {
-      text-align: center;
-      padding: 40px;
-    }
-    .ev-download-btn {
-      display: inline-block;
-      background: #c4841a;
-      color: #fff;
-      padding: 10px 20px;
-      border-radius: 4px;
-      text-decoration: none;
-      font-weight: 600;
-      margin-top: 12px;
-    }
-  </style>
-</head>
-<body>
-  <header class="ev-header">
-    <div>
-      <div class="ev-context">${escHtml(contextHeading)}</div>
-      <div class="ev-filename">${escHtml(ev.filename)}</div>
-    </div>
-    <a class="ev-download" href="${downloadUrl}" download="${escHtml(ev.filename)}">Download</a>
-  </header>
-  <div class="ev-viewer">${viewerHtml}</div>
-</body>
-</html>`;
+    const html = renderAttachmentViewerPage({
+      contextHeading,
+      filename: ev.filename,
+      mimeType: ev.mime_type,
+      downloadUrl,
+      uploadedByName,
+      uploadedByRole: ev.uploaded_by_role,
+      uploadedAt: ev.uploaded_at,
+    });
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'private, no-store');
