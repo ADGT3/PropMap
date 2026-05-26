@@ -2633,10 +2633,6 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
   const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
   // V80.3 — Terms badge removed (no longer surfaced on cards).
 
-  const stageOptions = stages.map(s =>
-    `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
-  ).join('');
-
   // V77.1: Lease Listings show rent (per-week / per-month) in the headline,
   // not "Price Unavailable" from the sales price field. Other boards keep
   // the standard formatKbPrice behaviour.
@@ -2657,7 +2653,6 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
     <div class="kb-card-price">${headline}</div>
     <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
     <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
-    <select class="kb-stage-select">${stageOptions}</select>
     <div class="kb-card-indicators">
       ${interestBadgeHtml}
       ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
@@ -2702,10 +2697,6 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
   const isLease = boardId === 'sys_lease_enquiry';
   const contactName = meta.contact_name || '<span style="color:var(--muted);font-style:italic">Loading…</span>';
 
-  const stageOptions = stages.map(s =>
-    `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
-  ).join('');
-
   // Build the per-board badge set
   const badges = [];
   if (isLease) {
@@ -2735,7 +2726,6 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
     <div class="kb-card-price">${contactName}</div>
     <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
     <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
-    <select class="kb-stage-select">${stageOptions}</select>
     <div class="kb-card-indicators">${badges.join('')}</div>
   `;
 }
@@ -2791,14 +2781,6 @@ async function enrichEnquiryCardsAsync() {
 // Helper to re-wire kb-card inner handlers after a rebuild of innerHTML.
 // Mirrors the wiring done in the main entries.forEach loop in renderBoard.
 function _wireCardInnerHandlers(card, id) {
-  const stageSel = card.querySelector('.kb-stage-select');
-  if (stageSel) {
-    stageSel.addEventListener('change', function (e) {
-      e.stopPropagation();
-      moveToColumn(id, this.value);
-      renderBoard();
-    });
-  }
   const removeBtn = card.querySelector('.kb-remove');
   if (removeBtn) {
     removeBtn.addEventListener('click', e => {
@@ -2904,13 +2886,6 @@ function renderBoard() {
       });
       card.addEventListener('dragend', () => card.classList.remove('dragging'));
 
-      // Stage select change — argument is the TARGET column id in the current board
-      card.querySelector('.kb-stage-select').addEventListener('change', function (e) {
-        e.stopPropagation();
-        moveToColumn(id, this.value);
-        renderBoard();
-      });
-
       // Remove card
       card.querySelector('.kb-remove').addEventListener('click', e => {
         e.stopPropagation();
@@ -2940,7 +2915,7 @@ function renderBoard() {
 
       // Click card body → open detail modal
       card.addEventListener('click', e => {
-        if (e.target.closest('.kb-remove, .kb-stage-select, .kb-card-address-link')) return;
+        if (e.target.closest('.kb-remove, .kb-card-address-link')) return;
         openCardModal(id);
       });
 
@@ -5161,10 +5136,6 @@ const _dealsBoardSync = createBoardSync({
     }
     refreshCardIndicators(card, id);
     card.classList.toggle('kb-card-attention', !!item._hasOverdueAction);
-    const sel = card.querySelector('.kb-stage-select');
-    if (sel) {
-      if (sel.value !== wantedColId) sel.value = wantedColId;
-    }
   },
   fullRender() { renderBoard(); },
   boardVisible() {
