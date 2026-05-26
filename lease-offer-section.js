@@ -565,6 +565,11 @@
       return `<a class="lo-review-view-link" href="/api/applications/evidence/${esc(f.id)}/view" target="_blank" rel="noopener">View</a>`;
     }
 
+    // V81.4b (revised V81.5) — Upload audit info (uploader name + timestamp) is
+    // no longer decorated inline on the evidence-review file lists. It now lives
+    // only on the full-attachment viewer page (api/evidence-view.js header), so
+    // the Enquiry/Application modal stays uncluttered.
+
     // V81.4 — Lease document slot renderer. Shared by both lease-doc slots
     // (signed-contract, accepted condition report). Applicant uploads render
     // with an "From applicant" badge and View only; agent uploads render with

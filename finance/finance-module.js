@@ -7,7 +7,13 @@
  *
  *  Rent (yr)        = IF(yr < settlementLag, 0, netIncome * (1+rentalGrowth)^yr)
  *  Principal Start  = IF(yr < settlementLag, 0, IF(yr == settlementLag, totalLoan, prev PrinEnd))
- *  Principal Paid   = (Rent - Interest) * profitUsedForDebt   ← driven by B10/G36
+ *  Principal Paid   = LVR glide path — fixed annual reduction that walks the loan
+ *                     from (initialLvr × price) down to (targetLvr × price) over
+ *                     paydownPeriod years, starting at settlement, then $0:
+ *                       annualPaydown = max(0, (initialLvr - targetLvr) * price) / paydownPeriod
+ *                       Principal Paid(yr) = annualPaydown  for the first paydownPeriod
+ *                         settled years (clamped so PrincipalEnd never < targetLoan),
+ *                         else 0. Decoupled from cashflow (may run cashflow negative).
  *  Interest Paid    = PrincipalStart * interestRate
  *  Principal End    = PrincipalStart - PrincipalPaid
  *  Cashflow         = Rent - Interest - PrincipalPaid          ← operating cashflow
@@ -36,11 +42,11 @@
  * INPUTS (grey cells — user editable):
  *   Feasibility sheet: B2 acquisitionPrice, B3 interestRate, B4 rentalGrowth,
  *     B5 lvr, B6 capitalGrowth, B7 holdDurationPreReval, B8 costOfCapital,
- *     B9 termOfOwnership, B10 profitUsedForDebt, B11 settlementLag, B12 projectDuration,
+ *     B9 termOfOwnership, B11 settlementLag, B12 projectDuration,
+ *     targetLvr (glide-path target), paydownPeriod (glide-path years),
  *     E2 depositPct, E3 salesCommissionPct,
  *     I5 residualLandVal, I9 lots, I10 avLotSizeSqm, I12 ratePerSqm,
- *     L7 profitMarginPct, M3 lots(m3), M4 tdcPerLot, Q4 targetYieldPct,
- *     G36 profitUsedForDebt (same as B10)
+ *     L7 profitMarginPct, M3 lots(m3), M4 tdcPerLot, Q4 targetYieldPct
  *   Expenses sheet: B2 managementFeePct, B3 sinkingFundPct,
  *     B7 water, B8 cleaning, B9 insurance, B10 landTax, B12 commonPower,
  *     B13 fireServices — direct $ inputs
@@ -115,12 +121,13 @@ function defaultModel(acquisitionPrice) {
     acquisitionPrice:        acquisitionPrice || 0,   // B2
     interestRate:            0.09,                     // B3
     rentalGrowth:            0.036,                    // B4
-    lvr:                     0.65,                     // B5
+    lvr:                     0.65,                     // B5  (Initial LVR)
     capitalGrowth:           0.065,                    // B6
     holdDurationPreReval:    4,                        // B7
     costOfCapital:           0.10,                     // B8
     termOfOwnership:         10,                       // B9
-    profitUsedForDebt:       0,                        // B10 / G36  (0–1 fraction)
+    targetLvr:               0.55,                     // glide-path target LVR (fraction)
+    paydownPeriod:           5,                        // glide-path years to reach target LVR
     settlementLag:           2,                        // B11
     projectDuration:         5,                        // B12
     depositPct:              0.05,                     // E2
@@ -554,7 +561,14 @@ function runModel(d) {
   // ── Year-by-year projection ───────────────────────────────────────────
   const lag    = Math.max(0, Math.round(d.settlementLag || 0));
   const terms  = Math.round(d.termOfOwnership || 10);
-  const pdPct  = d.profitUsedForDebt || 0;                       // B10/G36
+  // ── LVR glide path: walk loan from initial LVR down to target LVR ──────
+  // annualPaydown = (initialLvr − targetLvr) × price ÷ paydownPeriod, floored at 0.
+  // Applied for the first `paydownPeriod` settled years (yr >= lag), then $0.
+  const targetLvr     = d.targetLvr != null ? d.targetLvr : (d.lvr || 0);
+  const targetLoan    = price * targetLvr;                       // floor for principal balance
+  const paydownYears  = Math.max(0, Math.round(d.paydownPeriod || 0));
+  const totalPaydown  = Math.max(0, (d.lvr || 0) - targetLvr) * price;
+  const annualPaydown = paydownYears > 0 ? totalPaydown / paydownYears : 0;
   const rg     = d.rentalGrowth || 0;
   const cg     = d.capitalGrowth || 0;
   const coc    = d.costOfCapital || 0;
@@ -579,7 +593,14 @@ function runModel(d) {
     // else carries over from previous loop iteration (set below)
 
     const interest      = principalStart * (d.interestRate || 0);   // B21 = B19 * B3
-    const principalPaid = (rent - interest) * pdPct;                 // B20 = (B17-B21)*G36
+    // LVR glide path: pay the fixed annualPaydown during the first `paydownYears`
+    // settled years, but never reduce the balance below the target loan. After the
+    // paydown window (or once target reached) principal paid = 0.
+    const settledIdx    = settled ? (yr - lag) : -1;               // 0-based settled year index
+    const inPaydown     = settled && settledIdx < paydownYears;
+    const principalPaid = inPaydown
+      ? Math.min(annualPaydown, Math.max(0, principalStart - targetLoan))
+      : 0;
     const principalEnd  = principalStart - principalPaid;            // B22 = B19 - B20
     const operatingCashflow = rent - interest - principalPaid;       // B23 = B17-B21-B20 (always raw, used for return metrics)
     const cashflow      = operatingCashflow;                         // display cashflow — may be adjusted below by toggle
@@ -1014,10 +1035,11 @@ function renderSidebar(d, r) {
       <div class="fin-fields" style="margin-top:8px">
         ${ff('interestRate',       'Loan Interest Rate (pa)',      fmtPct(d.interestRate),          'pct')}
         ${ff('rentalGrowth',       'Rental Increase (pa)',         fmtPct(d.rentalGrowth),          'pct')}
-        ${ff('lvr',                'Assumed LVR (%)',              fmtPct(d.lvr),                   'pct')}
+        ${ff('lvr',                'Initial LVR (%)',              fmtPct(d.lvr),                   'pct')}
+        ${ff('targetLvr',          'Target LVR (%)',               fmtPct(d.targetLvr != null ? d.targetLvr : d.lvr), 'pct')}
+        ${ff('paydownPeriod',      'Paydown Period (yrs)',         (d.paydownPeriod || 0)+' yrs',  'int')}
         ${ff('capitalGrowth',      'Asset Value Growth (pa)',      fmtPct(d.capitalGrowth),         'pct')}
         ${ff('costOfCapital',      'Cost of Capital (%)',          fmtPct(d.costOfCapital),         'pct')}
-        ${ff('profitUsedForDebt',  '% Profit → Debt Reduction',   fmtPct(d.profitUsedForDebt),     'pct')}
         ${ff('retainedEarningsPct','Retained Earnings (%)',        fmtPct(d.retainedEarningsPct || 0),   'pct')}
         ${ff('holdDurationPreReval','Next Valuation (yrs)',        d.holdDurationPreReval+' yrs',   'int')}
         ${ff('termOfOwnership',    'Term of Ownership (yrs)',      d.termOfOwnership+' yrs',        'int')}
@@ -1356,8 +1378,8 @@ function renderMain(d, r) {
         <div class="fin-footer-legend-item">
           <div class="fin-footer-legend-label">Principal Paid</div>
           <div class="fin-footer-legend-text">
-            (Net Rent − Interest) × % Profit → Debt Reduction. The portion of each year's operating profit that is applied to reduce the loan balance, controlled by the "% Profit → Debt Reduction" input. Interest = Principal (Start) × Loan Interest Rate. Principal (End) = Principal (Start) − Principal Paid; this becomes next year's Principal (Start).
-            <em>Currently: ${fmtPct(d.profitUsedForDebt)} of profit applied to debt reduction.</em>
+            LVR glide path. A fixed annual amount reduces the loan from the Initial LVR down to the Target LVR over the Paydown Period, then stops (principal paid = $0). Annual reduction = (Initial LVR − Target LVR) × Acquisition Price ÷ Paydown Period, starting at settlement and clamped so the balance never falls below the target loan. Interest = Principal (Start) × Loan Interest Rate. Principal (End) = Principal (Start) − Principal Paid; this becomes next year's Principal (Start). The reduction is fixed (not funded from profit), so in lean years it can push Cashflow negative.
+            <em>Currently: ${fmtPct(d.lvr)} → ${fmtPct(d.targetLvr != null ? d.targetLvr : d.lvr)} over ${d.paydownPeriod || 0} yrs (${(() => { const tot = Math.max(0, (d.lvr||0) - (d.targetLvr != null ? d.targetLvr : (d.lvr||0))) * (d.acquisitionPrice||0); const yrs = Math.round(d.paydownPeriod||0); return fmtDollar(yrs > 0 ? tot / yrs : 0); })()}/yr).</em>
           </div>
         </div>
         <div class="fin-footer-legend-item">
@@ -1693,7 +1715,9 @@ function exportToExcel() {
       ['Term of Ownership (yrs)',    d.termOfOwnership,      FMT_INT],
       ['Settlement Lag (yrs)',       d.settlementLag,        FMT_NUM3],
       ['Hold to Revaluation (yrs)',  d.holdDurationPreReval, FMT_INT],
-      ['LVR',                        d.lvr,                  FMT_PCT2],
+      ['Initial LVR',                d.lvr,                  FMT_PCT2],
+      ['Target LVR',                 d.targetLvr != null ? d.targetLvr : d.lvr, FMT_PCT2],
+      ['Paydown Period (yrs)',       d.paydownPeriod || 0,   FMT_INT],
       ['Interest Rate',              d.interestRate,         FMT_PCT2],
       ['Rental Growth',              d.rentalGrowth,         FMT_PCT2],
       ['Capital Growth',             d.capitalGrowth,        FMT_PCT2],
@@ -1880,7 +1904,8 @@ function exportToExcel() {
 
     section('Acquisition & Loan');
     rowD('Acquisition Price',       d.acquisitionPrice, FMT_DOLLAR, '$');
-    rowD('LVR',                     d.lvr,              FMT_PCT2,   '%');
+    rowD('Initial LVR',             d.lvr,              FMT_PCT2,   '%');
+    rowD('Target LVR',              d.targetLvr != null ? d.targetLvr : d.lvr, FMT_PCT2, '%');
     rowD('Interest Rate',           d.interestRate,     FMT_PCT2,   '% p.a.');
     rowD('Deposit %',               d.depositPct,       FMT_PCT2,   '%');
     rowD('Sales Commission %',      d.salesCommissionPct, FMT_PCT2, '%');
@@ -1893,7 +1918,7 @@ function exportToExcel() {
     rowD('Hold to Revaluation',     d.holdDurationPreReval, FMT_INT,'yrs');
     rowD('Settlement Lag',          d.settlementLag,    FMT_NUM3,   'yrs');
     rowD('Project Duration',        d.projectDuration,  FMT_INT,    'yrs');
-    rowD('% Profit → Debt Reduction', d.profitUsedForDebt, FMT_PCT2,'%');
+    rowD('Paydown Period',          d.paydownPeriod || 0, FMT_INT,  'yrs');
     rowD('Retained Earnings %',     d.retainedEarningsPct, FMT_PCT2,'%');
 
     section('Purchase Costs');

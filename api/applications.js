@@ -141,12 +141,12 @@ async function fetchChildren(applicationId) {
       WHERE application_id = ${applicationId}
       ORDER BY sort_order, id`,
     sql`
-      SELECT id, applicant_contact_id, category, doc_type, filename, mime_type, size_bytes,
-             url, points_value, uploaded_at,
-             uploaded_by_role, uploaded_by
-      FROM application_evidence
-      WHERE application_id = ${applicationId}
-      ORDER BY uploaded_at`,
+      SELECT ev.id, ev.applicant_contact_id, ev.category, ev.doc_type, ev.filename,
+             ev.mime_type, ev.size_bytes, ev.url, ev.points_value, ev.uploaded_at,
+             ev.uploaded_by_role, ev.uploaded_by
+      FROM application_evidence ev
+      WHERE ev.application_id = ${applicationId}
+      ORDER BY ev.uploaded_at`,
   ]);
   return { housing_history: housing, income_history: income, evidence };
 }

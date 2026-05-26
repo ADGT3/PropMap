@@ -1019,14 +1019,18 @@ async function step2Upload(req, res, ctx) {
     return res.status(400).json({ error: err.message });
   }
 
-  // Persist evidence row
+  // Persist evidence row. Record the applicant as the uploader so the audit
+  // trail is populated at the source (uploaded_by_role defaults to 'applicant'
+  // but we set it explicitly for clarity; uploaded_by = the applicant contact).
   const result = await sql`
     INSERT INTO application_evidence
-      (application_id, applicant_contact_id, category, filename, mime_type, size_bytes, url, points_value)
+      (application_id, applicant_contact_id, category, filename, mime_type, size_bytes, url, points_value,
+       uploaded_by_role, uploaded_by)
     VALUES
       (${application_id}, ${applicant_contact_id || null}, ${category},
        ${filename}, ${mime_type}, ${buf.length},
-       ${uploadResult.url}, ${parseInt(points_value, 10) || 0})
+       ${uploadResult.url}, ${parseInt(points_value, 10) || 0},
+       'applicant', ${applicant_contact_id || null})
     RETURNING id, category, filename, mime_type, size_bytes, url, points_value, uploaded_at`;
 
   return res.status(200).json({ evidence: result[0] });

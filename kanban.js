@@ -42,6 +42,16 @@ let userDealOrder  = {};           // { dealId: column_order } per-user, per cur
 let boardDefaultScores = {};       // { board_id: number 0-100 }
 const BOARD_DEFAULT_SCORE_FALLBACK = 40;
 
+// V81.5 — Interest level shown/sorted as 25 ("Could") when not yet set, so
+// unset cards sit mid-column instead of dominating the top. Display/sort only;
+// no data is written (the stored value stays null until the user sets it).
+const INTEREST_DEFAULT = 25;
+function resolveInterestLevel(item) {
+  const raw = item?.data?.interest_level;
+  if (raw == null) return INTEREST_DEFAULT;
+  return Math.max(0, Math.min(100, parseInt(raw, 10) || 0));
+}
+
 // Returns the STAGES-like array for the current board. Falls back to the
 // static STAGES constant if no boards are loaded yet. Each returned entry
 // has { id: column.id, label, color, show_on_map, is_terminal, stage_slug }
@@ -184,16 +194,14 @@ function buildKanbanComparator(mode, ddItems) {
     }
     case 'interest':
     default:
-      // High first; UNSET sorts to the TOP (per Q5=b — demand attention)
+      // V81.5 — High first. Unset interest resolves to 25 (mid-column) rather
+      // than sorting to the top, so undefined cards no longer dominate. Equal
+      // scores fall back to most-recently-added first.
       return (a, b) => {
-        const ia = a[1].data?.interest_level;
-        const ib = b[1].data?.interest_level;
-        const aSet = (ia != null);
-        const bSet = (ib != null);
-        if (!aSet && !bSet) return (b[1].addedAt || 0) - (a[1].addedAt || 0);
-        if (!aSet) return -1; // a is unset → a goes top
-        if (!bSet) return  1;
-        return ib - ia; // higher first
+        const ia = resolveInterestLevel(a[1]);
+        const ib = resolveInterestLevel(b[1]);
+        if (ib !== ia) return ib - ia;          // higher interest first
+        return (b[1].addedAt || 0) - (a[1].addedAt || 0);
       };
   }
 }
@@ -2625,10 +2633,6 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
   const ddClass  = ddCount === 0 ? '' : ddHigh ? 'dd-high' : ddPoss ? 'dd-possible' : 'dd-low';
   // V80.3 — Terms badge removed (no longer surfaced on cards).
 
-  const stageOptions = stages.map(s =>
-    `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
-  ).join('');
-
   // V77.1: Lease Listings show rent (per-week / per-month) in the headline,
   // not "Price Unavailable" from the sales price field. Other boards keep
   // the standard formatKbPrice behaviour.
@@ -2637,12 +2641,9 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
 
   // V80.2 — Interest level badge: shown on every card type now (was Enquiry-only).
   // Format: "{MoSCoW} {score}" — e.g. "Wont 5", "Could 35", "Should 60", "Must 90".
-  const interestLevel = (item.data?.interest_level != null)
-    ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
-    : null;
-  const interestBadgeHtml = (interestLevel != null)
-    ? `<span class="kb-ind kb-ind-interest kb-ind-interest-${moscowBand(interestLevel)}" title="Interest level (0–100)">${moscowLabel(interestLevel)} ${interestLevel}</span>`
-    : '';
+  const interestLevel = resolveInterestLevel(item);
+  const interestBadgeHtml =
+    `<span class="kb-ind kb-ind-interest kb-ind-interest-${moscowBand(interestLevel)}" title="Interest level (0–100)">${moscowLabel(interestLevel)} ${interestLevel}</span>`;
 
   card.innerHTML = `
     <div class="kb-card-top">
@@ -2652,7 +2653,6 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
     <div class="kb-card-price">${headline}</div>
     <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
     <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
-    <select class="kb-stage-select">${stageOptions}</select>
     <div class="kb-card-indicators">
       ${interestBadgeHtml}
       ${offers.length ? `<span class="kb-ind kb-ind-offers" title="${offers.length} offer(s)">${offers.length} Offer${offers.length > 1 ? 's' : ''}</span>` : ''}
@@ -2691,17 +2691,11 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
   // above Status). Other badges (Offer, Evidenced, Latest Offer Price for
   // Lease; Inspected, Contract Requested, Latest Offer Price for Sales) come
   // from item._enquiryMeta (filled async — see enrichEnquiryCardsAsync()).
-  const interestLevel = (item.data?.interest_level != null)
-    ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
-    : null;
+  const interestLevel = resolveInterestLevel(item);
 
   const meta = item._enquiryMeta || {};
   const isLease = boardId === 'sys_lease_enquiry';
   const contactName = meta.contact_name || '<span style="color:var(--muted);font-style:italic">Loading…</span>';
-
-  const stageOptions = stages.map(s =>
-    `<option value="${s.id}" ${s.id === (item._columnId || stageToColumnId(item.stage)) ? 'selected' : ''}>${s.label}</option>`
-  ).join('');
 
   // Build the per-board badge set
   const badges = [];
@@ -2716,7 +2710,7 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
     if (meta.latest_rent != null)     badges.push(`<span class="kb-ind kb-ind-enq kb-ind-rent" title="Latest offer price">$${Math.round(meta.latest_rent).toLocaleString('en-AU')}</span>`);
   }
   // V80.2 — Interest level badge — only when set. Format: "{MoSCoW} {score}".
-  if (interestLevel != null) {
+  if (interestLevel != null) {  // always set now (resolveInterestLevel defaults to 25)
     badges.push(`<span class="kb-ind kb-ind-enq kb-ind-interest kb-ind-interest-${moscowBand(interestLevel)}" title="Interest level (0–100)">${moscowLabel(interestLevel)} ${interestLevel}</span>`);
   }
   // Common across both Enquiry types
@@ -2732,7 +2726,6 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
     <div class="kb-card-price">${contactName}</div>
     <div class="kb-card-address kb-card-address-link" title="Show on map">📍 ${p.address || ''}</div>
     <div class="kb-card-suburb">${p.suburb || ''}${p.state ? ' ' + p.state : ''}</div>
-    <select class="kb-stage-select">${stageOptions}</select>
     <div class="kb-card-indicators">${badges.join('')}</div>
   `;
 }
@@ -2788,14 +2781,6 @@ async function enrichEnquiryCardsAsync() {
 // Helper to re-wire kb-card inner handlers after a rebuild of innerHTML.
 // Mirrors the wiring done in the main entries.forEach loop in renderBoard.
 function _wireCardInnerHandlers(card, id) {
-  const stageSel = card.querySelector('.kb-stage-select');
-  if (stageSel) {
-    stageSel.addEventListener('change', function (e) {
-      e.stopPropagation();
-      moveToColumn(id, this.value);
-      renderBoard();
-    });
-  }
   const removeBtn = card.querySelector('.kb-remove');
   if (removeBtn) {
     removeBtn.addEventListener('click', e => {
@@ -2901,13 +2886,6 @@ function renderBoard() {
       });
       card.addEventListener('dragend', () => card.classList.remove('dragging'));
 
-      // Stage select change — argument is the TARGET column id in the current board
-      card.querySelector('.kb-stage-select').addEventListener('change', function (e) {
-        e.stopPropagation();
-        moveToColumn(id, this.value);
-        renderBoard();
-      });
-
       // Remove card
       card.querySelector('.kb-remove').addEventListener('click', e => {
         e.stopPropagation();
@@ -2937,7 +2915,7 @@ function renderBoard() {
 
       // Click card body → open detail modal
       card.addEventListener('click', e => {
-        if (e.target.closest('.kb-remove, .kb-stage-select, .kb-card-address-link')) return;
+        if (e.target.closest('.kb-remove, .kb-card-address-link')) return;
         openCardModal(id);
       });
 
@@ -4267,20 +4245,19 @@ ${rows.join('')}`;
   }
 
   // V80.2 — Interest level slider — now ALL deal modals (was Enquiry-only).
-  // Field is data.interest_level (0-100, step 5). MoSCoW band labels
-  // (Won't / Could / Should / Must) sit under the track at 0/33/66/100% so
-  // the agent sees both the precise number AND the qualitative position.
+  // Field is data.interest_level (0-100, step 1; unset displays as 25). MoSCoW
+  // band labels (Won't / Could / Should / Must) sit under the track at
+  // 0/33/66/100% so the agent sees both the precise number AND the qualitative
+  // position.
   {
     const interestMount = modal.querySelector('.v77-interest-mount');
     if (interestMount) {
-      const initialLevel = (item.data?.interest_level != null)
-        ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
-        : 0;
+      const initialLevel = resolveInterestLevel(item);
       interestMount.innerHTML = `
         <div class="kb-section-label" style="margin-top:12px">Interest Level</div>
         <div class="kb-modal-interest">
           <div class="kb-interest-row">
-            <input type="range" class="kb-modal-interest-slider" min="0" max="100" step="5" value="${initialLevel}">
+            <input type="range" class="kb-modal-interest-slider" min="0" max="100" step="1" value="${initialLevel}">
             <span class="kb-modal-interest-value">${initialLevel}</span>
           </div>
           <div class="kb-interest-moscow">
@@ -4420,7 +4397,16 @@ ${rows.join('')}`;
       window._dealModalCloseHooks = [];
     }
     overlay.remove();
-    if (kanbanVisible) renderBoard();
+    // V81.5 — close is now instant. Edits inside the modal already patch the
+    // board card in place via refreshCardLive(id) at each save site, so the old
+    // unconditional renderBoard() here was redundant work that blocked the paint
+    // (the whole board rebuilt on every close, even view-only opens — the main
+    // cause of the "click → wait → gone" lag). We do one final surgical
+    // refreshCardLive(id) to cover any close-hook mutation (e.g. inspection
+    // flush) that didn't already patch the card; it patches just this card from
+    // cache and only falls back to a full render if the card must appear but is
+    // missing. No-op cost when nothing changed.
+    if (kanbanVisible && typeof refreshCardLive === 'function') refreshCardLive(id);
   };
   overlay.querySelector('.kb-modal-close').addEventListener('click', closeAndRefresh);
 
@@ -4437,7 +4423,11 @@ ${rows.join('')}`;
   overlay.querySelector(`#kbModalStatus-${id}`)?.addEventListener('change', (e) => {
     const newColId = e.target.value;
     moveToColumn(id, newColId);
-    renderBoard();
+    // V81.5 — patch just this card (matches the modern status mount above);
+    // moveToColumn already updated the cache, and refreshCardLive handles the
+    // moved/filtered-out cases. Avoids a full renderBoard() mid-edit.
+    if (typeof refreshCardLive === 'function') refreshCardLive(id);
+    else renderBoard();
   });
 
   // Finance picker — delegate clicks on all .kb-fin-pick-btn rows
@@ -5132,13 +5122,20 @@ const _dealsBoardSync = createBoardSync({
     const item = pipeline[id]; if (!item) return;
     const card = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (!card) return;
+    // V81.5 — if the deal's column changed, the card needs to move to a different
+    // column container (and counts/sort order shift). A content-only patch can't
+    // relocate it, so fall back to a full board render in that case. (Previously
+    // the modal close did renderBoard() unconditionally, which masked this; now
+    // that close patches a single card, the cross-column move must be detected.)
+    const wantedColId = item._columnId || stageToColumnId(item.stage, item._boardId);
+    const currentContainer = card.closest('.kb-cards');
+    const currentColId = currentContainer?.dataset.columnId;
+    if (currentColId != null && wantedColId != null && currentColId !== wantedColId) {
+      renderBoard();
+      return;
+    }
     refreshCardIndicators(card, id);
     card.classList.toggle('kb-card-attention', !!item._hasOverdueAction);
-    const sel = card.querySelector('.kb-stage-select');
-    if (sel) {
-      const wantedColId = item._columnId || stageToColumnId(item.stage);
-      if (sel.value !== wantedColId) sel.value = wantedColId;
-    }
   },
   fullRender() { renderBoard(); },
   boardVisible() {
