@@ -4280,7 +4280,7 @@ ${rows.join('')}`;
         <div class="kb-section-label" style="margin-top:12px">Interest Level</div>
         <div class="kb-modal-interest">
           <div class="kb-interest-row">
-            <input type="range" class="kb-modal-interest-slider" min="0" max="100" step="5" value="${initialLevel}">
+            <input type="range" class="kb-modal-interest-slider" min="0" max="100" step="1" value="${initialLevel}">
             <span class="kb-modal-interest-value">${initialLevel}</span>
           </div>
           <div class="kb-interest-moscow">
