@@ -4420,7 +4420,16 @@ ${rows.join('')}`;
       window._dealModalCloseHooks = [];
     }
     overlay.remove();
-    if (kanbanVisible) renderBoard();
+    // V81.5 — close is now instant. Edits inside the modal already patch the
+    // board card in place via refreshCardLive(id) at each save site, so the old
+    // unconditional renderBoard() here was redundant work that blocked the paint
+    // (the whole board rebuilt on every close, even view-only opens — the main
+    // cause of the "click → wait → gone" lag). We do one final surgical
+    // refreshCardLive(id) to cover any close-hook mutation (e.g. inspection
+    // flush) that didn't already patch the card; it patches just this card from
+    // cache and only falls back to a full render if the card must appear but is
+    // missing. No-op cost when nothing changed.
+    if (kanbanVisible && typeof refreshCardLive === 'function') refreshCardLive(id);
   };
   overlay.querySelector('.kb-modal-close').addEventListener('click', closeAndRefresh);
 
@@ -4437,7 +4446,11 @@ ${rows.join('')}`;
   overlay.querySelector(`#kbModalStatus-${id}`)?.addEventListener('change', (e) => {
     const newColId = e.target.value;
     moveToColumn(id, newColId);
-    renderBoard();
+    // V81.5 — patch just this card (matches the modern status mount above);
+    // moveToColumn already updated the cache, and refreshCardLive handles the
+    // moved/filtered-out cases. Avoids a full renderBoard() mid-edit.
+    if (typeof refreshCardLive === 'function') refreshCardLive(id);
+    else renderBoard();
   });
 
   // Finance picker — delegate clicks on all .kb-fin-pick-btn rows
