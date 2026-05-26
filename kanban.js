@@ -42,6 +42,16 @@ let userDealOrder  = {};           // { dealId: column_order } per-user, per cur
 let boardDefaultScores = {};       // { board_id: number 0-100 }
 const BOARD_DEFAULT_SCORE_FALLBACK = 40;
 
+// V81.5 — Interest level shown/sorted as 25 ("Could") when not yet set, so
+// unset cards sit mid-column instead of dominating the top. Display/sort only;
+// no data is written (the stored value stays null until the user sets it).
+const INTEREST_DEFAULT = 25;
+function resolveInterestLevel(item) {
+  const raw = item?.data?.interest_level;
+  if (raw == null) return INTEREST_DEFAULT;
+  return Math.max(0, Math.min(100, parseInt(raw, 10) || 0));
+}
+
 // Returns the STAGES-like array for the current board. Falls back to the
 // static STAGES constant if no boards are loaded yet. Each returned entry
 // has { id: column.id, label, color, show_on_map, is_terminal, stage_slug }
@@ -184,16 +194,14 @@ function buildKanbanComparator(mode, ddItems) {
     }
     case 'interest':
     default:
-      // High first; UNSET sorts to the TOP (per Q5=b — demand attention)
+      // V81.5 — High first. Unset interest resolves to 25 (mid-column) rather
+      // than sorting to the top, so undefined cards no longer dominate. Equal
+      // scores fall back to most-recently-added first.
       return (a, b) => {
-        const ia = a[1].data?.interest_level;
-        const ib = b[1].data?.interest_level;
-        const aSet = (ia != null);
-        const bSet = (ib != null);
-        if (!aSet && !bSet) return (b[1].addedAt || 0) - (a[1].addedAt || 0);
-        if (!aSet) return -1; // a is unset → a goes top
-        if (!bSet) return  1;
-        return ib - ia; // higher first
+        const ia = resolveInterestLevel(a[1]);
+        const ib = resolveInterestLevel(b[1]);
+        if (ib !== ia) return ib - ia;          // higher interest first
+        return (b[1].addedAt || 0) - (a[1].addedAt || 0);
       };
   }
 }
@@ -2637,12 +2645,9 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
 
   // V80.2 — Interest level badge: shown on every card type now (was Enquiry-only).
   // Format: "{MoSCoW} {score}" — e.g. "Wont 5", "Could 35", "Should 60", "Must 90".
-  const interestLevel = (item.data?.interest_level != null)
-    ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
-    : null;
-  const interestBadgeHtml = (interestLevel != null)
-    ? `<span class="kb-ind kb-ind-interest kb-ind-interest-${moscowBand(interestLevel)}" title="Interest level (0–100)">${moscowLabel(interestLevel)} ${interestLevel}</span>`
-    : '';
+  const interestLevel = resolveInterestLevel(item);
+  const interestBadgeHtml =
+    `<span class="kb-ind kb-ind-interest kb-ind-interest-${moscowBand(interestLevel)}" title="Interest level (0–100)">${moscowLabel(interestLevel)} ${interestLevel}</span>`;
 
   card.innerHTML = `
     <div class="kb-card-top">
@@ -2691,9 +2696,7 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
   // above Status). Other badges (Offer, Evidenced, Latest Offer Price for
   // Lease; Inspected, Contract Requested, Latest Offer Price for Sales) come
   // from item._enquiryMeta (filled async — see enrichEnquiryCardsAsync()).
-  const interestLevel = (item.data?.interest_level != null)
-    ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
-    : null;
+  const interestLevel = resolveInterestLevel(item);
 
   const meta = item._enquiryMeta || {};
   const isLease = boardId === 'sys_lease_enquiry';
@@ -2716,7 +2719,7 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
     if (meta.latest_rent != null)     badges.push(`<span class="kb-ind kb-ind-enq kb-ind-rent" title="Latest offer price">$${Math.round(meta.latest_rent).toLocaleString('en-AU')}</span>`);
   }
   // V80.2 — Interest level badge — only when set. Format: "{MoSCoW} {score}".
-  if (interestLevel != null) {
+  if (interestLevel != null) {  // always set now (resolveInterestLevel defaults to 25)
     badges.push(`<span class="kb-ind kb-ind-enq kb-ind-interest kb-ind-interest-${moscowBand(interestLevel)}" title="Interest level (0–100)">${moscowLabel(interestLevel)} ${interestLevel}</span>`);
   }
   // Common across both Enquiry types
@@ -4267,15 +4270,14 @@ ${rows.join('')}`;
   }
 
   // V80.2 — Interest level slider — now ALL deal modals (was Enquiry-only).
-  // Field is data.interest_level (0-100, step 5). MoSCoW band labels
-  // (Won't / Could / Should / Must) sit under the track at 0/33/66/100% so
-  // the agent sees both the precise number AND the qualitative position.
+  // Field is data.interest_level (0-100, step 1; unset displays as 25). MoSCoW
+  // band labels (Won't / Could / Should / Must) sit under the track at
+  // 0/33/66/100% so the agent sees both the precise number AND the qualitative
+  // position.
   {
     const interestMount = modal.querySelector('.v77-interest-mount');
     if (interestMount) {
-      const initialLevel = (item.data?.interest_level != null)
-        ? Math.max(0, Math.min(100, parseInt(item.data.interest_level, 10) || 0))
-        : 0;
+      const initialLevel = resolveInterestLevel(item);
       interestMount.innerHTML = `
         <div class="kb-section-label" style="margin-top:12px">Interest Level</div>
         <div class="kb-modal-interest">
@@ -5145,11 +5147,22 @@ const _dealsBoardSync = createBoardSync({
     const item = pipeline[id]; if (!item) return;
     const card = document.querySelector(`.kb-card[data-id="${id}"]`);
     if (!card) return;
+    // V81.5 — if the deal's column changed, the card needs to move to a different
+    // column container (and counts/sort order shift). A content-only patch can't
+    // relocate it, so fall back to a full board render in that case. (Previously
+    // the modal close did renderBoard() unconditionally, which masked this; now
+    // that close patches a single card, the cross-column move must be detected.)
+    const wantedColId = item._columnId || stageToColumnId(item.stage, item._boardId);
+    const currentContainer = card.closest('.kb-cards');
+    const currentColId = currentContainer?.dataset.columnId;
+    if (currentColId != null && wantedColId != null && currentColId !== wantedColId) {
+      renderBoard();
+      return;
+    }
     refreshCardIndicators(card, id);
     card.classList.toggle('kb-card-attention', !!item._hasOverdueAction);
     const sel = card.querySelector('.kb-stage-select');
     if (sel) {
-      const wantedColId = item._columnId || stageToColumnId(item.stage);
       if (sel.value !== wantedColId) sel.value = wantedColId;
     }
   },
