@@ -4853,7 +4853,7 @@ function openDdAttachmentsDialog(dealId, ddKey, parentModal) {
         </div>
         <div class="kb-dd-attach-upload">
           <input type="file" class="kb-dd-attach-file-input" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,application/pdf,image/jpeg,image/png,image/heic,image/heif">
-          <span class="kb-dd-attach-upload-help">PDF, JPEG, PNG, HEIC. Max 10 MB.</span>
+          <span class="kb-dd-attach-upload-help">PDF, JPEG, PNG, HEIC. Max 20 MB.</span>
         </div>
         <div class="kb-dd-attach-error" data-error style="display:none"></div>
       </div>
@@ -4926,8 +4926,8 @@ function openDdAttachmentsDialog(dealId, ddKey, parentModal) {
     const file = fileInp.files && fileInp.files[0];
     if (!file) return;
     showError('');
-    if (file.size > 10 * 1024 * 1024) {
-      showError('File too large. Max 10 MB.');
+    if (file.size > 20 * 1024 * 1024) {
+      showError('File too large. Max 20 MB.');
       fileInp.value = '';
       return;
     }
