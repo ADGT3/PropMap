@@ -32,6 +32,8 @@ import { upload as blobUpload, remove as blobRemove } from '../../lib/blob.js';
 
 const sql = neon(getDatabaseUrl());
 
+export const config = { api: { bodyParser: { sizeLimit: '20mb' } } };
+
 export default async function handler(req, res) {
   const { token, action } = req.query || {};
   if (!token)  return res.status(400).json({ error: 'token is required in URL path' });
@@ -1000,8 +1002,8 @@ async function step2Upload(req, res, ctx) {
   try { buf = Buffer.from(body_base64, 'base64'); }
   catch { return res.status(400).json({ error: 'Invalid base64 body' }); }
 
-  if (buf.length > 10 * 1024 * 1024) {
-    return res.status(413).json({ error: 'File too large (max 10 MB).' });
+  if (buf.length > 20 * 1024 * 1024) {
+    return res.status(413).json({ error: 'File too large (max 20 MB).' });
   }
 
   let uploadResult;
