@@ -215,13 +215,31 @@ async function importContactsBulk(contacts, stats) {
       activityRows.push({ contact_id, ...c.activity });
     }
 
-    // Notes
+    // Notes — correct interaction_type and source per note type:
+    //   last_note        → email_out,  source = NULL  (outbound campaign, no source)
+    //   background_info  → file_note,  source = NULL  (internal note, no source)
+    //   legal_name       → file_note,  source = NULL
+    //   unsubscribe      → file_note,  source = NULL
+    //   source attr      → file_note,  source = slug  (separate attribution note)
     const source_slug = c.source ? (SOURCE_SLUG_MAP[c.source] ?? 'other') : null;
     for (const note of (c.notes || [])) {
-      if (note?.text) noteRows.push({ contact_id, text: `${note.tag} ${note.text}`, source_slug });
+      if (!note?.text) continue;
+      const isCampaign = note.tag === '[Rex last note]';
+      noteRows.push({
+        contact_id,
+        text: note.text,  // no tag prefix — author_name 'Rex Import' identifies origin
+        interaction_type: isCampaign ? 'email_out' : 'file_note',
+        source_slug: null,  // outbound/internal notes never have a source
+      });
     }
-    if (!(c.notes || []).length && source_slug) {
-      noteRows.push({ contact_id, text: '[Rex Import] Contact imported from Rex CRM.', source_slug });
+    // Source attribution — separate inbound note with source slug
+    if (source_slug) {
+      noteRows.push({
+        contact_id,
+        text: 'Contact imported from Rex CRM.',
+        interaction_type: 'file_note',
+        source_slug,
+      });
     }
 
     // Entity contacts (roles)
@@ -262,7 +280,7 @@ async function importContactsBulk(contacts, stats) {
       ) ON CONFLICT (contact_id) DO NOTHING`),
     ...noteRows.map(r => () => sql`
       INSERT INTO notes (entity_type, entity_id, note_text, interaction_type, source, author_id, author_name)
-      VALUES ('contact', ${String(r.contact_id)}, ${r.text}, 'file_note', ${r.source_slug ?? null}, NULL, 'Rex Import')`),
+      VALUES ('contact', ${String(r.contact_id)}, ${r.text}, ${r.interaction_type}, ${r.source_slug ?? null}, NULL, 'Rex Import')`),
     ...ecRows.map(r => () => sql`
       INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id)
       VALUES (${r.contact_id}, 'contact_import', ${r.rex_id}, ${r.role_id})
