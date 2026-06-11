@@ -5,39 +5,38 @@
  * Imports contacts and properties from the Rex CRM export per the
  * CRM Migration Plan v2 (June 2026).
  *
- * Reads pre-processed JSON data files:
- *   api/migrate-to-v82b-contacts.json   — 2,966 contacts
- *   api/migrate-to-v82b-addresses.json  — 79 properties
+ * Key schema facts confirmed from codebase:
+ *   - contacts: NO source column (dropped V77.1c); source lives on notes table
+ *   - notes table (not contact_notes): entity_type, entity_id (TEXT), note_text,
+ *     interaction_type (FK interaction_types, default 'file_note'), source (FK contact_sources)
+ *   - contact_sources: slug-style ids (our_website, realestate_com_au, domain_com_au,
+ *     instagram, facebook, edm, letter_drop, door_knocking, inspection, walk_in,
+ *     signboard, cold_calling, referral, other)
+ *   - entity_contacts: contact_id, entity_type, entity_id (TEXT), role_id
+ *   - properties: id (TEXT), address, suburb, state, lat, lng, lot_dps, area_sqm,
+ *     core_logic_id, property_metadata (JSONB) — added by migrate-to-v82b.js
  *
  * Per contact:
  *   1. Org (company) — upsert into organisations, link via organisation_id
- *   2. Contact — insert (skip on duplicate email; keep richer record)
+ *   2. Contact — insert (skip on duplicate email; keep existing)
  *   3. contact_marketing_categories rows
  *   4. contact_buyer_profile row
  *   5. contact_marketing_activity row
- *   6. contact_notes rows (background_info, last_note, legal_name, unsubscribe_reason)
- *   7. entity_contacts rows (roles — contact-level, no entity linked)
+ *   6. notes rows for background_info, last_note, source attribution,
+ *      legal_name, unsubscribe_reason
+ *   7. entity_contacts rows (roles)
  *
  * Per address:
- *   1. Property insert (requires lat/lng — skip if missing)
- *   2. Internal notes → contact_notes on property
- *   3. Owner contact reconciliation (exact mobile or email match → link;
+ *   1. Property insert (requires lat/lng)
+ *   2. Owner contact reconciliation (exact mobile or email match → link;
  *      no match → create contact, then link)
- *   4. entity_contacts row linking owner to property (role: owner)
+ *   3. entity_contacts row linking owner to property (role: owner)
  *
- * All operations wrapped in per-record try/catch so one bad row
- * does not abort the entire import.
+ * Idempotent — tracked via rex_import_log table.
+ * Supports ?batch=N&offset=M for Vercel 30s timeout compliance.
  *
- * Idempotent — a second run will skip already-imported records
- * (tracked via rex_source_id in migration_log).
- *
- * GET  → status (counts already imported, counts pending)
- * POST → execute (runs full import, returns summary)
- *
- * This is an admin-only endpoint. Expect it to take 30–120 seconds
- * for the full 2,966-contact import. Vercel's 30s function timeout
- * applies — POST accepts an optional ?batch=N&offset=M for pagination
- * if needed.
+ * GET  → status
+ * POST → execute
  */
 
 import { neon } from '@neondatabase/serverless';
@@ -48,12 +47,30 @@ import { createRequire } from 'module';
 const sql = neon(getDatabaseUrl());
 const require = createRequire(import.meta.url);
 
-// Load pre-processed data (committed as JSON alongside this file)
 const ALL_CONTACTS = require('./migrate-to-v82b-contacts.json');
 const ALL_ADDRESSES = require('./migrate-to-v82b-addresses.json');
 
 const MIGRATION_ID = 'v82b_rex_data_import';
-const LOG_TABLE    = 'rex_import_log';
+
+// ── Source mapping: our JSON values → contact_sources slug ids ───────────────
+const SOURCE_SLUG_MAP = {
+  'realestate.com.au': 'realestate_com_au',
+  'domain.com.au':     'domain_com_au',
+  'OpenLot':           'other',
+  'Facebook':          'facebook',
+  'Google':            'other',
+  'Instagram':         'instagram',
+  'Open_House':        'inspection',
+  'Referral':          'referral',
+  'Signboard':         'signboard',
+  'Site_Signage':      'signboard',
+  'Office_Website':    'our_website',
+  'Letterbox_Drop':    'letter_drop',
+  'Door_Knock':        'door_knocking',
+  'Walk_In':           'walk_in',
+  'Phone_In':          'other',
+  'Agent_Database':    'other',
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -61,10 +78,10 @@ async function ensureLogTable() {
   await sql`
     CREATE TABLE IF NOT EXISTS rex_import_log (
       id          BIGSERIAL PRIMARY KEY,
-      entity_type TEXT    NOT NULL,  -- 'contact' | 'property'
+      entity_type TEXT    NOT NULL,
       rex_id      TEXT    NOT NULL,
       propmap_id  INTEGER,
-      status      TEXT    NOT NULL,  -- 'inserted' | 'skipped_duplicate' | 'error' | 'owner_matched' | 'owner_created'
+      status      TEXT    NOT NULL,
       detail      TEXT,
       ran_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (entity_type, rex_id)
@@ -93,34 +110,40 @@ async function getOrCreateOrg(company) {
   if (!company) return null;
   const trimmed = company.trim();
   if (!trimmed) return null;
-  // Try to find existing
   const existing = await sql`
     SELECT id FROM organisations
     WHERE LOWER(TRIM(name)) = LOWER(${trimmed})
     LIMIT 1`;
   if (existing.length) return existing[0].id;
-  // Create new
   const inserted = await sql`
-    INSERT INTO organisations (name)
-    VALUES (${trimmed})
-    RETURNING id`;
+    INSERT INTO organisations (name) VALUES (${trimmed}) RETURNING id`;
   return inserted[0]?.id ?? null;
 }
 
 async function findContactByMobileOrEmail(mobile, email) {
-  if (!mobile && !email) return null;
-  const conditions = [];
   if (mobile) {
-    const r = await sql`
-      SELECT id FROM contacts WHERE mobile = ${mobile} LIMIT 1`;
+    const r = await sql`SELECT id FROM contacts WHERE mobile = ${mobile} LIMIT 1`;
     if (r.length) return r[0].id;
   }
   if (email) {
-    const r = await sql`
-      SELECT id FROM contacts WHERE LOWER(email) = LOWER(${email}) LIMIT 1`;
+    const r = await sql`SELECT id FROM contacts WHERE LOWER(email) = LOWER(${email}) LIMIT 1`;
     if (r.length) return r[0].id;
   }
   return null;
+}
+
+async function insertNote(contact_id, note_text, source_slug = null) {
+  // entity_id is TEXT in notes table
+  await sql`
+    INSERT INTO notes (
+      entity_type, entity_id, note_text,
+      interaction_type, source,
+      author_id, author_name
+    ) VALUES (
+      'contact', ${String(contact_id)}, ${note_text},
+      'file_note', ${source_slug ?? null},
+      NULL, 'Rex Import'
+    )`;
 }
 
 // ── Contact import ────────────────────────────────────────────────────────────
@@ -136,7 +159,6 @@ async function importContact(c, stats) {
     const org_id = await getOrCreateOrg(c.company);
 
     // 2. Check for duplicate email
-    let contact_id = null;
     if (c.email) {
       const dup = await sql`
         SELECT id FROM contacts WHERE LOWER(email) = ${c.email} LIMIT 1`;
@@ -144,15 +166,16 @@ async function importContact(c, stats) {
         await log('contact', c.rex_id, dup[0].id, 'skipped_duplicate',
           `duplicate email ${c.email}, linked to existing contact ${dup[0].id}`);
         stats.contacts_skipped_duplicate++;
-        return dup[0].id; // still return id so notes/roles can be attached
+        return dup[0].id;
       }
     }
 
-    // 3. Insert contact
+    // 3. Insert contact (no source column — stored as note below)
     const rows = await sql`
       INSERT INTO contacts (
         first_name, last_name, mobile, email,
-        organisation_id, source, dob,
+        organisation_id,
+        dob,
         current_address, current_address_suburb,
         current_address_state, current_address_postcode,
         discipline, last_contacted_at,
@@ -160,17 +183,18 @@ async function importContact(c, stats) {
         do_not_send_marketing_at,
         created_at, updated_at
       ) VALUES (
-        ${c.first_name}, ${c.last_name}, ${c.mobile ?? null}, ${c.email ?? null},
-        ${org_id ?? null}, ${c.source ?? null}, ${c.dob ?? null},
+        ${c.first_name}, ${c.last_name ?? ''}, ${c.mobile ?? ''}, ${c.email ?? ''},
+        ${org_id ?? null},
+        ${c.dob ?? null},
         ${c.current_address ?? null}, ${c.current_address_suburb ?? null},
         ${c.current_address_state ?? null}, ${c.current_address_postcode ?? null},
         ${c.discipline ?? null}, ${c.last_contacted_at ?? null},
         ${c.marketing_email_consent_at ?? null}, ${c.marketing_sms_consent_at ?? null},
         ${c.do_not_send_marketing_at ?? null},
-        ${c.created_at ?? 'now()'}, now()
+        ${c.created_at ?? null}, now()
       )
       RETURNING id`;
-    contact_id = rows[0].id;
+    const contact_id = rows[0].id;
 
     // 4. Marketing categories
     for (const cat of (c.marketing_categories || [])) {
@@ -219,20 +243,18 @@ async function importContact(c, stats) {
         ON CONFLICT (contact_id) DO NOTHING`;
     }
 
-    // 7. Notes
+    // 7. Notes (into notes table, entity_type='contact')
+    const source_slug = c.source ? (SOURCE_SLUG_MAP[c.source] ?? 'other') : null;
     for (const note of (c.notes || [])) {
       if (!note?.text) continue;
-      await sql`
-        INSERT INTO contact_notes (contact_id, note_text, created_at)
-        VALUES (${contact_id}, ${`${note.tag} ${note.text}`}, now())`;
+      await insertNote(contact_id, `${note.tag} ${note.text}`, source_slug);
+    }
+    // If no notes but we have a source, record it as a minimal import note
+    if ((c.notes || []).length === 0 && source_slug) {
+      await insertNote(contact_id, '[Rex Import] Contact imported from Rex CRM.', source_slug);
     }
 
-    // 8. Entity contacts (roles at contact level — no specific entity)
-    // Roles are recorded as contact-level without entity linkage for now;
-    // they will be linked to deals/properties as those relationships are
-    // established in the future.
-    // We store them as entity_type='contact_import', entity_id=rex_id
-    // so the data is preserved and queryable.
+    // 8. Entity contacts (roles)
     for (const role_id of (c.roles || [])) {
       await sql`
         INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id)
@@ -260,18 +282,15 @@ async function importAddress(a, stats) {
   }
 
   try {
-    // lat/lng required — skip if missing
     if (!a.lat || !a.lng) {
-      await log('property', a.rex_id, null, 'skipped_duplicate', 'missing lat/lng');
+      await log('property', a.rex_id, null, 'skipped_no_latlng', 'missing lat/lng');
       stats.properties_skipped++;
       return;
     }
 
-    // Build lot_dps string
-    const lot_dps = [a.lot_no, a.street_no].filter(Boolean).join('/');
+    const prop_id    = `rex_${a.rex_id}`;
+    const lot_dps    = [a.lot_no, a.street_no].filter(Boolean).join('/');
 
-    // Insert property
-    const prop_id = `rex_${a.rex_id}`;
     await sql`
       INSERT INTO properties (
         id, address, suburb, state, lat, lng,
@@ -282,40 +301,32 @@ async function importAddress(a, stats) {
         ${a.lat}, ${a.lng},
         ${lot_dps || ''}, ${a.land_size_sqm ?? null}, ${a.core_logic_id ?? null},
         ${a.property_metadata ? JSON.stringify(a.property_metadata) : '{}'},
-        ${a.created_at ?? 'now()'}, now()
+        ${a.created_at ?? null}, now()
       )
       ON CONFLICT (id) DO NOTHING`;
 
-    // Internal notes
-    if (a.internal_notes) {
-      await sql`
-        INSERT INTO contact_notes (contact_id, note_text, created_at)
-        SELECT NULL, ${`[Rex property note] ${a.internal_notes}`}, now()
-        WHERE FALSE`; // placeholder — property notes need a deal_id; log as audit only
-    }
-
     // Owner reconciliation
+    let owner_status = null;
     if (a.owner) {
       const o = a.owner;
       let owner_contact_id = await findContactByMobileOrEmail(o.mobile, o.email);
-      let owner_status = 'owner_matched';
 
       if (!owner_contact_id) {
-        // Create new contact from owner fields
         const org_id = await getOrCreateOrg(o.company);
         const new_owner = await sql`
           INSERT INTO contacts (
             first_name, last_name, mobile, email,
-            organisation_id, source, created_at, updated_at
+            organisation_id, created_at, updated_at
           ) VALUES (
-            ${o.first_name}, ${o.last_name}, ${o.mobile ?? null}, ${o.email ?? null},
-            ${org_id ?? null}, 'rex_import', now(), now()
+            ${o.first_name}, ${o.last_name ?? ''}, ${o.mobile ?? ''}, ${o.email ?? ''},
+            ${org_id ?? null}, now(), now()
           )
           RETURNING id`;
         owner_contact_id = new_owner[0]?.id;
         owner_status = 'owner_created';
         stats.owners_created++;
       } else {
+        owner_status = 'owner_matched';
         stats.owners_matched++;
       }
 
@@ -324,12 +335,11 @@ async function importAddress(a, stats) {
           INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id)
           VALUES (${owner_contact_id}, 'property', ${prop_id}, 'owner')
           ON CONFLICT (contact_id, entity_type, entity_id, role_id) DO NOTHING`;
-        await log('property', a.rex_id, null, owner_status,
-          `owner contact_id=${owner_contact_id}`);
       }
     }
 
-    await log('property', a.rex_id, null, 'inserted');
+    await log('property', a.rex_id, null, owner_status ?? 'inserted',
+      owner_status ? `prop_id=${prop_id}` : null);
     stats.properties_inserted++;
 
   } catch (err) {
@@ -355,9 +365,7 @@ export default async function handler(req, res) {
         GROUP BY entity_type, status
         ORDER BY entity_type, status`;
 
-      const pending_contacts  = ALL_CONTACTS.length;
-      const pending_addresses = ALL_ADDRESSES.length;
-      const loggedContactIds  = new Set(
+      const loggedContactIds = new Set(
         (await sql`SELECT rex_id FROM rex_import_log WHERE entity_type='contact'`).map(r => r.rex_id)
       );
       const loggedPropIds = new Set(
@@ -367,8 +375,8 @@ export default async function handler(req, res) {
       return res.status(200).json({
         migration_id: MIGRATION_ID,
         source: {
-          total_contacts:    pending_contacts,
-          total_addresses:   pending_addresses,
+          total_contacts:    ALL_CONTACTS.length,
+          total_addresses:   ALL_ADDRESSES.length,
           contacts_pending:  ALL_CONTACTS.filter(c => !loggedContactIds.has(c.rex_id)).length,
           addresses_pending: ALL_ADDRESSES.filter(a => !loggedPropIds.has(a.rex_id)).length,
         },
@@ -378,7 +386,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const batch  = parseInt(req.query?.batch  ?? '500', 10);
+      const batch  = parseInt(req.query?.batch  ?? '300', 10);
       const offset = parseInt(req.query?.offset ?? '0',   10);
 
       const stats = {
@@ -388,13 +396,13 @@ export default async function handler(req, res) {
         owners_matched: 0, owners_created: 0,
       };
 
-      // ── Contacts (paginated) ──────────────────────────────────────────────
+      // Contacts (paginated)
       const contactSlice = ALL_CONTACTS.slice(offset, offset + batch);
       for (const c of contactSlice) {
         await importContact(c, stats);
       }
 
-      // ── Addresses (always full — only 79 records) ─────────────────────────
+      // Addresses (always full — only 79 records; only on first batch)
       if (offset === 0) {
         for (const a of ALL_ADDRESSES) {
           await importAddress(a, stats);
@@ -402,7 +410,7 @@ export default async function handler(req, res) {
       }
 
       const next_offset = offset + batch;
-      const has_more = next_offset < ALL_CONTACTS.length;
+      const has_more    = next_offset < ALL_CONTACTS.length;
 
       return res.status(200).json({
         migration_id: MIGRATION_ID,
