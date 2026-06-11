@@ -144,35 +144,39 @@ async function importContactsBulk(contacts, stats) {
   // 3. Build org cache for this batch
   const orgCache = await buildOrgCache(toInsert.map(c => c.company));
 
-  // 4. Bulk insert contacts — one row at a time but in a tight loop (no await per sub-insert)
-  //    Neon serverless doesn't support multi-row parameterised VALUES easily,
-  //    so we use Promise.allSettled to parallelise the inserts.
-  const insertResults = await Promise.allSettled(
-    toInsert.map(c => {
-      const org_id = c.company ? (orgCache.get(c.company.trim().toLowerCase()) ?? null) : null;
-      return sql`
-        INSERT INTO contacts (
-          first_name, last_name, mobile, email,
-          organisation_id, dob,
-          current_address, current_address_suburb,
-          current_address_state, current_address_postcode,
-          discipline, last_contacted_at,
-          marketing_email_consent_at, marketing_sms_consent_at,
-          do_not_send_marketing_at,
-          created_at, updated_at
-        ) VALUES (
-          ${c.first_name}, ${c.last_name ?? ''}, ${c.mobile ?? ''}, ${c.email ?? ''},
-          ${org_id}, ${c.dob ?? null},
-          ${c.current_address ?? null}, ${c.current_address_suburb ?? null},
-          ${c.current_address_state ?? null}, ${c.current_address_postcode ?? null},
-          ${c.discipline ?? null}, ${c.last_contacted_at ?? null},
-          ${c.marketing_email_consent_at ?? null}, ${c.marketing_sms_consent_at ?? null},
-          ${c.do_not_send_marketing_at ?? null},
-          ${c.created_at ?? null}, now()
-        )
-        RETURNING id`;
-    })
-  );
+  // 4. Bulk insert contacts in chunks of 20 to avoid overwhelming Neon connections
+  const CHUNK = 20;
+  const insertResults = [];
+  for (let i = 0; i < toInsert.length; i += CHUNK) {
+    const chunk = toInsert.slice(i, i + CHUNK);
+    const chunkResults = await Promise.allSettled(
+      chunk.map(c => {
+        const org_id = c.company ? (orgCache.get(c.company.trim().toLowerCase()) ?? null) : null;
+        return sql`
+          INSERT INTO contacts (
+            first_name, last_name, mobile, email,
+            organisation_id, dob,
+            current_address, current_address_suburb,
+            current_address_state, current_address_postcode,
+            discipline, last_contacted_at,
+            marketing_email_consent_at, marketing_sms_consent_at,
+            do_not_send_marketing_at,
+            created_at, updated_at
+          ) VALUES (
+            ${c.first_name}, ${c.last_name ?? ''}, ${c.mobile ?? ''}, ${c.email ?? ''},
+            ${org_id}, ${c.dob ?? null},
+            ${c.current_address ?? null}, ${c.current_address_suburb ?? null},
+            ${c.current_address_state ?? null}, ${c.current_address_postcode ?? null},
+            ${c.discipline ?? null}, ${c.last_contacted_at ?? null},
+            ${c.marketing_email_consent_at ?? null}, ${c.marketing_sms_consent_at ?? null},
+            ${c.do_not_send_marketing_at ?? null},
+            ${c.created_at ?? null}, now()
+          )
+          RETURNING id`;
+      })
+    );
+    insertResults.push(...chunkResults);
+  }
 
   // 5. Map results back, collect child rows
   const mktCatRows   = [];
@@ -226,15 +230,12 @@ async function importContactsBulk(contacts, stats) {
     }
   }
 
-  // 6. Bulk insert child tables in parallel
-  await Promise.all([
-    // Marketing categories
-    ...mktCatRows.map(r => sql`
+  // 6. Bulk insert child tables in chunked parallel batches (max 20 concurrent)
+  const allChildOps = [
+    ...mktCatRows.map(r => () => sql`
       INSERT INTO contact_marketing_categories (contact_id, category)
       VALUES (${r.contact_id}, ${r.category}) ON CONFLICT DO NOTHING`),
-
-    // Buyer profiles
-    ...buyerProfRows.map(r => sql`
+    ...buyerProfRows.map(r => () => sql`
       INSERT INTO contact_buyer_profile (
         contact_id, listing_types, property_types,
         min_price, max_price, min_rent, max_rent,
@@ -252,27 +253,24 @@ async function importContactsBulk(contacts, stats) {
         ${r.min_land_size_sqm ?? null}, ${r.max_land_size_sqm ?? null},
         ${r.commercial_listing_type ?? null}, ${r.max_commercial_rent ?? null}
       ) ON CONFLICT (contact_id) DO NOTHING`),
-
-    // Marketing activity
-    ...activityRows.map(r => sql`
+    ...activityRows.map(r => () => sql`
       INSERT INTO contact_marketing_activity (
         contact_id, activity_score, email_opens, email_clicks, page_views
       ) VALUES (
         ${r.contact_id}, ${r.activity_score ?? null},
         ${r.email_opens ?? 0}, ${r.email_clicks ?? 0}, ${r.page_views ?? 0}
       ) ON CONFLICT (contact_id) DO NOTHING`),
-
-    // Notes
-    ...noteRows.map(r => sql`
+    ...noteRows.map(r => () => sql`
       INSERT INTO notes (entity_type, entity_id, note_text, interaction_type, source, author_id, author_name)
       VALUES ('contact', ${String(r.contact_id)}, ${r.text}, 'file_note', ${r.source_slug ?? null}, NULL, 'Rex Import')`),
-
-    // Entity contacts
-    ...ecRows.map(r => sql`
+    ...ecRows.map(r => () => sql`
       INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id)
       VALUES (${r.contact_id}, 'contact_import', ${r.rex_id}, ${r.role_id})
       ON CONFLICT (contact_id, entity_type, entity_id, role_id) DO NOTHING`),
-  ]);
+  ];
+  for (let i = 0; i < allChildOps.length; i += CHUNK) {
+    await Promise.allSettled(allChildOps.slice(i, i + CHUNK).map(fn => fn()));
+  }
 
   // 7. Log results
   await bulkLog(logRows);
