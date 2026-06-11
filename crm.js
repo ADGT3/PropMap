@@ -407,7 +407,7 @@ async function renderNotesPanel(contactId, pipelineId) {
       notes.forEach(n => {
         const entry = document.createElement('div');
         entry.className = 'crm-note-entry';
-        const src     = n.source_label           ? ` <span class="crm-note-prop">· ${n.source_label}</span>` : '';
+        const src     = n.source_label_text       ? ` <span class="crm-note-prop">· ${n.source_label_text}</span>` : '';
         const typeBdg = n.interaction_type_label ? ` <span class="crm-note-prop">· ${n.interaction_type_label}</span>` : '';
         const author = n.author_name || 'Unknown';
         entry.innerHTML = `
@@ -1495,8 +1495,8 @@ function renderCRMView(container) {
               <div class="crm-modal-notes-list">
                 ${notes.length ? notes.map(n => {
                   const author = n.author_name || 'Unknown';
-                  const sourceBadge = n.source_label
-                    ? `<span class="crm-note-source">${n.source_label}</span>`
+                  const sourceBadge = n.source_label_text
+                    ? `<span class="crm-note-source">${n.source_label_text}</span>`
                     : '';
                   return `
                   <div class="crm-note-entry" data-note-id="${n.id}">

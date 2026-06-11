@@ -4530,7 +4530,7 @@ ${rows.join('')}`;
       const author = n.author_name || 'Unknown';
       // V77.1 — type + source badges (server returns *_label fields if available)
       const typeLabel = n.interaction_type_label || (n.interaction_type ? n.interaction_type.replace(/_/g, ' ') : '');
-      const srcLabel  = n.source_label || (n.source ? n.source.replace(/_/g, ' ') : '');
+      const srcLabel  = n.source_label_text || (n.source ? n.source.replace(/_/g, ' ') : '');
       const typeBadge = typeLabel ? `<span class="kb-note-type-badge">${typeLabel}</span>` : '';
       const srcBadge  = srcLabel  ? `<span class="kb-note-source-badge">${srcLabel}</span>`  : '';
       entry.innerHTML = `
