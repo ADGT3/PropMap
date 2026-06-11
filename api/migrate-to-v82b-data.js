@@ -386,8 +386,9 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const batch  = parseInt(req.query?.batch  ?? '300', 10);
+      const batch  = parseInt(req.query?.batch  ?? '200', 10);
       const offset = parseInt(req.query?.offset ?? '0',   10);
+      const mode   = req.query?.mode ?? 'contacts'; // 'contacts' | 'addresses'
 
       const stats = {
         contacts_inserted: 0, contacts_skipped: 0,
@@ -396,17 +397,23 @@ export default async function handler(req, res) {
         owners_matched: 0, owners_created: 0,
       };
 
+      if (mode === 'addresses') {
+        // Run addresses import separately — POST ?mode=addresses
+        for (const a of ALL_ADDRESSES) {
+          await importAddress(a, stats);
+        }
+        return res.status(200).json({
+          migration_id: MIGRATION_ID,
+          mode: 'addresses',
+          stats,
+          message: 'Addresses import complete.',
+        });
+      }
+
       // Contacts (paginated)
       const contactSlice = ALL_CONTACTS.slice(offset, offset + batch);
       for (const c of contactSlice) {
         await importContact(c, stats);
-      }
-
-      // Addresses (always full — only 79 records; only on first batch)
-      if (offset === 0) {
-        for (const a of ALL_ADDRESSES) {
-          await importAddress(a, stats);
-        }
       }
 
       const next_offset = offset + batch;
@@ -422,7 +429,7 @@ export default async function handler(req, res) {
           : null,
         message: has_more
           ? `Processed ${offset}–${offset + contactSlice.length} of ${ALL_CONTACTS.length} contacts. POST to next_url to continue.`
-          : 'Import complete.',
+          : 'Contacts import complete. Run POST ?mode=addresses to import properties.',
       });
     }
 
