@@ -1214,6 +1214,11 @@ function renderCRMView(container) {
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
 
+      // Derive source from earliest note that has a source label (V82.b)
+      const sortedNotes = [...notes].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      const firstSourceNote = sortedNotes.find(n => n.source_label_text);
+      const contactSource = firstSourceNote?.source_label_text ?? null;
+
       // Local HTML-escape helper for the V80 Action Requests section.
       const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch =>
         ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])
@@ -1323,9 +1328,10 @@ function renderCRMView(container) {
           <div class="crm-modal-section">
             <div class="crm-modal-section-title">Contact Details</div>
             <div class="crm-detail-grid">
-              ${c.mobile   ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
-              ${c.email    ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
-              ${c.org_name ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
+              ${c.mobile       ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
+              ${c.email        ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
+              ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
+              ${contactSource  ? `<div class="crm-detail-label">Source</div><div>${contactSource}</div>` : ""}
             </div>
           </div>
 
