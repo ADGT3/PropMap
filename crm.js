@@ -1382,22 +1382,19 @@ function renderCRMView(container) {
               })()}
             </div>
             <div class="crm-mkt-edit-form" style="display:none">
-              <div class="crm-mkt-edit-options">
-                <label class="crm-mkt-option">
-                  <input type="radio" name="crm-mkt-pref" value="email_sms"> Email + SMS
-                </label>
-                <label class="crm-mkt-option">
-                  <input type="radio" name="crm-mkt-pref" value="email"> Email only
-                </label>
-                <label class="crm-mkt-option">
-                  <input type="radio" name="crm-mkt-pref" value="sms"> SMS only
-                </label>
-                <label class="crm-mkt-option">
-                  <input type="radio" name="crm-mkt-pref" value="dns"> Do not send marketing
-                </label>
-                <label class="crm-mkt-option">
-                  <input type="radio" name="crm-mkt-pref" value="unset"> Not yet confirmed
-                </label>
+              <div class="crm-detail-grid" style="margin-top:8px">
+                <div class="crm-detail-label">Email</div>
+                <div>
+                  <label class="crm-mkt-toggle"><input type="checkbox" class="crm-mkt-email-chk"> Subscribed</label>
+                </div>
+                <div class="crm-detail-label">SMS</div>
+                <div>
+                  <label class="crm-mkt-toggle"><input type="checkbox" class="crm-mkt-sms-chk"> Subscribed</label>
+                </div>
+                <div class="crm-detail-label">Do not contact</div>
+                <div>
+                  <label class="crm-mkt-toggle"><input type="checkbox" class="crm-mkt-dns-chk"> Do not send marketing</label>
+                </div>
               </div>
               <div style="display:flex;gap:8px;margin-top:10px">
                 <button class="crm-mkt-save-btn kb-add-offer-btn">Save</button>
@@ -1561,17 +1558,13 @@ function renderCRMView(container) {
       const mktSaveBtn    = modal.querySelector(".crm-mkt-save-btn");
       const mktCancelBtn  = modal.querySelector(".crm-mkt-cancel-btn");
 
-      // Pre-select current state
-      const currentPref = (() => {
-        if (!c.marketing_pref_set_at) return 'unset';
-        if (c.do_not_send_marketing_at) return 'dns';
-        if (c.marketing_email_consent_at && c.marketing_sms_consent_at) return 'email_sms';
-        if (c.marketing_email_consent_at) return 'email';
-        if (c.marketing_sms_consent_at) return 'sms';
-        return 'unset';
-      })();
-      const preSelected = mktEditForm.querySelector(`input[value="${currentPref}"]`);
-      if (preSelected) preSelected.checked = true;
+      // Pre-tick checkboxes from current state
+      const emailChk = mktEditForm.querySelector('.crm-mkt-email-chk');
+      const smsChk   = mktEditForm.querySelector('.crm-mkt-sms-chk');
+      const dnsChk   = mktEditForm.querySelector('.crm-mkt-dns-chk');
+      emailChk.checked = !!c.marketing_email_consent_at;
+      smsChk.checked   = !!c.marketing_sms_consent_at;
+      dnsChk.checked   = !!c.do_not_send_marketing_at;
 
       mktEditBtn.addEventListener('click', () => {
         mktDisplay.style.display  = 'none';
@@ -1584,21 +1577,12 @@ function renderCRMView(container) {
         mktEditBtn.style.display  = '';
       });
       mktSaveBtn.addEventListener('click', async () => {
-        const pref = mktEditForm.querySelector('input[name="crm-mkt-pref"]:checked')?.value;
-        if (!pref) return;
         const payload = {
-          marketing_email_consent:  pref === 'email_sms' || pref === 'email',
-          marketing_sms_consent:    pref === 'email_sms' || pref === 'sms',
-          do_not_send_marketing:    pref === 'dns',
-          marketing_pref_set:       pref !== 'unset',
+          marketing_email_consent: emailChk.checked ? true : null,
+          marketing_sms_consent:   smsChk.checked   ? true : null,
+          do_not_send_marketing:   dnsChk.checked   ? true : null,
+          marketing_pref_set:      emailChk.checked || smsChk.checked || dnsChk.checked,
         };
-        // For unset, explicitly null all consent fields
-        if (pref === 'unset') {
-          payload.marketing_email_consent   = null;
-          payload.marketing_sms_consent     = null;
-          payload.do_not_send_marketing     = null;
-          payload.marketing_pref_set        = false;
-        }
         mktSaveBtn.disabled = true;
         mktSaveBtn.textContent = 'Saving…';
         try {
@@ -1608,7 +1592,6 @@ function renderCRMView(container) {
             body: JSON.stringify(payload),
           });
           if (!r.ok) throw new Error(await r.text());
-          // Re-render the contact detail to reflect updated state
           await renderContactDetail(modal, contactId, onDone);
         } catch (err) {
           mktSaveBtn.disabled = false;

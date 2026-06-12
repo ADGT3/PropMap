@@ -993,26 +993,14 @@
 .crm-mkt-none  { background: var(--surface2); color: var(--text); }
 
 /* V82.b — Marketing preference edit form */
-.crm-mkt-edit-options {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
-}
-.crm-mkt-option {
+.crm-mkt-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
   cursor: pointer;
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  transition: background 0.1s;
 }
-.crm-mkt-option:hover { background: var(--surface2); }
-.crm-mkt-option input[type="radio"] { accent-color: var(--accent); }
+.crm-mkt-toggle input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
 
 /* ════════════════════════════════════════════════════════════════════════════
    V80 — Pending Action Requests section in contact detail view
