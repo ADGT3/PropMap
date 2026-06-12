@@ -1200,7 +1200,7 @@ function renderCRMView(container) {
   async function renderContactDetail(modal, contactId, onDone) {
     modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
     try {
-      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles, contactActions] = await Promise.all([
+      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles, contactActions, contactGroups] = await Promise.all([
         apiGet({ id: contactId }),
         fetch(`/api/notes?by_contact=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
@@ -1210,6 +1210,8 @@ function renderCRMView(container) {
         rolesForScope('deal'),
         // V80 — actions where this contact is an assignee
         fetch(`/api/actions?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        // V82.b — contact roles and marketing categories
+        fetch(`/api/contact-groups?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : {}).catch(() => {}),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
@@ -1316,30 +1318,34 @@ function renderCRMView(container) {
         <div class="crm-modal-header">
           <div>
             <div class="crm-modal-title">${displayName(c)}</div>
-            <div class="crm-modal-subtitle">${[c.org_name, c.mobile, c.email].filter(Boolean).join(" · ")}</div>
+            ${c.org_name ? `<div class="crm-modal-subtitle">${c.org_name}</div>` : ''}
           </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <button class="crm-modal-edit-btn kb-add-offer-btn">✎ Edit</button>
-            <button class="crm-modal-close">✕</button>
-          </div>
+          <button class="crm-modal-close">✕</button>
         </div>
         <div class="crm-modal-body">
 
           <div class="crm-modal-section">
-            <div class="crm-modal-section-title">Contact Details</div>
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left">Contact Details</span>
+              <button class="crm-modal-edit-btn kb-add-offer-btn">✎ Edit</button>
+            </div>
             <div class="crm-detail-grid">
               ${c.mobile       ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
               ${c.email        ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
               ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
               ${contactSource  ? `<div class="crm-detail-label">Source</div><div>${contactSource}</div>` : ""}
+              ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Roles</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ""}
+              ${(contactGroups?.marketing_categories?.length) ? `<div class="crm-detail-label">Categories</div><div>${contactGroups.marketing_categories.join(', ')}</div>` : ""}
             </div>
           </div>
 
-          <!-- V79 — Marketing preference status (read-only). Set via the
-               attendee registration form or the agent check-in modal. -->
+          <!-- Marketing Preferences — V79 read-only status, V82.b adds manual update -->
           <div class="crm-modal-section">
-            <div class="crm-modal-section-title">Marketing Preferences</div>
-            <div class="crm-detail-grid">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left">Marketing Preferences</span>
+              <button class="crm-mkt-edit-btn kb-add-offer-btn">✎ Edit</button>
+            </div>
+            <div class="crm-mkt-display">
               ${(() => {
                 const dns       = !!c.do_not_send_marketing_at;
                 const email     = !!c.marketing_email_consent_at;
@@ -1367,12 +1373,36 @@ function renderCRMView(container) {
                 }
                 const lastSet = prefSetAt ? new Date(prefSetAt).toLocaleString() : '—';
                 return `
-                  <div class="crm-detail-label">Status</div>
-                  <div><span class="crm-mkt-status ${statusClass}">${statusLabel}</span></div>
-                  <div class="crm-detail-label">Last set</div>
-                  <div>${lastSet}</div>
-                `;
+                  <div class="crm-detail-grid">
+                    <div class="crm-detail-label">Status</div>
+                    <div><span class="crm-mkt-status ${statusClass}">${statusLabel}</span></div>
+                    <div class="crm-detail-label">Last set</div>
+                    <div>${lastSet}</div>
+                  </div>`;
               })()}
+            </div>
+            <div class="crm-mkt-edit-form" style="display:none">
+              <div class="crm-mkt-edit-options">
+                <label class="crm-mkt-option">
+                  <input type="radio" name="crm-mkt-pref" value="email_sms"> Email + SMS
+                </label>
+                <label class="crm-mkt-option">
+                  <input type="radio" name="crm-mkt-pref" value="email"> Email only
+                </label>
+                <label class="crm-mkt-option">
+                  <input type="radio" name="crm-mkt-pref" value="sms"> SMS only
+                </label>
+                <label class="crm-mkt-option">
+                  <input type="radio" name="crm-mkt-pref" value="dns"> Do not send marketing
+                </label>
+                <label class="crm-mkt-option">
+                  <input type="radio" name="crm-mkt-pref" value="unset"> Not yet confirmed
+                </label>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <button class="crm-mkt-save-btn kb-add-offer-btn">Save</button>
+                <button class="crm-mkt-cancel-btn crm-cancel-btn">Cancel</button>
+              </div>
             </div>
           </div>
 
@@ -1522,6 +1552,69 @@ function renderCRMView(container) {
       modal.querySelector(".crm-modal-close").addEventListener("click", onDone);
       modal.querySelector(".crm-modal-edit-btn").addEventListener("click", () => {
         renderContactModal(modal, c, () => renderContactDetail(modal, contactId, onDone));
+      });
+
+      // ── Marketing preference edit (V82.b) ────────────────────────────────
+      const mktEditBtn    = modal.querySelector(".crm-mkt-edit-btn");
+      const mktDisplay    = modal.querySelector(".crm-mkt-display");
+      const mktEditForm   = modal.querySelector(".crm-mkt-edit-form");
+      const mktSaveBtn    = modal.querySelector(".crm-mkt-save-btn");
+      const mktCancelBtn  = modal.querySelector(".crm-mkt-cancel-btn");
+
+      // Pre-select current state
+      const currentPref = (() => {
+        if (!c.marketing_pref_set_at) return 'unset';
+        if (c.do_not_send_marketing_at) return 'dns';
+        if (c.marketing_email_consent_at && c.marketing_sms_consent_at) return 'email_sms';
+        if (c.marketing_email_consent_at) return 'email';
+        if (c.marketing_sms_consent_at) return 'sms';
+        return 'unset';
+      })();
+      const preSelected = mktEditForm.querySelector(`input[value="${currentPref}"]`);
+      if (preSelected) preSelected.checked = true;
+
+      mktEditBtn.addEventListener('click', () => {
+        mktDisplay.style.display  = 'none';
+        mktEditForm.style.display = 'block';
+        mktEditBtn.style.display  = 'none';
+      });
+      mktCancelBtn.addEventListener('click', () => {
+        mktDisplay.style.display  = '';
+        mktEditForm.style.display = 'none';
+        mktEditBtn.style.display  = '';
+      });
+      mktSaveBtn.addEventListener('click', async () => {
+        const pref = mktEditForm.querySelector('input[name="crm-mkt-pref"]:checked')?.value;
+        if (!pref) return;
+        const payload = {
+          marketing_email_consent:  pref === 'email_sms' || pref === 'email',
+          marketing_sms_consent:    pref === 'email_sms' || pref === 'sms',
+          do_not_send_marketing:    pref === 'dns',
+          marketing_pref_set:       pref !== 'unset',
+        };
+        // For unset, explicitly null all consent fields
+        if (pref === 'unset') {
+          payload.marketing_email_consent   = null;
+          payload.marketing_sms_consent     = null;
+          payload.do_not_send_marketing     = null;
+          payload.marketing_pref_set        = false;
+        }
+        mktSaveBtn.disabled = true;
+        mktSaveBtn.textContent = 'Saving…';
+        try {
+          const r = await fetch(`/api/contacts?id=${contactId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!r.ok) throw new Error(await r.text());
+          // Re-render the contact detail to reflect updated state
+          await renderContactDetail(modal, contactId, onDone);
+        } catch (err) {
+          mktSaveBtn.disabled = false;
+          mktSaveBtn.textContent = 'Save';
+          alert('Failed to save: ' + err.message);
+        }
       });
 
       // ── Collapsible sections ─────────────────────────────────────────────
