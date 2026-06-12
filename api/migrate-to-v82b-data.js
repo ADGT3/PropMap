@@ -87,16 +87,44 @@ async function bulkLog(rows) {
   }
 }
 
+// ── Phone number helpers ─────────────────────────────────────────────────────
+
+// Matches strings that are purely numeric/phone — not valid org names
+const PHONE_RE = /^[\d\s().+\-]{7,}$/;
+
+function normalisePhone(raw) {
+  if (!raw) return null;
+  const digits = raw.replace(/[^\d]/g, '');
+  if (digits.startsWith('61') && digits.length === 11) return '+' + digits;
+  if (digits.startsWith('0')  && digits.length === 10) return '+61' + digits.slice(1);
+  if (digits.length === 9)                              return '+61' + digits;
+  return null;
+}
+
+// Returns { org: companyName|null, mobile: phone|null }
+// If company looks like a phone number, treat it as a mobile (if contact has none)
+function resolveCompany(company, existingMobile) {
+  if (!company) return { org: null, mobile: null };
+  const trimmed = company.trim();
+  if (!trimmed) return { org: null, mobile: null };
+  if (PHONE_RE.test(trimmed)) {
+    // It's a phone number — use as mobile if contact has none
+    const phone = normalisePhone(trimmed);
+    return { org: null, mobile: (!existingMobile && phone) ? phone : null };
+  }
+  return { org: trimmed, mobile: null };
+}
+
 // ── Org cache — build once per batch ─────────────────────────────────────────
 
 async function buildOrgCache(companies) {
+  // companies already filtered to non-phone values by resolveCompany
   const unique = [...new Set(companies.filter(Boolean).map(c => c.trim().toLowerCase()))];
   if (!unique.length) return new Map();
   const existing = await sql`
     SELECT id, LOWER(TRIM(name)) AS name FROM organisations
     WHERE LOWER(TRIM(name)) = ANY(${unique})`;
   const cache = new Map(existing.map(r => [r.name, r.id]));
-  // Insert missing orgs
   const missing = unique.filter(n => !cache.has(n));
   for (const name of missing) {
     const r = await sql`INSERT INTO organisations (name) VALUES (${name}) RETURNING id, LOWER(TRIM(name)) AS name`;
@@ -141,17 +169,25 @@ async function importContactsBulk(contacts, stats) {
   await bulkLog(dupLogs);
   if (!toInsert.length) return;
 
-  // 3. Build org cache for this batch
-  const orgCache = await buildOrgCache(toInsert.map(c => c.company));
+  // 3. Resolve company → org name or rescued mobile, build org cache
+  const resolved = toInsert.map(c => {
+    const { org, mobile: rescuedMobile } = resolveCompany(c.company, c.mobile);
+    return { ...c, resolvedOrg: org, mobile: c.mobile || rescuedMobile };
+  });
+  const orgCache = await buildOrgCache(resolved.map(c => c.resolvedOrg));
 
   // 4. Bulk insert contacts in chunks of 20 to avoid overwhelming Neon connections
   const CHUNK = 20;
   const insertResults = [];
-  for (let i = 0; i < toInsert.length; i += CHUNK) {
-    const chunk = toInsert.slice(i, i + CHUNK);
+  for (let i = 0; i < resolved.length; i += CHUNK) {
+    const chunk = resolved.slice(i, i + CHUNK);
     const chunkResults = await Promise.allSettled(
       chunk.map(c => {
-        const org_id = c.company ? (orgCache.get(c.company.trim().toLowerCase()) ?? null) : null;
+        const org_id = c.resolvedOrg ? (orgCache.get(c.resolvedOrg.trim().toLowerCase()) ?? null) : null;
+        // marketing_pref_set_at: set to migration timestamp if any consent field is populated
+        const mktPrefSetAt = (c.marketing_email_consent_at || c.marketing_sms_consent_at || c.do_not_send_marketing_at)
+          ? (c.marketing_email_consent_at || c.marketing_sms_consent_at || c.do_not_send_marketing_at)
+          : null;
         return sql`
           INSERT INTO contacts (
             first_name, last_name, mobile, email,
@@ -160,7 +196,7 @@ async function importContactsBulk(contacts, stats) {
             current_address_state, current_address_postcode,
             discipline, last_contacted_at,
             marketing_email_consent_at, marketing_sms_consent_at,
-            do_not_send_marketing_at,
+            do_not_send_marketing_at, marketing_pref_set_at,
             created_at, updated_at
           ) VALUES (
             ${c.first_name}, ${c.last_name ?? ''}, ${c.mobile ?? ''}, ${c.email ?? ''},
@@ -169,7 +205,7 @@ async function importContactsBulk(contacts, stats) {
             ${c.current_address_state ?? null}, ${c.current_address_postcode ?? null},
             ${c.discipline ?? null}, ${c.last_contacted_at ?? null},
             ${c.marketing_email_consent_at ?? null}, ${c.marketing_sms_consent_at ?? null},
-            ${c.do_not_send_marketing_at ?? null},
+            ${c.do_not_send_marketing_at ?? null}, ${mktPrefSetAt ?? null},
             ${c.created_at ?? null}, now()
           )
           RETURNING id`;
