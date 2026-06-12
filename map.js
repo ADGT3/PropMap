@@ -14,6 +14,7 @@ let listings = [];
 // Last successful Domain search options — used by Reveal Price button to
 // replay the same search at price brackets.
 let _lastDomainSearchOptions = null;
+let _lastSearchBounds = null;  // Bounds at the time of the last domain search
 // True while a viewport-level reveal probe is running (prevents duplicate
 // clicks from kicking off parallel batches).
 let _revealInFlight = false;
@@ -2346,7 +2347,9 @@ function renderListings() {
   Object.values(markers).forEach(m => map.removeLayer(m));
   markers = {};
 
-  const bounds = map.getBounds();
+  // Use search-time bounds if available so listings aren't filtered out by
+  // viewport drift during the async Domain API round-trip (V82.b fix).
+  const bounds = (_lastSearchBounds || map.getBounds());
   // V76.3: CoreLogic listings may lack coordinates; keep those in the sidebar
   // but don't require them to be in the viewport.
   const filtered = listings.filter(l => {
@@ -3984,6 +3987,7 @@ function debouncedDomainSearch() {
 
 function runListingSearch() {
   if (_activeFilters.propertyCategory === 'commercial') {
+    _lastSearchBounds = null;  // CoreLogic uses live bounds
     return runCoreLogicSearch();
   }
   return runDomainSearch();
@@ -3991,6 +3995,8 @@ function runListingSearch() {
 
 async function runDomainSearch() {
   if (!window.DomainAPI || !DomainAPI.search) { renderListings(); return; }
+  const loadingEl = document.getElementById('listingsLoadingindicator');
+  if (loadingEl) loadingEl.style.display = 'inline';
   try {
     const geoWindow = buildDomainGeoWindow();
     const isRent = _activeFilters.listingType === 'Rent';
@@ -4026,12 +4032,15 @@ async function runDomainSearch() {
     };
     // Stash so the Reveal Price handler can replay this search at price brackets
     _lastDomainSearchOptions = searchOptions;
+    _lastSearchBounds = map.getBounds();  // snapshot bounds at search time
     const domainListings = await DomainAPI.search(searchOptions);
     listings.length = 0;
     domainListings.forEach(l => listings.push(l));
     console.log('[map] Domain API returned ' + listings.length + ' listings');
+    if (loadingEl) loadingEl.style.display = 'none';
     renderListings();
   } catch (err) {
+    if (loadingEl) loadingEl.style.display = 'none';
     console.error('[map] Domain API fetch failed:', err);
     showListingError(err.message, 'Domain');
   }
