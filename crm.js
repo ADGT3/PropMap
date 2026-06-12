@@ -1069,13 +1069,19 @@ function renderCRMView(container) {
 
   let contactSearch = '';
   let contactPage   = 0;
-  const PAGE_SIZE   = 30;
+  let pageSize      = 50;
 
   async function loadContactsPane() {
     const pane = container.querySelector('#crm-pane-contacts');
     pane.innerHTML = `
       <div class="crm-pane-toolbar">
         <input class="kb-input crm-view-search" placeholder="Search contacts…" value="${contactSearch}">
+        <select class="crm-page-size-select kb-input">
+          <option value="50"  ${pageSize===50  ? 'selected':''}>50 per page</option>
+          <option value="100" ${pageSize===100 ? 'selected':''}>100 per page</option>
+          <option value="150" ${pageSize===150 ? 'selected':''}>150 per page</option>
+          <option value="200" ${pageSize===200 ? 'selected':''}>200 per page</option>
+        </select>
         <button class="crm-pane-add-btn" data-role="pane-add-contact">+ New Contact</button>
       </div>
       <div class="crm-contact-table-wrap">
@@ -1093,6 +1099,11 @@ function renderCRMView(container) {
       contactPage   = 0;
       fetchContacts();
     });
+    pane.querySelector('.crm-page-size-select').addEventListener('change', e => {
+      pageSize    = parseInt(e.target.value, 10);
+      contactPage = 0;
+      fetchContacts();
+    });
     pane.querySelector('[data-role="pane-add-contact"]').addEventListener('click', () => {
       openModal(modal => renderContactModal(modal, null, () => { closeModal(); loadContactsPane(); }));
     });
@@ -1108,7 +1119,7 @@ function renderCRMView(container) {
 
     tbody.innerHTML = `<tr><td colspan="6" class="crm-loading">Loading…</td></tr>`;
     try {
-      const params = { all: '1', offset: contactPage * PAGE_SIZE, limit: PAGE_SIZE };
+      const params = { all: '1', offset: contactPage * pageSize, limit: pageSize };
       if (contactSearch) params.search = contactSearch;
       const data = await apiGet(params);
       const contacts = Array.isArray(data) ? data : (data.contacts || []);
@@ -1170,7 +1181,7 @@ function renderCRMView(container) {
 
       // Pagination
       if (pagEl) {
-        const totalPages = Math.ceil(total / PAGE_SIZE);
+        const totalPages = Math.ceil(total / pageSize);
         if (totalPages <= 1) { pagEl.innerHTML = ''; return; }
         pagEl.innerHTML = '';
         const prev = document.createElement('button');

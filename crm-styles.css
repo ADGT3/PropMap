@@ -482,6 +482,7 @@
   flex-shrink: 0;
 }
 .crm-pane-toolbar .kb-input { flex: 1; }
+.crm-page-size-select { flex: 0 0 auto; width: auto; min-width: 120px; }
 
 /* V77.2g — Level-3 "+ New ..." add button (inline right of toolbar search).
    Visually identical to .crm-view-add-btn so the two stay consistent if any
