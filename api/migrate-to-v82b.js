@@ -143,6 +143,18 @@ export default async function handler(req, res) {
       await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS marketing_pref_set_by TEXT`;
       steps.push('contacts.marketing_pref_set_by added');
 
+      await sql`
+        CREATE TABLE IF NOT EXISTS marketing_category_lookup (
+          category   TEXT PRIMARY KEY,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )`;
+      // Seed from existing contact_marketing_categories
+      await sql`
+        INSERT INTO marketing_category_lookup (category)
+        SELECT DISTINCT category FROM contact_marketing_categories
+        ON CONFLICT (category) DO NOTHING`;
+      steps.push('marketing_category_lookup table created and seeded');
+
       // ── 2. properties — new columns ──────────────────────────────────────
       await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS core_logic_id TEXT`;
       steps.push('properties.core_logic_id added');

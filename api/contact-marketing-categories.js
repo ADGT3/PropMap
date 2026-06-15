@@ -11,10 +11,10 @@ import { requireSession } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
 const sql = neon(getDatabaseUrl());
 
-// All known categories — used for multi-select suggestions
+// All known categories from lookup table — used for multi-select in modal
 async function getAllCategories() {
   const rows = await sql`
-    SELECT DISTINCT category FROM contact_marketing_categories ORDER BY category`;
+    SELECT category FROM marketing_category_lookup ORDER BY category`;
   return rows.map(r => r.category);
 }
 
