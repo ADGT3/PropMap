@@ -1075,7 +1075,7 @@ function renderCRMView(container) {
     const pane = container.querySelector('#crm-pane-contacts');
     pane.innerHTML = `
       <div class="crm-pane-toolbar">
-        <input class="kb-input crm-view-search" placeholder="Search… or category=edan, role=vendor, discipline=builder" value="${contactSearch}">
+        <input class="kb-input crm-view-search" placeholder="Search… or category=edan, role=vendor, organisation=edan, discipline=builder" value="${contactSearch}">
         <span class="crm-contact-count" id="crmContactCount"></span>
         <select class="crm-page-size-select kb-input">
           <option value="50"  ${pageSize===50  ? 'selected':''}>50 per page</option>
