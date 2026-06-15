@@ -268,11 +268,28 @@ export default async function handler(req, res) {
               SELECT c.*, o.name AS org_name,
                 (SELECT COUNT(DISTINCT ec.entity_id)
                  FROM entity_contacts ec
-                 WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count
+                 WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+                (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label)
+                 FROM entity_contacts ec2
+                 JOIN roles r ON r.id = ec2.role_id
+                 WHERE ec2.contact_id = c.id) AS roles_label,
+                (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category)
+                 FROM contact_marketing_categories cmc
+                 WHERE cmc.contact_id = c.id) AS categories_label
               FROM contacts c
               LEFT JOIN organisations o ON o.id = c.organisation_id
               WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
                  OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
+                 OR c.source ILIKE ${q} OR c.discipline ILIKE ${q}
+                 OR EXISTS (
+                   SELECT 1 FROM entity_contacts ec3
+                   JOIN roles r2 ON r2.id = ec3.role_id
+                   WHERE ec3.contact_id = c.id AND r2.label ILIKE ${q}
+                 )
+                 OR EXISTS (
+                   SELECT 1 FROM contact_marketing_categories cmc2
+                   WHERE cmc2.contact_id = c.id AND cmc2.category ILIKE ${q}
+                 )
               ORDER BY c.last_name, c.first_name`;
             return res.status(200).json({ contacts: rows.slice(off, off + lim), total: rows.length });
           }
@@ -280,7 +297,14 @@ export default async function handler(req, res) {
             SELECT c.*, o.name AS org_name,
               (SELECT COUNT(DISTINCT ec.entity_id)
                FROM entity_contacts ec
-               WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count
+               WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+              (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label)
+               FROM entity_contacts ec2
+               JOIN roles r ON r.id = ec2.role_id
+               WHERE ec2.contact_id = c.id) AS roles_label,
+              (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category)
+               FROM contact_marketing_categories cmc
+               WHERE cmc.contact_id = c.id) AS categories_label
             FROM contacts c
             LEFT JOIN organisations o ON o.id = c.organisation_id
             ORDER BY c.last_name, c.first_name`;
