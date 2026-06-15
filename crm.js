@@ -1354,31 +1354,8 @@ function renderCRMView(container) {
               ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
               ${contactSource  ? `<div class="crm-detail-label">Source</div><div>${contactSource}</div>` : ""}
               ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Roles</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ""}
-              ${(contactGroups?.marketing_categories?.length) ? `
-                <div class="crm-detail-label">Categories</div>
-                <div class="crm-categories-display-wrap">
-                  <span class="crm-categories-display">${contactGroups.marketing_categories.join(', ')}</span>
-                  <button class="crm-cat-edit-btn kb-add-offer-btn" style="margin-left:8px;padding:2px 8px;font-size:11px">✎</button>
-                </div>` : `
-                <div class="crm-detail-label">Categories</div>
-                <div class="crm-categories-display-wrap">
-                  <span class="crm-categories-display crm-muted">None</span>
-                  <button class="crm-cat-edit-btn kb-add-offer-btn" style="margin-left:8px;padding:2px 8px;font-size:11px">✎</button>
-                </div>`}
               ${c.discipline       ? `<div class="crm-detail-label">Discipline</div><div>${c.discipline}</div>` : ""}
               ${c.last_contacted_at ? `<div class="crm-detail-label">Last Contacted</div><div>${new Date(c.last_contacted_at).toLocaleDateString()}</div>` : ""}
-            </div>
-            <!-- V82.b — Categories multi-select edit form -->
-            <div class="crm-cat-edit-form" style="display:none;margin-top:12px">
-              <div class="crm-cat-checkboxes"></div>
-              <div style="margin-top:8px;display:flex;gap:6px;align-items:center">
-                <input type="text" class="kb-input crm-cat-new-input" placeholder="Add new category…" style="flex:1;font-size:12px">
-                <button class="crm-cat-add-btn kb-add-offer-btn" style="padding:4px 10px">+ Add</button>
-              </div>
-              <div style="display:flex;gap:8px;margin-top:10px">
-                <button class="crm-cat-save-btn kb-add-offer-btn">Save</button>
-                <button class="crm-cat-cancel-btn crm-cancel-btn">Cancel</button>
-              </div>
             </div>
           </div>
 
@@ -1414,16 +1391,41 @@ function renderCRMView(container) {
                   statusLabel = 'Asked, no marketing channels';
                   statusClass = 'crm-mkt-none';
                 }
-                const lastSet = prefSetAt ? new Date(prefSetAt).toLocaleString() : '—';
+                const lastSet  = prefSetAt ? new Date(prefSetAt).toLocaleString() : '—';
+                const setBy    = c.marketing_pref_set_by || null;
                 return `
                   <div class="crm-detail-grid">
                     <div class="crm-detail-label">Status</div>
                     <div><span class="crm-mkt-status ${statusClass}">${statusLabel}</span></div>
                     <div class="crm-detail-label">Last set</div>
-                    <div>${lastSet}</div>
+                    <div>${lastSet}${setBy ? ` <span class="crm-muted">by ${setBy}</span>` : ''}</div>
                   </div>`;
               })()}
             </div>
+            <!-- V82.b — Marketing Categories within Marketing Preferences -->
+            <div class="crm-mkt-categories-wrap" style="margin-top:10px">
+              <div class="crm-detail-grid">
+                <div class="crm-detail-label">Categories</div>
+                <div class="crm-categories-display-wrap">
+                  ${(contactGroups?.marketing_categories?.length)
+                    ? `<span class="crm-categories-display">${contactGroups.marketing_categories.join(', ')}</span>`
+                    : `<span class="crm-categories-display crm-muted">None</span>`}
+                  <button class="crm-cat-edit-btn kb-add-offer-btn" style="margin-left:8px;padding:2px 8px;font-size:11px">✎</button>
+                </div>
+              </div>
+              <div class="crm-cat-edit-form" style="display:none;margin-top:12px">
+                <div class="crm-cat-checkboxes"></div>
+                <div style="margin-top:8px;display:flex;gap:6px;align-items:center">
+                  <input type="text" class="kb-input crm-cat-new-input" placeholder="Add new category…" style="flex:1;font-size:12px">
+                  <button class="crm-cat-add-btn kb-add-offer-btn" style="padding:4px 10px">+ Add</button>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:10px">
+                  <button class="crm-cat-save-btn kb-add-offer-btn">Save</button>
+                  <button class="crm-cat-cancel-btn crm-cancel-btn">Cancel</button>
+                </div>
+              </div>
+            </div>
+
             <div class="crm-mkt-edit-form" style="display:none">
               <div class="crm-detail-grid" style="margin-top:8px">
                 <div class="crm-detail-label">Email</div>
