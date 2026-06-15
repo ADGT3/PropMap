@@ -290,7 +290,12 @@
         <div class="sidebar-header-row">
           <div>
             <h2>Listings in view</h2>
-            <p><span id="listingCount">0</span> properties found</p>
+            <p>
+              <span id="listingCount">0</span> properties found
+              <span id="listingsLoadingindicator" style="display:none">
+                <span class="listings-loading-spinner"></span> Searching Domain…
+              </span>
+            </p>
           </div>
           <div style="display:flex;gap:6px;align-items:center">
             <button class="sidebar-listings-toggle active" id="listingsPanelToggle" title="Show/hide listings on map">
@@ -970,6 +975,7 @@
         <button class="settings-submenu-item" data-section="parameters">Parameters</button>
         <button class="settings-submenu-item" data-section="notifications">Notifications</button>
         <button class="settings-submenu-item" data-section="retention-policy">Retention Policy</button>
+        <button class="settings-submenu-item" data-section="marketing">Marketing</button>
       </div>
 
       <!-- API Dashboard section -->
@@ -1155,6 +1161,16 @@
         </div>
       </div>
 
+      <div class="settings-section" id="settingsSectionMarketing" style="display:none">
+        <div class="settings-section-header">
+          <h2>Marketing</h2>
+          <p class="settings-section-sub">Manage marketing categories used to group and segment contacts.</p>
+        </div>
+        <div id="marketingSettingsContainer">
+          <div class="params-loading">Loading…</div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -1177,6 +1193,7 @@
   <script src="nsw-lookup-client.js"></script>
   <script src="lookups.js"></script>
   <script src="parameters-page.js"></script>
+  <script src="marketing-settings-page.js"></script>
   <script src="notifications-page.js"></script>
   <script src="retention-policy-page.js"></script>
   <script src="note-form.js"></script>
@@ -1330,6 +1347,7 @@
     let _aarRendered = false;
     let _notificationsRendered = false;
     let _retentionPolicyRendered = false;
+    let _marketingSettingsRendered = false;
     function showSettingsSection(sectionKey) {
       // Update active button
       document.querySelectorAll('.settings-submenu-item').forEach(btn => {
@@ -1345,6 +1363,8 @@
       if (notifSection) notifSection.style.display = sectionKey === 'notifications' ? '' : 'none';
       const retentionSection = document.getElementById('settingsSectionRetentionPolicy');
       if (retentionSection) retentionSection.style.display = sectionKey === 'retention-policy' ? '' : 'none';
+      const marketingSection = document.getElementById('settingsSectionMarketing');
+      if (marketingSection) marketingSection.style.display = sectionKey === 'marketing' ? '' : 'none';
       // Lazy-render Parameters on first visit
       if (sectionKey === 'parameters' && !_parametersRendered && window.ParametersPage) {
         const container = document.getElementById('parametersPageContainer');
@@ -1375,6 +1395,14 @@
         if (container) {
           RetentionPolicyPage.render(container);
           _retentionPolicyRendered = true;
+        }
+      }
+      // V82.b — Lazy-render Marketing on first visit
+      if (sectionKey === 'marketing' && !_marketingSettingsRendered && window.MarketingSettingsPage) {
+        const container = document.getElementById('marketingSettingsContainer');
+        if (container) {
+          MarketingSettingsPage.render(container);
+          _marketingSettingsRendered = true;
         }
       }
     }

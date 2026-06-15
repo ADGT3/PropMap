@@ -482,6 +482,7 @@
   flex-shrink: 0;
 }
 .crm-pane-toolbar .kb-input { flex: 1; }
+.crm-page-size-select { flex: 0 0 auto; width: auto; min-width: 0; max-width: fit-content; }
 
 /* V77.2g — Level-3 "+ New ..." add button (inline right of toolbar search).
    Visually identical to .crm-view-add-btn so the two stay consistent if any
@@ -991,6 +992,52 @@
 .crm-mkt-yes   { background: rgba(46,160,67,0.12); color: #2ea043; }
 .crm-mkt-dns   { background: rgba(207,93,93,0.12); color: #cf5d5d; }
 .crm-mkt-none  { background: var(--surface2); color: var(--text); }
+
+/* V82.b — Roles and categories labels in contacts table */
+.crm-roles-label,
+.crm-categories-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  display: inline-block;
+}
+
+/* V82.b — Categories display wrap in contact detail */
+.crm-categories-display-wrap { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.crm-muted { color: var(--muted); font-style: italic; font-size: 12px; }
+
+/* V82.b — Categories multi-select checkboxes */
+.crm-cat-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--surface);
+}
+
+/* V82.b — Buyer profile edit form inputs */
+.crm-bp-edit-form .crm-detail-grid input.kb-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+}
+
+/* V82.b — Marketing preference edit form */
+.crm-mkt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.crm-mkt-toggle input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
 
 /* ════════════════════════════════════════════════════════════════════════════
    V80 — Pending Action Requests section in contact detail view

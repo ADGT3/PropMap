@@ -298,7 +298,7 @@
 
         <div class="s2-upload-zone" data-idx="${i}">
           <div class="s2-upload-zone-prompt">+ Add ID document</div>
-          <div class="s2-upload-zone-help">Drag &amp; drop or click to upload (PDF, JPG, PNG, HEIC · max 10MB)</div>
+          <div class="s2-upload-zone-help">Drag &amp; drop or click to upload (PDF, JPG, PNG, HEIC · max 20MB)</div>
           <input type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" multiple>
         </div>
       </div>
@@ -317,7 +317,7 @@
         <div class="s2-uploaded-files" data-evidence-section="${section}" data-client-id="${esc(clientId)}">${filesHtml}</div>
         <div class="s2-upload-zone s2-upload-zone-small" data-evidence-section="${section}" data-client-id="${esc(clientId)}">
           <div class="s2-upload-zone-prompt">+ Add file</div>
-          <div class="s2-upload-zone-help">${esc(help)} Drag &amp; drop or click. PDF/JPG/PNG/HEIC, max 10MB.</div>
+          <div class="s2-upload-zone-help">${esc(help)} Drag &amp; drop or click. PDF/JPG/PNG/HEIC, max 20MB.</div>
           <input type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" multiple>
         </div>
       </div>
@@ -443,8 +443,8 @@
   }
 
   async function uploadIdFile(file, applicantIdx) {
-    if (file.size > 10 * 1024 * 1024) {
-      alert('File too large. Maximum 10 MB per file.');
+    if (file.size > 20 * 1024 * 1024) {
+      alert('File too large. Maximum 20 MB per file.');
       return;
     }
     const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];
@@ -518,8 +518,8 @@
 
   // Upload housing/income evidence file (separate from ID — different category, different storage)
   async function uploadEvidenceFile(file, section, clientId) {
-    if (file.size > 10 * 1024 * 1024) {
-      alert('File too large. Maximum 10 MB per file.');
+    if (file.size > 20 * 1024 * 1024) {
+      alert('File too large. Maximum 20 MB per file.');
       return;
     }
     const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];
@@ -590,8 +590,8 @@
 
   // Upload a lease-doc file into a specific slot ('signed-contract' / 'condition-report')
   async function uploadLeaseDocFile(file, slot) {
-    if (file.size > 10 * 1024 * 1024) {
-      alert('File too large. Maximum 10 MB per file.');
+    if (file.size > 20 * 1024 * 1024) {
+      alert('File too large. Maximum 20 MB per file.');
       return;
     }
     const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];
@@ -829,7 +829,7 @@
         <div class="s2-uploaded-files" data-leasedoc-slot="${esc(slotKey)}">${filesHtml}</div>
         <div class="s2-upload-zone s2-upload-zone-small" data-leasedoc-slot="${esc(slotKey)}">
           <div class="s2-upload-zone-prompt">+ Add file</div>
-          <div class="s2-upload-zone-help">${esc(help)} Drag &amp; drop or click. PDF/JPG/PNG/HEIC, max 10MB.</div>
+          <div class="s2-upload-zone-help">${esc(help)} Drag &amp; drop or click. PDF/JPG/PNG/HEIC, max 20MB.</div>
           <input type="file" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" multiple>
         </div>
       </div>

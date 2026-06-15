@@ -43,6 +43,8 @@ import { upload as blobUpload, remove as blobRemove } from '../lib/blob.js';
 
 const sql = neon(getDatabaseUrl());
 
+export const config = { api: { bodyParser: { sizeLimit: '20mb' } } };
+
 // Categories agents are allowed to upload to / delete from via this endpoint.
 const ALLOWED_AGENT_CATEGORIES = new Set([
   'lease-doc:signed-contract',
@@ -90,8 +92,8 @@ export default async function handler(req, res) {
 
       // Size guard is also enforced inside blobUpload; keep the early check for a
       // clearer error before we hit the blob lib.
-      if (buf.length > 10 * 1024 * 1024) {
-        return res.status(413).json({ error: 'File too large (max 10 MB).' });
+      if (buf.length > 20 * 1024 * 1024) {
+        return res.status(413).json({ error: 'File too large (max 20 MB).' });
       }
 
       // Resolve the agent's contact id from the session for audit + blob path.

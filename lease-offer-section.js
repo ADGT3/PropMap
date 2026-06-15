@@ -579,7 +579,7 @@
       let html = '<div class="lo-review-entry lo-review-doc-slot" data-slot="' + esc(slotKey) + '" data-application-id="' + esc(applicationId) + '">';
       html += '<div class="lo-review-entry-head">';
       html += '  <strong>' + esc(label) + '</strong>';
-      html += '  <button type="button" class="lo-review-doc-upload-btn" data-slot="' + esc(slotKey) + '" data-application-id="' + esc(applicationId) + '" title="Upload another file to this slot. PDF/JPG/PNG/HEIC, max 10 MB.">+ Upload</button>';
+      html += '  <button type="button" class="lo-review-doc-upload-btn" data-slot="' + esc(slotKey) + '" data-application-id="' + esc(applicationId) + '" title="Upload another file to this slot. PDF/JPG/PNG/HEIC, max 20 MB.">+ Upload</button>';
       html += '  <input type="file" class="lo-review-doc-file-input" data-slot="' + esc(slotKey) + '" data-application-id="' + esc(applicationId) + '" accept=".pdf,.jpg,.jpeg,.png,.heic,.heif" hidden>';
       html += '</div>';
       if (files.length) {
@@ -1157,8 +1157,8 @@
           if (!file) return;
           const slot = input.getAttribute('data-slot');
           const applicationId = parseInt(input.getAttribute('data-application-id'), 10);
-          if (file.size > 10 * 1024 * 1024) {
-            alert('File too large. Maximum 10 MB.');
+          if (file.size > 20 * 1024 * 1024) {
+            alert('File too large. Maximum 20 MB.');
             return;
           }
           const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];

@@ -260,31 +260,144 @@ export default async function handler(req, res) {
 
         // ── Paginated all (CRM list)
         if (all) {
-          const lim = Math.min(parseInt(limit) || 30, 100);
+          const lim = Math.min(parseInt(limit) || 50, 500);
           const off = parseInt(offset) || 0;
           if (search) {
-            const q = `%${search}%`;
-            const rows = await sql`
-              SELECT c.*, o.name AS org_name,
-                (SELECT COUNT(DISTINCT ec.entity_id)
-                 FROM entity_contacts ec
-                 WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count
-              FROM contacts c
-              LEFT JOIN organisations o ON o.id = c.organisation_id
-              WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
-                 OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
-              ORDER BY c.last_name, c.first_name`;
-            return res.status(200).json({ contacts: rows.slice(off, off + lim), total: rows.length });
+            // Parse field-scoped syntax: category=edan, role=vendor, discipline=builder
+            // Matches pipeline search convention. Unrecognised fields fall through to free-text.
+            const fieldMatch = search.match(/^(categories?|role|discipline|org|organisation|mobile|email)\s*=\s*(.+)$/i);
+            let countRows, rows;
+
+            if (fieldMatch) {
+              const field = fieldMatch[1].toLowerCase();
+              const val   = fieldMatch[2].trim();
+              const q = `%${val}%`;
+
+              if (field === 'category' || field === 'categories') {
+                countRows = await sql`
+                  SELECT COUNT(DISTINCT c.id)::int AS total FROM contacts c
+                  JOIN contact_marketing_categories cmc ON cmc.contact_id = c.id
+                  WHERE cmc.category ILIKE ${q}`;
+                rows = await sql`
+                  SELECT c.*, o.name AS org_name,
+                    (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+                    (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
+                    (SELECT STRING_AGG(DISTINCT cmc2.category, ', ' ORDER BY cmc2.category) FROM contact_marketing_categories cmc2 WHERE cmc2.contact_id = c.id) AS categories_label
+                  FROM contacts c
+                  LEFT JOIN organisations o ON o.id = c.organisation_id
+                  JOIN contact_marketing_categories cmc ON cmc.contact_id = c.id
+                  WHERE cmc.category ILIKE ${q}
+                  GROUP BY c.id, o.name
+                  ORDER BY c.last_name, c.first_name
+                  LIMIT ${lim} OFFSET ${off}`;
+
+              } else if (field === 'role') {
+                countRows = await sql`
+                  SELECT COUNT(DISTINCT c.id)::int AS total FROM contacts c
+                  JOIN entity_contacts ec ON ec.contact_id = c.id
+                  JOIN roles r ON r.id = ec.role_id
+                  WHERE r.label ILIKE ${q}`;
+                rows = await sql`
+                  SELECT c.*, o.name AS org_name,
+                    (SELECT COUNT(DISTINCT ec2.entity_id) FROM entity_contacts ec2 WHERE ec2.contact_id = c.id AND ec2.entity_type = 'deal')::int AS property_count,
+                    (SELECT STRING_AGG(DISTINCT r2.label, ', ' ORDER BY r2.label) FROM entity_contacts ec3 JOIN roles r2 ON r2.id = ec3.role_id WHERE ec3.contact_id = c.id) AS roles_label,
+                    (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
+                  FROM contacts c
+                  LEFT JOIN organisations o ON o.id = c.organisation_id
+                  JOIN entity_contacts ec ON ec.contact_id = c.id
+                  JOIN roles r ON r.id = ec.role_id
+                  WHERE r.label ILIKE ${q}
+                  GROUP BY c.id, o.name
+                  ORDER BY c.last_name, c.first_name
+                  LIMIT ${lim} OFFSET ${off}`;
+
+              } else if (field === 'discipline') {
+                countRows = await sql`SELECT COUNT(*)::int AS total FROM contacts c WHERE c.discipline ILIKE ${q}`;
+                rows = await sql`
+                  SELECT c.*, o.name AS org_name,
+                    (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+                    (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
+                    (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
+                  FROM contacts c LEFT JOIN organisations o ON o.id = c.organisation_id
+                  WHERE c.discipline ILIKE ${q}
+                  ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
+
+              } else if (field === 'org' || field === 'organisation') {
+                countRows = await sql`SELECT COUNT(DISTINCT c.id)::int AS total FROM contacts c JOIN organisations o ON o.id = c.organisation_id WHERE o.name ILIKE ${q}`;
+                rows = await sql`
+                  SELECT c.*, o.name AS org_name,
+                    (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+                    (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
+                    (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
+                  FROM contacts c JOIN organisations o ON o.id = c.organisation_id
+                  WHERE o.name ILIKE ${q}
+                  ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
+
+              } else {
+                // mobile / email / source — direct column match
+                const colMap = { mobile: 'c.mobile', email: 'c.email' };
+                const col = colMap[field] || 'c.mobile';
+                countRows = await sql`SELECT COUNT(*)::int AS total FROM contacts c WHERE ${sql.unsafe(col)} ILIKE ${q}`;
+                rows = await sql`
+                  SELECT c.*, o.name AS org_name,
+                    (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+                    (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
+                    (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
+                  FROM contacts c LEFT JOIN organisations o ON o.id = c.organisation_id
+                  WHERE ${sql.unsafe(col)} ILIKE ${q}
+                  ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
+              }
+
+            } else {
+              // Free-text search across name, email, mobile, org
+              const q = `%${search}%`;
+              countRows = await sql`
+                SELECT COUNT(*)::int AS total
+                FROM contacts c
+                LEFT JOIN organisations o ON o.id = c.organisation_id
+                WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
+                   OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
+                   OR c.discipline ILIKE ${q}
+                   OR EXISTS (SELECT 1 FROM entity_contacts ec3 JOIN roles r2 ON r2.id = ec3.role_id WHERE ec3.contact_id = c.id AND r2.label ILIKE ${q})
+                   OR EXISTS (SELECT 1 FROM contact_marketing_categories cmc2 WHERE cmc2.contact_id = c.id AND cmc2.category ILIKE ${q})`;
+              rows = await sql`
+                SELECT c.*, o.name AS org_name,
+                  (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+                  (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
+                  (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
+                FROM contacts c
+                LEFT JOIN organisations o ON o.id = c.organisation_id
+                WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
+                   OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
+                   OR c.discipline ILIKE ${q}
+                   OR EXISTS (SELECT 1 FROM entity_contacts ec3 JOIN roles r2 ON r2.id = ec3.role_id WHERE ec3.contact_id = c.id AND r2.label ILIKE ${q})
+                   OR EXISTS (SELECT 1 FROM contact_marketing_categories cmc2 WHERE cmc2.contact_id = c.id AND cmc2.category ILIKE ${q})
+                ORDER BY c.last_name, c.first_name
+                LIMIT ${lim} OFFSET ${off}`;
+            }
+
+            const total = countRows[0].total;
+            return res.status(200).json({ contacts: rows, total });
           }
+          const totalRows = await sql`SELECT COUNT(*)::int AS n FROM contacts`;
+          const total = totalRows[0].n;
           const rows = await sql`
             SELECT c.*, o.name AS org_name,
               (SELECT COUNT(DISTINCT ec.entity_id)
                FROM entity_contacts ec
-               WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count
+               WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+              (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label)
+               FROM entity_contacts ec2
+               JOIN roles r ON r.id = ec2.role_id
+               WHERE ec2.contact_id = c.id) AS roles_label,
+              (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category)
+               FROM contact_marketing_categories cmc
+               WHERE cmc.contact_id = c.id) AS categories_label
             FROM contacts c
             LEFT JOIN organisations o ON o.id = c.organisation_id
-            ORDER BY c.last_name, c.first_name`;
-          return res.status(200).json({ contacts: rows.slice(off, off + lim), total: rows.length });
+            ORDER BY c.last_name, c.first_name
+            LIMIT ${lim} OFFSET ${off}`;
+          return res.status(200).json({ contacts: rows, total });
         }
 
         // ── Unpaginated list / search
@@ -528,6 +641,7 @@ export default async function handler(req, res) {
           first_name, last_name = '', mobile = '', email = '', organisation_id = null,
           domain_id = null,
           dob = null,
+          discipline = null,
           current_address = null, current_address_suburb = null,
           current_address_state = null, current_address_postcode = null,
           // V79 — `privacy_consent` removed (column dropped in v79 migration).
@@ -649,6 +763,12 @@ export default async function handler(req, res) {
         const nextDoNotSend = cDoNotSend.touch ? cDoNotSend.value : c.do_not_send_marketing_at;
         const nextPrefSet   = cPrefSet.touch   ? cPrefSet.value   : c.marketing_pref_set_at;
 
+        // Stamp who set the marketing preference if any consent field is being changed
+        const prefIsChanging = cEmailMkt.touch || cSmsMkt.touch || cDoNotSend.touch || cPrefSet.touch;
+        const nextPrefSetBy  = prefIsChanging
+          ? (session.name || session.email || 'System')
+          : c.marketing_pref_set_by;
+
         const rows = await sql`
           UPDATE contacts SET
             first_name                  = COALESCE(${first_name              ?? null}, first_name),
@@ -662,10 +782,12 @@ export default async function handler(req, res) {
             current_address_suburb      = COALESCE(${current_address_suburb  ?? null}, current_address_suburb),
             current_address_state       = COALESCE(${current_address_state   ?? null}, current_address_state),
             current_address_postcode    = COALESCE(${current_address_postcode?? null}, current_address_postcode),
+            discipline                  = COALESCE(${discipline                 ?? null}, discipline),
             marketing_email_consent_at  = ${nextEmailMkt},
             marketing_sms_consent_at    = ${nextSmsMkt},
             do_not_send_marketing_at    = ${nextDoNotSend},
             marketing_pref_set_at       = ${nextPrefSet},
+            marketing_pref_set_by       = ${nextPrefSetBy ?? null},
             updated_at                  = now()
           WHERE id = ${parseInt(id)}
           RETURNING *`;

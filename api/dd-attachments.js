@@ -22,7 +22,9 @@ import { renderAttachmentViewerPage } from '../lib/attachment-viewer.js';
 
 const sql = neon(getDatabaseUrl());
 
-const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+export const config = { api: { bodyParser: { sizeLimit: '20mb' } } };
+
+const MAX_BYTES = 20 * 1024 * 1024; // 20 MB
 const ALLOWED_MIME = new Set([
   'application/pdf',
   'image/jpeg',
@@ -181,7 +183,7 @@ export default async function handler(req, res) {
       }
 
       if (typeof size === 'number' && size > MAX_BYTES) {
-        return res.status(400).json({ error: `File too large. Max 10 MB; got ${(size/1024/1024).toFixed(1)} MB.` });
+        return res.status(400).json({ error: `File too large. Max 20 MB; got ${(size/1024/1024).toFixed(1)} MB.` });
       }
       if (!ALLOWED_MIME.has(String(mime_type).toLowerCase())) {
         return res.status(400).json({ error: `Unsupported file type: ${mime_type}. Allowed: PDF, JPEG, PNG, HEIC.` });

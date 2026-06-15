@@ -407,7 +407,7 @@ async function renderNotesPanel(contactId, pipelineId) {
       notes.forEach(n => {
         const entry = document.createElement('div');
         entry.className = 'crm-note-entry';
-        const src     = n.source_label           ? ` <span class="crm-note-prop">· ${n.source_label}</span>` : '';
+        const src     = n.source_label_text       ? ` <span class="crm-note-prop">· ${n.source_label_text}</span>` : '';
         const typeBdg = n.interaction_type_label ? ` <span class="crm-note-prop">· ${n.interaction_type_label}</span>` : '';
         const author = n.author_name || 'Unknown';
         entry.innerHTML = `
@@ -925,7 +925,24 @@ async function renderContactsSection(pipelineId, agentData) {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-window.CRM = { renderContactsSection, splitName, displayName, renderCRMView };
+window.CRM = {
+  renderContactsSection, splitName, displayName, renderCRMView,
+  // V82.b — navigate to CRM contacts pane with a pre-filled search
+  openContactsWithSearch(search) {
+    if (window.Router) Router.navigate('/crm');
+    // Wait for CRM to render, then set search and trigger fetch
+    const attempt = (tries = 0) => {
+      const input = document.querySelector('.crm-view-search');
+      if (input) {
+        input.value = search;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      } else if (tries < 20) {
+        setTimeout(() => attempt(tries + 1), 100);
+      }
+    };
+    setTimeout(() => attempt(), 200);
+  },
+};
 
 // ─── Standalone CRM View ──────────────────────────────────────────────────────
 
@@ -1069,21 +1086,27 @@ function renderCRMView(container) {
 
   let contactSearch = '';
   let contactPage   = 0;
-  const PAGE_SIZE   = 30;
+  let pageSize      = 50;
 
   async function loadContactsPane() {
     const pane = container.querySelector('#crm-pane-contacts');
     pane.innerHTML = `
       <div class="crm-pane-toolbar">
-        <input class="kb-input crm-view-search" placeholder="Search contacts…" value="${contactSearch}">
+        <input class="kb-input crm-view-search" placeholder="Search… or category=edan, role=vendor, organisation=edan, discipline=builder" value="${contactSearch}">
+        <select class="crm-page-size-select kb-input">
+          <option value="50"  ${pageSize===50  ? 'selected':''}>50 per page</option>
+          <option value="100" ${pageSize===100 ? 'selected':''}>100 per page</option>
+          <option value="150" ${pageSize===150 ? 'selected':''}>150 per page</option>
+          <option value="200" ${pageSize===200 ? 'selected':''}>200 per page</option>
+        </select>
         <button class="crm-pane-add-btn" data-role="pane-add-contact">+ New Contact</button>
       </div>
       <div class="crm-contact-table-wrap">
         <table class="crm-contact-table">
           <thead><tr>
-            <th>Name</th><th>Organisation</th><th>Mobile</th><th>Email</th><th>Properties</th><th></th>
+            <th>Name</th><th>Organisation</th><th>Roles</th><th>Categories</th><th>Mobile</th><th>Email</th><th>Properties</th><th></th>
           </tr></thead>
-          <tbody id="crmContactTableBody"><tr><td colspan="6" class="crm-loading">Loading…</td></tr></tbody>
+          <tbody id="crmContactTableBody"><tr><td colspan="8" class="crm-loading">Loading…</td></tr></tbody>
         </table>
       </div>
       <div class="crm-pane-pagination" id="crmContactPagination"></div>`;
@@ -1091,6 +1114,11 @@ function renderCRMView(container) {
     pane.querySelector('.crm-view-search').addEventListener('input', e => {
       contactSearch = e.target.value;
       contactPage   = 0;
+      fetchContacts();
+    });
+    pane.querySelector('.crm-page-size-select').addEventListener('change', e => {
+      pageSize    = parseInt(e.target.value, 10);
+      contactPage = 0;
       fetchContacts();
     });
     pane.querySelector('[data-role="pane-add-contact"]').addEventListener('click', () => {
@@ -1106,16 +1134,16 @@ function renderCRMView(container) {
     const pagEl  = pane?.querySelector('#crmContactPagination');
     if (!tbody) return;
 
-    tbody.innerHTML = `<tr><td colspan="6" class="crm-loading">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="crm-loading">Loading…</td></tr>`;
     try {
-      const params = { all: '1', offset: contactPage * PAGE_SIZE, limit: PAGE_SIZE };
+      const params = { all: '1', offset: contactPage * pageSize, limit: pageSize };
       if (contactSearch) params.search = contactSearch;
       const data = await apiGet(params);
       const contacts = Array.isArray(data) ? data : (data.contacts || []);
       const total    = data.total ?? contacts.length;
 
       if (!contacts.length) {
-        tbody.innerHTML = `<tr><td colspan="6" class="crm-empty">No contacts found</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="crm-empty">No contacts found</td></tr>`;
         if (pagEl) pagEl.innerHTML = '';
         return;
       }
@@ -1128,6 +1156,8 @@ function renderCRMView(container) {
         tr.innerHTML = `
           <td class="crm-td-name"><strong>${displayName(c)}</strong></td>
           <td>${c.org_name || '—'}</td>
+          <td>${c.roles_label ? `<span class="crm-roles-label">${c.roles_label}</span>` : '—'}</td>
+          <td>${c.categories_label ? `<span class="crm-roles-label">${c.categories_label}</span>` : '—'}</td>
           <td>${c.mobile ? `<a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a>` : '—'}</td>
           <td>${c.email  ? `<a href="mailto:${c.email}" class="crm-link">${c.email}</a>` : '—'}</td>
           <td>${propCount ? `<span class="crm-prop-count">${propCount}</span>` : '—'}</td>
@@ -1170,7 +1200,7 @@ function renderCRMView(container) {
 
       // Pagination
       if (pagEl) {
-        const totalPages = Math.ceil(total / PAGE_SIZE);
+        const totalPages = Math.ceil(total / pageSize);
         if (totalPages <= 1) { pagEl.innerHTML = ''; return; }
         pagEl.innerHTML = '';
         const prev = document.createElement('button');
@@ -1191,7 +1221,7 @@ function renderCRMView(container) {
         pagEl.appendChild(next);
       }
     } catch (err) {
-      if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="crm-empty">Error loading contacts</td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="crm-empty">Error loading contacts</td></tr>`;
     }
   }
 
@@ -1200,7 +1230,7 @@ function renderCRMView(container) {
   async function renderContactDetail(modal, contactId, onDone) {
     modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
     try {
-      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles, contactActions] = await Promise.all([
+      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles, contactActions, contactGroups, buyerProfile, marketingActivity, allCategoriesData] = await Promise.all([
         apiGet({ id: contactId }),
         fetch(`/api/notes?by_contact=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
@@ -1210,9 +1240,22 @@ function renderCRMView(container) {
         rolesForScope('deal'),
         // V80 — actions where this contact is an assignee
         fetch(`/api/actions?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        // V82.b — contact roles and marketing categories
+        fetch(`/api/contact-groups?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : {}).catch(() => {}),
+        // V82.b — buyer profile
+        fetch(`/api/contact-buyer-profile?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : {}).catch(() => {}),
+        // V82.b — marketing activity
+        fetch(`/api/contact-marketing-activity?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : {}).catch(() => {}),
+        // V82.b — all categories for multi-select
+        fetch('/api/contact-marketing-categories').then(r => r.ok ? r.json() : {categories:[]}).catch(() => ({categories:[]})),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
+
+      // Derive source from earliest note that has a source label (V82.b)
+      const sortedNotes = [...notes].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      const firstSourceNote = sortedNotes.find(n => n.source_label_text);
+      const contactSource = firstSourceNote?.source_label_text ?? null;
 
       // Local HTML-escape helper for the V80 Action Requests section.
       const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch =>
@@ -1311,29 +1354,35 @@ function renderCRMView(container) {
         <div class="crm-modal-header">
           <div>
             <div class="crm-modal-title">${displayName(c)}</div>
-            <div class="crm-modal-subtitle">${[c.org_name, c.mobile, c.email].filter(Boolean).join(" · ")}</div>
+            ${c.org_name ? `<div class="crm-modal-subtitle">${c.org_name}</div>` : ''}
           </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <button class="crm-modal-edit-btn kb-add-offer-btn">✎ Edit</button>
-            <button class="crm-modal-close">✕</button>
-          </div>
+          <button class="crm-modal-close">✕</button>
         </div>
         <div class="crm-modal-body">
 
           <div class="crm-modal-section">
-            <div class="crm-modal-section-title">Contact Details</div>
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left">Contact Details</span>
+              <button class="crm-modal-edit-btn kb-add-offer-btn">✎ Edit</button>
+            </div>
             <div class="crm-detail-grid">
-              ${c.mobile   ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
-              ${c.email    ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
-              ${c.org_name ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
+              ${c.mobile       ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
+              ${c.email        ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
+              ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
+              ${contactSource  ? `<div class="crm-detail-label">Source</div><div>${contactSource}</div>` : ""}
+              ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Roles</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ""}
+              ${c.discipline       ? `<div class="crm-detail-label">Discipline</div><div>${c.discipline}</div>` : ""}
+              ${c.last_contacted_at ? `<div class="crm-detail-label">Last Contacted</div><div>${new Date(c.last_contacted_at).toLocaleDateString()}</div>` : ""}
             </div>
           </div>
 
-          <!-- V79 — Marketing preference status (read-only). Set via the
-               attendee registration form or the agent check-in modal. -->
+          <!-- Marketing Preferences — V79 read-only status, V82.b adds manual update -->
           <div class="crm-modal-section">
-            <div class="crm-modal-section-title">Marketing Preferences</div>
-            <div class="crm-detail-grid">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left">Marketing Preferences</span>
+              <button class="crm-mkt-edit-btn kb-add-offer-btn">✎ Edit</button>
+            </div>
+            <div class="crm-mkt-display">
               ${(() => {
                 const dns       = !!c.do_not_send_marketing_at;
                 const email     = !!c.marketing_email_consent_at;
@@ -1359,18 +1408,118 @@ function renderCRMView(container) {
                   statusLabel = 'Asked, no marketing channels';
                   statusClass = 'crm-mkt-none';
                 }
-                const lastSet = prefSetAt ? new Date(prefSetAt).toLocaleString() : '—';
+                const lastSet  = prefSetAt ? new Date(prefSetAt).toLocaleString() : '—';
+                const setBy    = c.marketing_pref_set_by || null;
                 return `
-                  <div class="crm-detail-label">Status</div>
-                  <div><span class="crm-mkt-status ${statusClass}">${statusLabel}</span></div>
-                  <div class="crm-detail-label">Last set</div>
-                  <div>${lastSet}</div>
-                `;
+                  <div class="crm-detail-grid">
+                    <div class="crm-detail-label">Status</div>
+                    <div><span class="crm-mkt-status ${statusClass}">${statusLabel}</span></div>
+                    <div class="crm-detail-label">Categories</div>
+                    <div>${(contactGroups?.marketing_categories?.length) ? contactGroups.marketing_categories.join(', ') : '<span class="crm-muted">None</span>'}</div>
+                    <div class="crm-detail-label">Last set</div>
+                    <div>${lastSet}${setBy ? ` <span class="crm-muted">by ${setBy}</span>` : ''}</div>
+                  </div>`;
               })()}
+            </div>
+
+
+            <div class="crm-mkt-edit-form" style="display:none">
+              <div class="crm-detail-grid" style="margin-top:8px">
+                <div class="crm-detail-label">Email</div>
+                <div>
+                  <label class="crm-mkt-toggle"><input type="checkbox" class="crm-mkt-email-chk"> Subscribed</label>
+                </div>
+                <div class="crm-detail-label">SMS</div>
+                <div>
+                  <label class="crm-mkt-toggle"><input type="checkbox" class="crm-mkt-sms-chk"> Subscribed</label>
+                </div>
+                <div class="crm-detail-label">Do not contact</div>
+                <div>
+                  <label class="crm-mkt-toggle"><input type="checkbox" class="crm-mkt-dns-chk"> Do not send marketing</label>
+                </div>
+                <div class="crm-detail-label" style="align-self:start;padding-top:4px">Categories</div>
+                <div>
+                  <div class="crm-cat-checkboxes"></div>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <button class="crm-mkt-save-btn kb-add-offer-btn">Save</button>
+                <button class="crm-mkt-cancel-btn crm-cancel-btn">Cancel</button>
+              </div>
             </div>
           </div>
 
           ${siteAccessHtml}
+
+          <!-- V82.b — Buyer Profile section -->
+          ${buyerProfile && Object.keys(buyerProfile).some(k => k !== 'contact_id' && k !== 'updated_at' && buyerProfile[k] !== null) ? `
+          <div class="crm-modal-section crm-section-collapsible" data-section="buyer-profile" data-collapsed="0">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Buyer Profile</span>
+              <button class="crm-bp-edit-btn kb-add-offer-btn">✎ Edit</button>
+            </div>
+            <div class="crm-section-body">
+              <div class="crm-bp-display crm-detail-grid">
+                ${buyerProfile.listing_types?.length  ? `<div class="crm-detail-label">Listing Types</div><div>${buyerProfile.listing_types.join(', ')}</div>` : ''}
+                ${buyerProfile.property_types?.length ? `<div class="crm-detail-label">Property Types</div><div>${buyerProfile.property_types.join(', ')}</div>` : ''}
+                ${(buyerProfile.min_price || buyerProfile.max_price) ? `<div class="crm-detail-label">Price Range</div><div>${[buyerProfile.min_price ? '$'+buyerProfile.min_price.toLocaleString() : 'Any', buyerProfile.max_price ? '$'+buyerProfile.max_price.toLocaleString() : 'Any'].join(' – ')}</div>` : ''}
+                ${(buyerProfile.min_rent || buyerProfile.max_rent) ? `<div class="crm-detail-label">Rent Range</div><div>${[buyerProfile.min_rent ? '$'+buyerProfile.min_rent.toLocaleString() : 'Any', buyerProfile.max_rent ? '$'+buyerProfile.max_rent.toLocaleString() : 'Any'].join(' – ')}</div>` : ''}
+                ${(buyerProfile.min_bedrooms || buyerProfile.max_bedrooms) ? `<div class="crm-detail-label">Bedrooms</div><div>${[buyerProfile.min_bedrooms ?? 'Any', buyerProfile.max_bedrooms ?? 'Any'].join(' – ')}</div>` : ''}
+                ${(buyerProfile.min_bathrooms || buyerProfile.max_bathrooms) ? `<div class="crm-detail-label">Bathrooms</div><div>${[buyerProfile.min_bathrooms ?? 'Any', buyerProfile.max_bathrooms ?? 'Any'].join(' – ')}</div>` : ''}
+                ${(buyerProfile.min_car_spaces || buyerProfile.max_car_spaces) ? `<div class="crm-detail-label">Car Spaces</div><div>${[buyerProfile.min_car_spaces ?? 'Any', buyerProfile.max_car_spaces ?? 'Any'].join(' – ')}</div>` : ''}
+                ${(buyerProfile.min_land_size_sqm || buyerProfile.max_land_size_sqm) ? `<div class="crm-detail-label">Land Size</div><div>${[buyerProfile.min_land_size_sqm ? buyerProfile.min_land_size_sqm.toLocaleString()+'m²' : 'Any', buyerProfile.max_land_size_sqm ? buyerProfile.max_land_size_sqm.toLocaleString()+'m²' : 'Any'].join(' – ')}</div>` : ''}
+                ${buyerProfile.postcode_preferences?.length ? `<div class="crm-detail-label">Postcodes</div><div>${buyerProfile.postcode_preferences.join(', ')}</div>` : ''}
+                ${buyerProfile.commercial_listing_type ? `<div class="crm-detail-label">Commercial Type</div><div>${buyerProfile.commercial_listing_type}</div>` : ''}
+                ${buyerProfile.max_commercial_rent ? `<div class="crm-detail-label">Max Commercial Rent</div><div>$${buyerProfile.max_commercial_rent.toLocaleString()}</div>` : ''}
+                ${buyerProfile.updated_at ? `<div class="crm-detail-label">Last Updated</div><div>${new Date(buyerProfile.updated_at).toLocaleDateString()}</div>` : ''}
+              </div>
+              <div class="crm-bp-edit-form" style="display:none">
+                <div class="crm-detail-grid">
+                  <div class="crm-detail-label">Listing Types</div><div><input class="kb-input crm-bp-listing-types" value="${(buyerProfile.listing_types||[]).join(', ')}" placeholder="e.g. land, residential_sale"></div>
+                  <div class="crm-detail-label">Property Types</div><div><input class="kb-input crm-bp-property-types" value="${(buyerProfile.property_types||[]).join(', ')}" placeholder="e.g. house, townhouse"></div>
+                  <div class="crm-detail-label">Min Price</div><div><input type="number" class="kb-input crm-bp-min-price" value="${buyerProfile.min_price ?? ''}"></div>
+                  <div class="crm-detail-label">Max Price</div><div><input type="number" class="kb-input crm-bp-max-price" value="${buyerProfile.max_price ?? ''}"></div>
+                  <div class="crm-detail-label">Min Rent</div><div><input type="number" class="kb-input crm-bp-min-rent" value="${buyerProfile.min_rent ?? ''}"></div>
+                  <div class="crm-detail-label">Max Rent</div><div><input type="number" class="kb-input crm-bp-max-rent" value="${buyerProfile.max_rent ?? ''}"></div>
+                  <div class="crm-detail-label">Min Bedrooms</div><div><input type="number" class="kb-input crm-bp-min-bed" value="${buyerProfile.min_bedrooms ?? ''}"></div>
+                  <div class="crm-detail-label">Max Bedrooms</div><div><input type="number" class="kb-input crm-bp-max-bed" value="${buyerProfile.max_bedrooms ?? ''}"></div>
+                  <div class="crm-detail-label">Min Bathrooms</div><div><input type="number" class="kb-input crm-bp-min-bath" value="${buyerProfile.min_bathrooms ?? ''}"></div>
+                  <div class="crm-detail-label">Max Bathrooms</div><div><input type="number" class="kb-input crm-bp-max-bath" value="${buyerProfile.max_bathrooms ?? ''}"></div>
+                  <div class="crm-detail-label">Min Car Spaces</div><div><input type="number" class="kb-input crm-bp-min-car" value="${buyerProfile.min_car_spaces ?? ''}"></div>
+                  <div class="crm-detail-label">Max Car Spaces</div><div><input type="number" class="kb-input crm-bp-max-car" value="${buyerProfile.max_car_spaces ?? ''}"></div>
+                  <div class="crm-detail-label">Min Land (m²)</div><div><input type="number" class="kb-input crm-bp-min-land" value="${buyerProfile.min_land_size_sqm ?? ''}"></div>
+                  <div class="crm-detail-label">Max Land (m²)</div><div><input type="number" class="kb-input crm-bp-max-land" value="${buyerProfile.max_land_size_sqm ?? ''}"></div>
+                  <div class="crm-detail-label">Postcodes</div><div><input class="kb-input crm-bp-postcodes" value="${(buyerProfile.postcode_preferences||[]).join(', ')}" placeholder="Comma separated"></div>
+                  <div class="crm-detail-label">Commercial Type</div><div><input class="kb-input crm-bp-comm-type" value="${buyerProfile.commercial_listing_type ?? ''}"></div>
+                  <div class="crm-detail-label">Max Comm. Rent</div><div><input type="number" class="kb-input crm-bp-max-comm-rent" value="${buyerProfile.max_commercial_rent ?? ''}"></div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:12px">
+                  <button class="crm-bp-save-btn kb-add-offer-btn">Save</button>
+                  <button class="crm-bp-cancel-btn crm-cancel-btn">Cancel</button>
+                </div>
+              </div>
+            </div>
+          </div>` : ''}
+
+          <!-- V82.b — Marketing Activity section -->
+          ${marketingActivity && marketingActivity.contact_id ? `
+          <div class="crm-modal-section crm-section-collapsible" data-section="marketing-activity" data-collapsed="1">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▸</span> Marketing Activity</span>
+            </div>
+            <div class="crm-section-body" style="display:none">
+              <div class="crm-detail-grid">
+                ${marketingActivity.activity_score != null ? `<div class="crm-detail-label">Activity Score</div><div>${marketingActivity.activity_score}</div>` : ''}
+                <div class="crm-detail-label">Email Opens</div><div>${marketingActivity.email_opens ?? 0}</div>
+                <div class="crm-detail-label">Email Clicks</div><div>${marketingActivity.email_clicks ?? 0}</div>
+                <div class="crm-detail-label">Page Views</div><div>${marketingActivity.page_views ?? 0}</div>
+                ${marketingActivity.last_email_open_at ? `<div class="crm-detail-label">Last Email Open</div><div>${new Date(marketingActivity.last_email_open_at).toLocaleDateString()}</div>` : ''}
+                ${marketingActivity.last_click_at ? `<div class="crm-detail-label">Last Click</div><div>${new Date(marketingActivity.last_click_at).toLocaleDateString()}</div>` : ''}
+                ${marketingActivity.last_campaign ? `<div class="crm-detail-label">Last Campaign</div><div>${marketingActivity.last_campaign}</div>` : ''}
+                ${marketingActivity.updated_at ? `<div class="crm-detail-label">Last Updated</div><div>${new Date(marketingActivity.updated_at).toLocaleDateString()}</div>` : ''}
+              </div>
+            </div>
+          </div>` : ''}
 
           <!-- V80 — Pending Action Requests on this contact (joined via
                action_assignees from check-in triggers, etc.). Read-only
@@ -1495,8 +1644,8 @@ function renderCRMView(container) {
               <div class="crm-modal-notes-list">
                 ${notes.length ? notes.map(n => {
                   const author = n.author_name || 'Unknown';
-                  const sourceBadge = n.source_label
-                    ? `<span class="crm-note-source">${n.source_label}</span>`
+                  const sourceBadge = n.source_label_text
+                    ? `<span class="crm-note-source">${n.source_label_text}</span>`
                     : '';
                   return `
                   <div class="crm-note-entry" data-note-id="${n.id}">
@@ -1517,6 +1666,174 @@ function renderCRMView(container) {
       modal.querySelector(".crm-modal-edit-btn").addEventListener("click", () => {
         renderContactModal(modal, c, () => renderContactDetail(modal, contactId, onDone));
       });
+
+      // ── Marketing preference edit (V82.b) ────────────────────────────────
+      const mktEditBtn    = modal.querySelector(".crm-mkt-edit-btn");
+      const mktDisplay    = modal.querySelector(".crm-mkt-display");
+      const mktEditForm   = modal.querySelector(".crm-mkt-edit-form");
+      const mktSaveBtn    = modal.querySelector(".crm-mkt-save-btn");
+      const mktCancelBtn  = modal.querySelector(".crm-mkt-cancel-btn");
+
+      // Pre-tick checkboxes from current state
+      const emailChk = mktEditForm.querySelector('.crm-mkt-email-chk');
+      const smsChk   = mktEditForm.querySelector('.crm-mkt-sms-chk');
+      const dnsChk   = mktEditForm.querySelector('.crm-mkt-dns-chk');
+      emailChk.checked = !!c.marketing_email_consent_at;
+      smsChk.checked   = !!c.marketing_sms_consent_at;
+      dnsChk.checked   = !!c.do_not_send_marketing_at;
+
+      mktEditBtn.addEventListener('click', () => {
+        // Build category checkboxes inside the edit form on open
+        const catChkboxes = mktEditForm.querySelector('.crm-cat-checkboxes');
+        if (catChkboxes) {
+          const allCats     = allCategoriesData?.categories ?? [];
+          const currentCats = new Set(contactGroups?.marketing_categories ?? []);
+          const allKnown    = [...new Set([...allCats, ...currentCats])].sort();
+          catChkboxes.innerHTML = allKnown.map(cat => `
+            <label class="crm-mkt-toggle" style="margin-bottom:4px">
+              <input type="checkbox" value="${cat}" ${currentCats.has(cat) ? 'checked' : ''}> ${cat}
+            </label>`).join('');
+
+        }
+        mktDisplay.style.display  = 'none';
+        mktEditForm.style.display = 'block';
+        mktEditBtn.style.display  = 'none';
+      });
+      mktCancelBtn.addEventListener('click', () => {
+        mktDisplay.style.display  = '';
+        mktEditForm.style.display = 'none';
+        mktEditBtn.style.display  = '';
+      });
+      mktSaveBtn.addEventListener('click', async () => {
+        const payload = {
+          marketing_email_consent: emailChk.checked ? true : null,
+          marketing_sms_consent:   smsChk.checked   ? true : null,
+          do_not_send_marketing:   dnsChk.checked   ? true : null,
+          marketing_pref_set:      true,
+        };
+        mktSaveBtn.disabled = true;
+        mktSaveBtn.textContent = 'Saving…';
+        try {
+          // Save consent fields
+          const r = await fetch(`/api/contacts?id=${contactId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!r.ok) throw new Error(await r.text());
+          // Save categories from the same form
+          const catChkboxes = mktEditForm.querySelector('.crm-cat-checkboxes');
+          if (catChkboxes) {
+            const selected = [...catChkboxes.querySelectorAll('input:checked')].map(i => i.value);
+            await fetch(`/api/contact-marketing-categories?contact_id=${contactId}`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ categories: selected }),
+            });
+          }
+          await renderContactDetail(modal, contactId, onDone);
+        } catch (err) {
+          mktSaveBtn.disabled = false;
+          mktSaveBtn.textContent = 'Save';
+          alert('Failed to save: ' + err.message);
+        }
+      });
+
+      // ── V82.b — Categories multi-select ─────────────────────────────────
+      const catEditBtn    = modal.querySelector('.crm-cat-edit-btn');
+      const catDisplay    = modal.querySelector('.crm-categories-display-wrap');
+      const catEditForm   = modal.querySelector('.crm-cat-edit-form');
+      const catSaveBtn    = modal.querySelector('.crm-cat-save-btn');
+      const catCancelBtn  = modal.querySelector('.crm-cat-cancel-btn');
+      const catCheckboxes = modal.querySelector('.crm-cat-checkboxes');
+      const catNewInput   = modal.querySelector('.crm-cat-new-input');
+      const catAddBtn     = modal.querySelector('.crm-cat-add-btn');
+
+      if (catEditBtn && catEditForm) {
+        const allCats = allCategoriesData?.categories ?? [];
+        const currentCats = new Set(contactGroups?.marketing_categories ?? []);
+
+        const buildCheckboxes = (cats) => {
+          const allKnown = [...new Set([...allCats, ...currentCats, ...cats])].sort();
+          catCheckboxes.innerHTML = allKnown.map(cat => `
+            <label class="crm-mkt-toggle" style="margin-bottom:4px">
+              <input type="checkbox" value="${cat}" ${currentCats.has(cat) || cats.includes(cat) ? 'checked' : ''}> ${cat}
+            </label>`).join('');
+        };
+        buildCheckboxes([]);
+
+        catEditBtn.addEventListener('click', () => {
+          catEditForm.style.display = 'block';
+          catEditBtn.style.display  = 'none';
+        });
+        catCancelBtn.addEventListener('click', () => {
+          catEditForm.style.display = 'none';
+          catEditBtn.style.display  = '';
+        });
+        catAddBtn.addEventListener('click', () => {
+          const val = catNewInput.value.trim();
+          if (!val) return;
+          const checked = [...catCheckboxes.querySelectorAll('input:checked')].map(i => i.value);
+          buildCheckboxes([...checked, val]);
+          catNewInput.value = '';
+        });
+      }
+
+      // ── V82.b — Buyer Profile edit/save ──────────────────────────────────
+      const bpEditBtn   = modal.querySelector('.crm-bp-edit-btn');
+      const bpDisplay   = modal.querySelector('.crm-bp-display');
+      const bpEditForm  = modal.querySelector('.crm-bp-edit-form');
+      const bpSaveBtn   = modal.querySelector('.crm-bp-save-btn');
+      const bpCancelBtn = modal.querySelector('.crm-bp-cancel-btn');
+
+      if (bpEditBtn && bpEditForm) {
+        bpEditBtn.addEventListener('click', () => {
+          bpDisplay.style.display  = 'none';
+          bpEditForm.style.display = 'block';
+          bpEditBtn.style.display  = 'none';
+        });
+        bpCancelBtn.addEventListener('click', () => {
+          bpDisplay.style.display  = '';
+          bpEditForm.style.display = 'none';
+          bpEditBtn.style.display  = '';
+        });
+        bpSaveBtn.addEventListener('click', async () => {
+          const f = bpEditForm;
+          const splitArr = v => v ? v.split(',').map(s => s.trim()).filter(Boolean) : null;
+          const intVal   = sel => { const v = parseInt(f.querySelector(sel)?.value); return isNaN(v) ? null : v; };
+          const floatVal = sel => { const v = parseFloat(f.querySelector(sel)?.value); return isNaN(v) ? null : v; };
+          const payload  = {
+            listing_types:           splitArr(f.querySelector('.crm-bp-listing-types')?.value),
+            property_types:          splitArr(f.querySelector('.crm-bp-property-types')?.value),
+            min_price:               intVal('.crm-bp-min-price'),
+            max_price:               intVal('.crm-bp-max-price'),
+            min_rent:                intVal('.crm-bp-min-rent'),
+            max_rent:                intVal('.crm-bp-max-rent'),
+            min_bedrooms:            intVal('.crm-bp-min-bed'),
+            max_bedrooms:            intVal('.crm-bp-max-bed'),
+            min_bathrooms:           intVal('.crm-bp-min-bath'),
+            max_bathrooms:           intVal('.crm-bp-max-bath'),
+            min_car_spaces:          intVal('.crm-bp-min-car'),
+            max_car_spaces:          intVal('.crm-bp-max-car'),
+            min_land_size_sqm:       floatVal('.crm-bp-min-land'),
+            max_land_size_sqm:       floatVal('.crm-bp-max-land'),
+            postcode_preferences:    splitArr(f.querySelector('.crm-bp-postcodes')?.value),
+            commercial_listing_type: f.querySelector('.crm-bp-comm-type')?.value.trim() || null,
+            max_commercial_rent:     intVal('.crm-bp-max-comm-rent'),
+          };
+          bpSaveBtn.disabled = true; bpSaveBtn.textContent = 'Saving…';
+          try {
+            const r = await fetch(`/api/contact-buyer-profile?contact_id=${contactId}`, {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            if (!r.ok) throw new Error(await r.text());
+            await renderContactDetail(modal, contactId, onDone);
+          } catch (err) {
+            bpSaveBtn.disabled = false; bpSaveBtn.textContent = 'Save';
+            alert('Failed to save: ' + err.message);
+          }
+        });
+      }
 
       // ── Collapsible sections ─────────────────────────────────────────────
       // Section state is per-render (no persistence); clicking the header
@@ -1808,6 +2125,14 @@ function renderCRMView(container) {
               <div class="crm-org-wrap"></div>
             </div>
           </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Discipline</label>
+              <select class="kb-input crm-discipline">
+                <option value="">— None —</option>
+              </select>
+            </div>
+          </div>
           <div class="crm-duplicate-warning-wrap"></div>
           <div class="crm-form-actions">
             <button class="crm-save-btn kb-add-offer-btn">${isEdit ? 'Save Changes' : 'Create Contact'}</button>
@@ -1824,6 +2149,21 @@ function renderCRMView(container) {
     let selectedOrgId = prefill?.organisation_id || null;
     const orgTA = buildOrgTypeahead(modal.querySelector('.crm-org-wrap'), (id) => { selectedOrgId = id; });
     if (prefill?.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
+
+    // Populate discipline dropdown from API
+    const discSel = modal.querySelector('.crm-discipline');
+    if (discSel) {
+      fetch('/api/disciplines').then(r => r.ok ? r.json() : []).then(disciplines => {
+        const active = disciplines.filter(d => d.active);
+        active.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d.label;
+          opt.textContent = d.label;
+          if (prefill?.discipline === d.label) opt.selected = true;
+          discSel.appendChild(opt);
+        });
+      }).catch(() => {});
+    }
 
     // V77.1c: Source field removed — source now lives only on notes.source
 
@@ -1860,6 +2200,7 @@ function renderCRMView(container) {
         mobile:          modal.querySelector('.crm-mobile').value.trim(),
         email:           modal.querySelector('.crm-email').value.trim(),
         organisation_id: selectedOrgId,
+        discipline:      modal.querySelector('.crm-discipline')?.value || null,
       };
       let saved;
       if (isEdit) {
