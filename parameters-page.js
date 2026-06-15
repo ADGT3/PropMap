@@ -525,7 +525,7 @@
           <td>${esc(d.label)}</td>
           <td>$${Number(d.rate_per_hour).toFixed(2)}</td>
           <td>${d.active ? '<span class="params-active-badge">Active</span>' : '<span class="params-inactive-badge">Inactive</span>'}</td>
-          <td>${d.contact_count ?? 0}</td>
+          <td>${d.contact_count > 0 ? `<button class="params-action-btn" data-action="view-disc-contacts" data-label="${esc(d.label)}" title="View contacts" style="text-decoration:underline;background:none;border:none;padding:0;cursor:pointer;color:var(--accent)">${d.contact_count}</button>` : '0'}</td>
           <td style="white-space:nowrap">
             <button class="params-action-btn" data-action="edit-disc" data-id="${d.id}" title="Edit">✎</button>
             <button class="params-action-btn params-delete-btn" data-action="delete-disc" data-id="${d.id}" data-count="${d.contact_count ?? 0}" title="Delete">✕</button>
@@ -579,6 +579,15 @@
         }
 
         if (action === 'confirm-add-disc') { confirmAddDisc(); }
+
+        if (action === 'view-disc-contacts') {
+          const label = btn.getAttribute('data-label');
+          if (window.CRM?.openContactsWithSearch) {
+            // Close settings and open CRM with discipline filter
+            document.getElementById('settingsClose')?.click();
+            CRM.openContactsWithSearch(`discipline=${label}`);
+          }
+        }
 
         if (action === 'delete-disc') {
           const count = parseInt(btn.getAttribute('data-count') ?? '0', 10);

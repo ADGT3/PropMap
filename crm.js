@@ -925,7 +925,24 @@ async function renderContactsSection(pipelineId, agentData) {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-window.CRM = { renderContactsSection, splitName, displayName, renderCRMView };
+window.CRM = {
+  renderContactsSection, splitName, displayName, renderCRMView,
+  // V82.b — navigate to CRM contacts pane with a pre-filled search
+  openContactsWithSearch(search) {
+    if (window.Router) Router.navigate('/crm');
+    // Wait for CRM to render, then set search and trigger fetch
+    const attempt = (tries = 0) => {
+      const input = document.querySelector('.crm-view-search');
+      if (input) {
+        input.value = search;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      } else if (tries < 20) {
+        setTimeout(() => attempt(tries + 1), 100);
+      }
+    };
+    setTimeout(() => attempt(), 200);
+  },
+};
 
 // ─── Standalone CRM View ──────────────────────────────────────────────────────
 
