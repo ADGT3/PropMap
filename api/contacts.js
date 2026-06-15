@@ -641,6 +641,7 @@ export default async function handler(req, res) {
           first_name, last_name = '', mobile = '', email = '', organisation_id = null,
           domain_id = null,
           dob = null,
+          discipline = null,
           current_address = null, current_address_suburb = null,
           current_address_state = null, current_address_postcode = null,
           // V79 — `privacy_consent` removed (column dropped in v79 migration).
@@ -781,6 +782,7 @@ export default async function handler(req, res) {
             current_address_suburb      = COALESCE(${current_address_suburb  ?? null}, current_address_suburb),
             current_address_state       = COALESCE(${current_address_state   ?? null}, current_address_state),
             current_address_postcode    = COALESCE(${current_address_postcode?? null}, current_address_postcode),
+            discipline                  = COALESCE(${discipline                 ?? null}, discipline),
             marketing_email_consent_at  = ${nextEmailMkt},
             marketing_sms_consent_at    = ${nextSmsMkt},
             do_not_send_marketing_at    = ${nextDoNotSend},
