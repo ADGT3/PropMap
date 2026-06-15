@@ -1075,7 +1075,8 @@ function renderCRMView(container) {
     const pane = container.querySelector('#crm-pane-contacts');
     pane.innerHTML = `
       <div class="crm-pane-toolbar">
-        <input class="kb-input crm-view-search" placeholder="Search contacts…" value="${contactSearch}">
+        <input class="kb-input crm-view-search" placeholder="Search… or category=edan, role=vendor, discipline=builder" value="${contactSearch}">
+        <span class="crm-contact-count" id="crmContactCount"></span>
         <select class="crm-page-size-select kb-input">
           <option value="50"  ${pageSize===50  ? 'selected':''}>50 per page</option>
           <option value="100" ${pageSize===100 ? 'selected':''}>100 per page</option>
@@ -1124,6 +1125,8 @@ function renderCRMView(container) {
       const data = await apiGet(params);
       const contacts = Array.isArray(data) ? data : (data.contacts || []);
       const total    = data.total ?? contacts.length;
+      const countEl  = pane?.querySelector('#crmContactCount');
+      if (countEl) countEl.textContent = `${total.toLocaleString()} contacts`;
 
       if (!contacts.length) {
         tbody.innerHTML = `<tr><td colspan="8" class="crm-empty">No contacts found</td></tr>`;
