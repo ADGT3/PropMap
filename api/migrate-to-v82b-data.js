@@ -199,7 +199,7 @@ async function importContactsBulk(contacts, stats) {
             current_address_state, current_address_postcode,
             discipline, last_contacted_at,
             marketing_email_consent_at, marketing_sms_consent_at,
-            do_not_send_marketing_at, marketing_pref_set_at,
+            do_not_send_marketing_at, marketing_pref_set_at, marketing_pref_set_by,
             created_at, updated_at
           ) VALUES (
             ${c.first_name}, ${c.last_name ?? ''}, ${c.mobile ?? ''}, ${c.email ?? ''},
@@ -208,7 +208,7 @@ async function importContactsBulk(contacts, stats) {
             ${c.current_address_state ?? null}, ${c.current_address_postcode ?? null},
             ${c.discipline ?? null}, ${c.last_contacted_at ?? null},
             ${c.marketing_email_consent_at ?? null}, ${c.marketing_sms_consent_at ?? null},
-            ${c.do_not_send_marketing_at ?? null}, ${mktPrefSetAt ?? null},
+            ${c.do_not_send_marketing_at ?? null}, ${mktPrefSetAt ?? null}, ${'Rex Import'},
             ${c.created_at ?? null}, now()
           )
           RETURNING id`;

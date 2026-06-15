@@ -140,6 +140,9 @@ export default async function handler(req, res) {
       await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS discipline TEXT`;
       steps.push('contacts.discipline added');
 
+      await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS marketing_pref_set_by TEXT`;
+      steps.push('contacts.marketing_pref_set_by added');
+
       // ── 2. properties — new columns ──────────────────────────────────────
       await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS core_logic_id TEXT`;
       steps.push('properties.core_logic_id added');

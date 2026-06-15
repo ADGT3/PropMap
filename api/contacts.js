@@ -762,6 +762,12 @@ export default async function handler(req, res) {
         const nextDoNotSend = cDoNotSend.touch ? cDoNotSend.value : c.do_not_send_marketing_at;
         const nextPrefSet   = cPrefSet.touch   ? cPrefSet.value   : c.marketing_pref_set_at;
 
+        // Stamp who set the marketing preference if any consent field is being changed
+        const prefIsChanging = cEmailMkt.touch || cSmsMkt.touch || cDoNotSend.touch || cPrefSet.touch;
+        const nextPrefSetBy  = prefIsChanging
+          ? (session.name || session.email || 'System')
+          : c.marketing_pref_set_by;
+
         const rows = await sql`
           UPDATE contacts SET
             first_name                  = COALESCE(${first_name              ?? null}, first_name),
@@ -779,6 +785,7 @@ export default async function handler(req, res) {
             marketing_sms_consent_at    = ${nextSmsMkt},
             do_not_send_marketing_at    = ${nextDoNotSend},
             marketing_pref_set_at       = ${nextPrefSet},
+            marketing_pref_set_by       = ${nextPrefSetBy ?? null},
             updated_at                  = now()
           WHERE id = ${parseInt(id)}
           RETURNING *`;
