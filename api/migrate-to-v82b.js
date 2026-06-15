@@ -55,35 +55,7 @@ async function hasMigrationRun() {
   return r.length > 0;
 }
 
-async function getStatus() {
-  // Check which pieces are already in place
-  const [cols] = await sql`
-    SELECT
-      COUNT(*) FILTER (WHERE table_name='contacts'    AND column_name='last_contacted_at') AS contacts_last_contacted,
-      COUNT(*) FILTER (WHERE table_name='contacts'    AND column_name='discipline')        AS contacts_discipline,
-      COUNT(*) FILTER (WHERE table_name='properties'  AND column_name='core_logic_id')     AS props_core_logic,
-      COUNT(*) FILTER (WHERE table_name='properties'  AND column_name='pricefinder_id')    AS props_pricefinder,
-      COUNT(*) FILTER (WHERE table_name='properties'  AND column_name='property_metadata') AS props_metadata
-    FROM information_schema.columns
-    WHERE table_schema = 'public'`;
 
-  const tables = await sql`
-    SELECT table_name FROM information_schema.tables
-    WHERE table_schema = 'public'
-      AND table_name IN (
-        'contact_marketing_categories',
-        'contact_buyer_profile',
-        'contact_marketing_activity'
-      )`;
-  const tableNames = tables.map(t => t.table_name);
-
-  const roles = await sql`
-    SELECT id FROM roles
-    WHERE id IN ('mortgage_broker','investor','developer','accountant','contractor')`;
-  const roleIds = roles.map(r => r.id);
-
-  return { cols, tableNames, roleIds };
-}
 
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
@@ -95,33 +67,9 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       const already_ran = await hasMigrationRun();
-      const { cols, tableNames, roleIds } = await getStatus();
       return res.status(200).json({
         migration_id: MIGRATION_ID,
         already_ran,
-        status: {
-          contacts_columns: {
-            last_contacted_at: cols.contacts_last_contacted > 0,
-            discipline:        cols.contacts_discipline > 0,
-          },
-          properties_columns: {
-            core_logic_id:     cols.props_core_logic > 0,
-            pricefinder_id:    cols.props_pricefinder > 0,
-            property_metadata: cols.props_metadata > 0,
-          },
-          new_tables: {
-            contact_marketing_categories: tableNames.includes('contact_marketing_categories'),
-            contact_buyer_profile:        tableNames.includes('contact_buyer_profile'),
-            contact_marketing_activity:   tableNames.includes('contact_marketing_activity'),
-          },
-          new_roles: {
-            mortgage_broker: roleIds.includes('mortgage_broker'),
-            investor:        roleIds.includes('investor'),
-            developer:       roleIds.includes('developer'),
-            accountant:      roleIds.includes('accountant'),
-            contractor:      roleIds.includes('contractor'),
-          },
-        },
         note: 'POST to execute.',
       });
     }
@@ -181,10 +129,10 @@ export default async function handler(req, res) {
       ];
       let so = 10;
       for (const label of disciplineSeeds) {
-        await sql\`INSERT INTO disciplines (label, rate_per_hour, sort_order) VALUES (\${label}, 150.00, \${so}) ON CONFLICT (label) DO NOTHING\`;
+        await sql`INSERT INTO disciplines (label, rate_per_hour, sort_order) VALUES (${label}, 150.00, ${so}) ON CONFLICT (label) DO NOTHING`;
         so += 10;
       }
-      steps.push(\`disciplines table created and seeded (\${disciplineSeeds.length} rows at $150/hr)\`);
+      steps.push(`disciplines table created and seeded (${disciplineSeeds.length} rows at $150/hr)`);
 
       // ── 2. properties — new columns ──────────────────────────────────────
       await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS core_logic_id TEXT`;
