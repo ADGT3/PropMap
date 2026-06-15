@@ -1398,9 +1398,12 @@
         }
       }
       // V82.b — Lazy-render Marketing on first visit
-      if (sectionKey === 'marketing' && !_marketingSettingsRendered) {
-        _marketingSettingsRendered = true;
-        renderMarketingSettings(document.getElementById('marketingSettingsContainer'));
+      if (sectionKey === 'marketing' && !_marketingSettingsRendered && window.MarketingSettingsPage) {
+        const container = document.getElementById('marketingSettingsContainer');
+        if (container) {
+          MarketingSettingsPage.render(container);
+          _marketingSettingsRendered = true;
+        }
       }
     }
     document.querySelectorAll('.settings-submenu-item').forEach(btn => {
