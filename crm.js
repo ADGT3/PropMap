@@ -1423,10 +1423,6 @@ function renderCRMView(container) {
                 <div class="crm-detail-label" style="align-self:start;padding-top:4px">Categories</div>
                 <div>
                   <div class="crm-cat-checkboxes"></div>
-                  <div style="margin-top:8px;display:flex;gap:6px;align-items:center">
-                    <input type="text" class="kb-input crm-cat-new-input" placeholder="Add new category…" style="flex:1;font-size:12px">
-                    <button class="crm-cat-add-btn kb-add-offer-btn" style="padding:4px 10px">+ Add</button>
-                  </div>
                 </div>
               </div>
               <div style="display:flex;gap:8px;margin-top:10px">
@@ -1680,22 +1676,7 @@ function renderCRMView(container) {
             <label class="crm-mkt-toggle" style="margin-bottom:4px">
               <input type="checkbox" value="${cat}" ${currentCats.has(cat) ? 'checked' : ''}> ${cat}
             </label>`).join('');
-          // Wire add button
-          const catNewInput = mktEditForm.querySelector('.crm-cat-new-input');
-          const catAddBtn   = mktEditForm.querySelector('.crm-cat-add-btn');
-          if (catAddBtn) {
-            catAddBtn.onclick = () => {
-              const val = catNewInput.value.trim();
-              if (!val) return;
-              const existing = catChkboxes.querySelector(`input[value="${val}"]`);
-              if (!existing) {
-                catChkboxes.innerHTML += `<label class="crm-mkt-toggle" style="margin-bottom:4px"><input type="checkbox" value="${val}" checked> ${val}</label>`;
-              } else {
-                existing.checked = true;
-              }
-              catNewInput.value = '';
-            };
-          }
+
         }
         mktDisplay.style.display  = 'none';
         mktEditForm.style.display = 'block';
