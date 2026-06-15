@@ -1398,30 +1398,13 @@ function renderCRMView(container) {
                     <div class="crm-detail-label">Status</div>
                     <div><span class="crm-mkt-status ${statusClass}">${statusLabel}</span></div>
                     <div class="crm-detail-label">Categories</div>
-                    <div class="crm-categories-display-wrap">
-                      ${(contactGroups?.marketing_categories?.length)
-                        ? `<span class="crm-categories-display">${contactGroups.marketing_categories.join(', ')}</span>`
-                        : `<span class="crm-categories-display crm-muted">None</span>`}
-                      <button class="crm-cat-edit-btn kb-add-offer-btn" style="margin-left:8px;padding:2px 8px;font-size:11px">✎</button>
-                    </div>
+                    <div>${(contactGroups?.marketing_categories?.length) ? contactGroups.marketing_categories.join(', ') : '<span class="crm-muted">None</span>'}</div>
                     <div class="crm-detail-label">Last set</div>
                     <div>${lastSet}${setBy ? ` <span class="crm-muted">by ${setBy}</span>` : ''}</div>
                   </div>`;
               })()}
             </div>
-            <div class="crm-mkt-categories-wrap">
-              <div class="crm-cat-edit-form" style="display:none;margin-top:12px">
-                <div class="crm-cat-checkboxes"></div>
-                <div style="margin-top:8px;display:flex;gap:6px;align-items:center">
-                  <input type="text" class="kb-input crm-cat-new-input" placeholder="Add new category…" style="flex:1;font-size:12px">
-                  <button class="crm-cat-add-btn kb-add-offer-btn" style="padding:4px 10px">+ Add</button>
-                </div>
-                <div style="display:flex;gap:8px;margin-top:10px">
-                  <button class="crm-cat-save-btn kb-add-offer-btn">Save</button>
-                  <button class="crm-cat-cancel-btn crm-cancel-btn">Cancel</button>
-                </div>
-              </div>
-            </div>
+
 
             <div class="crm-mkt-edit-form" style="display:none">
               <div class="crm-detail-grid" style="margin-top:8px">
@@ -1436,6 +1419,14 @@ function renderCRMView(container) {
                 <div class="crm-detail-label">Do not contact</div>
                 <div>
                   <label class="crm-mkt-toggle"><input type="checkbox" class="crm-mkt-dns-chk"> Do not send marketing</label>
+                </div>
+                <div class="crm-detail-label" style="align-self:start;padding-top:4px">Categories</div>
+                <div>
+                  <div class="crm-cat-checkboxes"></div>
+                  <div style="margin-top:8px;display:flex;gap:6px;align-items:center">
+                    <input type="text" class="kb-input crm-cat-new-input" placeholder="Add new category…" style="flex:1;font-size:12px">
+                    <button class="crm-cat-add-btn kb-add-offer-btn" style="padding:4px 10px">+ Add</button>
+                  </div>
                 </div>
               </div>
               <div style="display:flex;gap:8px;margin-top:10px">
@@ -1679,6 +1670,33 @@ function renderCRMView(container) {
       dnsChk.checked   = !!c.do_not_send_marketing_at;
 
       mktEditBtn.addEventListener('click', () => {
+        // Build category checkboxes inside the edit form on open
+        const catChkboxes = mktEditForm.querySelector('.crm-cat-checkboxes');
+        if (catChkboxes) {
+          const allCats     = allCategoriesData?.categories ?? [];
+          const currentCats = new Set(contactGroups?.marketing_categories ?? []);
+          const allKnown    = [...new Set([...allCats, ...currentCats])].sort();
+          catChkboxes.innerHTML = allKnown.map(cat => `
+            <label class="crm-mkt-toggle" style="margin-bottom:4px">
+              <input type="checkbox" value="${cat}" ${currentCats.has(cat) ? 'checked' : ''}> ${cat}
+            </label>`).join('');
+          // Wire add button
+          const catNewInput = mktEditForm.querySelector('.crm-cat-new-input');
+          const catAddBtn   = mktEditForm.querySelector('.crm-cat-add-btn');
+          if (catAddBtn) {
+            catAddBtn.onclick = () => {
+              const val = catNewInput.value.trim();
+              if (!val) return;
+              const existing = catChkboxes.querySelector(`input[value="${val}"]`);
+              if (!existing) {
+                catChkboxes.innerHTML += `<label class="crm-mkt-toggle" style="margin-bottom:4px"><input type="checkbox" value="${val}" checked> ${val}</label>`;
+              } else {
+                existing.checked = true;
+              }
+              catNewInput.value = '';
+            };
+          }
+        }
         mktDisplay.style.display  = 'none';
         mktEditForm.style.display = 'block';
         mktEditBtn.style.display  = 'none';
@@ -1693,17 +1711,27 @@ function renderCRMView(container) {
           marketing_email_consent: emailChk.checked ? true : null,
           marketing_sms_consent:   smsChk.checked   ? true : null,
           do_not_send_marketing:   dnsChk.checked   ? true : null,
-          marketing_pref_set:      emailChk.checked || smsChk.checked || dnsChk.checked,
+          marketing_pref_set:      true,
         };
         mktSaveBtn.disabled = true;
         mktSaveBtn.textContent = 'Saving…';
         try {
+          // Save consent fields
           const r = await fetch(`/api/contacts?id=${contactId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
           });
           if (!r.ok) throw new Error(await r.text());
+          // Save categories from the same form
+          const catChkboxes = mktEditForm.querySelector('.crm-cat-checkboxes');
+          if (catChkboxes) {
+            const selected = [...catChkboxes.querySelectorAll('input:checked')].map(i => i.value);
+            await fetch(`/api/contact-marketing-categories?contact_id=${contactId}`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ categories: selected }),
+            });
+          }
           await renderContactDetail(modal, contactId, onDone);
         } catch (err) {
           mktSaveBtn.disabled = false;
@@ -1749,26 +1777,6 @@ function renderCRMView(container) {
           const checked = [...catCheckboxes.querySelectorAll('input:checked')].map(i => i.value);
           buildCheckboxes([...checked, val]);
           catNewInput.value = '';
-        });
-        catSaveBtn.addEventListener('click', async () => {
-          const selected = [...catCheckboxes.querySelectorAll('input:checked')].map(i => i.value);
-          catSaveBtn.disabled = true; catSaveBtn.textContent = 'Saving…';
-          try {
-            const r = await fetch(`/api/contact-marketing-categories?contact_id=${contactId}`, {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ categories: selected }),
-            });
-            if (!r.ok) throw new Error(await r.text());
-            // Update marketing_pref_set_at/by when categories change
-            await fetch(`/api/contacts?id=${contactId}`, {
-              method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ marketing_pref_set: true }),
-            });
-            await renderContactDetail(modal, contactId, onDone);
-          } catch (err) {
-            catSaveBtn.disabled = false; catSaveBtn.textContent = 'Save';
-            alert('Failed to save: ' + err.message);
-          }
         });
       }
 
