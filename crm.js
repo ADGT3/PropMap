@@ -1087,9 +1087,9 @@ function renderCRMView(container) {
       <div class="crm-contact-table-wrap">
         <table class="crm-contact-table">
           <thead><tr>
-            <th>Name</th><th>Organisation</th><th>Mobile</th><th>Email</th><th>Properties</th><th></th>
+            <th>Name</th><th>Organisation</th><th>Roles</th><th>Categories</th><th>Mobile</th><th>Email</th><th>Properties</th><th></th>
           </tr></thead>
-          <tbody id="crmContactTableBody"><tr><td colspan="6" class="crm-loading">Loading…</td></tr></tbody>
+          <tbody id="crmContactTableBody"><tr><td colspan="8" class="crm-loading">Loading…</td></tr></tbody>
         </table>
       </div>
       <div class="crm-pane-pagination" id="crmContactPagination"></div>`;
@@ -1117,7 +1117,7 @@ function renderCRMView(container) {
     const pagEl  = pane?.querySelector('#crmContactPagination');
     if (!tbody) return;
 
-    tbody.innerHTML = `<tr><td colspan="6" class="crm-loading">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="crm-loading">Loading…</td></tr>`;
     try {
       const params = { all: '1', offset: contactPage * pageSize, limit: pageSize };
       if (contactSearch) params.search = contactSearch;
@@ -1126,7 +1126,7 @@ function renderCRMView(container) {
       const total    = data.total ?? contacts.length;
 
       if (!contacts.length) {
-        tbody.innerHTML = `<tr><td colspan="6" class="crm-empty">No contacts found</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="crm-empty">No contacts found</td></tr>`;
         if (pagEl) pagEl.innerHTML = '';
         return;
       }
@@ -1139,6 +1139,8 @@ function renderCRMView(container) {
         tr.innerHTML = `
           <td class="crm-td-name"><strong>${displayName(c)}</strong></td>
           <td>${c.org_name || '—'}</td>
+          <td>${c.roles_label ? `<span class="crm-roles-label">${c.roles_label}</span>` : '—'}</td>
+          <td>${c.categories_label ? `<span class="crm-roles-label">${c.categories_label}</span>` : '—'}</td>
           <td>${c.mobile ? `<a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a>` : '—'}</td>
           <td>${c.email  ? `<a href="mailto:${c.email}" class="crm-link">${c.email}</a>` : '—'}</td>
           <td>${propCount ? `<span class="crm-prop-count">${propCount}</span>` : '—'}</td>
@@ -1202,7 +1204,7 @@ function renderCRMView(container) {
         pagEl.appendChild(next);
       }
     } catch (err) {
-      if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="crm-empty">Error loading contacts</td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="crm-empty">Error loading contacts</td></tr>`;
     }
   }
 
@@ -1211,7 +1213,7 @@ function renderCRMView(container) {
   async function renderContactDetail(modal, contactId, onDone) {
     modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
     try {
-      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles, contactActions, contactGroups] = await Promise.all([
+      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles, contactActions, contactGroups, buyerProfile, marketingActivity, allCategoriesData] = await Promise.all([
         apiGet({ id: contactId }),
         fetch(`/api/notes?by_contact=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
@@ -1223,6 +1225,12 @@ function renderCRMView(container) {
         fetch(`/api/actions?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
         // V82.b — contact roles and marketing categories
         fetch(`/api/contact-groups?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : {}).catch(() => {}),
+        // V82.b — buyer profile
+        fetch(`/api/contact-buyer-profile?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : {}).catch(() => {}),
+        // V82.b — marketing activity
+        fetch(`/api/contact-marketing-activity?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : {}).catch(() => {}),
+        // V82.b — all categories for multi-select
+        fetch('/api/contact-marketing-categories').then(r => r.ok ? r.json() : {categories:[]}).catch(() => ({categories:[]})),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
@@ -1346,7 +1354,31 @@ function renderCRMView(container) {
               ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
               ${contactSource  ? `<div class="crm-detail-label">Source</div><div>${contactSource}</div>` : ""}
               ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Roles</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ""}
-              ${(contactGroups?.marketing_categories?.length) ? `<div class="crm-detail-label">Categories</div><div>${contactGroups.marketing_categories.join(', ')}</div>` : ""}
+              ${(contactGroups?.marketing_categories?.length) ? `
+                <div class="crm-detail-label">Categories</div>
+                <div class="crm-categories-display-wrap">
+                  <span class="crm-categories-display">${contactGroups.marketing_categories.join(', ')}</span>
+                  <button class="crm-cat-edit-btn kb-add-offer-btn" style="margin-left:8px;padding:2px 8px;font-size:11px">✎</button>
+                </div>` : `
+                <div class="crm-detail-label">Categories</div>
+                <div class="crm-categories-display-wrap">
+                  <span class="crm-categories-display crm-muted">None</span>
+                  <button class="crm-cat-edit-btn kb-add-offer-btn" style="margin-left:8px;padding:2px 8px;font-size:11px">✎</button>
+                </div>`}
+              ${c.discipline       ? `<div class="crm-detail-label">Discipline</div><div>${c.discipline}</div>` : ""}
+              ${c.last_contacted_at ? `<div class="crm-detail-label">Last Contacted</div><div>${new Date(c.last_contacted_at).toLocaleDateString()}</div>` : ""}
+            </div>
+            <!-- V82.b — Categories multi-select edit form -->
+            <div class="crm-cat-edit-form" style="display:none;margin-top:12px">
+              <div class="crm-cat-checkboxes"></div>
+              <div style="margin-top:8px;display:flex;gap:6px;align-items:center">
+                <input type="text" class="kb-input crm-cat-new-input" placeholder="Add new category…" style="flex:1;font-size:12px">
+                <button class="crm-cat-add-btn kb-add-offer-btn" style="padding:4px 10px">+ Add</button>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <button class="crm-cat-save-btn kb-add-offer-btn">Save</button>
+                <button class="crm-cat-cancel-btn crm-cancel-btn">Cancel</button>
+              </div>
             </div>
           </div>
 
@@ -1415,6 +1447,76 @@ function renderCRMView(container) {
           </div>
 
           ${siteAccessHtml}
+
+          <!-- V82.b — Buyer Profile section -->
+          ${buyerProfile && Object.keys(buyerProfile).some(k => k !== 'contact_id' && k !== 'updated_at' && buyerProfile[k] !== null) ? `
+          <div class="crm-modal-section crm-section-collapsible" data-section="buyer-profile" data-collapsed="0">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▾</span> Buyer Profile</span>
+              <button class="crm-bp-edit-btn kb-add-offer-btn">✎ Edit</button>
+            </div>
+            <div class="crm-section-body">
+              <div class="crm-bp-display crm-detail-grid">
+                ${buyerProfile.listing_types?.length  ? `<div class="crm-detail-label">Listing Types</div><div>${buyerProfile.listing_types.join(', ')}</div>` : ''}
+                ${buyerProfile.property_types?.length ? `<div class="crm-detail-label">Property Types</div><div>${buyerProfile.property_types.join(', ')}</div>` : ''}
+                ${(buyerProfile.min_price || buyerProfile.max_price) ? `<div class="crm-detail-label">Price Range</div><div>${[buyerProfile.min_price ? '$'+buyerProfile.min_price.toLocaleString() : 'Any', buyerProfile.max_price ? '$'+buyerProfile.max_price.toLocaleString() : 'Any'].join(' – ')}</div>` : ''}
+                ${(buyerProfile.min_rent || buyerProfile.max_rent) ? `<div class="crm-detail-label">Rent Range</div><div>${[buyerProfile.min_rent ? '$'+buyerProfile.min_rent.toLocaleString() : 'Any', buyerProfile.max_rent ? '$'+buyerProfile.max_rent.toLocaleString() : 'Any'].join(' – ')}</div>` : ''}
+                ${(buyerProfile.min_bedrooms || buyerProfile.max_bedrooms) ? `<div class="crm-detail-label">Bedrooms</div><div>${[buyerProfile.min_bedrooms ?? 'Any', buyerProfile.max_bedrooms ?? 'Any'].join(' – ')}</div>` : ''}
+                ${(buyerProfile.min_bathrooms || buyerProfile.max_bathrooms) ? `<div class="crm-detail-label">Bathrooms</div><div>${[buyerProfile.min_bathrooms ?? 'Any', buyerProfile.max_bathrooms ?? 'Any'].join(' – ')}</div>` : ''}
+                ${(buyerProfile.min_car_spaces || buyerProfile.max_car_spaces) ? `<div class="crm-detail-label">Car Spaces</div><div>${[buyerProfile.min_car_spaces ?? 'Any', buyerProfile.max_car_spaces ?? 'Any'].join(' – ')}</div>` : ''}
+                ${(buyerProfile.min_land_size_sqm || buyerProfile.max_land_size_sqm) ? `<div class="crm-detail-label">Land Size</div><div>${[buyerProfile.min_land_size_sqm ? buyerProfile.min_land_size_sqm.toLocaleString()+'m²' : 'Any', buyerProfile.max_land_size_sqm ? buyerProfile.max_land_size_sqm.toLocaleString()+'m²' : 'Any'].join(' – ')}</div>` : ''}
+                ${buyerProfile.postcode_preferences?.length ? `<div class="crm-detail-label">Postcodes</div><div>${buyerProfile.postcode_preferences.join(', ')}</div>` : ''}
+                ${buyerProfile.commercial_listing_type ? `<div class="crm-detail-label">Commercial Type</div><div>${buyerProfile.commercial_listing_type}</div>` : ''}
+                ${buyerProfile.max_commercial_rent ? `<div class="crm-detail-label">Max Commercial Rent</div><div>$${buyerProfile.max_commercial_rent.toLocaleString()}</div>` : ''}
+                ${buyerProfile.updated_at ? `<div class="crm-detail-label">Last Updated</div><div>${new Date(buyerProfile.updated_at).toLocaleDateString()}</div>` : ''}
+              </div>
+              <div class="crm-bp-edit-form" style="display:none">
+                <div class="crm-detail-grid">
+                  <div class="crm-detail-label">Listing Types</div><div><input class="kb-input crm-bp-listing-types" value="${(buyerProfile.listing_types||[]).join(', ')}" placeholder="e.g. land, residential_sale"></div>
+                  <div class="crm-detail-label">Property Types</div><div><input class="kb-input crm-bp-property-types" value="${(buyerProfile.property_types||[]).join(', ')}" placeholder="e.g. house, townhouse"></div>
+                  <div class="crm-detail-label">Min Price</div><div><input type="number" class="kb-input crm-bp-min-price" value="${buyerProfile.min_price ?? ''}"></div>
+                  <div class="crm-detail-label">Max Price</div><div><input type="number" class="kb-input crm-bp-max-price" value="${buyerProfile.max_price ?? ''}"></div>
+                  <div class="crm-detail-label">Min Rent</div><div><input type="number" class="kb-input crm-bp-min-rent" value="${buyerProfile.min_rent ?? ''}"></div>
+                  <div class="crm-detail-label">Max Rent</div><div><input type="number" class="kb-input crm-bp-max-rent" value="${buyerProfile.max_rent ?? ''}"></div>
+                  <div class="crm-detail-label">Min Bedrooms</div><div><input type="number" class="kb-input crm-bp-min-bed" value="${buyerProfile.min_bedrooms ?? ''}"></div>
+                  <div class="crm-detail-label">Max Bedrooms</div><div><input type="number" class="kb-input crm-bp-max-bed" value="${buyerProfile.max_bedrooms ?? ''}"></div>
+                  <div class="crm-detail-label">Min Bathrooms</div><div><input type="number" class="kb-input crm-bp-min-bath" value="${buyerProfile.min_bathrooms ?? ''}"></div>
+                  <div class="crm-detail-label">Max Bathrooms</div><div><input type="number" class="kb-input crm-bp-max-bath" value="${buyerProfile.max_bathrooms ?? ''}"></div>
+                  <div class="crm-detail-label">Min Car Spaces</div><div><input type="number" class="kb-input crm-bp-min-car" value="${buyerProfile.min_car_spaces ?? ''}"></div>
+                  <div class="crm-detail-label">Max Car Spaces</div><div><input type="number" class="kb-input crm-bp-max-car" value="${buyerProfile.max_car_spaces ?? ''}"></div>
+                  <div class="crm-detail-label">Min Land (m²)</div><div><input type="number" class="kb-input crm-bp-min-land" value="${buyerProfile.min_land_size_sqm ?? ''}"></div>
+                  <div class="crm-detail-label">Max Land (m²)</div><div><input type="number" class="kb-input crm-bp-max-land" value="${buyerProfile.max_land_size_sqm ?? ''}"></div>
+                  <div class="crm-detail-label">Postcodes</div><div><input class="kb-input crm-bp-postcodes" value="${(buyerProfile.postcode_preferences||[]).join(', ')}" placeholder="Comma separated"></div>
+                  <div class="crm-detail-label">Commercial Type</div><div><input class="kb-input crm-bp-comm-type" value="${buyerProfile.commercial_listing_type ?? ''}"></div>
+                  <div class="crm-detail-label">Max Comm. Rent</div><div><input type="number" class="kb-input crm-bp-max-comm-rent" value="${buyerProfile.max_commercial_rent ?? ''}"></div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:12px">
+                  <button class="crm-bp-save-btn kb-add-offer-btn">Save</button>
+                  <button class="crm-bp-cancel-btn crm-cancel-btn">Cancel</button>
+                </div>
+              </div>
+            </div>
+          </div>` : ''}
+
+          <!-- V82.b — Marketing Activity section -->
+          ${marketingActivity && marketingActivity.contact_id ? `
+          <div class="crm-modal-section crm-section-collapsible" data-section="marketing-activity" data-collapsed="1">
+            <div class="crm-modal-section-title crm-section-header">
+              <span class="crm-section-header-left"><span class="crm-section-chev">▸</span> Marketing Activity</span>
+            </div>
+            <div class="crm-section-body" style="display:none">
+              <div class="crm-detail-grid">
+                ${marketingActivity.activity_score != null ? `<div class="crm-detail-label">Activity Score</div><div>${marketingActivity.activity_score}</div>` : ''}
+                <div class="crm-detail-label">Email Opens</div><div>${marketingActivity.email_opens ?? 0}</div>
+                <div class="crm-detail-label">Email Clicks</div><div>${marketingActivity.email_clicks ?? 0}</div>
+                <div class="crm-detail-label">Page Views</div><div>${marketingActivity.page_views ?? 0}</div>
+                ${marketingActivity.last_email_open_at ? `<div class="crm-detail-label">Last Email Open</div><div>${new Date(marketingActivity.last_email_open_at).toLocaleDateString()}</div>` : ''}
+                ${marketingActivity.last_click_at ? `<div class="crm-detail-label">Last Click</div><div>${new Date(marketingActivity.last_click_at).toLocaleDateString()}</div>` : ''}
+                ${marketingActivity.last_campaign ? `<div class="crm-detail-label">Last Campaign</div><div>${marketingActivity.last_campaign}</div>` : ''}
+                ${marketingActivity.updated_at ? `<div class="crm-detail-label">Last Updated</div><div>${new Date(marketingActivity.updated_at).toLocaleDateString()}</div>` : ''}
+              </div>
+            </div>
+          </div>` : ''}
 
           <!-- V80 — Pending Action Requests on this contact (joined via
                action_assignees from check-in triggers, etc.). Read-only
@@ -1610,6 +1712,118 @@ function renderCRMView(container) {
           alert('Failed to save: ' + err.message);
         }
       });
+
+      // ── V82.b — Categories multi-select ─────────────────────────────────
+      const catEditBtn    = modal.querySelector('.crm-cat-edit-btn');
+      const catDisplay    = modal.querySelector('.crm-categories-display-wrap');
+      const catEditForm   = modal.querySelector('.crm-cat-edit-form');
+      const catSaveBtn    = modal.querySelector('.crm-cat-save-btn');
+      const catCancelBtn  = modal.querySelector('.crm-cat-cancel-btn');
+      const catCheckboxes = modal.querySelector('.crm-cat-checkboxes');
+      const catNewInput   = modal.querySelector('.crm-cat-new-input');
+      const catAddBtn     = modal.querySelector('.crm-cat-add-btn');
+
+      if (catEditBtn && catEditForm) {
+        const allCats = allCategoriesData?.categories ?? [];
+        const currentCats = new Set(contactGroups?.marketing_categories ?? []);
+
+        const buildCheckboxes = (cats) => {
+          const allKnown = [...new Set([...allCats, ...currentCats, ...cats])].sort();
+          catCheckboxes.innerHTML = allKnown.map(cat => `
+            <label class="crm-mkt-toggle" style="margin-bottom:4px">
+              <input type="checkbox" value="${cat}" ${currentCats.has(cat) || cats.includes(cat) ? 'checked' : ''}> ${cat}
+            </label>`).join('');
+        };
+        buildCheckboxes([]);
+
+        catEditBtn.addEventListener('click', () => {
+          catEditForm.style.display = 'block';
+          catEditBtn.style.display  = 'none';
+        });
+        catCancelBtn.addEventListener('click', () => {
+          catEditForm.style.display = 'none';
+          catEditBtn.style.display  = '';
+        });
+        catAddBtn.addEventListener('click', () => {
+          const val = catNewInput.value.trim();
+          if (!val) return;
+          const checked = [...catCheckboxes.querySelectorAll('input:checked')].map(i => i.value);
+          buildCheckboxes([...checked, val]);
+          catNewInput.value = '';
+        });
+        catSaveBtn.addEventListener('click', async () => {
+          const selected = [...catCheckboxes.querySelectorAll('input:checked')].map(i => i.value);
+          catSaveBtn.disabled = true; catSaveBtn.textContent = 'Saving…';
+          try {
+            const r = await fetch(`/api/contact-marketing-categories?contact_id=${contactId}`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ categories: selected }),
+            });
+            if (!r.ok) throw new Error(await r.text());
+            await renderContactDetail(modal, contactId, onDone);
+          } catch (err) {
+            catSaveBtn.disabled = false; catSaveBtn.textContent = 'Save';
+            alert('Failed to save: ' + err.message);
+          }
+        });
+      }
+
+      // ── V82.b — Buyer Profile edit/save ──────────────────────────────────
+      const bpEditBtn   = modal.querySelector('.crm-bp-edit-btn');
+      const bpDisplay   = modal.querySelector('.crm-bp-display');
+      const bpEditForm  = modal.querySelector('.crm-bp-edit-form');
+      const bpSaveBtn   = modal.querySelector('.crm-bp-save-btn');
+      const bpCancelBtn = modal.querySelector('.crm-bp-cancel-btn');
+
+      if (bpEditBtn && bpEditForm) {
+        bpEditBtn.addEventListener('click', () => {
+          bpDisplay.style.display  = 'none';
+          bpEditForm.style.display = 'block';
+          bpEditBtn.style.display  = 'none';
+        });
+        bpCancelBtn.addEventListener('click', () => {
+          bpDisplay.style.display  = '';
+          bpEditForm.style.display = 'none';
+          bpEditBtn.style.display  = '';
+        });
+        bpSaveBtn.addEventListener('click', async () => {
+          const f = bpEditForm;
+          const splitArr = v => v ? v.split(',').map(s => s.trim()).filter(Boolean) : null;
+          const intVal   = sel => { const v = parseInt(f.querySelector(sel)?.value); return isNaN(v) ? null : v; };
+          const floatVal = sel => { const v = parseFloat(f.querySelector(sel)?.value); return isNaN(v) ? null : v; };
+          const payload  = {
+            listing_types:           splitArr(f.querySelector('.crm-bp-listing-types')?.value),
+            property_types:          splitArr(f.querySelector('.crm-bp-property-types')?.value),
+            min_price:               intVal('.crm-bp-min-price'),
+            max_price:               intVal('.crm-bp-max-price'),
+            min_rent:                intVal('.crm-bp-min-rent'),
+            max_rent:                intVal('.crm-bp-max-rent'),
+            min_bedrooms:            intVal('.crm-bp-min-bed'),
+            max_bedrooms:            intVal('.crm-bp-max-bed'),
+            min_bathrooms:           intVal('.crm-bp-min-bath'),
+            max_bathrooms:           intVal('.crm-bp-max-bath'),
+            min_car_spaces:          intVal('.crm-bp-min-car'),
+            max_car_spaces:          intVal('.crm-bp-max-car'),
+            min_land_size_sqm:       floatVal('.crm-bp-min-land'),
+            max_land_size_sqm:       floatVal('.crm-bp-max-land'),
+            postcode_preferences:    splitArr(f.querySelector('.crm-bp-postcodes')?.value),
+            commercial_listing_type: f.querySelector('.crm-bp-comm-type')?.value.trim() || null,
+            max_commercial_rent:     intVal('.crm-bp-max-comm-rent'),
+          };
+          bpSaveBtn.disabled = true; bpSaveBtn.textContent = 'Saving…';
+          try {
+            const r = await fetch(`/api/contact-buyer-profile?contact_id=${contactId}`, {
+              method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            if (!r.ok) throw new Error(await r.text());
+            await renderContactDetail(modal, contactId, onDone);
+          } catch (err) {
+            bpSaveBtn.disabled = false; bpSaveBtn.textContent = 'Save';
+            alert('Failed to save: ' + err.message);
+          }
+        });
+      }
 
       // ── Collapsible sections ─────────────────────────────────────────────
       // Section state is per-render (no persistence); clicking the header
