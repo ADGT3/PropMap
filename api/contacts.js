@@ -271,7 +271,7 @@ export default async function handler(req, res) {
               LEFT JOIN organisations o ON o.id = c.organisation_id
               WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
                  OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
-                 OR c.source ILIKE ${q} OR c.discipline ILIKE ${q}
+                 OR c.discipline ILIKE ${q}
                  OR EXISTS (
                    SELECT 1 FROM entity_contacts ec3
                    JOIN roles r2 ON r2.id = ec3.role_id
@@ -298,7 +298,7 @@ export default async function handler(req, res) {
               LEFT JOIN organisations o ON o.id = c.organisation_id
               WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
                  OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
-                 OR c.source ILIKE ${q} OR c.discipline ILIKE ${q}
+                 OR c.discipline ILIKE ${q}
                  OR EXISTS (
                    SELECT 1 FROM entity_contacts ec3
                    JOIN roles r2 ON r2.id = ec3.role_id
@@ -312,6 +312,8 @@ export default async function handler(req, res) {
               LIMIT ${lim} OFFSET ${off}`;
             return res.status(200).json({ contacts: rows, total });
           }
+          const totalRows = await sql`SELECT COUNT(*)::int AS n FROM contacts`;
+          const total = totalRows[0].n;
           const rows = await sql`
             SELECT c.*, o.name AS org_name,
               (SELECT COUNT(DISTINCT ec.entity_id)
@@ -326,8 +328,9 @@ export default async function handler(req, res) {
                WHERE cmc.contact_id = c.id) AS categories_label
             FROM contacts c
             LEFT JOIN organisations o ON o.id = c.organisation_id
-            ORDER BY c.last_name, c.first_name`;
-          return res.status(200).json({ contacts: rows.slice(off, off + lim), total: rows.length });
+            ORDER BY c.last_name, c.first_name
+            LIMIT ${lim} OFFSET ${off}`;
+          return res.status(200).json({ contacts: rows, total });
         }
 
         // ── Unpaginated list / search
