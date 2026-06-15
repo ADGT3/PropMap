@@ -4,6 +4,45 @@ A browser-based interactive property map overlaying live Domain.com.au listings 
 
 ---
 
+## Development Standards
+
+### Navigation — Back vs Close
+
+PropMap uses a client-side Router (`router.js`) with an explicit back stack (`_backStack`). The following rules **must** be followed in all new code:
+
+**Back (`Router.back()`)**
+- Returns the user to the literal previous screen they were on, regardless of workflow.
+- Used by the browser/app back button only.
+- The back stack is maintained automatically by `Router.navigate()` — every navigation pushes the current path before moving.
+- **Never call `Router.back()` from a close button.** Close buttons have a fixed workflow destination.
+
+**Close (fixed workflow navigation)**
+- Returns the user to the logical parent screen in the workflow, regardless of where they came from.
+- Examples: closing a deal modal → Pipeline board; closing a property panel → Mapping.
+- Use `Router.navigate('/destination')` with the fixed destination.
+- **Never manually close a module (e.g. `settingsClose.click()`) before calling `Router.navigate()`** — this corrupts the back stack. Let the Router's `navigate()` call handle closing the previous module via `closeAllModules()`.
+
+**Rules summary:**
+
+| Action | Method | Destination |
+|---|---|---|
+| User clicks ← Back | `Router.back()` | Previous screen (stack-driven) |
+| User closes a modal | `Router.navigate('/parent')` | Fixed workflow parent |
+| Code navigates programmatically | `Router.navigate('/path')` | Explicit destination |
+| Code needs back to work after navigation | Just call `Router.navigate()` | Stack is maintained automatically |
+
+**Anti-patterns to avoid:**
+```javascript
+// ✗ WRONG — manually closing a module before navigating corrupts the back stack
+document.getElementById('settingsClose')?.click();
+Router.navigate('/crm');
+
+// ✓ CORRECT — Router.navigate() closes the previous module and maintains the stack
+Router.navigate('/crm');
+```
+
+---
+
 ## File Structure
 
 ```
