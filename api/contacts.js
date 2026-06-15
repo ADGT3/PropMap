@@ -265,7 +265,7 @@ export default async function handler(req, res) {
           if (search) {
             // Parse field-scoped syntax: category=edan, role=vendor, discipline=builder
             // Matches pipeline search convention. Unrecognised fields fall through to free-text.
-            const fieldMatch = search.match(/^(category|role|discipline|org|organisation|mobile|email|source)\s*=\s*(.+)$/i);
+            const fieldMatch = search.match(/^(categories?|role|discipline|org|organisation|mobile|email)\s*=\s*(.+)$/i);
             let countRows, rows;
 
             if (fieldMatch) {
@@ -273,7 +273,7 @@ export default async function handler(req, res) {
               const val   = fieldMatch[2].trim();
               const q = `%${val}%`;
 
-              if (field === 'category') {
+              if (field === 'category' || field === 'categories') {
                 countRows = await sql`
                   SELECT COUNT(DISTINCT c.id)::int AS total FROM contacts c
                   JOIN contact_marketing_categories cmc ON cmc.contact_id = c.id
