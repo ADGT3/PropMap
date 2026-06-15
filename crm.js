@@ -2112,59 +2112,7 @@ function renderCRMView(container) {
             <div class="kb-field-wrap" style="flex:1">
               <label class="kb-field-label">Discipline</label>
               <select class="kb-input crm-discipline">
-                <option value=""></option>
-          <option value="Aboriginal Sensitivity" ${prefill?.discipline === 'Aboriginal Sensitivity' ? 'selected' : ''}>Aboriginal Sensitivity</option>
-          <option value="Accessibility" ${prefill?.discipline === 'Accessibility' ? 'selected' : ''}>Accessibility</option>
-          <option value="Acoustics" ${prefill?.discipline === 'Acoustics' ? 'selected' : ''}>Acoustics</option>
-          <option value="Architecture" ${prefill?.discipline === 'Architecture' ? 'selected' : ''}>Architecture</option>
-          <option value="Arborist" ${prefill?.discipline === 'Arborist' ? 'selected' : ''}>Arborist</option>
-          <option value="BCA" ${prefill?.discipline === 'BCA' ? 'selected' : ''}>BCA</option>
-          <option value="Builder (Civil)" ${prefill?.discipline === 'Builder (Civil)' ? 'selected' : ''}>Builder (Civil)</option>
-          <option value="Builder (Construction)" ${prefill?.discipline === 'Builder (Construction)' ? 'selected' : ''}>Builder (Construction)</option>
-          <option value="Builder (Electrical)" ${prefill?.discipline === 'Builder (Electrical)' ? 'selected' : ''}>Builder (Electrical)</option>
-          <option value="Builder (Landscaping)" ${prefill?.discipline === 'Builder (Landscaping)' ? 'selected' : ''}>Builder (Landscaping)</option>
-          <option value="Builder (Telco Contractor)" ${prefill?.discipline === 'Builder (Telco Contractor)' ? 'selected' : ''}>Builder (Telco Contractor)</option>
-          <option value="Builder (Water)" ${prefill?.discipline === 'Builder (Water)' ? 'selected' : ''}>Builder (Water)</option>
-          <option value="Building Maintenance" ${prefill?.discipline === 'Building Maintenance' ? 'selected' : ''}>Building Maintenance</option>
-          <option value="Civil" ${prefill?.discipline === 'Civil' ? 'selected' : ''}>Civil</option>
-          <option value="Council" ${prefill?.discipline === 'Council' ? 'selected' : ''}>Council</option>
-          <option value="Demolition/HazMat" ${prefill?.discipline === 'Demolition/HazMat' ? 'selected' : ''}>Demolition/HazMat</option>
-          <option value="Dilapidation/Assessments" ${prefill?.discipline === 'Dilapidation/Assessments' ? 'selected' : ''}>Dilapidation/Assessments</option>
-          <option value="Ecology" ${prefill?.discipline === 'Ecology' ? 'selected' : ''}>Ecology</option>
-          <option value="Engineering - Civil/SW" ${prefill?.discipline === 'Engineering - Civil/SW' ? 'selected' : ''}>Engineering - Civil/SW</option>
-          <option value="Engineering - Electrical" ${prefill?.discipline === 'Engineering - Electrical' ? 'selected' : ''}>Engineering - Electrical</option>
-          <option value="Engineering - Fire" ${prefill?.discipline === 'Engineering - Fire' ? 'selected' : ''}>Engineering - Fire</option>
-          <option value="Engineering - Hydraulic" ${prefill?.discipline === 'Engineering - Hydraulic' ? 'selected' : ''}>Engineering - Hydraulic</option>
-          <option value="Engineering - Mechanical" ${prefill?.discipline === 'Engineering - Mechanical' ? 'selected' : ''}>Engineering - Mechanical</option>
-          <option value="Engineering - Structural" ${prefill?.discipline === 'Engineering - Structural' ? 'selected' : ''}>Engineering - Structural</option>
-          <option value="Engineering - Traffic" ${prefill?.discipline === 'Engineering - Traffic' ? 'selected' : ''}>Engineering - Traffic</option>
-          <option value="Engineering - Vertical" ${prefill?.discipline === 'Engineering - Vertical' ? 'selected' : ''}>Engineering - Vertical</option>
-          <option value="Fencing" ${prefill?.discipline === 'Fencing' ? 'selected' : ''}>Fencing</option>
-          <option value="Finance" ${prefill?.discipline === 'Finance' ? 'selected' : ''}>Finance</option>
-          <option value="Fire Consultant" ${prefill?.discipline === 'Fire Consultant' ? 'selected' : ''}>Fire Consultant</option>
-          <option value="Geotechnical" ${prefill?.discipline === 'Geotechnical' ? 'selected' : ''}>Geotechnical</option>
-          <option value="Hydraulics" ${prefill?.discipline === 'Hydraulics' ? 'selected' : ''}>Hydraulics</option>
-          <option value="Hygienist/Contamination" ${prefill?.discipline === 'Hygienist/Contamination' ? 'selected' : ''}>Hygienist/Contamination</option>
-          <option value="Interior Design" ${prefill?.discipline === 'Interior Design' ? 'selected' : ''}>Interior Design</option>
-          <option value="Labourer" ${prefill?.discipline === 'Labourer' ? 'selected' : ''}>Labourer</option>
-          <option value="Landscape Architecture" ${prefill?.discipline === 'Landscape Architecture' ? 'selected' : ''}>Landscape Architecture</option>
-          <option value="Legal" ${prefill?.discipline === 'Legal' ? 'selected' : ''}>Legal</option>
-          <option value="Marketing" ${prefill?.discipline === 'Marketing' ? 'selected' : ''}>Marketing</option>
-          <option value="Operations Management (Childcare)" ${prefill?.discipline === 'Operations Management (Childcare)' ? 'selected' : ''}>Operations Management (Childcare)</option>
-          <option value="Operations Management (Commercial)" ${prefill?.discipline === 'Operations Management (Commercial)' ? 'selected' : ''}>Operations Management (Commercial)</option>
-          <option value="Operations Management (Retail)" ${prefill?.discipline === 'Operations Management (Retail)' ? 'selected' : ''}>Operations Management (Retail)</option>
-          <option value="Project Management" ${prefill?.discipline === 'Project Management' ? 'selected' : ''}>Project Management</option>
-          <option value="Property Manager" ${prefill?.discipline === 'Property Manager' ? 'selected' : ''}>Property Manager</option>
-          <option value="PCA" ${prefill?.discipline === 'PCA' ? 'selected' : ''}>PCA</option>
-          <option value="Quantity Surveyor (QS)" ${prefill?.discipline === 'Quantity Surveyor (QS)' ? 'selected' : ''}>Quantity Surveyor (QS)</option>
-          <option value="Sales" ${prefill?.discipline === 'Sales' ? 'selected' : ''}>Sales</option>
-          <option value="Structural" ${prefill?.discipline === 'Structural' ? 'selected' : ''}>Structural</option>
-          <option value="Survey" ${prefill?.discipline === 'Survey' ? 'selected' : ''}>Survey</option>
-          <option value="Technology" ${prefill?.discipline === 'Technology' ? 'selected' : ''}>Technology</option>
-          <option value="Thermal/BASIX/Section J" ${prefill?.discipline === 'Thermal/BASIX/Section J' ? 'selected' : ''}>Thermal/BASIX/Section J</option>
-          <option value="Tree Clearing" ${prefill?.discipline === 'Tree Clearing' ? 'selected' : ''}>Tree Clearing</option>
-          <option value="Valuation" ${prefill?.discipline === 'Valuation' ? 'selected' : ''}>Valuation</option>
-          <option value="Water Services/WSC" ${prefill?.discipline === 'Water Services/WSC' ? 'selected' : ''}>Water Services/WSC</option>
+                <option value="">— None —</option>
               </select>
             </div>
           </div>
@@ -2184,6 +2132,21 @@ function renderCRMView(container) {
     let selectedOrgId = prefill?.organisation_id || null;
     const orgTA = buildOrgTypeahead(modal.querySelector('.crm-org-wrap'), (id) => { selectedOrgId = id; });
     if (prefill?.org_name) orgTA.setValue(prefill.organisation_id, prefill.org_name);
+
+    // Populate discipline dropdown from API
+    const discSel = modal.querySelector('.crm-discipline');
+    if (discSel) {
+      fetch('/api/disciplines').then(r => r.ok ? r.json() : []).then(disciplines => {
+        const active = disciplines.filter(d => d.active);
+        active.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d.label;
+          opt.textContent = d.label;
+          if (prefill?.discipline === d.label) opt.selected = true;
+          discSel.appendChild(opt);
+        });
+      }).catch(() => {});
+    }
 
     // V77.1c: Source field removed — source now lives only on notes.source
 

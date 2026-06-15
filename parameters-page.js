@@ -87,9 +87,10 @@
 
   let _container = null;
   const _state = {
-    roles: makeSectionState(),
-    sources: makeSectionState(),
-    types: makeSectionState(),
+    roles:       makeSectionState(),
+    disciplines: makeSectionState('label', 'asc'),
+    sources:     makeSectionState(),
+    types:       makeSectionState(),
   };
   // V77.2g — boards cache for the Roles "Board Default" multi-select.
   // Single fetch, cached for the page lifetime. Refresh by reloading the page.
@@ -123,6 +124,17 @@
             <button class="params-add-btn" data-action="add-role">+ Add Role</button>
           </div>
           <div class="params-table-wrap" data-table-wrap="roles">
+            <div class="params-loading">Loading…</div>
+          </div>
+        </div>
+
+        <div class="params-section" data-section="disciplines">
+          <div class="params-section-header">
+            <h2>Disciplines</h2>
+            <p class="settings-section-sub">Contractor/consultant discipline types assigned to contacts. Each discipline has a base hourly rate used by the Finance module.</p>
+            <button class="params-add-btn" data-action="add-discipline">+ Add Discipline</button>
+          </div>
+          <div class="params-table-wrap" data-table-wrap="disciplines">
             <div class="params-loading">Loading…</div>
           </div>
         </div>
@@ -166,6 +178,10 @@
       _state.roles.adding = true;
       renderRolesTable();
     });
+    containerEl.querySelector('[data-action="add-discipline"]').addEventListener('click', () => {
+      _state.disciplines.adding = true;
+      renderDisciplinesTable();
+    });
     containerEl.querySelector('[data-action="add-source"]').addEventListener('click', () => {
       _state.sources.adding = true;
       renderSourcesTable();
@@ -177,6 +193,7 @@
 
     await Promise.all([
       renderRolesTable(),
+      renderDisciplinesTable(),
       renderSourcesTable(),
       renderTypesTable(),
       renderBoardsTable(),
@@ -449,6 +466,151 @@
   }
 
   // ── Sources table ─────────────────────────────────────────────────────────
+
+  async function renderDisciplinesTable() {
+    const wrap = _container?.querySelector('[data-table-wrap="disciplines"]');
+    if (!wrap) return;
+    let disciplines;
+    try {
+      const r = await fetch('/api/disciplines');
+      if (!r.ok) throw new Error(r.status);
+      disciplines = await r.json();
+    } catch (err) {
+      wrap.innerHTML = `<div class="params-error">Failed to load: ${esc(err.message)}</div>`;
+      return;
+    }
+
+    const st = _state.disciplines;
+    const sorted = sortRows(disciplines, st.sortKey, st.sortDir);
+
+    const thSort = (key, label) => {
+      const active = st.sortKey === key;
+      const arrow  = active ? (st.sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+      return `<th class="params-th${active ? ' params-th-active' : ''}" data-sort="${key}" style="cursor:pointer">${label}${arrow}</th>`;
+    };
+
+    let html = `<table class="params-table"><thead><tr>
+      ${thSort('label', 'Discipline')}
+      ${thSort('rate_per_hour', '$/hr')}
+      ${thSort('active', 'Active')}
+      ${thSort('contact_count', 'Contacts')}
+      <th class="params-th">Actions</th>
+    </tr></thead><tbody>`;
+
+    if (st.adding) {
+      html += `<tr class="params-row params-row-editing">
+        <td><input type="text" class="kb-input params-edit-input" id="discAddLabel" placeholder="Discipline name…" style="width:100%"></td>
+        <td><input type="number" class="kb-input params-edit-input" id="discAddRate" value="150" style="width:80px"></td>
+        <td>—</td><td>—</td>
+        <td style="white-space:nowrap">
+          <button class="params-save-btn" data-action="confirm-add-disc">Save</button>
+          <button class="params-cancel-btn" data-action="cancel-add-disc">Cancel</button>
+        </td></tr>`;
+    }
+
+    for (const d of sorted) {
+      const isEditing = st.editingId === d.id;
+      if (isEditing) {
+        html += `<tr class="params-row params-row-editing" data-id="${d.id}">
+          <td><input type="text" class="kb-input params-edit-input" data-field="label" value="${esc(d.label)}" style="width:100%"></td>
+          <td><input type="number" class="kb-input params-edit-input" data-field="rate" value="${d.rate_per_hour}" style="width:80px"></td>
+          <td>${d.active ? 'Yes' : 'No'}</td>
+          <td>${d.contact_count ?? 0}</td>
+          <td style="white-space:nowrap">
+            <button class="params-save-btn" data-action="confirm-edit-disc" data-id="${d.id}">Save</button>
+            <button class="params-cancel-btn" data-action="cancel-edit-disc">Cancel</button>
+          </td></tr>`;
+      } else {
+        html += `<tr class="params-row" data-id="${d.id}">
+          <td>${esc(d.label)}</td>
+          <td>$${Number(d.rate_per_hour).toFixed(2)}</td>
+          <td>${d.active ? '<span class="params-active-badge">Active</span>' : '<span class="params-inactive-badge">Inactive</span>'}</td>
+          <td>${d.contact_count ?? 0}</td>
+          <td style="white-space:nowrap">
+            <button class="params-action-btn" data-action="edit-disc" data-id="${d.id}" title="Edit">✎</button>
+            <button class="params-action-btn params-delete-btn" data-action="delete-disc" data-id="${d.id}" data-count="${d.contact_count ?? 0}" title="Delete">✕</button>
+          </td></tr>`;
+      }
+    }
+
+    if (!sorted.length && !st.adding) {
+      html += `<tr><td colspan="5" class="params-empty">No disciplines yet.</td></tr>`;
+    }
+
+    html += `</tbody></table>`;
+    wrap.innerHTML = html;
+
+    wrap.querySelectorAll('th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        const key = th.getAttribute('data-sort');
+        if (st.sortKey === key) st.sortDir = st.sortDir === 'asc' ? 'desc' : 'asc';
+        else { st.sortKey = key; st.sortDir = 'asc'; }
+        renderDisciplinesTable();
+      });
+    });
+
+    const addLabel = wrap.querySelector('#discAddLabel');
+    if (addLabel) { addLabel.focus(); addLabel.addEventListener('keydown', e => { if (e.key === 'Enter') confirmAddDisc(); }); }
+
+    wrap.querySelectorAll('[data-action]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const action = btn.getAttribute('data-action');
+        const id     = parseInt(btn.getAttribute('data-id'));
+
+        if (action === 'edit-disc') {
+          st.editingId = id; st.adding = false; renderDisciplinesTable();
+          wrap.querySelector('[data-field="label"]')?.focus();
+        }
+        if (action === 'cancel-edit-disc') { st.editingId = null; renderDisciplinesTable(); }
+        if (action === 'cancel-add-disc')  { st.adding = false;   renderDisciplinesTable(); }
+
+        if (action === 'confirm-edit-disc') {
+          const row   = btn.closest('tr');
+          const label = row.querySelector('[data-field="label"]')?.value.trim();
+          const rate  = parseFloat(row.querySelector('[data-field="rate"]')?.value);
+          if (!label) return;
+          btn.disabled = true; btn.textContent = '…';
+          try {
+            await fetch('/api/disciplines', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id, label, rate_per_hour: isNaN(rate) ? 150 : rate }) });
+            st.editingId = null;
+            await renderDisciplinesTable();
+          } catch (err) { alert('Save failed: ' + err.message); btn.disabled = false; btn.textContent = 'Save'; }
+        }
+
+        if (action === 'confirm-add-disc') { confirmAddDisc(); }
+
+        if (action === 'delete-disc') {
+          const count = parseInt(btn.getAttribute('data-count') ?? '0', 10);
+          const row = btn.closest('tr');
+          const label = row?.querySelector('td')?.textContent?.trim() || id;
+          const msg = count > 0
+            ? `Delete "${label}"? It is assigned to ${count} contact${count === 1 ? '' : 's'}. Those contacts will have their discipline cleared.`
+            : `Delete "${label}"?`;
+          if (!confirm(msg)) return;
+          btn.disabled = true;
+          try {
+            await fetch(`/api/disciplines?id=${id}`, { method: 'DELETE' });
+            await renderDisciplinesTable();
+          } catch (err) { alert('Delete failed: ' + err.message); btn.disabled = false; }
+        }
+      });
+    });
+
+    async function confirmAddDisc() {
+      const label = wrap.querySelector('#discAddLabel')?.value.trim();
+      const rate  = parseFloat(wrap.querySelector('#discAddRate')?.value) || 150;
+      if (!label) return;
+      const saveBtn = wrap.querySelector('[data-action="confirm-add-disc"]');
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '…'; }
+      try {
+        await fetch('/api/disciplines', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label, rate_per_hour: rate }) });
+        st.adding = false;
+        await renderDisciplinesTable();
+      } catch (err) { alert('Add failed: ' + err.message); if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; } }
+    }
+  }
 
   async function renderSourcesTable() {
     const wrap = _container.querySelector('[data-table-wrap="sources"]');
