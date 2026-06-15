@@ -260,10 +260,28 @@ export default async function handler(req, res) {
 
         // ── Paginated all (CRM list)
         if (all) {
-          const lim = Math.min(parseInt(limit) || 30, 100);
+          const lim = Math.min(parseInt(limit) || 50, 500);
           const off = parseInt(offset) || 0;
           if (search) {
             const q = `%${search}%`;
+            // Count total matches first, then fetch the page
+            const countRows = await sql`
+              SELECT COUNT(*)::int AS total
+              FROM contacts c
+              LEFT JOIN organisations o ON o.id = c.organisation_id
+              WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
+                 OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
+                 OR c.source ILIKE ${q} OR c.discipline ILIKE ${q}
+                 OR EXISTS (
+                   SELECT 1 FROM entity_contacts ec3
+                   JOIN roles r2 ON r2.id = ec3.role_id
+                   WHERE ec3.contact_id = c.id AND r2.label ILIKE ${q}
+                 )
+                 OR EXISTS (
+                   SELECT 1 FROM contact_marketing_categories cmc2
+                   WHERE cmc2.contact_id = c.id AND cmc2.category ILIKE ${q}
+                 )`;
+            const total = countRows[0].total;
             const rows = await sql`
               SELECT c.*, o.name AS org_name,
                 (SELECT COUNT(DISTINCT ec.entity_id)
@@ -290,8 +308,9 @@ export default async function handler(req, res) {
                    SELECT 1 FROM contact_marketing_categories cmc2
                    WHERE cmc2.contact_id = c.id AND cmc2.category ILIKE ${q}
                  )
-              ORDER BY c.last_name, c.first_name`;
-            return res.status(200).json({ contacts: rows.slice(off, off + lim), total: rows.length });
+              ORDER BY c.last_name, c.first_name
+              LIMIT ${lim} OFFSET ${off}`;
+            return res.status(200).json({ contacts: rows, total });
           }
           const rows = await sql`
             SELECT c.*, o.name AS org_name,
