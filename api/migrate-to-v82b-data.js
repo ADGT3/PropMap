@@ -48,6 +48,9 @@ const SOURCE_SLUG_MAP = {
   'Walk_In':           'walk_in',
   'Phone_In':          'other',
   'Agent_Database':    'other',
+  'Facebook_Ads':      'facebook',
+  'Social_Eazie':      'facebook',
+  'Website_Enquiry':   'our_website',
 };
 
 // ── Log table ────────────────────────────────────────────────────────────────
