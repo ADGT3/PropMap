@@ -583,8 +583,7 @@
         if (action === 'view-disc-contacts') {
           const label = btn.getAttribute('data-label');
           if (window.CRM?.openContactsWithSearch) {
-            // Close settings and open CRM with discipline filter
-            document.getElementById('settingsClose')?.click();
+            // Navigate to CRM — Router handles closing Settings and pushes /settings onto back stack
             CRM.openContactsWithSearch(`discipline=${label}`);
           }
         }
