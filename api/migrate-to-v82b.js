@@ -148,12 +148,43 @@ export default async function handler(req, res) {
           category   TEXT PRIMARY KEY,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )`;
-      // Seed from existing contact_marketing_categories
       await sql`
         INSERT INTO marketing_category_lookup (category)
         SELECT DISTINCT category FROM contact_marketing_categories
         ON CONFLICT (category) DO NOTHING`;
       steps.push('marketing_category_lookup table created and seeded');
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS disciplines (
+          id            SERIAL PRIMARY KEY,
+          label         TEXT           NOT NULL UNIQUE,
+          rate_per_hour NUMERIC(10,2)  NOT NULL DEFAULT 150.00,
+          sort_order    INTEGER        NOT NULL DEFAULT 999,
+          active        BOOLEAN        NOT NULL DEFAULT true,
+          created_at    TIMESTAMPTZ    NOT NULL DEFAULT now(),
+          updated_at    TIMESTAMPTZ    NOT NULL DEFAULT now()
+        )`;
+      const disciplineSeeds = [
+        'Aboriginal Sensitivity','Accessibility','Acoustics','Architecture','Arborist','BCA',
+        'Builder (Civil)','Builder (Construction)','Builder (Electrical)','Builder (Landscaping)',
+        'Builder (Telco Contractor)','Builder (Water)','Building Maintenance','Civil','Council',
+        'Demolition/HazMat','Dilapidation/Assessments','Ecology','Engineering - Civil/SW',
+        'Engineering - Electrical','Engineering - Fire','Engineering - Hydraulic',
+        'Engineering - Mechanical','Engineering - Structural','Engineering - Traffic',
+        'Engineering - Vertical','Fencing','Finance','Fire Consultant','Geotechnical',
+        'Hydraulics','Hygienist/Contamination','Interior Design','Labourer',
+        'Landscape Architecture','Legal','Marketing','Operations Management (Childcare)',
+        'Operations Management (Commercial)','Operations Management (Retail)',
+        'Project Management','Property Manager','PCA','Quantity Surveyor (QS)','Sales',
+        'Structural','Survey','Technology','Thermal/BASIX/Section J','Tree Clearing',
+        'Valuation','Water Services/WSC',
+      ];
+      let so = 10;
+      for (const label of disciplineSeeds) {
+        await sql\`INSERT INTO disciplines (label, rate_per_hour, sort_order) VALUES (\${label}, 150.00, \${so}) ON CONFLICT (label) DO NOTHING\`;
+        so += 10;
+      }
+      steps.push(\`disciplines table created and seeded (\${disciplineSeeds.length} rows at $150/hr)\`);
 
       // ── 2. properties — new columns ──────────────────────────────────────
       await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS core_logic_id TEXT`;
