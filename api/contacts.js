@@ -379,6 +379,12 @@ export default async function handler(req, res) {
             const total = countRows[0].total;
             return res.status(200).json({ contacts: rows, total });
           }
+          // Check if contact_marketing_categories exists (may not on fresh deploy before migration)
+          const catsTableExists = await sql`
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema='public' AND table_name='contact_marketing_categories'`;
+          const hasCatsTable = catsTableExists.length > 0;
+
           const totalRows = await sql`SELECT COUNT(*)::int AS n FROM contacts`;
           const total = totalRows[0].n;
           const rows = await sql`
@@ -710,6 +716,8 @@ export default async function handler(req, res) {
           do_not_send_marketing_at, marketing_pref_set_at,
           // Legacy boolean field aliases (still accepted from older callers)
           marketing_email_consent, marketing_sms_consent, do_not_send_marketing,
+          // V82.b
+          discipline,
         } = req.body;
 
         // Update organisation
