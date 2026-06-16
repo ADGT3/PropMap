@@ -1370,7 +1370,9 @@ function renderCRMView(container) {
             <div class="crm-detail-grid">
               ${c.mobile       ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
               ${c.email        ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
+              ${c.dob          ? `<div class="crm-detail-label">Date of Birth</div><div>${new Date(c.dob).toLocaleDateString()}</div>` : ""}
               ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
+              ${c.current_address ? `<div class="crm-detail-label">Address</div><div>${[c.current_address, c.current_address_suburb, c.current_address_state, c.current_address_postcode].filter(Boolean).join(', ')}</div>` : ""}
               ${contactSource  ? `<div class="crm-detail-label">Source</div><div>${contactSource}</div>` : ""}
               ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Role (Default)</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ''}
               ${c.discipline       ? `<div class="crm-detail-label">Discipline</div><div>${c.discipline}</div>` : ""}
@@ -2129,6 +2131,32 @@ function renderCRMView(container) {
           </div>
           <div class="crm-form-row">
             <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Date of Birth</label>
+              <input type="date" class="kb-input crm-dob" value="${prefill?.dob ? prefill.dob.slice(0,10) : ''}">
+            </div>
+          </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Address</label>
+              <input type="text" class="kb-input crm-current-address" placeholder="Street address" value="${prefill?.current_address ?? ''}">
+            </div>
+          </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:2">
+              <label class="kb-field-label">Suburb</label>
+              <input type="text" class="kb-input crm-current-suburb" value="${prefill?.current_address_suburb ?? ''}">
+            </div>
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">State</label>
+              <input type="text" class="kb-input crm-current-state" value="${prefill?.current_address_state ?? ''}">
+            </div>
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Postcode</label>
+              <input type="text" class="kb-input crm-current-postcode" value="${prefill?.current_address_postcode ?? ''}">
+            </div>
+          </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
               <label class="kb-field-label">Role (Default)</label>
               <div class="crm-roles-checkboxes kb-input" style="height:auto;max-height:160px;overflow-y:auto;padding:8px">
                 <div class="crm-roles-loading" style="color:var(--muted);font-size:12px">Loading roles…</div>
@@ -2223,12 +2251,17 @@ function renderCRMView(container) {
       const first = modal.querySelector('.crm-first').value.trim();
       if (!first) { modal.querySelector('.crm-first').focus(); return; }
       const data = {
-        first_name:      first,
-        last_name:       modal.querySelector('.crm-last').value.trim(),
-        mobile:          modal.querySelector('.crm-mobile').value.trim(),
-        email:           modal.querySelector('.crm-email').value.trim(),
-        organisation_id: selectedOrgId,
-        discipline:      modal.querySelector('.crm-discipline')?.value || null,
+        first_name:               first,
+        last_name:                modal.querySelector('.crm-last').value.trim(),
+        mobile:                   modal.querySelector('.crm-mobile').value.trim(),
+        email:                    modal.querySelector('.crm-email').value.trim(),
+        organisation_id:          selectedOrgId,
+        dob:                      modal.querySelector('.crm-dob')?.value || null,
+        current_address:          modal.querySelector('.crm-current-address')?.value.trim() || null,
+        current_address_suburb:   modal.querySelector('.crm-current-suburb')?.value.trim() || null,
+        current_address_state:    modal.querySelector('.crm-current-state')?.value.trim() || null,
+        current_address_postcode: modal.querySelector('.crm-current-postcode')?.value.trim() || null,
+        discipline:               modal.querySelector('.crm-discipline')?.value || null,
       };
       let saved;
       if (isEdit) {
