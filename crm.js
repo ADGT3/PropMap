@@ -1371,7 +1371,7 @@ function renderCRMView(container) {
               ${c.mobile       ? `<div class="crm-detail-label">Mobile</div><div><a href="tel:${c.mobile}" class="crm-link">${c.mobile}</a></div>` : ""}
               ${c.email        ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
               ${c.dob          ? `<div class="crm-detail-label">Date of Birth</div><div>${new Date(c.dob).toLocaleDateString()}</div>` : ""}
-              ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
+              ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div><a href="#" class="crm-link crm-org-detail-link" data-org-id="${c.organisation_id}">${c.org_name}</a></div>` : ""}
               ${c.current_address ? `<div class="crm-detail-label">Address</div><div>${[c.current_address, c.current_address_suburb, c.current_address_state, c.current_address_postcode].filter(Boolean).join(', ')}</div>` : ""}
               ${contactSource  ? `<div class="crm-detail-label">Source</div><div>${contactSource}</div>` : ""}
               ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Role (Default)</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ''}
@@ -1669,6 +1669,17 @@ function renderCRMView(container) {
       modal.querySelector(".crm-modal-close").addEventListener("click", onDone);
       modal.querySelector(".crm-modal-edit-btn").addEventListener("click", () => {
         renderContactModal(modal, c, () => renderContactDetail(modal, contactId, onDone));
+      });
+
+      // Org name click → open org modal
+      modal.querySelector(".crm-org-detail-link")?.addEventListener("click", async (e) => {
+        e.preventDefault();
+        const orgId = parseInt(e.currentTarget.dataset.orgId);
+        if (!orgId) return;
+        openModal(m => renderOrgModal(m, { id: orgId, name: c.org_name }, () => {
+          closeModal();
+          renderContactDetail(modal, contactId, onDone);
+        }));
       });
 
       // ── Marketing preference edit (V82.b) ────────────────────────────────
