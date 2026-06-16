@@ -1372,7 +1372,7 @@ function renderCRMView(container) {
               ${c.email        ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
               ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
               ${contactSource  ? `<div class="crm-detail-label">Source</div><div>${contactSource}</div>` : ""}
-              ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Roles</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ''}
+              ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Role (Default)</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ''}
               ${c.discipline       ? `<div class="crm-detail-label">Discipline</div><div>${c.discipline}</div>` : ""}
               ${c.last_contacted_at ? `<div class="crm-detail-label">Last Contacted</div><div>${new Date(c.last_contacted_at).toLocaleDateString()}</div>` : ""}
             </div>
@@ -1591,7 +1591,7 @@ function renderCRMView(container) {
                     ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
                   </select>
                   <select class="kb-input crm-prop-role-new" style="font-size:12px">
-                    ${propScopeRoles.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                    ${propScopeRoles.map(r => `<option value="${r.value}" ${r.value === (contactGroups?.roles?.[0]?.id ?? '') ? 'selected' : ''}>${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-prop-link-save kb-add-offer-btn">Link</button>
                   <button class="crm-prop-link-cancel crm-cancel-btn">Cancel</button>
@@ -1625,7 +1625,7 @@ function renderCRMView(container) {
                     ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
                   </select>
                   <select class="kb-input crm-deal-role-new" style="font-size:12px">
-                    ${dealScopeRoles.map(r => `<option value="${r.value}">${r.label}</option>`).join("")}
+                    ${dealScopeRoles.map(r => `<option value="${r.value}" ${r.value === (contactGroups?.roles?.[0]?.id ?? '') ? 'selected' : ''}>${r.label}</option>`).join("")}
                   </select>
                   <button class="crm-deal-link-save kb-add-offer-btn">Link</button>
                   <button class="crm-deal-link-cancel crm-cancel-btn">Cancel</button>
@@ -2129,18 +2129,18 @@ function renderCRMView(container) {
           </div>
           <div class="crm-form-row">
             <div class="kb-field-wrap" style="flex:1">
-              <label class="kb-field-label">Discipline</label>
-              <select class="kb-input crm-discipline">
-                <option value="">— None —</option>
-              </select>
+              <label class="kb-field-label">Role (Default)</label>
+              <div class="crm-roles-checkboxes kb-input" style="height:auto;max-height:160px;overflow-y:auto;padding:8px">
+                <div class="crm-roles-loading" style="color:var(--muted);font-size:12px">Loading roles…</div>
+              </div>
             </div>
           </div>
           <div class="crm-form-row">
             <div class="kb-field-wrap" style="flex:1">
-              <label class="kb-field-label">Roles</label>
-              <div class="crm-roles-checkboxes kb-input" style="height:auto;max-height:160px;overflow-y:auto;padding:8px">
-                <div class="crm-roles-loading" style="color:var(--muted);font-size:12px">Loading roles…</div>
-              </div>
+              <label class="kb-field-label">Discipline</label>
+              <select class="kb-input crm-discipline">
+                <option value="">— None —</option>
+              </select>
             </div>
           </div>
           <div class="crm-duplicate-warning-wrap"></div>
@@ -2185,7 +2185,8 @@ function renderCRMView(container) {
           : Promise.resolve({}),
       ]).then(([allRoles, groups]) => {
         const currentRoleIds = new Set((groups?.roles ?? []).map(r => r.id));
-        rolesWrap.innerHTML = allRoles.map(r => `
+        const sortedRoles = [...allRoles].sort((a, b) => a.label.localeCompare(b.label));
+        rolesWrap.innerHTML = sortedRoles.map(r => `
           <label class="crm-mkt-toggle" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">
             <input type="checkbox" class="crm-role-chk" value="${r.id}" ${currentRoleIds.has(r.id) ? 'checked' : ''}> ${r.label}
           </label>`).join('');
