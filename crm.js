@@ -1230,7 +1230,7 @@ function renderCRMView(container) {
   async function renderContactDetail(modal, contactId, onDone) {
     modal.innerHTML = '<div class="crm-modal-loading">Loading…</div>';
     try {
-      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles, contactActions, contactGroups, buyerProfile, marketingActivity, allCategoriesData] = await Promise.all([
+      const [contactData, notes, props, allPipeline, me, propScopeRoles, dealScopeRoles, contactActions, contactGroups, buyerProfile, marketingActivity, allCategoriesData, allRolesData] = await Promise.all([
         apiGet({ id: contactId }),
         fetch(`/api/notes?by_contact=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : []).catch(() => []),
         apiGet({ contact_properties: '1', contact_id: contactId }).catch(() => []),
@@ -1248,6 +1248,8 @@ function renderCRMView(container) {
         fetch(`/api/contact-marketing-activity?contact_id=${encodeURIComponent(contactId)}`).then(r => r.ok ? r.json() : {}).catch(() => {}),
         // V82.b — all categories for multi-select
         fetch('/api/contact-marketing-categories').then(r => r.ok ? r.json() : {categories:[]}).catch(() => ({categories:[]})),
+        // V82.b — all active roles for roles multi-select
+        fetch('/api/roles?active=1').then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
       const c = Array.isArray(contactData) ? contactData[0] : contactData;
       if (!c) { modal.innerHTML = '<div class="crm-modal-loading">Not found</div>'; return; }
@@ -1370,7 +1372,7 @@ function renderCRMView(container) {
               ${c.email        ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
               ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div>${c.org_name}</div>` : ""}
               ${contactSource  ? `<div class="crm-detail-label">Source</div><div>${contactSource}</div>` : ""}
-              ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Roles</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ""}
+              ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Roles</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ''}
               ${c.discipline       ? `<div class="crm-detail-label">Discipline</div><div>${c.discipline}</div>` : ""}
               ${c.last_contacted_at ? `<div class="crm-detail-label">Last Contacted</div><div>${new Date(c.last_contacted_at).toLocaleDateString()}</div>` : ""}
             </div>
@@ -2133,6 +2135,14 @@ function renderCRMView(container) {
               </select>
             </div>
           </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Roles</label>
+              <div class="crm-roles-checkboxes kb-input" style="height:auto;max-height:160px;overflow-y:auto;padding:8px">
+                <div class="crm-roles-loading" style="color:var(--muted);font-size:12px">Loading roles…</div>
+              </div>
+            </div>
+          </div>
           <div class="crm-duplicate-warning-wrap"></div>
           <div class="crm-form-actions">
             <button class="crm-save-btn kb-add-offer-btn">${isEdit ? 'Save Changes' : 'Create Contact'}</button>
@@ -2163,6 +2173,23 @@ function renderCRMView(container) {
           discSel.appendChild(opt);
         });
       }).catch(() => {});
+    }
+
+    // Populate roles checkboxes from API
+    const rolesWrap = modal.querySelector('.crm-roles-checkboxes');
+    if (rolesWrap) {
+      Promise.all([
+        fetch('/api/roles?active=1').then(r => r.ok ? r.json() : []).catch(() => []),
+        prefill?.id
+          ? fetch(`/api/contact-groups?contact_id=${prefill.id}`).then(r => r.ok ? r.json() : {}).catch(() => ({}))
+          : Promise.resolve({}),
+      ]).then(([allRoles, groups]) => {
+        const currentRoleIds = new Set((groups?.roles ?? []).map(r => r.id));
+        rolesWrap.innerHTML = allRoles.map(r => `
+          <label class="crm-mkt-toggle" style="margin-bottom:4px;display:flex;align-items:center;gap:6px">
+            <input type="checkbox" class="crm-role-chk" value="${r.id}" ${currentRoleIds.has(r.id) ? 'checked' : ''}> ${r.label}
+          </label>`).join('');
+      }).catch(() => { rolesWrap.innerHTML = ''; });
     }
 
     // V77.1c: Source field removed — source now lives only on notes.source
@@ -2207,6 +2234,16 @@ function renderCRMView(container) {
         saved = await apiPut({ id: prefill.id, ...data });
       } else {
         saved = await apiPost(data);
+      }
+      // Save roles if checkboxes present
+      const roleChks = modal.querySelectorAll('.crm-role-chk');
+      if (roleChks.length && saved?.id) {
+        const selectedRoles = [...roleChks].filter(c => c.checked).map(c => c.value);
+        await fetch(`/api/contact-groups?contact_id=${saved.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roles: selectedRoles }),
+        }).catch(() => {});
       }
       // V77.2g — pass saved contact to onDone callback so callers can
       // re-use the freshly-created/updated contact (e.g. inline link flows).
