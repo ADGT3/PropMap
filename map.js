@@ -4032,7 +4032,13 @@ async function runDomainSearch() {
     };
     // Stash so the Reveal Price handler can replay this search at price brackets
     _lastDomainSearchOptions = searchOptions;
-    _lastSearchBounds = map.getBounds();  // snapshot bounds at search time
+    // Build bounds from the actual geoWindow used — may be larger than viewport
+    // (e.g. parcel selection uses a 0.05 degree radius box around the parcel)
+    const gw = geoWindow.box;
+    _lastSearchBounds = L.latLngBounds(
+      L.latLng(gw.bottomRight.lat, gw.topLeft.lon),
+      L.latLng(gw.topLeft.lat,     gw.bottomRight.lon)
+    );
     const domainListings = await DomainAPI.search(searchOptions);
     listings.length = 0;
     domainListings.forEach(l => listings.push(l));
