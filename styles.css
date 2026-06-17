@@ -535,10 +535,9 @@ header {
 
 /* V82.b — Domain search loading indicator */
 #listingsLoadingindicator {
-  margin-left: 8px;
   color: var(--accent);
   font-size: 12px;
-  vertical-align: middle;
+  margin-top: 2px;
 }
 .listings-loading-spinner {
   display: inline-block;
@@ -548,7 +547,6 @@ header {
   border-top-color: transparent;
   border-radius: 50%;
   animation: listings-spin 0.7s linear infinite;
-  vertical-align: middle;
   margin-right: 3px;
 }
 @keyframes listings-spin {
