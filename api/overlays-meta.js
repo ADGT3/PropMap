@@ -381,8 +381,8 @@ const OVERLAYS = [
     bounds: null,
     b64: null,
     wms: {
-      url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Transport_and_Infrastructure_2021/MapServer/export",
-      layers: "show:1"
+    url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/ePlanning/Planning_Portal_SEPP/MapServer/export",
+    layers: "show:792"
     }
   },
   {
