@@ -369,7 +369,7 @@ const OVERLAYS = [
   },
   {
     // Rail & Infrastructure Corridors — SEPP (Transport and Infrastructure) 2021
-    // Layers 1 = Subject Land (73 features), 2 = Land Application (135 features)
+    // Planning_Portal_SEPP layer 792 = "Future Infrastructure Corridors Map" (6 features, minScale 0)
     // Covers Western Sydney Freight Line, North South Rail, South West Rail Link Extension
     id: "nsw-rail-corridors",
     label: "Rail & Infrastructure Corridors (SEPP)",
@@ -381,8 +381,8 @@ const OVERLAYS = [
     bounds: null,
     b64: null,
     wms: {
-      url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Transport_and_Infrastructure_2021/MapServer/export",
-      layers: "show:1"
+      url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/ePlanning/Planning_Portal_SEPP/MapServer/export",
+      layers: "show:792"
     }
   },
   {
