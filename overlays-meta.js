@@ -351,10 +351,12 @@ const OVERLAYS = [
     }
   },
   {
-    // Future Road Reservations — EPI Additional Layers (NSW Planning Portal)
-    // Shows land reserved for future roads and arterial infrastructure under Transport & Infrastructure SEPP
-    id: "nsw-future-roads",
-    label: "Future Road Reservations",
+    // Aerotropolis Transport Corridors — SEPP (Precincts—Western Parkland City) 2021
+    // Traced from in-force PDF map SEPP_WPC_AER_TRC_001_20250501 (commenced 1 May 2025),
+    // georeferenced in QGIS (MGA Zone 56). INDICATIVE — not survey-accurate.
+    // Interim source while NSW's live layer (WPC/21, EPI_Additional_Layers/10) returns 0 features.
+    id: "aerotropolis-transport-corridors",
+    label: "Transport & Arterial Road Infrastructure",
     type: "future-roads",
     group: "transport",
     zone: "all",
@@ -362,9 +364,18 @@ const OVERLAYS = [
     opacity: 0.65,
     bounds: null,
     b64: null,
-    wms: {
-      url: "https://mapprod.environment.nsw.gov.au/arcgis/rest/services/Planning/EPI_Additional_Layers/MapServer/export",
-      layers: "show:10"
+    vector: true,
+    vectorUrl: "/aerotropolis_transport_corridors_wgs84.geojson",
+    source: "SEPP_WPC_AER_TRC_001_20250501 (traced from in-force PDF; georeferenced, indicative)",
+    vectorStyleProp: "LABEL",
+    vectorStyleMap: {
+      "Primary Arterial (60m)":                     { color: "#0059a0", fillColor: "#0077b6", fillOpacity: 0.65, weight: 1 },
+      "Fifteenth Avenue (45m)":                     { color: "#008bb0", fillColor: "#00b4d8", fillOpacity: 0.65, weight: 1 },
+      "Arterial (40m)":                             { color: "#5fb8d6", fillColor: "#90e0ef", fillOpacity: 0.65, weight: 1 },
+      "Elizabeth Drive":                            { color: "#c9c400", fillColor: "#fff75e", fillOpacity: 0.65, weight: 1 },
+      "M12 Motorway":                               { color: "#cc9500", fillColor: "#ffba08", fillOpacity: 0.65, weight: 1 },
+      "Outer Sydney Orbital (Under Consideration)": { color: "#c46e00", fillColor: "#f48c06", fillOpacity: 0.65, weight: 1 },
+      "East-West Rail Link":                        { color: "#b40000", fillColor: "#e10600", fillOpacity: 0.70, weight: 1 }
     }
   },
   {
