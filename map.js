@@ -5468,7 +5468,7 @@ window.reSelectParcels = function(parcels, opts) {
   // API. Map the confirmed legend codes here. Codes not listed are shown as
   // "density not specified" (no value is guessed).
   const DWELLING_DENSITY_BY_CODE = {
-    'M': 12.5, 'O': 15, 'Q': 20, 'T': 25, 'U': 30, 'W': 40, 'X': 45,
+    'M': 12.5, 'O': 15, 'P': 18, 'Q': 20, 'T': 25, 'U': 30, 'W': 40, 'X': 45,
   };
 
   // Convert overlay's wms.url + wms.layers into an identify URL + layer spec.
