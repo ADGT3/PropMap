@@ -619,47 +619,20 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
   // V76.7+ — "+ Property" button always available (creates property without a
   // deal — for not-suitable tracking, agency listings, linking to known
   // addresses, etc). Sits alongside the pipeline button.
-  const propertyBtn = `
-    <span class="popup-property-btn-slot" style="display:block">
-    <button type="button"
-      onclick="window.addCurrentSelectionAsProperty && window.addCurrentSelectionAsProperty()"
-      style="display:block;width:100%;margin-top:6px;padding:7px 10px;
-             background:#fff;color:#1a6b3a;border:1px solid #1a6b3a;border-radius:4px;
-             font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
-      + Property
-    </button>
-    </span>`;
-
-  let pipelineBtn;
-  if (matchedPipelineId) {
-    const pid = String(matchedPipelineId).replace(/'/g, "\\'");
-    pipelineBtn = `
-      <div class="popup-pipeline-btn-slot" data-pid="${pid}">
-        <button type="button"
-          onclick="window.openPipelineItem && window.openPipelineItem('${pid}')"
-          style="display:block;width:100%;margin-top:10px;padding:7px 10px;
-                 background:#c4841a;color:#fff;border:none;border-radius:4px;
-                 font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
-          ★ Open in Pipeline
-        </button>${propertyBtn}
-      </div>`;
-  } else {
-    // + Pipeline button (V74.7). Uses an inline onclick so the button keeps
-    // working across popup re-renders (DD data loading, etc.). The handler
-    // reads live map selection state at click time, not popup-build time.
-    // V76.9: wrapper class lets us swap this for "Open in Pipeline" optimistically
-    // once the pipeline add resolves, without rebuilding the whole popup.
-    pipelineBtn = `
-      <div class="popup-pipeline-btn-slot">
-        <button type="button"
-          onclick="window.addCurrentSelectionToPipeline && window.addCurrentSelectionToPipeline()"
-          style="display:block;width:100%;margin-top:10px;padding:7px 10px;
-                 background:#1a6b3a;color:#fff;border:none;border-radius:4px;
-                 font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
-          + Pipeline
-        </button>${propertyBtn}
-      </div>`;
-  }
+  // V84 — Both add-buttons live in `.popup-pipeline-btn-slot`, each in its own
+  // inner wrapper so they can be updated independently:
+  //   .popup-pipeline-btn      — Pipeline button (resolved synchronously)
+  //   .popup-property-btn-slot — Property button (starts "Loading…"; an async
+  //     existence check after the popup opens resolves it to gold "View
+  //     Property" or plain "+ Property"). See _resolvePopupPropertyBtn.
+  const propertyBtn = `<span class="popup-property-btn-slot" style="display:block">${_btnLoadingHtml(6)}</span>`;
+  const pipelineInner = matchedPipelineId
+    ? _pipelineBtnOpenHtml(matchedPipelineId)
+    : _pipelineBtnAddHtml();
+  const pipelineBtn = `
+    <div class="popup-pipeline-btn-slot">
+      <span class="popup-pipeline-btn" style="display:block">${pipelineInner}</span>${propertyBtn}
+    </div>`;
 
   // V75.1 — Not Suitable / snooze control. The popup is rendered as a string,
   // so we can't attach JS event listeners directly to its buttons. Instead we
@@ -1238,6 +1211,12 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   if (activeMarker) {
     activeMarker.setPopupContent(popupHtml(buildPopupInner(label, lga, lotDP || 'Not found', areaSqm, zoneCode, srlupBlock + zoningBlock + floodBlock + roadsBlock, listing)));
     if (!suppressPopup) activeMarker.openPopup();
+    // V84 — resolve the Property button (gold "View Property" if already in CRM).
+    _resolvePopupPropertyBtn({
+      id:      listing ? String(listing.id) : null,
+      address: (listing && listing.address) || String(label || '').split(',')[0].trim(),
+      _lotDPs: (lotDP && lotDP !== 'Not found') ? lotDP : '',
+    });
   }
 }
 
@@ -2665,56 +2644,81 @@ function stateFromLatLng(lat, lng) {
   return 'NSW';
 }
 
-// V76.9: After a successful pipeline add from the popup, swap the "+ Pipeline"
-// button for "★ Open in Pipeline" without rebuilding the whole popup. The
-// popup HTML wraps the button section in `.popup-pipeline-btn-slot`; we find
-// it (there's only one open popup at a time) and replace its inner content.
-// Falls back silently if the slot isn't there (e.g. user closed the popup
-// during the await).
-function _refreshPopupPipelineBtn(pipelineId) {
-  const slot = document.querySelector('.leaflet-popup-content .popup-pipeline-btn-slot');
-  if (!slot) return;
-  const pid = String(pipelineId).replace(/'/g, "\\'");
-  // Match the exact "Open in Pipeline" markup from buildPopupInner so the
-  // swapped button looks identical to a freshly-rendered one. We also need
-  // to preserve the "+ Property" button that follows; rebuild the whole slot.
-  const propertyBtn = `
-    <span class="popup-property-btn-slot" style="display:block">
-    <button type="button"
-      onclick="window.addCurrentSelectionAsProperty && window.addCurrentSelectionAsProperty()"
-      style="display:block;width:100%;margin-top:6px;padding:7px 10px;
-             background:#fff;color:#1a6b3a;border:1px solid #1a6b3a;border-radius:4px;
-             font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
-      + Property
-    </button>
-    </span>`;
-  slot.dataset.pid = pid;
-  slot.innerHTML = `
-    <button type="button"
-      onclick="window.openPipelineItem && window.openPipelineItem('${pid}')"
-      style="display:block;width:100%;margin-top:10px;padding:7px 10px;
-             background:#c4841a;color:#fff;border:none;border-radius:4px;
-             font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
-      ★ Open in Pipeline
-    </button>${propertyBtn}`;
-}
+// ── Popup add-buttons: unified state helpers (V84) ──────────────────────────
+// A single "Loading…" state (spinner) covers ANY pending/unconfirmed state on
+// either button. The spinner reuses the existing `listings-spin` keyframe
+// (styles.css) via inline style, so no CSS changes are needed. Only one popup
+// is open at a time, so the slot selectors are unambiguous.
+const _POPUP_SPINNER = '<span style="display:inline-block;width:11px;height:11px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:listings-spin 0.7s linear infinite;vertical-align:middle;margin-right:6px"></span>';
 
-// V84: After a successful "+ Property" add (property saved to CRM, NO deal),
-// swap the popup's "+ Property" button for a gold "View Property" button that
-// opens the record in CRM > Properties. This is popup-DOM only — it does NOT
-// change the map pin. (The gold/star pin is reserved for pipeline adds.)
-function _refreshPopupPropertyBtn(propertyId) {
-  const slot = document.querySelector('.leaflet-popup-content .popup-property-btn-slot');
-  if (!slot) return;
+function _pipelineBtnAddHtml() {
+  return `<button type="button"
+      onclick="window.addCurrentSelectionToPipeline && window.addCurrentSelectionToPipeline()"
+      style="display:block;width:100%;margin-top:10px;padding:7px 10px;background:#1a6b3a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+      + Pipeline
+    </button>`;
+}
+function _pipelineBtnOpenHtml(pipelineId) {
+  const pid = String(pipelineId).replace(/'/g, "\\'");
+  return `<button type="button"
+      onclick="window.openPipelineItem && window.openPipelineItem('${pid}')"
+      style="display:block;width:100%;margin-top:10px;padding:7px 10px;background:#c4841a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+      ★ Open in Pipeline
+    </button>`;
+}
+function _propertyBtnAddHtml() {
+  return `<button type="button"
+      onclick="window.addCurrentSelectionAsProperty && window.addCurrentSelectionAsProperty()"
+      style="display:block;width:100%;margin-top:6px;padding:7px 10px;background:#fff;color:#1a6b3a;border:1px solid #1a6b3a;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+      + Property
+    </button>`;
+}
+function _propertyBtnViewHtml(propertyId) {
   const pid = String(propertyId).replace(/'/g, "\\'");
-  slot.innerHTML = `
-    <button type="button"
+  return `<button type="button"
       onclick="window.openPropertyItem && window.openPropertyItem('${pid}')"
-      style="display:block;width:100%;margin-top:6px;padding:7px 10px;
-             background:#c4841a;color:#fff;border:none;border-radius:4px;
-             font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+      style="display:block;width:100%;margin-top:6px;padding:7px 10px;background:#c4841a;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
       View Property
     </button>`;
+}
+function _btnLoadingHtml(marginTop) {
+  return `<button type="button" disabled
+      style="display:block;width:100%;margin-top:${marginTop}px;padding:7px 10px;background:#e9e9e9;color:#777;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:default;letter-spacing:0.02em">
+      ${_POPUP_SPINNER}Loading…
+    </button>`;
+}
+
+// Slot setters — update each button independently without disturbing the other.
+function _setPipelineBtn(html) {
+  const el = document.querySelector('.leaflet-popup-content .popup-pipeline-btn');
+  if (el) el.innerHTML = html;
+}
+function _setPropertyBtn(html) {
+  const el = document.querySelector('.leaflet-popup-content .popup-property-btn-slot');
+  if (el) el.innerHTML = html;
+}
+
+// Back-compat swap helpers (used after a successful add) → resolved gold buttons.
+function _refreshPopupPipelineBtn(pipelineId) { _setPipelineBtn(_pipelineBtnOpenHtml(pipelineId)); }
+function _refreshPopupPropertyBtn(propertyId) { _setPropertyBtn(_propertyBtnViewHtml(propertyId)); }
+
+// V84: async-resolve the Property button when a popup opens. Shows gold
+// "View Property" if a property already exists for this selection, else
+// "+ Property". Popup-DOM only — never touches the map pin.
+async function _resolvePopupPropertyBtn(probe) {
+  const sel = '.leaflet-popup-content .popup-property-btn-slot';
+  if (!document.querySelector(sel)) return;
+  try {
+    if (!probe || typeof window.findExistingProperty !== 'function') {
+      _setPropertyBtn(_propertyBtnAddHtml());
+      return;
+    }
+    const existing = await window.findExistingProperty(probe);
+    if (!document.querySelector(sel)) return;               // popup closed/changed
+    _setPropertyBtn(existing && existing.id ? _propertyBtnViewHtml(existing.id) : _propertyBtnAddHtml());
+  } catch (_) {
+    if (document.querySelector(sel)) _setPropertyBtn(_propertyBtnAddHtml());
+  }
 }
 
 async function addCurrentSelectionToPipeline() {
@@ -2759,6 +2763,7 @@ async function addCurrentSelectionToPipeline() {
   // without a listing, pass id=null so it knows this is non-Domain.
   const incomingDomainId = listing ? String(listing.id) : null;
 
+  _setPipelineBtn(_btnLoadingHtml(10));  // V84 — loading state during add
   // Push into the pipeline first (synchronous ish — await so we have the new
   // property id available before we try to PATCH it with NSW data below).
   await addToPipeline({
@@ -2795,6 +2800,7 @@ async function addCurrentSelectionToPipeline() {
     _newDealId = findPipelineMatchForClick(listing || { lat: avgLat, lng: avgLng });
   }
   if (_newDealId) _refreshPopupPipelineBtn(_newDealId);
+  else _setPipelineBtn(_pipelineBtnAddHtml());  // V84 — revert if no deal id resolved
 
   // V76.5: resolve the actual property id that addToPipeline created so the
   // NSW backfill below can target the right row. Look up via the pipeline
@@ -2899,6 +2905,7 @@ async function addCurrentSelectionAsProperty() {
 
   const incomingDomainId = listing ? String(listing.id) : null;
 
+  _setPropertyBtn(_btnLoadingHtml(6));  // V84 — loading state during add
   const result = await addPropertyOnly({
     id:           incomingDomainId,
     address:      listing?.address || streetPart,
@@ -2918,7 +2925,7 @@ async function addCurrentSelectionAsProperty() {
     listingUrl:   listing?.listingUrl || null,
   });
 
-  if (!result?.propertyId) return;
+  if (!result?.propertyId) { _setPropertyBtn(_propertyBtnAddHtml()); return; }
 
   // V84 — swap the popup's "+ Property" button to a gold "View Property"
   // button. Pin is intentionally left unchanged (property adds never restyle
@@ -4693,6 +4700,12 @@ window._renderPipelinePins = function () {
       // _suppressBluePinPopups flag we set just before reSelectParcels —
       // see below.
       marker.openPopup();
+      // V84 — resolve the Property button for the aggregate parcel popup.
+      _resolvePopupPropertyBtn({
+        id:      null,
+        address: String(aggLabel || '').split(',')[0].trim(),
+        _lotDPs: (aggLotDP && aggLotDP !== 'Not found') ? aggLotDP : '',
+      });
     });
 
     markers.push(marker);
