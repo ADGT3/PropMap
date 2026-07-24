@@ -334,18 +334,30 @@ export default async function handler(req, res) {
                   ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
 
               } else {
-                // mobile / email / source — direct column match
-                const colMap = { mobile: 'c.mobile', email: 'c.email' };
-                const col = colMap[field] || 'c.mobile';
-                countRows = await sql`SELECT COUNT(*)::int AS total FROM contacts c WHERE ${sql.unsafe(col)} ILIKE ${q}`;
-                rows = await sql`
-                  SELECT c.*, o.name AS org_name,
-                    (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
-                    (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
-                    (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
-                  FROM contacts c LEFT JOIN organisations o ON o.id = c.organisation_id
-                  WHERE ${sql.unsafe(col)} ILIKE ${q}
-                  ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
+                // mobile / email — direct column match. `field` is validated by
+                // the regex above (one of a fixed set), so branch explicitly
+                // rather than interpolating a column name.
+                if (field === 'email') {
+                  countRows = await sql`SELECT COUNT(*)::int AS total FROM contacts c WHERE c.email ILIKE ${q}`;
+                  rows = await sql`
+                    SELECT c.*, o.name AS org_name,
+                      (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+                      (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
+                      (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
+                    FROM contacts c LEFT JOIN organisations o ON o.id = c.organisation_id
+                    WHERE c.email ILIKE ${q}
+                    ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
+                } else {
+                  countRows = await sql`SELECT COUNT(*)::int AS total FROM contacts c WHERE c.mobile ILIKE ${q}`;
+                  rows = await sql`
+                    SELECT c.*, o.name AS org_name,
+                      (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+                      (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
+                      (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
+                    FROM contacts c LEFT JOIN organisations o ON o.id = c.organisation_id
+                    WHERE c.mobile ILIKE ${q}
+                    ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
+                }
               }
 
             } else {
@@ -356,15 +368,17 @@ export default async function handler(req, res) {
               // "David mojo" work. `ILIKE ALL(array)` => must match all patterns.
               const tokens   = String(search).trim().split(/\s+/).filter(Boolean);
               const patterns = tokens.length ? tokens.map(t => `%${t}%`) : ['%'];
-              const SEARCHABLE = `concat_ws(' ',
-                c.first_name, c.last_name, c.email, c.mobile, c.discipline, c.job_title, o.name,
-                (SELECT string_agg(r.label, ' ') FROM entity_contacts ec JOIN roles r ON r.id = ec.role_id WHERE ec.contact_id = c.id),
-                (SELECT string_agg(cmc.category, ' ') FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id))`;
+              // Searchable text is static SQL (no user input) so it's written
+              // inline; only the token patterns are bound (as a text[] param).
               countRows = await sql`
                 SELECT COUNT(*)::int AS total
                 FROM contacts c
                 LEFT JOIN organisations o ON o.id = c.organisation_id
-                WHERE ${sql.unsafe(SEARCHABLE)} ILIKE ALL(${patterns}::text[])`;
+                WHERE concat_ws(' ',
+                  c.first_name, c.last_name, c.email, c.mobile, c.discipline, c.job_title, o.name,
+                  (SELECT string_agg(r.label, ' ') FROM entity_contacts ec JOIN roles r ON r.id = ec.role_id WHERE ec.contact_id = c.id),
+                  (SELECT string_agg(cmc.category, ' ') FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id)
+                ) ILIKE ALL(${patterns}::text[])`;
               rows = await sql`
                 SELECT c.*, o.name AS org_name,
                   (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
@@ -372,7 +386,11 @@ export default async function handler(req, res) {
                   (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
                 FROM contacts c
                 LEFT JOIN organisations o ON o.id = c.organisation_id
-                WHERE ${sql.unsafe(SEARCHABLE)} ILIKE ALL(${patterns}::text[])
+                WHERE concat_ws(' ',
+                  c.first_name, c.last_name, c.email, c.mobile, c.discipline, c.job_title, o.name,
+                  (SELECT string_agg(r.label, ' ') FROM entity_contacts ec JOIN roles r ON r.id = ec.role_id WHERE ec.contact_id = c.id),
+                  (SELECT string_agg(cmc.category, ' ') FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id)
+                ) ILIKE ALL(${patterns}::text[])
                 ORDER BY c.last_name, c.first_name
                 LIMIT ${lim} OFFSET ${off}`;
             }
