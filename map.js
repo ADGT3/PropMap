@@ -5462,6 +5462,15 @@ window.reSelectParcels = function(parcels, opts) {
     'Shape.STArea()', 'Shape.STLength()', 'Shape_Length_', 'Shape_Area_',
   ]);
 
+  // Dwelling Density (SEPP Precincts—Central River City 2021, layer 16):
+  // the service returns only a symbol letter (SYM_CODE / "Code") — the actual
+  // dwellings-per-hectare figure lives in the SEPP density-map legend, not the
+  // API. Map the confirmed legend codes here. Codes not listed are shown as
+  // "density not specified" (no value is guessed).
+  const DWELLING_DENSITY_BY_CODE = {
+    'M': 12.5, 'O': 15, 'Q': 20, 'T': 25, 'U': 30, 'W': 40, 'X': 45,
+  };
+
   // Convert overlay's wms.url + wms.layers into an identify URL + layer spec.
   // Returns null for overlays that can't be identified (tiled rasters etc.).
   function _identifyEndpointFor(def) {
@@ -5526,6 +5535,20 @@ window.reSelectParcels = function(parcels, opts) {
         </div>`;
     }
 
+    // Dwelling Density: surface the actual density for mapped legend codes.
+    let densityHtml = '';
+    if (def.id === 'crc-dwelling-density') {
+      const rawCode = attrs['Code'] ?? attrs['SYM_CODE'] ?? attrs['Type'] ?? attrs['LABEL'] ?? '';
+      const code = String(rawCode).trim();
+      if (code) {
+        const dph = DWELLING_DENSITY_BY_CODE[code];
+        const text = (dph !== undefined)
+          ? `${dph} dwellings/ha (code ${code})`
+          : `code ${code} — density not specified`;
+        densityHtml = `<div style="font-size:13px;font-weight:600;color:${colour};margin-bottom:4px">Dwelling Density: ${text}</div>`;
+      }
+    }
+
     const rows = Object.entries(attrs)
       .filter(([k, v]) => !SKIP_ATTR_FIELDS.has(k) && v !== null && v !== '' && v !== ' ' && String(v).toLowerCase() !== 'null')
       .map(([k, v]) => `<tr>
@@ -5544,6 +5567,7 @@ window.reSelectParcels = function(parcels, opts) {
     return `
       <div style="border-top:2px solid ${colour};margin-top:8px;padding-top:6px">
         <div style="font-size:10px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:${colour};margin-bottom:4px">${labelHtml}</div>
+        ${densityHtml}
         <table style="border-collapse:collapse;width:100%;font-family:'DM Sans',sans-serif">${rows}</table>
       </div>`;
   }
