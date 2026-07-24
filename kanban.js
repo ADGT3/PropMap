@@ -5566,6 +5566,9 @@ window.addPropertyOnly = addPropertyOnly;
 // V84 — expose property-open for the map popup's "View Property" button
 // (mirrors window.openPipelineItem for the pipeline "Open in Pipeline" button).
 window.openPropertyItem = _openPropertyInCrm;
+// V84 — expose the existing-property lookup so the map popup can show
+// "View Property" (gold) when a parcel already has a property in the CRM.
+window.findExistingProperty = findExistingProperty;
 
 // V76.7+ — Expose the generic confirm modal so other modules (CRM, map.js)
 // can use the same site-styled overlay instead of native confirm() dialogs.
