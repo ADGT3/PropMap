@@ -1372,6 +1372,7 @@ function renderCRMView(container) {
               ${c.email        ? `<div class="crm-detail-label">Email</div><div><a href="mailto:${c.email}" class="crm-link">${c.email}</a></div>` : ""}
               ${c.dob          ? `<div class="crm-detail-label">Date of Birth</div><div>${new Date(c.dob).toLocaleDateString()}</div>` : ""}
               ${c.org_name     ? `<div class="crm-detail-label">Organisation</div><div><a href="#" class="crm-link crm-org-detail-link" data-org-id="${c.organisation_id}">${c.org_name}</a></div>` : ""}
+              ${c.job_title    ? `<div class="crm-detail-label">Job Title</div><div>${c.job_title}</div>` : ""}
               ${c.current_address ? `<div class="crm-detail-label">Address</div><div>${[c.current_address, c.current_address_suburb, c.current_address_state, c.current_address_postcode].filter(Boolean).join(', ')}</div>` : ""}
               ${contactSource  ? `<div class="crm-detail-label">Source</div><div>${contactSource}</div>` : ""}
               ${(contactGroups?.roles?.length) ? `<div class="crm-detail-label">Role (Default)</div><div>${contactGroups.roles.map(r => r.label).join(', ')}</div>` : ''}
@@ -2142,6 +2143,12 @@ function renderCRMView(container) {
           </div>
           <div class="crm-form-row">
             <div class="kb-field-wrap" style="flex:1">
+              <label class="kb-field-label">Job Title</label>
+              <input type="text" class="kb-input crm-job-title" placeholder="Job title" value="${prefill?.job_title || ''}">
+            </div>
+          </div>
+          <div class="crm-form-row">
+            <div class="kb-field-wrap" style="flex:1">
               <label class="kb-field-label">Date of Birth</label>
               <input type="date" class="kb-input crm-dob" value="${prefill?.dob ? prefill.dob.slice(0,10) : ''}">
             </div>
@@ -2267,6 +2274,7 @@ function renderCRMView(container) {
         mobile:                   modal.querySelector('.crm-mobile').value.trim(),
         email:                    modal.querySelector('.crm-email').value.trim(),
         organisation_id:          selectedOrgId,
+        job_title:                modal.querySelector('.crm-job-title')?.value.trim() || null,
         dob:                      modal.querySelector('.crm-dob')?.value || null,
         current_address:          modal.querySelector('.crm-current-address')?.value.trim() || null,
         current_address_suburb:   modal.querySelector('.crm-current-suburb')?.value.trim() || null,
