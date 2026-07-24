@@ -334,32 +334,51 @@ export default async function handler(req, res) {
                   ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
 
               } else {
-                // mobile / email / source — direct column match
-                const colMap = { mobile: 'c.mobile', email: 'c.email' };
-                const col = colMap[field] || 'c.mobile';
-                countRows = await sql`SELECT COUNT(*)::int AS total FROM contacts c WHERE ${sql.unsafe(col)} ILIKE ${q}`;
-                rows = await sql`
-                  SELECT c.*, o.name AS org_name,
-                    (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
-                    (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
-                    (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
-                  FROM contacts c LEFT JOIN organisations o ON o.id = c.organisation_id
-                  WHERE ${sql.unsafe(col)} ILIKE ${q}
-                  ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
+                // mobile / email — direct column match. `field` is validated by
+                // the regex above (one of a fixed set), so branch explicitly
+                // rather than interpolating a column name.
+                if (field === 'email') {
+                  countRows = await sql`SELECT COUNT(*)::int AS total FROM contacts c WHERE c.email ILIKE ${q}`;
+                  rows = await sql`
+                    SELECT c.*, o.name AS org_name,
+                      (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+                      (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
+                      (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
+                    FROM contacts c LEFT JOIN organisations o ON o.id = c.organisation_id
+                    WHERE c.email ILIKE ${q}
+                    ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
+                } else {
+                  countRows = await sql`SELECT COUNT(*)::int AS total FROM contacts c WHERE c.mobile ILIKE ${q}`;
+                  rows = await sql`
+                    SELECT c.*, o.name AS org_name,
+                      (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
+                      (SELECT STRING_AGG(DISTINCT r.label, ', ' ORDER BY r.label) FROM entity_contacts ec2 JOIN roles r ON r.id = ec2.role_id WHERE ec2.contact_id = c.id) AS roles_label,
+                      (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
+                    FROM contacts c LEFT JOIN organisations o ON o.id = c.organisation_id
+                    WHERE c.mobile ILIKE ${q}
+                    ORDER BY c.last_name, c.first_name LIMIT ${lim} OFFSET ${off}`;
+                }
               }
 
             } else {
-              // Free-text search across name, email, mobile, org
-              const q = `%${search}%`;
+              // Free-text search — TOKENISED. Split the query on whitespace and
+              // require EVERY token to appear somewhere in the contact's searchable
+              // text (name, email, mobile, org, discipline, job title, roles,
+              // categories). Makes multi-word queries like "David He" or
+              // "David mojo" work. `ILIKE ALL(array)` => must match all patterns.
+              const tokens   = String(search).trim().split(/\s+/).filter(Boolean);
+              const patterns = tokens.length ? tokens.map(t => `%${t}%`) : ['%'];
+              // Searchable text is static SQL (no user input) so it's written
+              // inline; only the token patterns are bound (as a text[] param).
               countRows = await sql`
                 SELECT COUNT(*)::int AS total
                 FROM contacts c
                 LEFT JOIN organisations o ON o.id = c.organisation_id
-                WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
-                   OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
-                   OR c.discipline ILIKE ${q}
-                   OR EXISTS (SELECT 1 FROM entity_contacts ec3 JOIN roles r2 ON r2.id = ec3.role_id WHERE ec3.contact_id = c.id AND r2.label ILIKE ${q})
-                   OR EXISTS (SELECT 1 FROM contact_marketing_categories cmc2 WHERE cmc2.contact_id = c.id AND cmc2.category ILIKE ${q})`;
+                WHERE concat_ws(' ',
+                  c.first_name, c.last_name, c.email, c.mobile, c.discipline, c.job_title, o.name,
+                  (SELECT string_agg(r.label, ' ') FROM entity_contacts ec JOIN roles r ON r.id = ec.role_id WHERE ec.contact_id = c.id),
+                  (SELECT string_agg(cmc.category, ' ') FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id)
+                ) ILIKE ALL(${patterns}::text[])`;
               rows = await sql`
                 SELECT c.*, o.name AS org_name,
                   (SELECT COUNT(DISTINCT ec.entity_id) FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal')::int AS property_count,
@@ -367,11 +386,11 @@ export default async function handler(req, res) {
                   (SELECT STRING_AGG(DISTINCT cmc.category, ', ' ORDER BY cmc.category) FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id) AS categories_label
                 FROM contacts c
                 LEFT JOIN organisations o ON o.id = c.organisation_id
-                WHERE c.first_name ILIKE ${q} OR c.last_name ILIKE ${q}
-                   OR c.email ILIKE ${q} OR c.mobile ILIKE ${q} OR o.name ILIKE ${q}
-                   OR c.discipline ILIKE ${q}
-                   OR EXISTS (SELECT 1 FROM entity_contacts ec3 JOIN roles r2 ON r2.id = ec3.role_id WHERE ec3.contact_id = c.id AND r2.label ILIKE ${q})
-                   OR EXISTS (SELECT 1 FROM contact_marketing_categories cmc2 WHERE cmc2.contact_id = c.id AND cmc2.category ILIKE ${q})
+                WHERE concat_ws(' ',
+                  c.first_name, c.last_name, c.email, c.mobile, c.discipline, c.job_title, o.name,
+                  (SELECT string_agg(r.label, ' ') FROM entity_contacts ec JOIN roles r ON r.id = ec.role_id WHERE ec.contact_id = c.id),
+                  (SELECT string_agg(cmc.category, ' ') FROM contact_marketing_categories cmc WHERE cmc.contact_id = c.id)
+                ) ILIKE ALL(${patterns}::text[])
                 ORDER BY c.last_name, c.first_name
                 LIMIT ${lim} OFFSET ${off}`;
             }
@@ -648,6 +667,7 @@ export default async function handler(req, res) {
           domain_id = null,
           dob = null,
           discipline = null,
+          job_title = null,
           current_address = null, current_address_suburb = null,
           current_address_state = null, current_address_postcode = null,
           // V79 — `privacy_consent` removed (column dropped in v79 migration).
@@ -680,6 +700,7 @@ export default async function handler(req, res) {
             domain_id,
             dob, current_address, current_address_suburb,
             current_address_state, current_address_postcode,
+            job_title,
             marketing_email_consent_at, marketing_sms_consent_at,
             do_not_send_marketing_at, marketing_pref_set_at
           ) VALUES (
@@ -687,6 +708,7 @@ export default async function handler(req, res) {
             ${domain_id},
             ${dob}, ${current_address}, ${current_address_suburb},
             ${current_address_state}, ${current_address_postcode},
+            ${job_title},
             ${emailMktAt}, ${smsMktAt}, ${doNotSendAt}, ${prefSetAt}
           )
           RETURNING *`;
@@ -718,6 +740,8 @@ export default async function handler(req, res) {
           marketing_email_consent, marketing_sms_consent, do_not_send_marketing,
           // V82.b
           discipline,
+          // V84
+          job_title,
         } = req.body;
 
         // Update organisation
@@ -791,6 +815,7 @@ export default async function handler(req, res) {
             current_address_state       = COALESCE(${current_address_state   ?? null}, current_address_state),
             current_address_postcode    = COALESCE(${current_address_postcode?? null}, current_address_postcode),
             discipline                  = COALESCE(${discipline                 ?? null}, discipline),
+            job_title                   = COALESCE(${job_title                  ?? null}, job_title),
             marketing_email_consent_at  = ${nextEmailMkt},
             marketing_sms_consent_at    = ${nextSmsMkt},
             do_not_send_marketing_at    = ${nextDoNotSend},

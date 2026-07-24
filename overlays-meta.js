@@ -565,6 +565,80 @@ const OVERLAYS = [
     wms: { url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Precincts_Western_Parkland_City_2021/MapServer/export", layers: "show:40" }
   },
 
+  // ── SEPP (Precincts—Central River City) 2021 ────────────────────────────
+  {
+    id: "crc-minimum-lot-size",
+    label: "Minimum Lot Size",
+    type: "crc",
+    group: "central-river-city",
+    zone: "all", enabled: false, opacity: 0.6, bounds: null, b64: null,
+    wms: { url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Precincts_Central_River_City_2021/MapServer/export", layers: "show:5" }
+  },
+  {
+    id: "crc-flood",
+    label: "Flood",
+    type: "crc",
+    group: "central-river-city",
+    zone: "all", enabled: false, opacity: 0.6, bounds: null, b64: null,
+    wms: { url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Precincts_Central_River_City_2021/MapServer/export", layers: "show:8" }
+  },
+  {
+    id: "crc-land-reservation-acquisition",
+    label: "Land Reservation Acquisition",
+    type: "crc",
+    group: "central-river-city",
+    zone: "all", enabled: false, opacity: 0.6, bounds: null, b64: null,
+    wms: { url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Precincts_Central_River_City_2021/MapServer/export", layers: "show:9" }
+  },
+  {
+    id: "crc-acid-sulfate-soils",
+    label: "Acid Sulfate Soils",
+    type: "crc",
+    group: "central-river-city",
+    zone: "all", enabled: false, opacity: 0.6, bounds: null, b64: null,
+    wms: { url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Precincts_Central_River_City_2021/MapServer/export", layers: "show:11" }
+  },
+  {
+    id: "crc-environmental-conservation",
+    label: "Environmental Conservation Area",
+    type: "crc",
+    group: "central-river-city",
+    zone: "all", enabled: false, opacity: 0.6, bounds: null, b64: null,
+    wms: { url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Precincts_Central_River_City_2021/MapServer/export", layers: "show:12" }
+  },
+  {
+    id: "crc-native-vegetation",
+    label: "Native Vegetation Protection",
+    type: "crc",
+    group: "central-river-city",
+    zone: "all", enabled: false, opacity: 0.6, bounds: null, b64: null,
+    wms: { url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Precincts_Central_River_City_2021/MapServer/export", layers: "show:13" }
+  },
+  {
+    id: "crc-dwelling-density",
+    label: "Dwelling Density",
+    type: "crc",
+    group: "central-river-city",
+    zone: "all", enabled: false, opacity: 0.6, bounds: null, b64: null,
+    wms: { url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Precincts_Central_River_City_2021/MapServer/export", layers: "show:16" }
+  },
+  {
+    id: "crc-heritage",
+    label: "Heritage",
+    type: "crc",
+    group: "central-river-city",
+    zone: "all", enabled: false, opacity: 0.6, bounds: null, b64: null,
+    wms: { url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Precincts_Central_River_City_2021/MapServer/export", layers: "show:18" }
+  },
+  {
+    id: "crc-riparian-lands",
+    label: "Riparian Lands and Watercourses",
+    type: "crc",
+    group: "central-river-city",
+    zone: "all", enabled: false, opacity: 0.6, bounds: null, b64: null,
+    wms: { url: "https://mapprod3.environment.nsw.gov.au/arcgis/rest/services/Planning/SEPP_Precincts_Central_River_City_2021/MapServer/export", layers: "show:20" }
+  },
+
   {
     // Electricity Transmission Lines — Geoscience Australia National Electricity Infrastructure
     // Shows high-voltage transmission corridors (proxy for easements) across NSW
@@ -642,6 +716,7 @@ const ZONES = [
 const OVERLAY_TYPE_META = {
   'airport-noise':       { label: "Airport Noise",      color: "#7d6608" },
   'wpc':                 { label: "WPC 2021",           color: "#1a5276" },
+  'crc':                 { label: "CRC 2021",           color: "#1a5276" },
   'future-roads':        { label: "Future Roads",       color: "#c0392b" },
   'transport-corridors': { label: "Transport Corridor", color: "#922b21" },
   'rail-corridors':      { label: "Rail Corridor",      color: "#6c3483" },
