@@ -620,13 +620,15 @@ function buildPopupInner(label, lga, lotDP, areaSqm, zoneCode, overlayBlock, lis
   // deal — for not-suitable tracking, agency listings, linking to known
   // addresses, etc). Sits alongside the pipeline button.
   const propertyBtn = `
+    <span class="popup-property-btn-slot" style="display:block">
     <button type="button"
       onclick="window.addCurrentSelectionAsProperty && window.addCurrentSelectionAsProperty()"
       style="display:block;width:100%;margin-top:6px;padding:7px 10px;
              background:#fff;color:#1a6b3a;border:1px solid #1a6b3a;border-radius:4px;
              font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
       + Property
-    </button>`;
+    </button>
+    </span>`;
 
   let pipelineBtn;
   if (matchedPipelineId) {
@@ -2677,13 +2679,15 @@ function _refreshPopupPipelineBtn(pipelineId) {
   // swapped button looks identical to a freshly-rendered one. We also need
   // to preserve the "+ Property" button that follows; rebuild the whole slot.
   const propertyBtn = `
+    <span class="popup-property-btn-slot" style="display:block">
     <button type="button"
       onclick="window.addCurrentSelectionAsProperty && window.addCurrentSelectionAsProperty()"
       style="display:block;width:100%;margin-top:6px;padding:7px 10px;
              background:#fff;color:#1a6b3a;border:1px solid #1a6b3a;border-radius:4px;
              font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
       + Property
-    </button>`;
+    </button>
+    </span>`;
   slot.dataset.pid = pid;
   slot.innerHTML = `
     <button type="button"
@@ -2693,6 +2697,24 @@ function _refreshPopupPipelineBtn(pipelineId) {
              font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
       ★ Open in Pipeline
     </button>${propertyBtn}`;
+}
+
+// V84: After a successful "+ Property" add (property saved to CRM, NO deal),
+// swap the popup's "+ Property" button for a gold "View Property" button that
+// opens the record in CRM > Properties. This is popup-DOM only — it does NOT
+// change the map pin. (The gold/star pin is reserved for pipeline adds.)
+function _refreshPopupPropertyBtn(propertyId) {
+  const slot = document.querySelector('.leaflet-popup-content .popup-property-btn-slot');
+  if (!slot) return;
+  const pid = String(propertyId).replace(/'/g, "\\'");
+  slot.innerHTML = `
+    <button type="button"
+      onclick="window.openPropertyItem && window.openPropertyItem('${pid}')"
+      style="display:block;width:100%;margin-top:6px;padding:7px 10px;
+             background:#c4841a;color:#fff;border:none;border-radius:4px;
+             font-size:12px;font-weight:600;cursor:pointer;letter-spacing:0.02em">
+      View Property
+    </button>`;
 }
 
 async function addCurrentSelectionToPipeline() {
@@ -2897,6 +2919,11 @@ async function addCurrentSelectionAsProperty() {
   });
 
   if (!result?.propertyId) return;
+
+  // V84 — swap the popup's "+ Property" button to a gold "View Property"
+  // button. Pin is intentionally left unchanged (property adds never restyle
+  // the marker; only pipeline adds do).
+  _refreshPopupPropertyBtn(result.propertyId);
 
   // NSW backfill — same logic as the pipeline path, just targeting the
   // property created by addPropertyOnly.
