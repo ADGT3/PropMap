@@ -5541,7 +5541,10 @@ window.reSelectParcels = function(parcels, opts) {
       const rawCode = attrs['Code'] ?? attrs['SYM_CODE'] ?? attrs['Type'] ?? attrs['LABEL'] ?? '';
       const code = String(rawCode).trim();
       if (code) {
-        const dph = DWELLING_DENSITY_BY_CODE[code];
+        // Strip a trailing numeric suffix so variants inherit their base code's
+        // density: O1/O2 -> O, T1/T2 -> T, etc. Exact code still wins if listed.
+        const baseCode = code.replace(/\d+$/, '');
+        const dph = DWELLING_DENSITY_BY_CODE[code] ?? DWELLING_DENSITY_BY_CODE[baseCode];
         const text = (dph !== undefined)
           ? `${dph} dwellings/ha (code ${code})`
           : `code ${code} — density not specified`;
