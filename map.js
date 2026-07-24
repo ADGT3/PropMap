@@ -1929,6 +1929,7 @@ function renderOverlayPanel() {
     { key: 'environmental',         label: 'Environmental' },
     { key: 'transport',             label: 'Transport' },
     { key: 'western-parkland-city', label: 'SEPP — Western Parkland City 2021' },
+    { key: 'central-river-city',    label: 'SEPP — Central River City 2021' },
     { key: 'other',                 label: 'Other' },
   ];
 
@@ -1951,6 +1952,7 @@ function renderOverlayPanel() {
       'transport-corridors': 'transport',
       'rail-corridors':      'transport',
       'wpc':                 'western-parkland-city',
+      'crc':                 'central-river-city',
       other:        'other',
     };
     const g = e.def.group || TYPE_GROUP[e.def.type] || 'other';
