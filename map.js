@@ -4273,7 +4273,7 @@ runListingSearch();
         SingleLine:  s.text,
         magicKey:    s.magicKey,
         f:           'json',
-        outFields:   'StAddr,Neighborhood,City,Region,Postal',
+        outFields:   'StAddr,Nbrhd,City,Region,Postal',
         outSR:       '4326'
       });
       const r    = await fetch(`${BASE}/findAddressCandidates?${candParams}`);
@@ -4281,15 +4281,15 @@ runListingSearch();
       const c    = (json.candidates || [])[0];
       if (!c || c.score < 60) return null;
       const attr = c.attributes;
-      // For Australian addresses ArcGIS returns suburb in Neighborhood, City = LGA
-      const suburb = attr.Neighborhood || '';
+      // For Australian addresses ArcGIS returns the suburb in Nbrhd; City = metro/LGA.
+      const suburb = attr.Nbrhd || attr.Neighborhood || '';
       const lga    = attr.City || '';
       const state  = attr.Region || '';
       return {
         lat:          c.location.y,
         lon:          c.location.x,
         display_name: [attr.StAddr, suburb].filter(Boolean).join(', '),
-        _sub:         [state, attr.Postal].filter(Boolean).join(' '),
+        _sub:         state,
         _lga:         lga,
         _state:       state,
         _postcode:    attr.Postal || ''
