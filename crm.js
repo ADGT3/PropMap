@@ -279,6 +279,140 @@ function buildOrgTypeahead(container, onSelect) {
   };
 }
 
+// ─── Property typeahead ───────────────────────────────────────────────────────
+//
+// Sources the CRM `properties` table (GET /api/properties) — NOT the deals /
+// pipeline list. Sourcing the property picker from deals produced one option
+// per deal, so a property with 13 deals appeared 13 times, deals with no
+// property showed as raw deal ids, and any property without a deal was
+// invisible. Match and sort rules live here so there is one definition.
+
+// Fields a property is matched against when the user types. Mirrors the
+// columns the CRM Properties table searches.
+function propertyMatchBlob(p) {
+  return [p.address, p.suburb, p.lot_dps, p.state_prop_id]
+    .filter(Boolean).join(' ').toLowerCase();
+}
+
+// `q` must already be trimmed + lowercased by the caller.
+function propertyMatches(p, q) {
+  return !q || propertyMatchBlob(p).includes(q);
+}
+
+// Leading lot/street number of an address, with an optional letter suffix and
+// an optional range or unit second part:
+//   "45 Earl Street"        -> 45,  ""   road "earl street"
+//   "45a Earl Street"       -> 45,  "a"  road "earl street"
+//   "42-50 Belmore Road"    -> 42,  ""   road "belmore road"
+//   "Lot 12 Rickard Road"   -> 12,  ""   road "rickard road"
+// Anything with no leading number sorts last.
+const PROPERTY_ADDRESS_RE = /^(?:lot\s+)?(\d+)([a-z]?)(?:\s*[-–/]\s*\d+[a-z]?)?\s*/i;
+
+function propertyAddressKey(p) {
+  const raw = String(p.address || '').trim();
+  const m   = raw.match(PROPERTY_ADDRESS_RE);
+  return {
+    num:    m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER,
+    suffix: m ? (m[2] || '').toLowerCase() : '',
+    road:   (m ? raw.slice(m[0].length) : raw).trim().toLowerCase(),
+    suburb: String(p.suburb || '').toLowerCase(),
+  };
+}
+
+// Ascending: street/lot number, then road, then suburb.
+function compareProperties(a, b) {
+  const ka = propertyAddressKey(a);
+  const kb = propertyAddressKey(b);
+  return (ka.num - kb.num)
+      || ka.suffix.localeCompare(kb.suffix)
+      || ka.road.localeCompare(kb.road)
+      || ka.suburb.localeCompare(kb.suburb);
+}
+
+// How many properties to show before the user has typed anything.
+const PROPERTY_TYPEAHEAD_PAGE = 50;
+
+// Text input + results list, same shape and CSS as buildOrgTypeahead.
+// onSelect(propertyId, label) fires on click. Returns a handle exposing
+// getPropertyId() so the Link button can read the current selection.
+function buildPropertyTypeahead(container, onSelect) {
+  const wrap = document.createElement('div');
+  wrap.style.position = 'relative';
+  wrap.style.flex = '2';
+  wrap.innerHTML = `
+    <input class="kb-input crm-prop-input" type="text"
+           placeholder="Search properties…" autocomplete="off">
+    <div class="crm-search-results crm-prop-results"></div>`;
+  container.appendChild(wrap);
+
+  const input   = wrap.querySelector('.crm-prop-input');
+  const results = wrap.querySelector('.crm-prop-results');
+  let all             = null;   // full property list, fetched once on first focus
+  let selectedId      = null;
+  let selectedLabel   = '';
+
+  const labelFor = (p) =>
+    `${p.address || p.id}${p.suburb ? ', ' + p.suburb : ''}`;
+
+  async function ensureLoaded() {
+    if (all) return all;
+    const rows = await fetch('/api/properties')
+      .then(r => r.ok ? r.json() : [])
+      .catch(() => []);
+    all = (Array.isArray(rows) ? rows : []).slice().sort(compareProperties);
+    return all;
+  }
+
+  function renderList() {
+    const q    = input.value.trim().toLowerCase();
+    const rows = (all || []).filter(p => propertyMatches(p, q));
+    results.innerHTML = '';
+
+    if (!rows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'crm-search-item';
+      empty.textContent = 'No properties match';
+      results.appendChild(empty);
+      return;
+    }
+
+    // Untyped: first PROPERTY_TYPEAHEAD_PAGE in sort order. Typed: all matches.
+    const shown = q ? rows : rows.slice(0, PROPERTY_TYPEAHEAD_PAGE);
+    shown.forEach(p => {
+      const item = document.createElement('div');
+      item.className   = 'crm-search-item';
+      item.textContent = labelFor(p);
+      item.addEventListener('click', () => {
+        selectedId    = p.id;
+        selectedLabel = labelFor(p);
+        input.value   = selectedLabel;
+        results.innerHTML = '';
+        onSelect?.(p.id, selectedLabel);
+      });
+      results.appendChild(item);
+    });
+  }
+
+  input.addEventListener('focus', async () => {
+    await ensureLoaded();
+    renderList();
+  });
+
+  // In-memory filter — no debounce needed, nothing is fetched per keystroke.
+  input.addEventListener('input', async () => {
+    selectedId = null;
+    await ensureLoaded();
+    renderList();
+  });
+
+  return {
+    getPropertyId:    () => selectedId,
+    getPropertyLabel: () => selectedLabel,
+    clear: () => { selectedId = null; selectedLabel = ''; input.value = ''; results.innerHTML = ''; },
+    focus: () => input.focus(),
+  };
+}
+
 // ─── Duplicate detection ──────────────────────────────────────────────────────
 
 async function checkDuplicates(firstName, lastName, email, mobile) {
@@ -1589,10 +1723,7 @@ function renderCRMView(container) {
               </div>
               <div class="crm-detail-add-prop-form" style="display:none;margin-top:8px">
                 <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-                  <select class="kb-input crm-prop-select" style="flex:2;font-size:12px">
-                    <option value="">Select property…</option>
-                    ${allPipeline.map(p => `<option value="${p.id}">${p.address || p.id}${p.suburb ? ", " + p.suburb : ""}</option>`).join("")}
-                  </select>
+                  <div class="crm-prop-typeahead-mount" style="flex:2"></div>
                   <select class="kb-input crm-prop-role-new" style="font-size:12px">
                     ${propScopeRoles.map(r => `<option value="${r.value}" ${r.value === (contactGroups?.roles?.[0]?.id ?? '') ? 'selected' : ''}>${r.label}</option>`).join("")}
                   </select>
@@ -1880,10 +2011,22 @@ function renderCRMView(container) {
       const addPropForm = modal.querySelector(".crm-detail-add-prop-form");
       const propsList   = modal.querySelector("#crmDetailPropsList");
 
-      addPropBtn?.addEventListener("click", () => { addPropForm.style.display = ""; addPropBtn.style.display = "none"; });
-      modal.querySelector(".crm-prop-link-cancel")?.addEventListener("click", () => { addPropForm.style.display = "none"; addPropBtn.style.display = ""; });
+      // Property picker — typeahead over the CRM properties table, mounted on
+      // first open of the form so the list isn't fetched for every contact.
+      const propMount = modal.querySelector(".crm-prop-typeahead-mount");
+      let propTypeahead = null;
+
+      addPropBtn?.addEventListener("click", () => {
+        addPropForm.style.display = ""; addPropBtn.style.display = "none";
+        if (propMount && !propTypeahead) propTypeahead = buildPropertyTypeahead(propMount);
+        propTypeahead?.focus();
+      });
+      modal.querySelector(".crm-prop-link-cancel")?.addEventListener("click", () => {
+        addPropForm.style.display = "none"; addPropBtn.style.display = "";
+        propTypeahead?.clear();
+      });
       modal.querySelector(".crm-prop-link-save")?.addEventListener("click", async () => {
-        const entityId = modal.querySelector(".crm-prop-select").value;
+        const entityId = propTypeahead?.getPropertyId();
         const role     = modal.querySelector(".crm-prop-role-new").value;
         if (!entityId) return;
         await apiPost({ action: "link", contact_id: contactId, entity_type: "property", entity_id: entityId, role_id: role });
