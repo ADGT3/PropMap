@@ -1,0 +1,244 @@
+/**
+ * router.js — V75.2 client-side router
+ *
+ * Owns top-level navigation state. Replaces the individual per-button click
+ * listeners that used to fire toggleKanban/toggleCRM/toggleFinance directly.
+ * Now the buttons just navigate to a URL; the router reads the URL and
+ * drives the module toggles so everything stays consistent with the browser
+ * back button.
+ *
+ * Routes:
+ *   /                              → Mapping (default)
+ *   /mapping                       → Mapping
+ *   /pipeline                      → Pipeline
+ *   /pipeline/deal/:id             → Pipeline, with deal modal open
+ *   /crm                           → CRM (Contacts)
+ *   /crm/contacts                  → CRM Contacts tab
+ *   /crm/contacts/:id              → CRM Contacts tab, modal open
+ *   /crm/organisations             → CRM Organisations tab
+ *   /crm/organisations/:id         → CRM Organisations tab, modal open
+ *   /finance                       → Finance
+ *   /tools                         → Tools (placeholder module — currently tools is a dropdown)
+ *   /settings                      → System Settings (empty scaffold in V75.2)
+ *
+ * Modules coordinate via these globals (all already exist from V74/V75.0):
+ *   - toggleKanban(show)            — opens/closes Pipeline view
+ *   - toggleCRM(show)               — opens/closes CRM view
+ *   - window.FinanceModule.toggle() — opens/closes Finance view
+ *   - toggleSettings(show)          — opens/closes Settings view (new in V75.2)
+ *
+ * Only one data-centric module is shown at a time. Mapping is the "empty"
+ * state where all data-centric views are closed and the map is the main
+ * content.
+ */
+
+(function () {
+  const TITLES = {
+    mapping:  'Sydney Property Map',
+    pipeline: 'Pipeline — Sydney Property Map',
+    crm:      'CRM — Sydney Property Map',
+    finance:  'Finance — Sydney Property Map',
+    tools:    'Tools — Sydney Property Map',
+    settings: 'System Settings — Sydney Property Map',
+  };
+
+  // Parse a URL path into a normalised route descriptor.
+  // Returns { module, subRoute, entityId } — any of those may be null.
+  function parsePath(path) {
+    if (!path || path === '/' || path === '') return { module: 'mapping', subRoute: null, entityId: null };
+    const parts = path.replace(/^\//, '').split('/').filter(Boolean);
+    const module = parts[0];
+    const validModules = ['mapping', 'pipeline', 'crm', 'finance', 'tools', 'settings'];
+    if (!validModules.includes(module)) return { module: 'mapping', subRoute: null, entityId: null };
+
+    return {
+      module,
+      subRoute: parts[1] || null,
+      entityId: parts[2] || null,
+    };
+  }
+
+  // Close every data-centric module first; then open the one we want.
+  // This centralisation means any previously-open module is dismissed when
+  // navigating somewhere else, regardless of how the user got there.
+  function closeAllModules() {
+    if (typeof toggleKanban   === 'function') toggleKanban(false);
+    if (typeof toggleCRM      === 'function') toggleCRM(false);
+    if (window.FinanceModule && typeof window.FinanceModule.toggle === 'function') {
+      window.FinanceModule.toggle(false);
+    } else {
+      // Fallback: direct class removal if the module didn't expose a toggle
+      document.getElementById('financeView')?.classList.remove('visible');
+      document.getElementById('financeNavBtn')?.classList.remove('active');
+    }
+    if (typeof toggleSettings === 'function') toggleSettings(false);
+  }
+
+  // Render a route — apply module visibility, update nav highlight, set title.
+  function render(route) {
+    closeAllModules();
+
+    switch (route.module) {
+      case 'pipeline':
+        if (typeof toggleKanban === 'function') toggleKanban(true);
+        // Deep link: open a specific deal modal
+        if (route.subRoute === 'deal' && route.entityId && typeof openCardModal === 'function') {
+          // Small delay so the Kanban board has rendered first
+          setTimeout(() => openCardModal(route.entityId), 100);
+        }
+        break;
+
+      case 'crm':
+        if (typeof toggleCRM === 'function') toggleCRM(true);
+        // Deep link: switch CRM sub-tab and open modal
+        if (route.subRoute && window.CRM && typeof window.CRM.navigateTo === 'function') {
+          setTimeout(() => window.CRM.navigateTo(route.subRoute, route.entityId), 100);
+        }
+        break;
+
+      case 'finance':
+        // finance-module.js attaches a click listener to #financeNavBtn that
+        // calls renderFinanceView() then toggleFinance(). Triggering that
+        // click programmatically is the cleanest way to open finance from
+        // the router without duplicating the render/toggle logic here.
+        document.getElementById('financeNavBtn')?.click();
+        break;
+
+      case 'settings':
+        if (typeof toggleSettings === 'function') toggleSettings(true);
+        break;
+
+      case 'tools':
+        // Tools is still a dropdown — for now /tools just shows the dropdown
+        // open on the Mapping view. Real Tools module may come later.
+        document.getElementById('toolsDropdownMenu')?.classList.add('open');
+        break;
+
+      case 'mapping':
+      default:
+        // Nothing to do — all modules closed = Mapping visible
+        break;
+    }
+
+    // Highlight active nav button
+    document.querySelectorAll('[data-module-nav]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.moduleNav === route.module);
+    });
+
+    // Body data-route attribute lets CSS target per-route states
+    document.body.dataset.route = route.module;
+
+    // Document title
+    document.title = TITLES[route.module] || TITLES.mapping;
+
+    // Emit event so modules can react (e.g. CRM refreshes list on re-entry)
+    window.dispatchEvent(new CustomEvent('modulechange', { detail: route }));
+  }
+
+  // ── In-app back stack (V81.3) ──────────────────────────────────────────────
+  // Tracks the in-app routes the user has visited so any close (X) button can
+  // return to the previous screen instead of unconditionally /mapping. Distinct
+  // from browser history so we control behaviour cleanly (e.g. can't navigate
+  // off-site when stack is empty — we fall back to /mapping).
+  const _backStack = [];
+  const _BACK_STACK_CAP = 30;
+
+  // Public navigation API — pushes a new history entry and renders.
+  // _isBackNav (internal) is set when called from back() so we don't re-push
+  // the route we're leaving and create an oscillation loop.
+  function navigate(path, replace = false, _isBackNav = false) {
+    // V84.3 — module access gate (Mapping / Pipeline / CRM / Finance)
+    if (window.AppModules && typeof window.AppModules.canEnterPath === 'function') {
+      if (!window.AppModules.canEnterPath(path)) {
+        const fallback = window.AppModules.firstAllowedPath();
+        if (fallback && fallback !== path) {
+          return navigate(fallback, true, true);
+        }
+        console.warn('[Router] no module access for', path);
+        return;
+      }
+    }
+    const route = parsePath(path);
+    const url = buildUrl(route);
+    if (replace) {
+      history.replaceState({ route }, '', url);
+    } else {
+      // Record the route we're leaving on the back stack (unless we're
+      // explicitly going back, or it's the same URL — no-op nav).
+      const cur = location.pathname || '/';
+      if (!_isBackNav && cur !== url) {
+        _backStack.push(cur);
+        if (_backStack.length > _BACK_STACK_CAP) _backStack.shift();
+      }
+      history.pushState({ route }, '', url);
+    }
+    render(route);
+  }
+
+  // Pop the previous in-app route and navigate to it. Falls back to /mapping
+  // if the stack is empty (e.g. deep-link load). Used by every X close button.
+  function back() {
+    if (_backStack.length > 0) {
+      const prev = _backStack.pop();
+      navigate(prev, false, true);
+    } else {
+      navigate('/mapping', false, true);
+    }
+  }
+
+  // Manually push a path onto the back stack without navigating. Used by
+  // modules whose internal state changes don't correspond to URL changes
+  // (e.g. kanban deal modal layered on /pipeline, finance deal layered on
+  // /finance). Lets back() return to that virtual screen.
+  function pushHistory(path) {
+    if (!path) return;
+    _backStack.push(path);
+    if (_backStack.length > _BACK_STACK_CAP) _backStack.shift();
+  }
+
+  function buildUrl(route) {
+    if (route.module === 'mapping') return '/';
+    let url = '/' + route.module;
+    if (route.subRoute) url += '/' + route.subRoute;
+    if (route.entityId) url += '/' + route.entityId;
+    return url;
+  }
+
+  // Back/forward button handling
+  window.addEventListener('popstate', (e) => {
+    const route = (e.state && e.state.route) || parsePath(location.pathname);
+    render(route);
+  });
+
+  // Initial render on page load — load module grants first so nav is correct
+  async function init() {
+    if (window.AppModules && typeof window.AppModules.initFromAuthMe === 'function') {
+      await window.AppModules.initFromAuthMe();
+    }
+    let path = location.pathname || '/';
+    if (window.AppModules && !window.AppModules.canEnterPath(path)) {
+      path = window.AppModules.firstAllowedPath() || '/';
+    }
+    const route = parsePath(path);
+    history.replaceState({ route }, '', buildUrl(route));
+    render(route);
+  }
+
+  // Public API
+  window.Router = {
+    navigate,
+    back,
+    pushHistory,
+    parsePath,
+    current: () => parsePath(location.pathname),
+    init,
+  };
+
+  // Auto-init once the page is interactive — after other scripts have defined
+  // toggleKanban, toggleCRM, etc.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { init(); });
+  } else {
+    init();
+  }
+})();

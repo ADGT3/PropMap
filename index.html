@@ -1,0 +1,1766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Sydney Property Map — Domain + Sydney Water Planning</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+  <link href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css"/>
+  <link rel="stylesheet" href="crm-styles.css"/>
+  <link rel="stylesheet" href="finance/finance-styles.css"/>
+  <!-- V78 mobile/tablet responsive layer — must be loaded LAST so it overrides -->
+  <link rel="stylesheet" href="mobile.css"/>
+  <style>
+    /* Reveal Price button — replaces the price text on listings where the
+       agent has withheld the price. Triggers a viewport-wide bracket probe
+       of the Domain API to derive a price range. */
+    .listing-reveal-price-btn {
+      background: #c4841a;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+    }
+    .listing-reveal-price-btn:hover { background: #a36c0a; }
+    .listing-reveal-price-btn:disabled {
+      background: #999;
+      cursor: progress;
+    }
+
+    /* V76.7+ — Pipeline search input in the kanban toolbar */
+    .kb-search-input {
+      flex: 1;
+      min-width: 200px;
+      max-width: 480px;
+      padding: 6px 10px;
+      font-size: 13px;
+      font-family: 'DM Sans', sans-serif;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fff;
+      margin-left: 8px;
+    }
+    .kb-search-input:focus {
+      outline: none;
+      border-color: #c4841a;
+      box-shadow: 0 0 0 2px rgba(196, 132, 26, 0.2);
+    }
+
+    /* V76.7+ — Refresh overlay shown briefly while pipeline reloads from DB.
+       Sits over the kanban board and absorbs clicks to prevent edits during
+       the unstable refresh window. */
+    #kanbanBoard { position: relative; }
+    .kb-refresh-overlay {
+      position: absolute; inset: 0;
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(2px);
+      z-index: 999;
+      display: flex; align-items: center; justify-content: center;
+      cursor: wait;
+    }
+    .kb-refresh-overlay-inner {
+      background: #c4841a;
+      color: #fff;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- V75.2c — SVG icon sprite. All icons use currentColor so they inherit
+       text colour from their surrounding element (white on gold active, gold
+       on hover, muted on rest). Monoline stroke style, 24-unit viewBox. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <!-- Mapping: folded map with creases -->
+      <symbol id="icon-mapping" viewBox="0 0 24 24">
+        <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"
+              d="M3 6.5 L9 4.5 L15 6.5 L21 4.5 L21 17.5 L15 19.5 L9 17.5 L3 19.5 Z M9 4.5 L9 17.5 M15 6.5 L15 19.5"/>
+      </symbol>
+
+      <!-- Pipeline: three kanban columns with cards -->
+      <symbol id="icon-pipeline" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+          <rect x="3"  y="4" width="5" height="16" rx="1"/>
+          <rect x="9.5" y="4" width="5" height="10" rx="1"/>
+          <rect x="16" y="4" width="5" height="7"  rx="1"/>
+        </g>
+      </symbol>
+
+      <!-- CRM: person with contact-card lines -->
+      <symbol id="icon-crm" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+          <circle cx="9" cy="8" r="3"/>
+          <path d="M3.5 19 C4 15.5 6 14 9 14 C12 14 14 15.5 14.5 19"/>
+          <line x1="16" y1="8"  x2="21" y2="8"/>
+          <line x1="16" y1="12" x2="21" y2="12"/>
+          <line x1="16" y1="16" x2="20" y2="16"/>
+        </g>
+      </symbol>
+
+      <!-- Finance: rising bar chart -->
+      <symbol id="icon-finance" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+          <line x1="3" y1="20" x2="21" y2="20"/>
+          <rect x="5"  y="13" width="3" height="7" rx="0.4"/>
+          <rect x="10.5" y="9"  width="3" height="11" rx="0.4"/>
+          <rect x="16" y="5"  width="3" height="15" rx="0.4"/>
+        </g>
+      </symbol>
+
+      <!-- Tools: wrench -->
+      <symbol id="icon-tools" viewBox="0 0 24 24">
+        <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"
+              d="M14.7 6.3 a4 4 0 0 0 5 5 L21 13 L13 21 L3 11 L11 3 L12.7 4.7 a4 4 0 0 0 2 1.6 Z"/>
+      </symbol>
+
+      <!-- Settings: gear -->
+      <symbol id="icon-settings" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2 L12 5 M12 19 L12 22 M4.9 4.9 L7 7 M17 17 L19.1 19.1 M2 12 L5 12 M19 12 L22 12 M4.9 19.1 L7 17 M17 7 L19.1 4.9"/>
+        </g>
+      </symbol>
+
+      <!-- Chevron down for dropdown toggles -->
+      <symbol id="icon-chevron-down" viewBox="0 0 24 24">
+        <path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"
+              d="M6 9 L12 15 L18 9"/>
+      </symbol>
+
+      <!-- Calendar (upcoming inspections) -->
+      <symbol id="icon-calendar" viewBox="0 0 24 24">
+        <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">
+          <rect x="3" y="5" width="18" height="16" rx="2"/>
+          <line x1="3" y1="10" x2="21" y2="10"/>
+          <line x1="8" y1="3" x2="8" y2="7"/>
+          <line x1="16" y1="3" x2="16" y2="7"/>
+        </g>
+      </symbol>
+    </defs>
+  </svg>
+
+  <header>
+    <div class="logo">property<span>map</span></div>
+
+    <!-- Search — always visible in header, operates on map regardless of active module -->
+    <div class="address-search" id="addressSearch">
+      <div class="address-input-wrap">
+        <span class="search-icon">&#9906;</span>
+        <input type="text" id="addressInput" placeholder="Search address or suburb&hellip;" autocomplete="off"/>
+        <button class="search-clear" id="searchClear" title="Clear">&#x2715;</button>
+      </div>
+      <ul class="search-suggestions" id="searchSuggestions"></ul>
+    </div>
+
+    <!-- Module nav + user menu — right-aligned (ml-auto via header CSS) -->
+    <nav class="module-nav">
+      <button class="module-nav-btn active" data-module-nav="mapping"  onclick="Router.navigate('/mapping')"><svg class="mn-icon"><use href="#icon-mapping"/></svg>Mapping</button>
+      <button class="module-nav-btn"        data-module-nav="pipeline" onclick="Router.navigate('/pipeline')"><svg class="mn-icon"><use href="#icon-pipeline"/></svg>Pipeline</button>
+      <button class="module-nav-btn"        data-module-nav="crm"      onclick="Router.navigate('/crm')"><svg class="mn-icon"><use href="#icon-crm"/></svg>CRM</button>
+      <button class="module-nav-btn"        data-module-nav="finance"  onclick="Router.navigate('/finance')"><svg class="mn-icon"><use href="#icon-finance"/></svg>Finance</button>
+
+      <!-- Tools dropdown (stays as dropdown, not a router target for now) -->
+      <div class="tools-dropdown-anchor" id="toolsAnchor">
+        <button class="module-nav-btn" id="toolsDropdownBtn"><svg class="mn-icon"><use href="#icon-tools"/></svg>Tools<svg class="mn-icon mn-icon-chev"><use href="#icon-chevron-down"/></svg></button>
+        <div class="tools-dropdown-menu" id="toolsDropdownMenu">
+          <button class="tools-dropdown-item" id="measureBtn">📐 Measure</button>
+          <button class="tools-dropdown-item" id="uploadPanelBtn">⬆ Upload Map</button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- User menu — far right -->
+    <div class="user-menu-anchor" id="userMenuAnchor">
+      <button class="panel-btn user-menu-btn" id="userMenuBtn" title="Account" style="display:none">
+        <span class="user-menu-avatar" id="userMenuAvatar">?</span>
+        <span class="user-menu-name" id="userMenuName"></span>
+        <span style="font-size:10px">▾</span>
+      </button>
+      <div class="user-menu-dropdown" id="userMenuDropdown">
+        <div class="user-menu-header">
+          <div class="user-menu-full-name" id="userMenuFullName"></div>
+          <div class="user-menu-email" id="userMenuEmail"></div>
+          <div class="user-menu-role" id="userMenuRole"></div>
+        </div>
+        <button class="tools-dropdown-item user-menu-settings" id="userMenuSettings" style="display:none"><svg class="menu-item-icon"><use href="#icon-settings"/></svg>System Settings</button>
+        <button class="tools-dropdown-item" id="userMenuUpcomingInspections"><svg class="menu-item-icon"><use href="#icon-calendar"/></svg>Upcoming Inspections</button>
+        <button class="tools-dropdown-item" id="userMenuLogout">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Stubs for legacy IDs that existing JS still references. These are
+       hidden and not user-visible — they exist so addEventListener calls
+       in kanban.js, finance-module.js, etc. still find their targets.
+       Router.navigate() is what actually drives module switching now. -->
+  <div style="display:none" id="legacyStubs">
+    <button id="kanbanToggleBtn"></button>
+    <button id="crmNavBtn"></button>
+    <button id="financeNavBtn"></button>
+    <button id="listingsToggle" class="active"></button>
+    <button id="overlayPanelBtn"></button>
+    <span id="overlayBadge">0</span>
+  </div>
+
+  <!-- Overlay panel (dropdown) — moved into anchor via JS -->
+  <div class="overlay-panel" id="overlayPanel">
+    <div class="panel-header">
+      <span>Map Overlays</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="panel-all-btn" id="overlayToggleAll">Hide all</button>
+        <button class="panel-close" id="overlayPanelClose">&#x2715;</button>
+      </div>
+    </div>
+    <div id="overlayList"></div>
+  </div>
+
+  <!-- Upload manager panel -->
+  <div class="overlay-panel upload-panel" id="uploadPanel">
+    <div class="panel-header">
+      <span>Upload GeoTIFF Overlay</span>
+      <button class="panel-close" id="uploadPanelClose">✕</button>
+    </div>
+    <div class="upload-body">
+
+      <div class="form-row">
+        <label>Label</label>
+        <input type="text" id="upLabel" placeholder="e.g. Wastewater — North West Sydney"/>
+      </div>
+
+      <div class="form-row">
+        <label>Type</label>
+        <select id="upType">
+          <option value="wastewater">Wastewater</option>
+          <option value="potable">Potable Water</option>
+          <option value="ilp">ILP</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label>Zone</label>
+        <input type="text" id="upZone" placeholder="e.g. south-west-sydney"/>
+        <small>Must match a zone id in overlays.js</small>
+      </div>
+
+      <div class="form-row">
+        <label>GeoTIFF file</label>
+        <input type="file" id="upFile" accept=".tif,.tiff,image/tiff"/>
+        <small id="upBoundsPreview" class="bounds-preview"></small>
+      </div>
+
+      <div class="form-row">
+        <label>Default opacity</label>
+        <div class="opacity-row">
+          <input type="range" id="upOpacity" min="0" max="100" value="40"/>
+          <span id="upOpacityVal">40%</span>
+        </div>
+      </div>
+
+      <div class="upload-actions">
+        <button class="btn-primary" id="upAddLive">Add to map (this session)</button>
+        <button class="btn-secondary" id="upDownload">Download overlay files</button>
+      </div>
+      <div id="upStatus" class="up-status"></div>
+
+      <div class="panel-header" style="margin-top:16px">
+        <span>Manage Overlays</span>
+      </div>
+      <div id="manageList"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div id="map"></div>
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-header-row">
+          <div>
+            <h2>Listings in view</h2>
+            <p><span id="listingCount">0</span> properties found</p>
+            <p id="listingsLoadingindicator" style="display:none">
+              <span class="listings-loading-spinner"></span> Searching Domain…
+            </p>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button class="sidebar-listings-toggle active" id="listingsPanelToggle" title="Show/hide listings on map">
+              <span class="dot"></span> Listings
+            </button>
+            <button class="filter-toggle-btn" id="filterToggleBtn">⚙ Filter <span class="filter-active-count" id="filterActiveCount"></span></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Filter panel -->
+      <div class="filter-panel" id="filterPanel">
+        <div class="filter-panel-header">
+          <span>Search Filters</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="filter-clear-btn" id="filterClearBtn">Clear all</button>
+            <button class="panel-close" id="filterPanelClose">✕</button>
+          </div>
+        </div>
+        <div class="filter-panel-body">
+
+          <!-- V76.3: Property Category is the master toggle. Residential -> Domain,
+               Commercial -> CoreLogic. Other filter groups show/hide based on this. -->
+          <div class="filter-group" data-mode="both">
+            <label class="filter-label">Property Type</label>
+            <div class="filter-chips" id="filterPropertyCategory">
+              <button class="filter-chip active" data-value="residential">Residential</button>
+              <button class="filter-chip" data-value="commercial">Commercial</button>
+            </div>
+          </div>
+
+          <div class="filter-group" data-mode="both">
+            <label class="filter-label">Listing Type</label>
+            <div class="filter-chips" id="filterListingType">
+              <button class="filter-chip active" data-value="Sale">Sale</button>
+              <button class="filter-chip" data-value="Rent">Rent</button>
+            </div>
+          </div>
+
+          <!-- Residential property type chips (Domain values) -->
+          <div class="filter-group" data-mode="residential">
+            <label class="filter-label">Dwelling Type</label>
+            <div class="filter-chips" id="filterPropertyTypes">
+              <button class="filter-chip" data-value="House">House</button>
+              <button class="filter-chip" data-value="Apartment">Apartment</button>
+              <button class="filter-chip" data-value="Land">Land</button>
+              <button class="filter-chip" data-value="Townhouse">Townhouse</button>
+              <button class="filter-chip" data-value="Villa">Villa</button>
+              <button class="filter-chip" data-value="Rural">Rural</button>
+              <button class="filter-chip" data-value="AcreageSemiRural">Acreage</button>
+              <button class="filter-chip" data-value="NewApartments">New Apartments</button>
+            </div>
+          </div>
+
+          <!-- Commercial propertyType dropdown (21 CoreLogic values) -->
+          <div class="filter-group" data-mode="commercial">
+            <label class="filter-label">Space / Property Type</label>
+            <select id="filterCoreLogicType" class="filter-select-full">
+              <option value="">Any</option>
+              <option value="Industrial">Industrial</option>
+              <option value="Office">Office</option>
+              <option value="Retail">Retail</option>
+              <option value="Warehouse &amp; Logistics">Warehouse &amp; Logistics</option>
+              <option value="Accommodation">Accommodation</option>
+              <option value="Tourism &amp; Leisure">Tourism &amp; Leisure</option>
+              <option value="Community">Community</option>
+              <option value="Education">Education</option>
+              <option value="Medical &amp; Care Facilities">Medical &amp; Care Facilities</option>
+              <option value="Childcare Centre">Childcare Centre</option>
+              <option value="Government Services">Government Services</option>
+              <option value="Place of Assembly">Place of Assembly</option>
+              <option value="Park/ Reserve/ Road">Park / Reserve / Road</option>
+              <option value="Storage Unit">Storage Unit</option>
+              <option value="Car Park">Car Park</option>
+              <option value="Utility">Utility</option>
+              <option value="Land">Land</option>
+              <option value="Industrial Land">Industrial Land</option>
+              <option value="Commercial Land">Commercial Land</option>
+              <option value="Residential Land">Residential Land</option>
+              <option value="Residential">Residential</option>
+            </select>
+          </div>
+
+          <!-- Listed since (residential only — Domain field) -->
+          <div class="filter-group" data-mode="residential">
+            <label class="filter-label">Listed Since</label>
+            <select id="filterListedSince" class="filter-select-full">
+              <option value="">Any time</option>
+              <option value="7">Last 7 days</option>
+              <option value="14">Last 14 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+          </div>
+
+          <!-- Sale price (residential + commercial) -->
+          <div class="filter-group" data-mode="both" data-listing-type="Sale">
+            <label class="filter-label">Price (Sale)</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinPriceSale">
+                  <option value="">Any</option>
+                  <option value="250000">$250k</option>
+                  <option value="500000">$500k</option>
+                  <option value="750000">$750k</option>
+                  <option value="1000000">$1m</option>
+                  <option value="1500000">$1.5m</option>
+                  <option value="2000000">$2m</option>
+                  <option value="3000000">$3m</option>
+                  <option value="4000000">$4m</option>
+                  <option value="5000000">$5m</option>
+                  <option value="7500000">$7.5m</option>
+                  <option value="10000000">$10m</option>
+                  <option value="15000000">$15m</option>
+                  <option value="20000000">$20m</option>
+                  <option value="30000000">$30m</option>
+                  <option value="50000000">$50m</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxPriceSale">
+                  <option value="">Any</option>
+                  <option value="500000">$500k</option>
+                  <option value="750000">$750k</option>
+                  <option value="1000000">$1m</option>
+                  <option value="1500000">$1.5m</option>
+                  <option value="2000000">$2m</option>
+                  <option value="3000000">$3m</option>
+                  <option value="4000000">$4m</option>
+                  <option value="5000000">$5m</option>
+                  <option value="7500000">$7.5m</option>
+                  <option value="10000000">$10m</option>
+                  <option value="15000000">$15m</option>
+                  <option value="20000000">$20m</option>
+                  <option value="30000000">$30m</option>
+                  <option value="50000000">$50m</option>
+                  <option value="100000000">$100m</option>
+                  <option value="999999999">Over $50m</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Residential rent (per week) -->
+          <div class="filter-group" data-mode="residential" data-listing-type="Rent">
+            <label class="filter-label">Rent (per week)</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinRentWeek">
+                  <option value="">Any</option>
+                  <option value="200">$200</option>
+                  <option value="300">$300</option>
+                  <option value="400">$400</option>
+                  <option value="500">$500</option>
+                  <option value="600">$600</option>
+                  <option value="700">$700</option>
+                  <option value="800">$800</option>
+                  <option value="1000">$1,000</option>
+                  <option value="1250">$1,250</option>
+                  <option value="1500">$1,500</option>
+                  <option value="2000">$2,000</option>
+                  <option value="3000">$3,000</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxRentWeek">
+                  <option value="">Any</option>
+                  <option value="300">$300</option>
+                  <option value="400">$400</option>
+                  <option value="500">$500</option>
+                  <option value="600">$600</option>
+                  <option value="700">$700</option>
+                  <option value="800">$800</option>
+                  <option value="1000">$1,000</option>
+                  <option value="1250">$1,250</option>
+                  <option value="1500">$1,500</option>
+                  <option value="2000">$2,000</option>
+                  <option value="3000">$3,000</option>
+                  <option value="5000">$5,000</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Commercial rent per annum -->
+          <div class="filter-group" data-mode="commercial" data-listing-type="Rent">
+            <label class="filter-label">Rent (per annum)</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinRentAnnum">
+                  <option value="">Any</option>
+                  <option value="10000">$10k</option>
+                  <option value="25000">$25k</option>
+                  <option value="50000">$50k</option>
+                  <option value="75000">$75k</option>
+                  <option value="100000">$100k</option>
+                  <option value="150000">$150k</option>
+                  <option value="200000">$200k</option>
+                  <option value="300000">$300k</option>
+                  <option value="500000">$500k</option>
+                  <option value="750000">$750k</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxRentAnnum">
+                  <option value="">Any</option>
+                  <option value="25000">$25k</option>
+                  <option value="50000">$50k</option>
+                  <option value="75000">$75k</option>
+                  <option value="100000">$100k</option>
+                  <option value="150000">$150k</option>
+                  <option value="200000">$200k</option>
+                  <option value="300000">$300k</option>
+                  <option value="500000">$500k</option>
+                  <option value="750000">$750k</option>
+                  <option value="1000000">$1m</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Commercial rent per sqm (separate filter, displayed alongside per-annum) -->
+          <div class="filter-group" data-mode="commercial" data-listing-type="Rent">
+            <label class="filter-label">Rent (per sqm p.a.)</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinRentSqm">
+                  <option value="">Any</option>
+                  <option value="100">$100</option>
+                  <option value="200">$200</option>
+                  <option value="300">$300</option>
+                  <option value="400">$400</option>
+                  <option value="500">$500</option>
+                  <option value="750">$750</option>
+                  <option value="1000">$1,000</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxRentSqm">
+                  <option value="">Any</option>
+                  <option value="200">$200</option>
+                  <option value="300">$300</option>
+                  <option value="400">$400</option>
+                  <option value="500">$500</option>
+                  <option value="750">$750</option>
+                  <option value="1000">$1,000</option>
+                  <option value="1500">$1,500</option>
+                  <option value="2000">$2,000</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Land / Site Area — shared (Domain minLand/maxLand, CoreLogic siteArea) -->
+          <div class="filter-group" data-mode="both">
+            <label class="filter-label">Land / Site Area</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinLand">
+                  <option value="">Any</option>
+                  <option value="100">100m²</option>
+                  <option value="150">150m²</option>
+                  <option value="200">200m²</option>
+                  <option value="250">250m²</option>
+                  <option value="300">300m²</option>
+                  <option value="400">400m²</option>
+                  <option value="500">500m²</option>
+                  <option value="600">600m²</option>
+                  <option value="800">800m²</option>
+                  <option value="1000">1,000m²</option>
+                  <option value="1500">1,500m²</option>
+                  <option value="2000">2,000m²</option>
+                  <option value="3000">3,000m²</option>
+                  <option value="5000">5,000m²</option>
+                  <option value="10000">1 ha</option>
+                  <option value="20000">2 ha</option>
+                  <option value="50000">5 ha</option>
+                  <option value="100000">10 ha</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxLand">
+                  <option value="">Any</option>
+                  <option value="150">150m²</option>
+                  <option value="200">200m²</option>
+                  <option value="300">300m²</option>
+                  <option value="500">500m²</option>
+                  <option value="800">800m²</option>
+                  <option value="1000">1,000m²</option>
+                  <option value="2000">2,000m²</option>
+                  <option value="5000">5,000m²</option>
+                  <option value="10000">1 ha</option>
+                  <option value="20000">2 ha</option>
+                  <option value="50000">5 ha</option>
+                  <option value="100000">10 ha</option>
+                  <option value="500000">50 ha</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Commercial-only: Floor Area -->
+          <div class="filter-group" data-mode="commercial">
+            <label class="filter-label">Floor Area</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinFloor">
+                  <option value="">Any</option>
+                  <option value="50">50m²</option>
+                  <option value="100">100m²</option>
+                  <option value="200">200m²</option>
+                  <option value="500">500m²</option>
+                  <option value="1000">1,000m²</option>
+                  <option value="2000">2,000m²</option>
+                  <option value="5000">5,000m²</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxFloor">
+                  <option value="">Any</option>
+                  <option value="100">100m²</option>
+                  <option value="200">200m²</option>
+                  <option value="500">500m²</option>
+                  <option value="1000">1,000m²</option>
+                  <option value="2000">2,000m²</option>
+                  <option value="5000">5,000m²</option>
+                  <option value="10000">10,000m²</option>
+                  <option value="50000">50,000m²</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Commercial-only: Advertised Yield (sale only) -->
+          <div class="filter-group" data-mode="commercial" data-listing-type="Sale">
+            <label class="filter-label">Advertised Yield (%)</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinYield">
+                  <option value="">Any</option>
+                  <option value="3">3%</option>
+                  <option value="4">4%</option>
+                  <option value="5">5%</option>
+                  <option value="6">6%</option>
+                  <option value="7">7%</option>
+                  <option value="8">8%</option>
+                  <option value="10">10%</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxYield">
+                  <option value="">Any</option>
+                  <option value="4">4%</option>
+                  <option value="5">5%</option>
+                  <option value="6">6%</option>
+                  <option value="7">7%</option>
+                  <option value="8">8%</option>
+                  <option value="10">10%</option>
+                  <option value="15">15%</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Commercial-only: Strata flag -->
+          <div class="filter-group" data-mode="commercial">
+            <label class="filter-label">Strata Unit</label>
+            <div class="filter-chips" id="filterStrata">
+              <button class="filter-chip active" data-value="Both">Any</button>
+              <button class="filter-chip" data-value="Yes">Strata only</button>
+              <button class="filter-chip" data-value="No">Non-strata</button>
+            </div>
+          </div>
+
+          <!-- Residential-only: Bedrooms -->
+          <div class="filter-group" data-mode="residential">
+            <label class="filter-label">Bedrooms</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinBeds">
+                  <option value="">Any</option>
+                  <option value="1">1+</option>
+                  <option value="2">2+</option>
+                  <option value="3">3+</option>
+                  <option value="4">4+</option>
+                  <option value="5">5+</option>
+                </select>
+              </div>
+              <div class="filter-field">
+                <span>Max</span>
+                <select id="filterMaxBeds">
+                  <option value="">Any</option>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Residential-only: Bathrooms -->
+          <div class="filter-group" data-mode="residential">
+            <label class="filter-label">Bathrooms</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinBaths">
+                  <option value="">Any</option>
+                  <option value="1">1+</option>
+                  <option value="2">2+</option>
+                  <option value="3">3+</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Residential-only: Car Spaces -->
+          <div class="filter-group" data-mode="residential">
+            <label class="filter-label">Car Spaces</label>
+            <div class="filter-row">
+              <div class="filter-field">
+                <span>Min</span>
+                <select id="filterMinCars">
+                  <option value="">Any</option>
+                  <option value="1">1+</option>
+                  <option value="2">2+</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Residential-only: Property Features -->
+          <div class="filter-group" data-mode="residential">
+            <label class="filter-label">Property Features</label>
+            <div class="filter-chips" id="filterFeatures">
+              <button class="filter-chip" data-value="AirConditioning">Air Con</button>
+              <button class="filter-chip" data-value="SwimmingPool">Pool</button>
+              <button class="filter-chip" data-value="Garage">Garage</button>
+              <button class="filter-chip" data-value="Ensuite">Ensuite</button>
+              <button class="filter-chip" data-value="Study">Study</button>
+              <button class="filter-chip" data-value="Dishwasher">Dishwasher</button>
+            </div>
+          </div>
+
+          <!-- Residential-only: Listing Attributes -->
+          <div class="filter-group" data-mode="residential">
+            <label class="filter-label">Listing Attributes</label>
+            <div class="filter-chips" id="filterAttributes">
+              <button class="filter-chip" data-value="HasPhotos">Has Photos</button>
+              <button class="filter-chip" data-value="HasFloorplan">Has Floorplan</button>
+              <button class="filter-chip" data-value="HasVideo">Has Video</button>
+            </div>
+          </div>
+
+          <!-- Residential-only: Property Status -->
+          <div class="filter-group" data-mode="residential">
+            <label class="filter-label">Property Status</label>
+            <div class="filter-chips" id="filterEstablished">
+              <button class="filter-chip" data-value="New">New</button>
+              <button class="filter-chip" data-value="Established">Established</button>
+            </div>
+          </div>
+
+          <!-- Residential-only: Checkbox flags -->
+          <div class="filter-group" data-mode="residential" style="padding-top:4px">
+            <label class="filter-checkbox-row">
+              <input type="checkbox" id="filterExcludePriceWithheld">
+              <span>Exclude price withheld</span>
+            </label>
+            <label class="filter-checkbox-row">
+              <input type="checkbox" id="filterExcludeDepositTaken" checked>
+              <span>Exclude deposit taken</span>
+            </label>
+            <label class="filter-checkbox-row">
+              <input type="checkbox" id="filterNewDevOnly">
+              <span>New developments only</span>
+            </label>
+            <label class="filter-checkbox-row">
+              <input type="checkbox" id="filterShowSnoozed">
+              <span>Show Not Suitable / snoozed</span>
+            </label>
+          </div>
+
+          <button class="filter-apply-btn" id="filterApplyBtn">Apply Filters</button>
+        </div>
+      </div>
+      <div class="listings" id="listingsList"></div>
+
+      <!-- Sydney Water legend -->
+      <div class="legend" id="legendPanel">
+        <div class="legend-toggle" id="legendToggle">
+          <span class="legend-toggle-label">Legend</span>
+          <span class="legend-toggle-icon">▲</span>
+        </div>
+        <div class="legend-body" id="legendBody">
+        <div class="legend-title">Sydney Water Planning</div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#e74c3c"></span>
+          Strategic Planning
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#f1c40f"></span>
+          Option Planning
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#2980b9"></span>
+          Concept Planning
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#27ae60"></span>
+          Design and Deliver
+        </div>
+        <div class="legend-title" style="margin-top:12px">NSW Strategic Land Use</div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#e67e22;opacity:0.8"></span>
+          SRLUP Growth Areas
+          <span style="font-size:10px;color:var(--muted);margin-left:auto">Click to identify</span>
+        </div>
+        <div class="legend-title" style="margin-top:12px">Electricity Transmission Easements</div>
+        <div class="legend-item elec-legend-item">
+          <span class="legend-line" style="background:#ff0000"></span>
+          <span class="elec-kv">500 kV</span>
+          <span class="elec-ease">~80m easement</span>
+        </div>
+        <div class="legend-item elec-legend-item">
+          <span class="legend-line" style="background:#ff6600"></span>
+          <span class="elec-kv">330 kV</span>
+          <span class="elec-ease">~45–60m easement</span>
+        </div>
+        <div class="legend-item elec-legend-item">
+          <span class="legend-line" style="background:#ffaa00"></span>
+          <span class="elec-kv">220 kV</span>
+          <span class="elec-ease">~50m easement</span>
+        </div>
+        <div class="legend-item elec-legend-item">
+          <span class="legend-line" style="background:#00aa00"></span>
+          <span class="elec-kv">132 kV</span>
+          <span class="elec-ease">~15–45m easement</span>
+        </div>
+        <div class="legend-item elec-legend-item">
+          <span class="legend-line" style="background:#aaaaaa"></span>
+          <span class="elec-kv">Unknown</span>
+          <span class="elec-ease">Verify with TransGrid</span>
+        </div>
+        <div style="font-size:10px;color:var(--muted);padding:2px 0 6px;font-style:italic">Source: TransGrid Easement Guidelines. Widths indicative only — vary by circuit design.</div>
+        <div class="legend-title" style="margin-top:12px">NSW Flood Planning</div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#2471a3;opacity:0.7"></span>
+          Flood Affected Land
+          <span style="font-size:10px;color:var(--muted);margin-left:auto">Click to identify</span>
+        </div>
+        <div class="legend-title" style="margin-top:12px">Biodiversity &amp; Bushfire</div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#1a7a3a;opacity:0.8"></span>
+          Biodiversity Values Map
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#c0392b;opacity:0.7"></span>
+          Bushfire Prone Land
+        </div>
+        <div class="legend-title" style="margin-top:12px">NSW Land Zoning</div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#f4a460;opacity:0.8"></span>
+          Rural (RU1–RU6)
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#ffb6c1;opacity:0.8"></span>
+          Residential (R1–R5)
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#87ceeb;opacity:0.8"></span>
+          Business (B1–B7)
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#d3d3d3;opacity:0.8"></span>
+          Industrial (IN1–IN4)
+        </div>
+        <div class="legend-item">
+          <span class="legend-swatch" style="background:#90ee90;opacity:0.8"></span>
+          Environment (E1–E4)
+        </div>
+        </div><!-- end legend-body -->
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- CRM view -->
+  <div class="crm-view" id="crmView">
+    <div id="crmViewContent" style="height:100%;display:flex;flex-direction:column;overflow:hidden"></div>
+  </div>
+
+  <!-- Finance module view -->
+  <div class="finance-view" id="financeView">
+    <div class="finance-header">
+      <div class="finance-header-left">
+        <svg class="module-header-icon"><use href="#icon-finance"/></svg>
+        <span class="finance-title">Finance</span>
+        <div class="fin-phase-nav">
+          <div class="fin-phase active" id="finPhaseAcquisition">
+            <span class="fin-phase-label">Financial Feasibility</span>
+            <span class="fin-phase-sub">Acquisition</span>
+          </div>
+          <span class="fin-phase-chevron">›</span>
+          <div class="fin-phase disabled" id="finPhaseDelivery" title="Coming soon">
+            <span class="fin-phase-label">Financial Feasibility</span>
+            <span class="fin-phase-sub">Delivery</span>
+          </div>
+        </div>
+      </div>
+      <div class="finance-header-right">
+        <button class="fin-export-btn" id="financeExportBtn" title="Export to Excel" style="display:none">
+          <span class="fin-export-icon">⬇</span> Export to Excel
+        </button>
+        <button class="panel-close" id="financeClose" title="Close">✕</button>
+      </div>
+    </div>
+    <div id="financeContent"></div>
+  </div>
+
+  <!-- Kanban pipeline view -->
+  <div class="kanban-view" id="kanbanView">
+    <div class="kanban-header">
+      <div class="kanban-title">
+        <svg class="module-header-icon"><use href="#icon-pipeline"/></svg>
+        Pipeline
+      </div>
+      <!-- V75.6: board selector + edit controls live in the module header (Header 2)
+           alongside the title, matching the CRM tab-bar pattern. -->
+      <div class="kanban-header-controls" id="kanbanBoardToolbar"></div>
+      <div class="kanban-header-right">
+        <!-- V76.4: due-actions bell badge. Hidden by default; kanban.js
+             populates count from GET /api/actions?count=due whenever the
+             Pipeline view becomes visible. Click jumps to My Actions board. -->
+        <button class="kb-due-badge" id="kanbanDueBadge" hidden title="Open My Actions">
+          <span class="kb-due-badge-icon">🔔</span>
+          <span class="kb-due-badge-count" id="kanbanDueBadgeCount">0</span>
+        </button>
+        <span class="kanban-count" id="kanbanTotalCount"></span>
+        <button class="panel-close" id="kanbanClose" title="Close pipeline">✕</button>
+      </div>
+    </div>
+    <div class="kanban-board" id="kanbanBoard"></div>
+  </div>
+
+  <!-- System Settings view — V75.2 scaffold; API Dashboard sub-section added below. -->
+  <div class="settings-view" id="settingsView">
+    <div class="settings-header">
+      <div class="settings-title">
+        <svg class="module-header-icon"><use href="#icon-settings"/></svg>
+        System Settings
+      </div>
+      <button class="panel-close" id="settingsClose" title="Close settings">✕</button>
+    </div>
+    <div class="settings-body">
+      <!-- Sub-menu navigation (admin-only sections) -->
+      <div class="settings-submenu" id="settingsSubmenu">
+        <button class="settings-submenu-item active" data-section="api-dashboard">API Dashboard</button>
+        <button class="settings-submenu-item" data-section="agency-agreements">Agency Agreements</button>
+        <button class="settings-submenu-item" data-section="parameters">Parameters</button>
+        <button class="settings-submenu-item" data-section="notifications">Notifications</button>
+        <button class="settings-submenu-item" data-section="retention-policy">Retention Policy</button>
+        <button class="settings-submenu-item" data-section="marketing">Marketing</button>
+      </div>
+
+      <!-- API Dashboard section -->
+      <div class="settings-section" id="settingsSectionApiDashboard">
+        <div class="settings-section-header">
+          <h2>API Dashboard</h2>
+          <p class="settings-section-sub">External API subscriptions and usage. Edit fields, toggle active, and top up.</p>
+        </div>
+        <div class="api-dashboard-cards" id="apiDashboardCards">
+          <!-- TessaDEM card -->
+          <div class="api-card" id="apiCardTessadem" data-api="tessadem">
+            <div class="api-card-header">
+              <h3>TessaDEM Elevation</h3>
+              <label class="api-active-toggle">
+                <input type="checkbox" data-role="active-toggle" />
+                <span class="api-active-toggle-track"></span>
+                <span class="api-active-toggle-label" data-role="active-label">Active</span>
+              </label>
+            </div>
+            <div class="api-card-fields">
+              <div class="api-field">
+                <span class="api-field-label">Type</span>
+                <span class="api-field-value" data-role="sub-type">—</span>
+              </div>
+              <div class="api-field">
+                <span class="api-field-label">Subscription Amount</span>
+                <span class="api-field-value" data-role="sub-amount">—</span>
+              </div>
+              <div class="api-field">
+                <span class="api-field-label">Effective Start Date</span>
+                <span class="api-field-value" data-role="effective-start">—</span>
+              </div>
+            </div>
+            <div class="api-card-stats">
+              <div class="api-stat">
+                <div class="api-stat-label">Balance Remaining</div>
+                <div class="api-stat-value" data-role="balance">—</div>
+              </div>
+              <div class="api-stat">
+                <div class="api-stat-label">This Period <span class="api-stat-period" data-role="period-label"></span></div>
+                <div class="api-stat-value" data-role="period-calls">—</div>
+              </div>
+              <div class="api-stat">
+                <div class="api-stat-label">Last Call</div>
+                <div class="api-stat-value api-stat-value-sm" data-role="last-call">—</div>
+              </div>
+            </div>
+            <div class="api-card-actions">
+              <button class="api-card-btn api-card-btn-primary" data-action="edit" data-api="tessadem">
+                Edit subscription
+              </button>
+              <a class="api-card-btn" href="https://tessadem.com/dashboard/" target="_blank" rel="noopener">
+                Top up at TessaDEM →
+              </a>
+            </div>
+          </div>
+
+          <!-- Domain card -->
+          <div class="api-card" id="apiCardDomain" data-api="domain">
+            <div class="api-card-header">
+              <h3>Domain API</h3>
+              <label class="api-active-toggle">
+                <input type="checkbox" data-role="active-toggle" />
+                <span class="api-active-toggle-track"></span>
+                <span class="api-active-toggle-label" data-role="active-label">Active</span>
+              </label>
+            </div>
+            <div class="api-card-fields">
+              <div class="api-field">
+                <span class="api-field-label">Type</span>
+                <span class="api-field-value" data-role="sub-type">—</span>
+              </div>
+              <div class="api-field">
+                <span class="api-field-label">Subscription Amount</span>
+                <span class="api-field-value" data-role="sub-amount">—</span>
+              </div>
+              <div class="api-field">
+                <span class="api-field-label">Effective Start Date</span>
+                <span class="api-field-value" data-role="effective-start">—</span>
+              </div>
+            </div>
+            <div class="api-card-stats">
+              <div class="api-stat">
+                <div class="api-stat-label">Balance Remaining</div>
+                <div class="api-stat-value" data-role="balance">—</div>
+              </div>
+              <div class="api-stat">
+                <div class="api-stat-label">This Period <span class="api-stat-period" data-role="period-label"></span></div>
+                <div class="api-stat-value" data-role="period-calls">—</div>
+              </div>
+              <div class="api-stat">
+                <div class="api-stat-label">Last Call</div>
+                <div class="api-stat-value api-stat-value-sm" data-role="last-call">—</div>
+              </div>
+            </div>
+            <div class="api-card-actions">
+              <button class="api-card-btn api-card-btn-primary" data-action="edit" data-api="domain">
+                Edit subscription
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Edit subscription modal -->
+        <div class="api-edit-modal" id="apiEditModal" style="display:none;">
+          <div class="api-edit-modal-backdrop" data-role="modal-close"></div>
+          <div class="api-edit-modal-content">
+            <div class="api-edit-modal-header">
+              <h3 id="apiEditModalTitle">Edit Subscription</h3>
+              <button class="api-edit-modal-close" data-role="modal-close" aria-label="Close">✕</button>
+            </div>
+            <div class="api-edit-modal-body">
+              <input type="hidden" id="apiEditApiName" />
+              <div class="api-edit-field">
+                <label for="apiEditSubType">Type</label>
+                <select id="apiEditSubType">
+                  <option value="monthly">Monthly</option>
+                  <option value="total">Total</option>
+                </select>
+              </div>
+              <div class="api-edit-field">
+                <label for="apiEditSubAmount">Subscription Amount (calls)</label>
+                <input type="number" id="apiEditSubAmount" min="0" step="1" />
+              </div>
+              <div class="api-edit-field">
+                <label for="apiEditEffectiveStart">Effective Start Date</label>
+                <input type="date" id="apiEditEffectiveStart" />
+              </div>
+              <p class="api-edit-help">
+                Saving will re-baseline calculations. For top-up, set the new amount and effective start date.
+              </p>
+              <p class="api-edit-error" id="apiEditError" style="display:none;"></p>
+            </div>
+            <div class="api-edit-modal-footer">
+              <button class="api-card-btn" data-role="modal-close">Cancel</button>
+              <button class="api-card-btn api-card-btn-primary" id="apiEditSave">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Agency Agreements report (V77.1) -->
+      <div class="settings-section" id="settingsSectionAgencyAgreements" style="display:none">
+        <div class="settings-section-header">
+          <h2>Agency Agreements</h2>
+          <p class="settings-section-sub">All agency agreements across every deal. Click any column header to sort. Click ↗ to jump to a deal.</p>
+        </div>
+        <div id="agencyAgreementsReportContainer">
+          <div class="aar-loading">Click Agency Agreements to load…</div>
+        </div>
+      </div>
+
+      <!-- Parameters section (V77.1) -->
+      <div class="settings-section" id="settingsSectionParameters" style="display:none">
+        <div class="settings-section-header">
+          <h2>Parameters</h2>
+          <p class="settings-section-sub">Lookup tables that drive contact roles, lead sources, and note interaction types. System rows are protected — they cannot be deleted, only deactivated. Custom rows can be deleted; references will have their assignment set to NULL.</p>
+        </div>
+        <div id="parametersPageContainer">
+          <div class="params-loading">Click Parameters to load…</div>
+        </div>
+      </div>
+
+      <!-- Notifications section (V77.2) -->
+      <div class="settings-section" id="settingsSectionNotifications" style="display:none">
+        <div class="settings-section-header">
+          <h2>Notifications</h2>
+          <p class="settings-section-sub">Email infrastructure configuration. Subscriptions and per-event-type controls coming in next release.</p>
+        </div>
+        <div id="notificationsPageContainer">
+          <div class="params-loading">Click Notifications to load…</div>
+        </div>
+      </div>
+
+      <!-- Retention Policy section (V77.2c) -->
+      <div class="settings-section" id="settingsSectionRetentionPolicy" style="display:none">
+        <div class="settings-section-header">
+          <h2>Retention Policy</h2>
+          <p class="settings-section-sub">Document retention period configuration and pending purges. Records become eligible for purge 12 months after the lease period ends.</p>
+        </div>
+        <div id="retentionPolicyPageContainer">
+          <div class="params-loading">Click Retention Policy to load…</div>
+        </div>
+      </div>
+
+      <div class="settings-section" id="settingsSectionMarketing" style="display:none">
+        <div class="settings-section-header">
+          <h2>Marketing</h2>
+          <p class="settings-section-sub">Manage marketing categories used to group and segment contacts.</p>
+        </div>
+        <div id="marketingSettingsContainer">
+          <div class="params-loading">Loading…</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Elevation quota banner (top of map). Hidden until elevation tile fetch returns 402. -->
+  <div class="elevation-quota-banner" id="elevationQuotaBanner" style="display:none;" role="alert">
+    <span id="elevationQuotaBannerText"></span>
+    <button class="elevation-quota-banner-close" id="elevationQuotaBannerClose" aria-label="Dismiss">✕</button>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.0/leaflet-maplibre-gl.js"></script>
+  <script src="modules/mapping/overlays-meta.js"></script>
+  <script src="modules/mapping/overlays-b64-sw-potable.js"></script>
+  <script src="modules/mapping/overlays-b64-sw-wastewater.js"></script>
+  <script src="modules/mapping/gsp-wsa-sw-wastewater.js"></script>
+  <script src="modules/mapping/domain-api.js"></script>
+  <script src="modules/pipeline/dd-risks.js"></script>
+  <script src="lib/parcel-format.js"></script>
+  <script src="modules/mapping/nsw-lookup-client.js"></script>
+  <script src="lookups.js"></script>
+  <script src="parameters-page.js"></script>
+  <script src="modules/crm/marketing-settings-page.js"></script>
+  <script src="notifications-page.js"></script>
+  <script src="retention-policy-page.js"></script>
+  <script src="modules/crm/note-form.js"></script>
+  <script src="modules/pipeline/inspections-section.js"></script>
+  <script src="modules/pipeline/agency-agreements-section.js"></script>
+  <script src="modules/pipeline/agency-agreements-report.js"></script>
+  <script src="modules/pipeline/listing-summary-section.js"></script>
+  <script src="modules/pipeline/lease-offer-section.js"></script>
+  <script src="modules/pipeline/lease-offers-received-section.js"></script>
+  <script src="modules/pipeline/kanban-new-card.js"></script>
+  <script src="modules/crm/crm.js"></script>
+  <script src="modules/mapping/map.js"></script>
+  <script src="modules/pipeline/kanban.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <script src="modules/finance/finance-module.js"></script>
+  <script src="modules/registry.js"></script>
+  <script src="router.js"></script>
+  <!-- V78 — mobile/tablet responsive shell. Must load AFTER kanban.js so it
+       can hook into renderBoard() and openCardModal(). -->
+  <script src="mobile-shell.js"></script>
+  <!-- V79 — attendee self-registration screen, opened from Upcoming Inspections -->
+  <script src="modules/pipeline/attendee-registration.js"></script>
+  <script>
+    // ── Tools dropdown toggle ──────────────────────────────────────────────
+    (function() {
+      const btn  = document.getElementById('toolsDropdownBtn');
+      const menu = document.getElementById('toolsDropdownMenu');
+      if (!btn || !menu) return;
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        menu.classList.toggle('open');
+      });
+      document.addEventListener('click', e => {
+        if (!e.target.closest('#toolsAnchor')) menu.classList.remove('open');
+      });
+      // Close menu when a tool item is clicked
+      menu.addEventListener('click', () => menu.classList.remove('open'));
+    })();
+
+    // ── Finance: open from kanban card ─────────────────────────────────────
+    // Kanban cards call window.openFinanceForProperty(id, pipelineEntry)
+    window.openFinanceForProperty = function(id, entry) {
+      if (window.FinanceModule) window.FinanceModule.open(id, entry);
+    };
+
+    // ── User menu (V74 — auth) ─────────────────────────────────────────────
+    (function () {
+      const btn       = document.getElementById('userMenuBtn');
+      const dropdown  = document.getElementById('userMenuDropdown');
+      const avatarEl  = document.getElementById('userMenuAvatar');
+      const nameEl    = document.getElementById('userMenuName');
+      const fullEl    = document.getElementById('userMenuFullName');
+      const emailEl   = document.getElementById('userMenuEmail');
+      const roleEl    = document.getElementById('userMenuRole');
+      const logoutBtn = document.getElementById('userMenuLogout');
+      if (!btn) return;
+
+      function initials(name, email) {
+        const src = (name && name.trim()) || email || '';
+        const parts = src.trim().split(/\s+/);
+        const chars = parts.length >= 2
+          ? parts[0][0] + parts[parts.length - 1][0]
+          : (src[0] || '?');
+        return chars.toUpperCase();
+      }
+
+      function renderUser(user) {
+        const displayName = user.name || user.email || 'User';
+        const shortName = (user.name || '').split(/\s+/)[0] || user.email || 'User';
+        avatarEl.textContent = initials(user.name, user.email);
+        nameEl.textContent   = shortName;
+        fullEl.textContent   = displayName;
+        emailEl.textContent  = user.email || '';
+        roleEl.textContent   = user.isAdmin ? 'Administrator' : 'Staff';
+        btn.style.display    = '';
+        // V75.2 — reveal System Settings menu item for admins
+        const settingsBtn = document.getElementById('userMenuSettings');
+        if (settingsBtn) settingsBtn.style.display = user.isAdmin ? '' : 'none';
+      }
+
+      async function loadMe() {
+        try {
+          const r = await fetch('/api/auth/me', { credentials: 'include' });
+          const d = await r.json();
+          if (d && d.authenticated && d.user) {
+            window.currentUser = d.user;
+            renderUser(d.user);
+          }
+        } catch { /* ignore */ }
+      }
+
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('open');
+      });
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('#userMenuAnchor')) dropdown.classList.remove('open');
+      });
+
+      logoutBtn.addEventListener('click', async () => {
+        try {
+          await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+        } catch { /* ignore */ }
+        location.href = '/login.html';
+      });
+
+      // V75.2 — System Settings menu item (admin only)
+      const settingsBtn = document.getElementById('userMenuSettings');
+      if (settingsBtn) {
+        settingsBtn.addEventListener('click', () => {
+          dropdown.classList.remove('open');
+          if (window.Router) Router.navigate('/settings');
+        });
+      }
+
+      loadMe();
+    })();
+
+    // ── Settings view toggle + close wiring (V75.2) ────────────────────────
+    let _settingsVisible = false;
+    function toggleSettings(show) {
+      _settingsVisible = (show !== undefined) ? show : !_settingsVisible;
+      const view = document.getElementById('settingsView');
+      if (!view) return;
+      view.classList.toggle('visible', _settingsVisible);
+      // V75.7 — load dashboard for any signed-in user (server gates writes only)
+      if (_settingsVisible) {
+        if (window.currentUser) {
+          loadApiDashboard();
+          // Hide admin-only controls for non-admins
+          const isAdmin = !!window.currentUser.isAdmin;
+          document.querySelectorAll('#apiDashboardCards [data-action="edit"]').forEach(btn => {
+            btn.style.display = isAdmin ? '' : 'none';
+          });
+          // TessaDEM toggle is admin-only; Domain toggle is allowed for all
+          const tessToggle = document.querySelector('#apiCardTessadem [data-role="active-toggle"]');
+          if (tessToggle) tessToggle.disabled = !isAdmin;
+        }
+      }
+    }
+    window.toggleSettings = toggleSettings;
+    document.getElementById('settingsClose')?.addEventListener('click', () => {
+      // V81.3 — back to previous screen instead of unconditional /mapping
+      if (window.Router && typeof window.Router.back === 'function') Router.back();
+      else if (window.Router) Router.navigate('/mapping');
+      else toggleSettings(false);
+    });
+
+    // V77.1 — Settings sub-menu navigation. Stores active section and shows/hides
+    // sections accordingly. Parameters page is rendered lazily on first visit.
+    let _parametersRendered = false;
+    let _aarRendered = false;
+    let _notificationsRendered = false;
+    let _retentionPolicyRendered = false;
+    let _marketingSettingsRendered = false;
+    function showSettingsSection(sectionKey) {
+      // Update active button
+      document.querySelectorAll('.settings-submenu-item').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-section') === sectionKey);
+      });
+      // Show/hide section divs
+      document.getElementById('settingsSectionApiDashboard').style.display = sectionKey === 'api-dashboard' ? '' : 'none';
+      const aarSection = document.getElementById('settingsSectionAgencyAgreements');
+      if (aarSection) aarSection.style.display = sectionKey === 'agency-agreements' ? '' : 'none';
+      const paramsSection = document.getElementById('settingsSectionParameters');
+      if (paramsSection) paramsSection.style.display = sectionKey === 'parameters' ? '' : 'none';
+      const notifSection = document.getElementById('settingsSectionNotifications');
+      if (notifSection) notifSection.style.display = sectionKey === 'notifications' ? '' : 'none';
+      const retentionSection = document.getElementById('settingsSectionRetentionPolicy');
+      if (retentionSection) retentionSection.style.display = sectionKey === 'retention-policy' ? '' : 'none';
+      const marketingSection = document.getElementById('settingsSectionMarketing');
+      if (marketingSection) marketingSection.style.display = sectionKey === 'marketing' ? '' : 'none';
+      // Lazy-render Parameters on first visit
+      if (sectionKey === 'parameters' && !_parametersRendered && window.ParametersPage) {
+        const container = document.getElementById('parametersPageContainer');
+        if (container) {
+          ParametersPage.render(container);
+          _parametersRendered = true;
+        }
+      }
+      // Lazy-render Agency Agreements on first visit
+      if (sectionKey === 'agency-agreements' && !_aarRendered && window.AgencyAgreementsReport) {
+        const container = document.getElementById('agencyAgreementsReportContainer');
+        if (container) {
+          AgencyAgreementsReport.render(container);
+          _aarRendered = true;
+        }
+      }
+      // V77.2 — Lazy-render Notifications on first visit
+      if (sectionKey === 'notifications' && !_notificationsRendered && window.NotificationsPage) {
+        const container = document.getElementById('notificationsPageContainer');
+        if (container) {
+          NotificationsPage.render(container);
+          _notificationsRendered = true;
+        }
+      }
+      // V77.2c — Lazy-render Retention Policy on first visit
+      if (sectionKey === 'retention-policy' && !_retentionPolicyRendered && window.RetentionPolicyPage) {
+        const container = document.getElementById('retentionPolicyPageContainer');
+        if (container) {
+          RetentionPolicyPage.render(container);
+          _retentionPolicyRendered = true;
+        }
+      }
+      // V82.b — Lazy-render Marketing on first visit
+      if (sectionKey === 'marketing' && !_marketingSettingsRendered && window.MarketingSettingsPage) {
+        const container = document.getElementById('marketingSettingsContainer');
+        if (container) {
+          MarketingSettingsPage.render(container);
+          _marketingSettingsRendered = true;
+        }
+      }
+    }
+    document.querySelectorAll('.settings-submenu-item').forEach(btn => {
+      btn.addEventListener('click', () => showSettingsSection(btn.getAttribute('data-section')));
+    });
+
+    // ── API Dashboard (V75.7) ──────────────────────────────────────────────
+    function fmtCount(n) {
+      if (n == null) return '—';
+      return Number(n).toLocaleString('en-AU');
+    }
+    function fmtTime(iso) {
+      if (!iso) return 'Never';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '—';
+      const now = new Date();
+      const sameDay = d.toDateString() === now.toDateString();
+      const opts = sameDay
+        ? { hour: '2-digit', minute: '2-digit' }
+        : { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' };
+      return d.toLocaleString('en-AU', opts);
+    }
+    function fmtDate(isoOrDate) {
+      if (!isoOrDate) return '—';
+      const d = new Date(isoOrDate);
+      if (isNaN(d.getTime())) return '—';
+      return d.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+    function fmtDateInput(isoOrDate) {
+      if (!isoOrDate) return '';
+      const d = new Date(isoOrDate);
+      if (isNaN(d.getTime())) return '';
+      // YYYY-MM-DD
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+
+    // Cached last-known state, used by listings button + overlay greying
+    window._apiState = window._apiState || { tessadem: null, domain: null };
+
+    // Paint the parts that come from /api/usage/config (fast):
+    // active toggle, sub_type, sub_amount, effective_start_date, card-inactive class.
+    function paintApiCardConfig(apiName, sub) {
+      const card = document.querySelector(`.api-card[data-api="${apiName}"]`);
+      if (!card || !sub) return;
+
+      const toggle = card.querySelector('[data-role="active-toggle"]');
+      const toggleLabel = card.querySelector('[data-role="active-label"]');
+      if (toggle) toggle.checked = !!sub.is_active;
+      if (toggleLabel) toggleLabel.textContent = sub.is_active ? 'Active' : 'Inactive';
+      card.classList.toggle('api-card-inactive', !sub.is_active);
+
+      card.querySelector('[data-role="sub-type"]').textContent =
+        sub.sub_type === 'monthly' ? 'Monthly' : 'Total';
+      card.querySelector('[data-role="sub-amount"]').textContent = fmtCount(sub.sub_amount);
+      card.querySelector('[data-role="effective-start"]').textContent = fmtDate(sub.effective_start_date);
+
+      // Show "Loading…" placeholders in the stat fields until the slower call returns
+      const balance = card.querySelector('[data-role="balance"]');
+      if (balance) balance.textContent = '…';
+      const periodCalls = card.querySelector('[data-role="period-calls"]');
+      if (periodCalls) periodCalls.textContent = '…';
+      const lastCall = card.querySelector('[data-role="last-call"]');
+      if (lastCall) lastCall.textContent = '…';
+      const periodLabel = card.querySelector('[data-role="period-label"]');
+      if (periodLabel) periodLabel.textContent = '';
+    }
+
+    // Paint the parts that come from /api/usage (slow):
+    // balance, period calls, last call, period label.
+    function paintApiCardStats(apiName, sub) {
+      const card = document.querySelector(`.api-card[data-api="${apiName}"]`);
+      if (!card || !sub) return;
+
+      card.querySelector('[data-role="balance"]').textContent = fmtCount(sub.balance_remaining);
+      card.querySelector('[data-role="period-calls"]').textContent = fmtCount(sub.period_calls);
+      const lastCall = card.querySelector('[data-role="last-call"]');
+      if (lastCall) lastCall.textContent = fmtTime(sub.last_call_at);
+
+      const periodLabel = card.querySelector('[data-role="period-label"]');
+      if (periodLabel) {
+        if (sub.sub_type === 'monthly' && sub.period_start && sub.period_end) {
+          periodLabel.textContent = `(${fmtDate(sub.period_start)} → ${fmtDate(sub.period_end)})`;
+        } else if (sub.sub_type === 'total' && sub.period_start) {
+          periodLabel.textContent = `(since ${fmtDate(sub.period_start)})`;
+        } else {
+          periodLabel.textContent = '';
+        }
+      }
+
+      const balance = card.querySelector('[data-role="balance"]');
+      if (balance) {
+        balance.classList.toggle('api-stat-low', sub.balance_remaining > 0 && sub.balance_remaining < 500);
+        balance.classList.toggle('api-stat-zero', sub.balance_remaining <= 0);
+      }
+    }
+
+    // Combined paint — used after edits/toggles when we already have the full state
+    function paintApiCard(apiName, sub) {
+      paintApiCardConfig(apiName, sub);
+      paintApiCardStats(apiName, sub);
+    }
+
+    async function loadApiDashboard() {
+      // Two-phase load:
+      //   Phase 1 — /api/usage/config (fast: one SELECT, no counting)
+      //             → paints toggle, type, amount, effective start immediately
+      //   Phase 2 — /api/usage (slower: period math + counts + last-call lookup)
+      //             → fills in balance, period calls, last call
+      const configPromise = fetch('/api/usage/config', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null);
+      const statsPromise = fetch('/api/usage', { credentials: 'include' })
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null);
+
+      const config = await configPromise;
+      if (config) {
+        if (config.tessadem) {
+          // Merge config into _apiState (preserves any existing stats)
+          window._apiState.tessadem = { ...(window._apiState.tessadem || {}), ...config.tessadem };
+          paintApiCardConfig('tessadem', config.tessadem);
+        }
+        if (config.domain) {
+          window._apiState.domain = { ...(window._apiState.domain || {}), ...config.domain };
+          paintApiCardConfig('domain', config.domain);
+        }
+        // Sync dependent UI from config alone (we know is_active now)
+        if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
+      }
+
+      const stats = await statsPromise;
+      if (stats) {
+        if (stats.tessadem) {
+          window._apiState.tessadem = stats.tessadem;
+          paintApiCardStats('tessadem', stats.tessadem);
+        }
+        if (stats.domain) {
+          window._apiState.domain = stats.domain;
+          paintApiCardStats('domain', stats.domain);
+        }
+        if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
+      }
+    }
+    window.loadApiDashboard = loadApiDashboard;
+
+    // Active toggle — admin-only writes (server enforces)
+    document.getElementById('apiDashboardCards')?.addEventListener('change', async (e) => {
+      const cb = e.target.closest('input[data-role="active-toggle"]');
+      if (!cb) return;
+      const card = cb.closest('.api-card');
+      const apiName = card?.getAttribute('data-api');
+      if (!apiName) return;
+      const newActive = !!cb.checked;
+      try {
+        const r = await fetch('/api/usage/active', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_name: apiName, is_active: newActive }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          alert(`Failed to toggle: ${err.error || r.status}`);
+          cb.checked = !newActive; // revert
+          return;
+        }
+        const data = await r.json();
+        if (data.subscription) {
+          window._apiState[apiName] = data.subscription;
+          paintApiCard(apiName, data.subscription);
+          if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
+        }
+      } catch (err) {
+        alert('Toggle failed: ' + err.message);
+        cb.checked = !newActive;
+      }
+    });
+
+    // Edit subscription modal — open
+    document.getElementById('apiDashboardCards')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action="edit"]');
+      if (!btn) return;
+      const apiName = btn.getAttribute('data-api');
+      const sub = window._apiState[apiName];
+      if (!sub) return;
+      document.getElementById('apiEditApiName').value = apiName;
+      document.getElementById('apiEditModalTitle').textContent =
+        `Edit ${apiName === 'tessadem' ? 'TessaDEM' : 'Domain'} Subscription`;
+      document.getElementById('apiEditSubType').value = sub.sub_type;
+      document.getElementById('apiEditSubAmount').value = sub.sub_amount;
+      document.getElementById('apiEditEffectiveStart').value = fmtDateInput(sub.effective_start_date);
+      document.getElementById('apiEditError').style.display = 'none';
+      document.getElementById('apiEditError').textContent = '';
+      document.getElementById('apiEditModal').style.display = '';
+    });
+
+    // Edit modal — close
+    document.getElementById('apiEditModal')?.addEventListener('click', (e) => {
+      if (e.target.matches('[data-role="modal-close"]')) {
+        document.getElementById('apiEditModal').style.display = 'none';
+      }
+    });
+
+    // Edit modal — save
+    document.getElementById('apiEditSave')?.addEventListener('click', async () => {
+      const apiName = document.getElementById('apiEditApiName').value;
+      const sub_type = document.getElementById('apiEditSubType').value;
+      const sub_amount = parseInt(document.getElementById('apiEditSubAmount').value, 10);
+      const effective_start_date = document.getElementById('apiEditEffectiveStart').value;
+      const errEl = document.getElementById('apiEditError');
+      errEl.style.display = 'none';
+
+      if (!Number.isFinite(sub_amount) || sub_amount < 0) {
+        errEl.textContent = 'Subscription Amount must be a non-negative number.';
+        errEl.style.display = '';
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(effective_start_date)) {
+        errEl.textContent = 'Effective Start Date is required (YYYY-MM-DD).';
+        errEl.style.display = '';
+        return;
+      }
+
+      try {
+        const r = await fetch('/api/usage', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_name: apiName, sub_type, sub_amount, effective_start_date }),
+        });
+        const data = await r.json();
+        if (!r.ok) {
+          errEl.textContent = `Save failed: ${data.error || r.status}`;
+          errEl.style.display = '';
+          return;
+        }
+        if (data.subscription) {
+          window._apiState[apiName] = data.subscription;
+          paintApiCard(apiName, data.subscription);
+          if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
+        }
+        document.getElementById('apiEditModal').style.display = 'none';
+      } catch (err) {
+        errEl.textContent = 'Save failed: ' + err.message;
+        errEl.style.display = '';
+      }
+    });
+
+    // ── Cross-cutting UI sync (V75.7) ──────────────────────────────────────
+    // Called whenever API state changes. Updates:
+    //   - Listings button (green when Domain active, grey when not)
+    //   - Elevation overlay row (greyed/disabled when TessaDEM inactive)
+    window.syncApiDependentUi = function () {
+      const t = window._apiState.tessadem;
+      const d = window._apiState.domain;
+
+      // Listings button: green (.active) when Domain active, grey when inactive.
+      // The .active class drives the existing green styling. When Domain is off,
+      // we strip .active and add .api-inactive (which paints grey).
+      const listingsBtn = document.getElementById('listingsPanelToggle');
+      if (listingsBtn && d) {
+        listingsBtn.classList.toggle('active', !!d.is_active);
+        listingsBtn.classList.toggle('api-inactive', !d.is_active);
+        listingsBtn.title = d.is_active
+          ? 'Show/hide listings on map (Domain API ON)'
+          : 'Domain API is OFF — click to enable';
+        // Keep showListings state in sync with API state on first load
+        if (typeof window.showListings !== 'undefined') {
+          window.showListings = !!d.is_active;
+        }
+      }
+
+      // Elevation overlay: grey out when TessaDEM inactive
+      const elevRow = document.querySelector('#ov-tessadem-elevation');
+      const row = elevRow?.closest('.overlay-row');
+      if (row && t) {
+        const inactive = !t.is_active;
+        row.classList.toggle('overlay-row-api-disabled', inactive);
+        if (elevRow) {
+          if (inactive) {
+            elevRow.disabled = true;
+            elevRow.title = 'TessaDEM API is OFF — enable in Settings → API Dashboard';
+            // Force-uncheck if currently on
+            if (elevRow.checked) {
+              elevRow.checked = false;
+              elevRow.dispatchEvent(new Event('change'));
+            }
+          } else {
+            elevRow.disabled = false;
+            elevRow.title = '';
+          }
+        }
+      }
+    };
+
+    // Initial sync on page load — uses the fast config endpoint since we only
+    // need is_active for the listings button + overlay greying. Full stats are
+    // loaded lazily when the dashboard is opened.
+    fetch('/api/usage/config', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (!d) return;
+        if (d.tessadem) window._apiState.tessadem = d.tessadem;
+        if (d.domain)   window._apiState.domain   = d.domain;
+        if (typeof window.syncApiDependentUi === 'function') window.syncApiDependentUi();
+      })
+      .catch(() => {});
+
+    // ── Elevation quota banner (V75.5) ─────────────────────────────────────
+    // Shown when /api/elevation-tile returns 402 (quota_exhausted).
+    // Admin: links to Settings dashboard. Non-admin: instructs to contact admin.
+    window.showElevationQuotaBanner = function () {
+      const banner = document.getElementById('elevationQuotaBanner');
+      const text = document.getElementById('elevationQuotaBannerText');
+      if (!banner || !text) return;
+      const isAdmin = !!(window.currentUser && window.currentUser.isAdmin);
+      if (isAdmin) {
+        text.innerHTML = 'Elevation quota exhausted &mdash; <a href="#/settings" class="elevation-quota-banner-link" id="elevQuotaLink">Settings</a>';
+      } else {
+        text.textContent = 'Elevation quota exhausted — please contact administrator';
+      }
+      banner.style.display = '';
+      // Wire link click for admin path
+      const link = document.getElementById('elevQuotaLink');
+      if (link) {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (window.Router) Router.navigate('/settings');
+          else toggleSettings(true);
+        }, { once: true });
+      }
+    };
+    window.hideElevationQuotaBanner = function () {
+      const banner = document.getElementById('elevationQuotaBanner');
+      if (banner) banner.style.display = 'none';
+    };
+    document.getElementById('elevationQuotaBannerClose')?.addEventListener('click', window.hideElevationQuotaBanner);
+
+    // ── Close buttons on existing views now back-navigate via the Router ───
+    // (was: directly flipping the .visible class; then unconditional /mapping;
+    // now V81.3 — back to whichever screen the user came from)
+    document.getElementById('kanbanClose')?.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (window.Router && typeof window.Router.back === 'function') Router.back();
+      else if (window.Router) Router.navigate('/mapping');
+    }, true); // capture so we run before kanban.js's own handler
+
+    document.getElementById('financeClose')?.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (window.FinanceModule && typeof window.FinanceModule.close === 'function') {
+        window.FinanceModule.close();
+      } else if (window.Router && typeof window.Router.back === 'function') {
+        Router.back();
+      } else if (window.Router) {
+        Router.navigate('/mapping');
+      }
+    }, true);
+  </script>
+
+</body>
+</html>

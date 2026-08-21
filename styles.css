@@ -1,0 +1,6346 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #f5f4f0;
+  --surface: #ffffff;
+  --surface2: #f0eeea;
+  --border: rgba(0,0,0,0.1);
+  --text: #1a1a1a;
+  --muted: #666;
+  --accent: #c4841a;
+  --red: #c0392b;
+  --green: #27ae60;
+  --blue: #2980b9;
+  --purple: #8e44ad;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ─── Header ─────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 56px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  /* V75.2a — must sit above module views (z-index 1500) so the user-menu
+     dropdown is visible when a module is open. Module views start at
+     top: 56px so they don't overlap the header anyway. */
+  z-index: 2500;
+  position: relative;
+}
+
+.logo {
+  font-family: 'DM Serif Display', serif;
+  font-size: 20px;
+  letter-spacing: -0.3px;
+  color: var(--accent);
+}
+.logo span { color: var(--text); }
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ─── Address search ──────────────────────────────── */
+.address-search {
+  position: relative;
+}
+.address-input-wrap {
+  display: flex;
+  align-items: center;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 8px;
+  gap: 6px;
+  transition: border-color 0.15s;
+  width: 240px;
+}
+.address-input-wrap:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.search-icon {
+  font-size: 15px;
+  color: var(--muted);
+  flex-shrink: 0;
+  line-height: 1;
+}
+.address-input-wrap input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  padding: 6px 0;
+  outline: none;
+  min-width: 0;
+}
+.address-input-wrap input::placeholder { color: var(--muted); }
+.search-clear {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  display: none;
+  flex-shrink: 0;
+}
+.search-clear:hover { color: var(--text); background: var(--border); }
+.search-clear.visible { display: block; }
+
+.search-suggestions {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 3000;
+  list-style: none;
+  overflow: hidden;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.search-suggestions.visible { display: block; }
+.search-suggestions li {
+  padding: 9px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  line-height: 1.4;
+  transition: background 0.1s;
+}
+.search-suggestions li:last-child { border-bottom: none; }
+.search-suggestions li:hover,
+.search-suggestions li.focused { background: var(--surface2); }
+.search-suggestions li .sug-main { font-weight: 500; }
+.search-suggestions li .sug-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.search-suggestions li.sug-empty,
+.search-suggestions li.sug-loading {
+  color: var(--muted);
+  font-style: italic;
+  cursor: default;
+  font-size: 12px;
+}
+
+.search-pin {
+  width: 28px; height: 28px;
+  background: var(--accent);
+  border: 2px solid #fff;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+}
+
+/* Zone selector */
+.zone-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.zone-selector select {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.zone-selector select:focus { outline: none; border-color: var(--accent); }
+
+/* Toggle button */
+.toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.toggle-btn.active { border-color: var(--accent); color: var(--accent); }
+.toggle-btn:hover { background: #2e2e2e; color: #fff; }
+
+.dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: background 0.15s;
+}
+.toggle-btn.active .dot { background: var(--accent); }
+
+/* Panel button */
+.panel-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.panel-btn:hover { background: #2e2e2e; color: #fff; }
+.panel-btn.open { border-color: var(--accent); color: var(--accent); }
+
+.badge {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 20px;
+  text-align: center;
+  display: inline-block;
+}
+
+/* ─── Overlay / Upload Panels ─────────────────── */
+.panel-anchor {
+  position: relative;
+}
+
+.overlay-panel {
+  /* V75.2 — Overlays button moved into basemap row at bottom-left of map;
+     panel now pops upward from there. Fixed positioning since the panel is
+     no longer nested inside a top-header anchor element. */
+  position: fixed;
+  left: 12px;
+  bottom: 56px;      /* above the basemap row (which sits at ~12px+row height) */
+  width: 320px;
+  max-height: calc(100vh - 200px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  z-index: 2000;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+.overlay-panel.visible { display: flex; }
+.upload-panel { width: 360px; }
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.panel-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.panel-close:hover { background: var(--surface2); }
+
+.panel-all-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: 'DM Sans', sans-serif;
+  padding: 2px 8px;
+  transition: all 0.15s;
+}
+.panel-all-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--text); }
+
+/* Overlay list */
+#overlayList {
+  overflow-y: auto;
+  padding: 8px 0;
+}
+#overlayList::-webkit-scrollbar { width: 4px; }
+#overlayList::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+
+.overlay-group-heading {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 10px 16px 4px;
+  border-top: 1px solid var(--border);
+  background: var(--surface2);
+}
+.overlay-group-heading:first-child { border-top: none; }
+
+.overlay-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.overlay-row:last-child { border-bottom: none; }
+
+.overlay-row input[type=checkbox] {
+  width: 16px; height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.overlay-row input[type=checkbox]:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.overlay-info { flex: 1; min-width: 0; }
+.overlay-label {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.overlay-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+.type-pill {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-weight: 600;
+  color: #fff;
+}
+.type-pill.wastewater { background: var(--blue); }
+.type-pill.potable    { background: var(--green); }
+.type-pill.ilp        { background: var(--purple); }
+.type-pill.srlup      { background: #e67e22; }
+.type-pill.zoning     { background: #8B0000; }
+.type-pill.flood      { background: #1a5fa8; }
+.type-pill.flood      { background: #2471a3; }
+.type-pill.other      { background: var(--muted); }
+
+.no-image-note {
+  font-size: 10px;
+  color: #e67e22;
+  font-style: italic;
+}
+
+.overlay-opacity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.overlay-opacity input[type=range] {
+  width: 64px;
+  accent-color: var(--accent);
+}
+.overlay-opacity span { font-size: 10px; color: var(--muted); }
+
+/* ─── Upload panel body ───────────────────────── */
+.upload-body {
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.upload-body::-webkit-scrollbar { width: 4px; }
+.upload-body::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+
+.form-row {
+  margin-bottom: 12px;
+}
+.form-row label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.form-row input[type=text],
+.form-row select {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  background: var(--surface2);
+  color: var(--text);
+}
+.form-row input:focus,
+.form-row select:focus { outline: none; border-color: var(--accent); }
+.form-row small { display: block; margin-top: 3px; font-size: 11px; color: var(--muted); }
+.form-row input[type=file] { font-size: 12px; }
+
+.bounds-preview {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--green);
+  min-height: 14px;
+  font-style: normal;
+}
+.bounds-preview.error { color: var(--red); }
+
+.opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.opacity-row input[type=range] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.opacity-row span { font-size: 12px; color: var(--muted); width: 36px; }
+
+.upload-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.btn-primary {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  font-weight: 500;
+}
+.btn-primary:hover { background: #b8760f; }
+.btn-secondary {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+}
+.btn-secondary:hover { background: #e0ddd7; }
+
+.up-status {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--green);
+  min-height: 16px;
+}
+.up-status.error { color: var(--red); }
+
+/* Manage overlays list */
+#manageList { padding: 4px 0; }
+.manage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.manage-row:last-child { border-bottom: none; }
+.manage-row-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-delete {
+  background: none;
+  border: none;
+  color: var(--red);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.btn-delete:hover { background: rgba(192,57,43,0.08); }
+
+/* ─── Main layout ─────────────────────────────── */
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+#map { flex: 1; height: 100%; cursor: crosshair; }
+
+/* ─── Sidebar ─────────────────────────────────── */
+.sidebar {
+  width: 340px;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.sidebar-header {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.sidebar-header h2 {
+  font-family: 'DM Serif Display', serif;
+  font-size: 17px;
+  font-weight: 400;
+  margin-bottom: 4px;
+}
+.sidebar-header p { font-size: 12px; color: var(--muted); }
+
+/* V82.b — Domain search loading indicator */
+#listingsLoadingindicator {
+  color: var(--accent);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.listings-loading-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: listings-spin 0.7s linear infinite;
+  margin-right: 3px;
+}
+@keyframes listings-spin {
+  to { transform: rotate(360deg); }
+}
+
+.filters {
+  display: none;
+}
+.filter-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  transition: all 0.15s;
+}
+.filter-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
+.filter-active-count {
+  display: none;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 10px;
+  padding: 1px 6px;
+  font-weight: 600;
+}
+
+.filter-panel {
+  display: none;
+  flex-direction: column;
+  border-bottom: 2px solid var(--border);
+  background: var(--surface);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.filter-panel.open { display: flex; }
+.filter-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 20px;
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.filter-panel-body { padding: 8px 20px 16px; }
+.filter-group { margin-bottom: 14px; }
+.filter-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.filter-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.filter-chip {
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: transparent;
+  color: var(--muted);
+  font-family: 'DM Sans', sans-serif;
+}
+.filter-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(196,132,26,0.08);
+}
+.filter-row {
+  display: flex;
+  gap: 10px;
+}
+.filter-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.filter-field select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+}
+.filter-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.filter-checkbox-row input { cursor: pointer; accent-color: var(--accent); }
+.filter-apply-btn {
+  width: 100%;
+  padding: 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: opacity 0.15s;
+}
+.filter-apply-btn:hover { opacity: 0.88; }
+.filter-clear-btn {
+  font-size: 11px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  font-family: 'DM Sans', sans-serif;
+}
+
+.listings {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+.listings::-webkit-scrollbar { width: 4px; }
+.listings::-webkit-scrollbar-track { background: transparent; }
+.listings::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+
+.listing-card {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s;
+  position: relative;
+}
+.listing-card:hover, .listing-card.active { background: var(--surface2); }
+.listing-card.active {
+  border-left: 2px solid var(--accent);
+  padding-left: 18px;
+}
+
+.listing-thumb {
+  width: calc(100% + 0px);
+  height: 160px;
+  margin: -14px -20px 12px -20px;
+  overflow: hidden;
+  border-radius: 0;
+}
+.listing-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.listing-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+.listing-price {
+  font-family: 'DM Serif Display', serif;
+  font-size: 18px;
+  color: var(--accent);
+  letter-spacing: -0.3px;
+}
+.listing-type {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  background: var(--surface2);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.listing-address {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.listing-suburb { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+
+.water-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-top: 6px;
+  font-weight: 500;
+}
+.water-badge.serviced   { background: rgba(39,174,96,0.12);  color: #27ae60; }
+.water-badge.planned    { background: rgba(52,152,219,0.12); color: #2980b9; }
+.water-badge.unserviced { background: rgba(192,57,43,0.12);  color: #c0392b; }
+.water-badge.outside    { background: rgba(100,100,100,0.1); color: #666; }
+
+/* ─── Leaflet popup ───────────────────────────── */
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  font-family: 'DM Sans', sans-serif;
+}
+.popup-price {
+  font-family: 'DM Serif Display', serif;
+  font-size: 18px;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.popup-address { font-size: 12px; color: #333; margin-bottom: 8px; }
+.popup-stats { display: flex; gap: 10px; font-size: 12px; color: #666; }
+
+/* ─── Legend ──────────────────────────────────── */
+.legend {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.legend-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  cursor: pointer;
+  user-select: none;
+}
+.legend-toggle:hover { background: var(--surface2); }
+
+.legend-toggle-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+
+.legend-toggle-icon {
+  font-size: 9px;
+  color: var(--muted);
+  transition: transform 0.2s;
+}
+.legend.collapsed .legend-toggle-icon { transform: rotate(180deg); }
+
+.legend-body {
+  padding: 0 20px 16px;
+  overflow: hidden;
+  transition: max-height 0.25s ease, opacity 0.2s;
+  max-height: 600px;
+  opacity: 1;
+}
+.legend.collapsed .legend-body {
+  max-height: 0;
+  opacity: 0;
+  padding-bottom: 0;
+}
+
+.legend-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 7px;
+}
+
+.legend-item:last-child { margin-bottom: 0; }
+
+.legend-swatch {
+  display: inline-block;
+  width: 28px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+/* ─── Basemap toggle ──────────────────────────────── */
+.basemap-toggle {
+  display: flex;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  border: 1px solid rgba(0,0,0,0.15);
+}
+.basemap-btn {
+  padding: 6px 14px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--muted);
+  transition: all 0.15s;
+  border-right: 1px solid var(--border);
+}
+.basemap-btn:last-child { border-right: none; }
+.basemap-btn:hover { background: var(--surface2); color: var(--text); }
+.basemap-btn.active {
+  background: var(--text);
+  color: #fff;
+}
+
+/* ─── Kanban toggle button ────────────────────────────────────────────────── */
+.kanban-toggle-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ─── Kanban view ─────────────────────────────────────────────────────────── */
+.kanban-view {
+  display: none;
+  position: fixed;
+  inset: 56px 0 0 0;
+  background: var(--bg);
+  z-index: 1500;
+  flex-direction: column;
+  overflow: hidden;
+}
+.kanban-view.visible { display: flex; }
+
+.kanban-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.kanban-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'DM Serif Display', serif;
+  font-size: 18px;
+  color: var(--text);
+}
+.kanban-title-icon {
+  color: var(--accent);
+  font-size: 20px;
+}
+
+.kanban-header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.kanban-count {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* V76.4 — Due-actions bell badge in Header 2 right side. Visible across all
+   Pipeline boards. Clicking jumps to My Actions. Hidden when count is 0. */
+.kb-due-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.kb-due-badge:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+.kb-due-badge[hidden] { display: none; }
+.kb-due-badge-icon { font-size: 14px; line-height: 1; }
+.kb-due-badge-count { line-height: 1; }
+
+/* V75.6.2 — Board selector controls inside .kanban-header (Header 2).
+   Matches the CRM tab-bar pattern exactly (same padding, same border chrome,
+   same font treatment). Close button remains pushed to the far right. */
+.kanban-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 16px;
+  flex: 1;
+  font-size: 13px;
+}
+.kanban-header-controls:empty { display: none; }
+
+/* Board selector — content-sensitive width, CRM-tab chrome */
+.kb-board-select {
+  padding: 6px 28px 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  transition: background 0.1s;
+  /* Native select control appearance left intact for optgroup support */
+  appearance: auto;
+  width: auto;
+  max-width: 280px;
+}
+.kb-board-select:hover { background: var(--surface2); }
+
+/* Toolbar buttons — match .crm-tab chrome */
+.kb-toolbar-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  transition: background 0.1s;
+  white-space: nowrap;
+}
+.kb-toolbar-btn:hover:not(:disabled) {
+  background: var(--surface2);
+  color: var(--text);
+}
+.kb-toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Destructive variant for Delete Board — red outline, red on hover */
+.kb-toolbar-btn-danger {
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+.kb-toolbar-btn-danger:hover:not(:disabled) {
+  border-color: #c0392b;
+  color: #c0392b;
+  background: #fdecea;
+}
+
+/* V75.6 — Edit columns modal */
+.kb-editcols-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'DM Sans', sans-serif;
+}
+.kb-editcols-modal {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  width: 640px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.kb-editcols-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.kb-editcols-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.kb-editcols-close {
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.kb-editcols-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  flex: 1;
+}
+.kb-editcols-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.kb-editcols-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.kb-editcols-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.kb-editcols-drag {
+  cursor: grab;
+  color: var(--text-secondary);
+  font-size: 14px;
+  user-select: none;
+}
+.kb-col-del {
+  background: none;
+  border: none;
+  color: #c0392b;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+}
+.kb-col-del:hover { background: #fdecea; border-radius: 3px; }
+.kb-editcols-add {
+  margin-top: 12px;
+  width: 100%;
+}
+.kb-editcols-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+.kb-editcols-cancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+/* ─── Board ───────────────────────────────────────────────────────────────── */
+.kanban-board {
+  display: flex;
+  gap: 0;
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 20px 20px 0;
+}
+.kanban-board::-webkit-scrollbar { height: 6px; }
+.kanban-board::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+
+/* ─── Columns ─────────────────────────────────────────────────────────────── */
+.kb-col {
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  min-width: 260px;
+  margin-right: 12px;
+  background: var(--surface2);
+  border-radius: 10px 10px 0 0;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.kb-col-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.kb-stage-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.kb-stage-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  flex: 1;
+}
+.kb-count {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-weight: 600;
+}
+
+/* ─── Cards container ─────────────────────────────────────────────────────── */
+.kb-cards {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 80px;
+  transition: background 0.15s;
+}
+.kb-cards::-webkit-scrollbar { width: 3px; }
+.kb-cards::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+.kb-cards.drag-over { background: rgba(196,132,26,0.07); }
+
+/* V76.9 — drop indicator: visible insertion line that moves with the cursor
+   during drag-over to show exactly where the card will land. ~3px accent line
+   with a small dot at each end so it's obvious even on light/dark backgrounds. */
+.kb-drop-indicator {
+  height: 3px;
+  background: var(--accent, #c4841a);
+  border-radius: 2px;
+  margin: -2px 0;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px rgba(196,132,26,0.18);
+  position: relative;
+  pointer-events: none;
+  animation: kb-drop-pulse 0.9s ease-in-out infinite;
+}
+.kb-drop-indicator::before,
+.kb-drop-indicator::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #c4841a);
+  transform: translateY(-50%);
+}
+.kb-drop-indicator::before { left: -1px; }
+.kb-drop-indicator::after  { right: -1px; }
+@keyframes kb-drop-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.6; }
+}
+
+/* ─── Cards ───────────────────────────────────────────────────────────────── */
+.kb-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: grab;
+  transition: box-shadow 0.15s, transform 0.15s, border-color 0.15s;
+  position: relative;
+}
+.kb-card:hover {
+  box-shadow: 0 3px 12px rgba(0,0,0,0.1);
+  border-color: rgba(0,0,0,0.15);
+}
+.kb-card.dragging {
+  opacity: 0.35;
+  transform: rotate(1.5deg) scale(0.97);
+  cursor: grabbing;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+}
+.kb-card.flash {
+  animation: kb-flash 0.4s ease 2;
+}
+@keyframes kb-flash {
+  0%, 100% { border-color: var(--border); }
+  50%       { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(196,132,26,0.2); }
+}
+
+.kb-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.kb-card-type {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  background: var(--surface2);
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.kb-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  line-height: 1;
+  transition: all 0.12s;
+}
+.kb-remove:hover { color: var(--red); background: rgba(192,57,43,0.08); }
+
+.kb-card-price {
+  font-family: 'DM Serif Display', serif;
+  font-size: 17px;
+  color: var(--accent);
+  letter-spacing: -0.2px;
+  margin-bottom: 3px;
+}
+.kb-card-address {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.kb-card-suburb {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.kb-card-stats {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.kb-note {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface2);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  color: var(--text);
+  resize: none;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+.kb-note:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+.kb-note::placeholder { color: #bbb; }
+
+/* ─── Timestamped notes ──────────────────────────────────────────────────── */
+.kb-notes-section { margin-top: 4px; }
+
+.kb-notes-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+.kb-notes-input-row .kb-note-input {
+  flex: 1;
+  width: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface2);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  color: var(--text);
+  resize: none;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+.kb-notes-input-row .kb-note-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.kb-notes-input-row .kb-note-input::placeholder { color: #bbb; }
+
+.kb-note-add-btn {
+  padding: 5px 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.kb-note-add-btn:hover { background: #155c30; }
+
+.kb-notes-empty {
+  font-size: 11px;
+  color: #bbb;
+  padding: 2px 0 6px;
+}
+
+.kb-note-entry {
+  border-left: 2px solid var(--border);
+  padding: 4px 0 4px 10px;
+  margin-bottom: 8px;
+}
+.kb-note-entry:last-child { margin-bottom: 0; }
+
+.kb-note-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
+.kb-note-date {
+  font-size: 10px;
+  color: #aaa;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.kb-note-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  color: #ccc;
+  padding: 0 2px;
+  line-height: 1;
+}
+.kb-note-delete:hover { color: #c0392b; }
+
+.kb-note-text {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ─── Pipeline add button on listing cards ────────────────────────────────── */
+.pipeline-add-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  font-weight: 300;
+}
+.pipeline-add-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.pipeline-add-btn.in-pipeline {
+  background: rgba(39,174,96,0.1);
+  border-color: #27ae60;
+  color: #27ae60;
+  font-size: 11px;
+}
+
+/* ─── Kanban toast ────────────────────────────────────────────────────────── */
+#kanbanToast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(60px);
+  background: var(--text);
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 20px;
+  font-size: 13px;
+  z-index: 9999;
+  transition: transform 0.3s;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+#kanbanToast.show { transform: translateX(-50%) translateY(0); }
+
+/* ─── Search result card in sidebar ──────────────────────────────────────── */
+.search-result-card {
+  padding: 14px 20px 16px;
+  border-bottom: 2px solid var(--accent);
+  background: linear-gradient(135deg, rgba(196,132,26,0.04) 0%, var(--surface) 60%);
+  position: relative;
+}
+
+.src-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid rgba(196,132,26,0.4);
+  border-radius: 4px;
+  padding: 1px 7px;
+  margin-bottom: 8px;
+}
+
+.src-price {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1.2;
+  margin-bottom: 2px;
+}
+
+.src-type {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.src-agent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+  margin-bottom: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+
+.src-address {
+  font-family: 'DM Serif Display', serif;
+  font-size: 15px;
+  line-height: 1.3;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.src-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.src-lotdp {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 12px;
+  font-style: italic;
+}
+
+.src-links-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.src-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.src-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: all 0.15s;
+  border: 1px solid var(--border);
+}
+
+.src-link-domain {
+  background: #fff;
+  color: #222;
+}
+.src-link-domain:hover {
+  background: #1565c0;
+  color: #fff;
+  border-color: #1565c0;
+}
+
+.src-link-rea {
+  background: #fff;
+  color: #222;
+}
+.src-link-rea:hover {
+  background: #e11;
+  color: #fff;
+  border-color: #e11;
+}
+
+.src-link-tag {
+  font-size: 10px;
+  opacity: 0.65;
+  font-weight: 400;
+}
+
+.src-disclaimer {
+  font-size: 10px;
+  color: #bbb;
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+
+.src-pipeline-btn {
+  width: 100%;
+  padding: 7px 12px;
+  border-radius: 5px;
+  border: 1px dashed var(--accent);
+  background: rgba(196,132,26,0.05);
+  color: var(--accent);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.src-pipeline-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-style: solid;
+}
+
+/* ─── Domain API enrichment styles ───────────────────────────────────────── */
+.domain-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(30,167,101,0.1);
+  color: #1ea765;
+  border: 1px solid rgba(30,167,101,0.25);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.domain-badge:hover {
+  background: rgba(30,167,101,0.18);
+}
+.domain-badge.mock {
+  background: rgba(100,100,100,0.07);
+  color: var(--muted);
+  border-color: var(--border);
+}
+.dom-days {
+  color: #1ea765;
+  font-weight: 400;
+  border-left: 1px solid rgba(30,167,101,0.35);
+  padding-left: 5px;
+  margin-left: 2px;
+}
+.domain-badge.mock .dom-days { color: var(--muted); border-color: var(--border); }
+
+.listing-agent {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+.agent-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+.agent-agency {
+  margin-left: auto;
+  font-size: 10px;
+  text-align: right;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Kanban Vendor Terms ─────────────────────────────────────────────────── */
+.kb-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 10px 0 6px;
+}
+
+.kb-terms {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.kb-terms-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.kb-field-wrap { display: flex; flex-direction: column; gap: 3px; }
+
+.kb-field-label {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.kb-input {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  color: var(--text);
+  box-sizing: border-box;
+  transition: border-color 0.12s;
+}
+.kb-input:focus { outline: none; border-color: var(--accent); }
+.kb-input::placeholder { color: #bbb; }
+
+/* Deposit rows */
+.kb-deposit-row {
+  position: relative;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.kb-deposit-row:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+
+.kb-deposit-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.kb-dep-remove {
+  position: absolute;
+  top: 8px;
+  right: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  line-height: 1;
+}
+.kb-dep-remove:hover { color: var(--red); background: rgba(192,57,43,0.08); }
+
+.kb-add-deposit {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 5px;
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.12s;
+}
+.kb-add-deposit:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(196,132,26,0.04);
+}
+
+/* ─── Terms Offered / Offer History ──────────────────────────────────────── */
+.kb-offer-form {
+  background: rgba(41,128,185,0.04);
+  border: 1px solid rgba(41,128,185,0.2);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.kb-submit-offer {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px;
+  border: none;
+  border-radius: 5px;
+  background: #2980b9;
+  color: #fff;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: center;
+}
+.kb-submit-offer:hover { background: #1f6799; }
+
+.kb-offers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.kb-offers-empty {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.kb-offer-item {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid #2980b9;
+  border-radius: 5px;
+  padding: 8px 10px;
+}
+
+.kb-offer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 5px;
+}
+
+.kb-offer-date {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.kb-offer-delete {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+  line-height: 1;
+}
+.kb-offer-delete:hover { color: var(--red); background: rgba(192,57,43,0.08); }
+
+.kb-offer-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.kb-offer-field {
+  font-size: 11px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+.kb-offer-lbl {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.kb-offer-deposits {
+  margin-top: 5px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.kb-offer-dep {
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.kb-offer-deps-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-top: 5px;
+  margin-bottom: 3px;
+}
+
+.kb-offer-deposits-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.kb-card-address-link {
+  cursor: pointer;
+  color: var(--accent);
+  transition: opacity 0.12s;
+}
+.kb-card-address-link:hover { opacity: 0.75; text-decoration: underline; }
+
+/* ─── Due Diligence section ───────────────────────────────────────────────── */
+.kb-dd {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* Two-column layout inside the modal */
+.kb-modal .kb-dd {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.kb-modal .kb-dd-row:nth-child(odd)  { border-right: 1px solid var(--border); }
+.kb-modal .kb-dd-row:last-child      { border-bottom: none; }
+.kb-modal .kb-dd-row:nth-last-child(-n+2) { border-bottom: none; }
+
+.kb-dd-row {
+  display: grid;
+  grid-template-columns: 1fr 90px 30px;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 4px 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.kb-dd-row .kb-dd-label    { grid-column: 1; grid-row: 1; }
+.kb-dd-row .kb-dd-select   { grid-column: 2; grid-row: 1; }
+.kb-dd-row .kb-dd-attach-btn { grid-column: 3; grid-row: 1; }
+.kb-dd-row .kb-dd-note     { grid-column: 1 / -1; grid-row: 2; font-size: 10px; padding: 3px 6px; }
+.kb-dd-row:last-child { border-bottom: none; }
+.kb-dd-row:nth-child(even) { background: var(--surface2); }
+
+/* V78i — Paperclip button on each DD row */
+.kb-dd-attach-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--muted);
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.kb-dd-attach-btn:hover {
+  background: rgba(196,132,26,0.10);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.kb-dd-attach-btn.kb-dd-attach-has-files {
+  color: var(--accent);
+}
+.kb-dd-attach-count {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* V78i — Attachments dialog */
+.kb-dd-attach-list {
+  margin-bottom: 12px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.kb-dd-attach-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  margin-bottom: 6px;
+}
+.kb-dd-attach-icon {
+  flex: 0 0 auto;
+  font-size: 16px;
+}
+.kb-dd-attach-name {
+  flex: 1 1 auto;
+  font-size: 13px;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kb-dd-attach-name:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.kb-dd-attach-meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.kb-dd-attach-remove {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.kb-dd-attach-remove:hover {
+  background: rgba(192,57,43,0.10);
+  color: var(--red);
+  border-color: var(--red);
+}
+.kb-dd-attach-empty,
+.kb-dd-attach-loading {
+  padding: 14px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+  background: var(--surface2);
+  border-radius: 4px;
+}
+.kb-dd-attach-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--surface2);
+  border-radius: 4px;
+}
+.kb-dd-attach-upload-help {
+  font-size: 11px;
+  color: var(--muted);
+}
+.kb-dd-attach-error {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: rgba(192,57,43,0.10);
+  color: var(--red);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.kb-dd-attach-done-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  padding: 6px 16px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.kb-dd-attach-done-btn:hover { filter: brightness(1.05); }
+
+.kb-dd-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.kb-dd-select {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.12s;
+  width: 90px;
+}
+.kb-dd-select:focus { outline: none; border-color: var(--accent); }
+
+.kb-dd-select.dd-risk-low      { background: #eafaf1; border-color: #27ae60; color: #1e8449; }
+.kb-dd-select.dd-risk-possible { background: #fef9e7; border-color: #f39c12; color: #b7770d; }
+.kb-dd-select.dd-risk-high     { background: #fdedec; border-color: #e74c3c; color: #c0392b; }
+.kb-dd-select.dd-risk-none     { background: var(--surface); color: var(--muted); }
+
+.kb-dd-note {
+  font-size: 10px;
+  padding: 3px 6px;
+  min-width: 0;
+}
+
+/* ─── Kanban summary card indicators ─────────────────────────────────────── */
+.kb-card-indicators {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.kb-ind {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--surface2);
+}
+.kb-ind-offers { border-color: #2980b9; color: #2980b9; background: rgba(41,128,185,0.07); }
+.kb-ind-dd              { border-color: #8e44ad; color: #8e44ad; background: rgba(142,68,173,0.07); }
+.kb-ind-dd.dd-low       { border-color: #27ae60; color: #27ae60; background: rgba(39,174,96,0.1); }
+.kb-ind-dd.dd-possible  { border-color: #e67e22; color: #e67e22; background: rgba(230,126,34,0.1); }
+.kb-ind-dd.dd-high      { border-color: #e74c3c; color: #e74c3c; background: rgba(231,76,60,0.1); }
+.kb-ind-note   { border-color: #27ae60; color: #27ae60; background: rgba(39,174,96,0.07);  }
+.kb-ind-action-due {
+  border-color: #dc2626;
+  color: #dc2626;
+  background: rgba(220,38,38,0.08);
+  font-weight: 600;
+}
+
+/* ─── Card detail modal ───────────────────────────────────────────────────── */
+.kb-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(2px);
+}
+
+.kb-modal {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  width: 100%;
+  max-width: 580px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.kb-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.kb-modal-price {
+  font-family: 'DM Serif Display', serif;
+  font-size: 22px;
+  color: var(--accent);
+  margin-bottom: 3px;
+}
+.kb-modal-address {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 500;
+}
+.kb-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--muted);
+  padding: 4px 6px;
+  border-radius: 5px;
+  line-height: 1;
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+.kb-modal-close:hover { background: var(--surface2); color: var(--text); }
+
+.kb-offer-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.kb-submit-offer {
+  flex: 1;
+}
+.kb-finance-btn {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 6px 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+  flex-shrink: 0;
+}
+.kb-finance-btn:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface2));
+  border-color: var(--accent);
+}
+
+.kb-modal-body {
+  overflow-y: auto;
+  padding: 20px;
+  flex: 1;
+}
+.kb-modal-body::-webkit-scrollbar { width: 4px; }
+.kb-modal-body::-webkit-scrollbar-thumb { background: #ddd; border-radius: 2px; }
+
+/* ─── Electricity legend ──────────────────────────────────────────────────── */
+.elec-legend-item {
+  align-items: center;
+}
+.legend-line {
+  display: inline-block;
+  width: 28px;
+  height: 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.elec-kv {
+  font-weight: 600;
+  font-size: 12px;
+  min-width: 52px;
+}
+.elec-ease {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+/* ─── Multi-select ────────────────────────────────────────────────────────── */
+.listing-card.multi-selected {
+  background: rgba(26, 107, 58, 0.06);
+  border-left: 2px solid #1a6b3a;
+  padding-left: 18px;
+}
+
+/* ─── Measurement Tool ───────────────────────────────────────────────────────── */
+.measure-tooltip {
+  background: rgba(0,0,0,0.75);
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.measure-tooltip::before { display: none; }
+
+.measure-seg-label {
+  font-size: 11px !important;
+  padding: 2px 7px !important;
+  opacity: 0.85;
+}
+
+/* V78h.1 — Per-polygon area label, anchored at the polygon's centroid.
+   Larger and bolder than segment labels so the area reads clearly against
+   the satellite imagery. */
+.measure-area-label {
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  padding: 4px 10px !important;
+  background: rgba(231, 76, 60, 0.92) !important;
+}
+
+/* V80.1 — pipeline pin (gold star) sits in a custom pane (pipelinePinPane,
+   z 650) that has pointer-events: none at the pane level, so right-clicks
+   on the empty space around pins fall through to overlay polygons (NSW
+   zoning, SRLUP, etc. in overlayPane z 400). The pin icon itself must
+   re-enable pointer-events so clicks on the pin still register. */
+.pipeline-map-pin {
+  pointer-events: auto;
+}
+
+/* ─── Domain API error state ─────────────────────────────────────────────── */
+.domain-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  text-align: center;
+  gap: 10px;
+}
+.domain-error-icon {
+  font-size: 32px;
+  color: var(--muted);
+}
+.domain-error-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.domain-error-msg {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 220px;
+}
+.domain-error-retry {
+  margin-top: 8px;
+  padding: 7px 20px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.domain-error-retry:hover { background: var(--border); }
+
+/* ─── Note contact tagging ───────────────────────────────────────────────────── */
+.kb-note-contact-row {
+  position: relative;
+  margin-bottom: 6px;
+}
+.kb-note-contact-search {
+  width: 100%;
+  font-size: 12px;
+}
+.kb-note-contact-results {
+  position: absolute;
+  top: 100%;
+  left: 0; right: 0;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.kb-note-contact-result {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #f4f4f4;
+}
+.kb-note-contact-result:last-child { border-bottom: none; }
+.kb-note-contact-result:hover { background: #f0f7f3; }
+.kb-note-contact-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #e8f5ee;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #1a6b3a;
+  font-weight: 600;
+}
+.kb-note-contact-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #1a6b3a;
+  font-size: 11px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.kb-note-contact-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  background: #e8f5ee;
+  color: #1a6b3a;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* ── Finance picker (in kanban modal) ───────────────────────────────────────── */
+.kb-finance-picker {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.kb-fin-pick-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 8px 12px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+}
+.kb-fin-pick-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.kb-fin-pick-row:last-child { border-bottom: none; }
+.kb-fin-pick-main { flex: 1; min-width: 0; }
+.kb-fin-pick-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.kb-fin-pick-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.kb-fin-pick-date {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.kb-fin-pick-latest {
+  font-size: 9px;
+  font-weight: 600;
+  background: var(--green);
+  color: #fff;
+  border-radius: 3px;
+  padding: 1px 4px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.kb-fin-pick-detail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+.kb-fin-pick-price {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.kb-fin-pick-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+.kb-fin-pick-deps {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+.kb-fin-pick-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.kb-fin-pick-btn {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 4px 10px;
+  white-space: nowrap;
+  transition: background 0.12s;
+}
+.kb-fin-pick-btn:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface2));
+}
+.kb-fin-pick-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: color 0.12s, background 0.12s;
+}
+.kb-fin-pick-delete:hover {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 10%, var(--surface2));
+}
+
+.kb-dep-note-inline {
+  flex: 0 1 120px;
+  font-size: 11px;
+}
+
+/* ── Add Offer button in picker header ───────────────────────────────────────── */
+.kb-fin-pick-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.kb-add-offer-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: opacity 0.12s;
+  flex-shrink: 0;
+}
+.kb-add-offer-btn:hover { opacity: 0.85; }
+
+/* ── Offer popup (inside finance picker) ─────────────────────────────────────── */
+.kb-offer-popup {
+  border-top: 1px solid var(--border);
+  background: var(--surface2);
+}
+.kb-offer-popup-inner {
+  padding: 12px;
+}
+.kb-offer-popup-cancel {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.kb-offer-popup-cancel:hover { color: var(--text); border-color: var(--text); }
+
+/* ── User menu (V74 — auth) ─────────────────────────────────────────────── */
+.user-menu-anchor {
+  position: relative;
+  display: inline-block;
+}
+.user-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 8px !important;
+  padding-right: 10px !important;
+}
+.user-menu-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #b8935f;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.user-menu-name {
+  font-size: 12px;
+  font-weight: 500;
+}
+.user-menu-dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 220px;
+  background: #fff;
+  border: 1px solid #e5e1d8;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  z-index: 1200;
+  overflow: hidden;
+}
+.user-menu-dropdown.open { display: block; }
+.user-menu-header {
+  padding: 12px 14px;
+  background: #fafaf7;
+  border-bottom: 1px solid #eeeae0;
+}
+.user-menu-full-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 2px;
+}
+.user-menu-email {
+  font-size: 11px;
+  color: #7a7366;
+  word-break: break-all;
+}
+.user-menu-role {
+  font-size: 10px;
+  font-weight: 500;
+  color: #b8935f;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+}
+.user-menu-dropdown .tools-dropdown-item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 10px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #1a1a1a;
+}
+.user-menu-dropdown .tools-dropdown-item:hover {
+  background: #fafaf7;
+}
+
+/* ─── V75.1 — Not Suitable controls ──────────────────────────────────────── */
+
+/* Inline button + dropdown on listing card */
+.listing-ns-wrap {
+  position: relative;
+  margin-top: 8px;
+}
+.listing-ns-toggle {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  background: transparent;
+  color: var(--muted, #888);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.listing-ns-toggle:hover {
+  background: #f8f4ec;
+  color: #1a1a1a;
+  border-color: #c4841a;
+}
+.listing-ns-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: #fff;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  overflow: hidden;
+}
+.listing-ns-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  background: #fff;
+  color: #333;
+  border: none;
+  border-bottom: 1px solid #eee;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.listing-ns-menu button:last-child { border-bottom: none; }
+.listing-ns-menu button:hover { background: #f8f4ec; color: #c4841a; }
+
+/* Banner + reinstate when listing is currently not-suitable */
+.listing-not-suitable-banner {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: #fdf3f3;
+  border: 1px solid #f0c4c4;
+  border-radius: 4px;
+  color: #a23838;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.listing-ns-clear {
+  background: transparent;
+  border: 1px solid #c0a0a0;
+  color: #a23838;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.listing-ns-clear:hover { background: #fff; color: #1a1a1a; }
+
+/* Dim the whole card when not suitable but still shown via toggle */
+.listing-card:has(.listing-not-suitable-banner) {
+  opacity: 0.7;
+}
+.listing-card:has(.listing-not-suitable-banner):hover {
+  opacity: 1;
+}
+
+/* ─── V76.5.7 — Listing Link/Unlink controls ──────────────────────────── */
+
+/* Two-button row layout: NS toggle + Link button side-by-side. The wrap
+   already provides relative positioning for the NS menu popout above. */
+.listing-actions-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  position: relative;
+}
+.listing-actions-row .listing-ns-wrap {
+  flex: 1;
+  margin-top: 0;     /* row provides the gap */
+}
+.listing-link-toggle {
+  flex: 1;
+  padding: 5px 8px;
+  background: transparent;
+  color: var(--muted, #888);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.listing-link-toggle:hover {
+  background: #f8f4ec;
+  color: #1a1a1a;
+  border-color: var(--accent, #c4841a);
+}
+.listing-link-toggle--unlink {
+  color: #a23838;
+  border-color: #d4b0b0;
+}
+.listing-link-toggle--unlink:hover {
+  background: #fdf3f3;
+  color: #1a1a1a;
+  border-color: #a23838;
+}
+
+/* Search popover — drops below the actions row, full width of card */
+.listing-link-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: #fff;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  padding: 8px;
+}
+.listing-link-search {
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.listing-link-results {
+  max-height: 240px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+.listing-link-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  background: #fff;
+  border: none;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  font-family: inherit;
+}
+.listing-link-result:last-child { border-bottom: none; }
+.listing-link-result:hover { background: #f8f4ec; }
+.listing-link-result-addr {
+  font-size: 12px;
+  font-weight: 500;
+  color: #1a1a1a;
+}
+.listing-link-result-meta {
+  font-size: 10px;
+  color: var(--muted, #888);
+  margin-top: 2px;
+}
+.listing-link-empty {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--muted, #888);
+  text-align: center;
+}
+.listing-link-actions {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
+}
+.listing-link-cancel {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--muted, #888);
+}
+.listing-link-cancel:hover { color: #1a1a1a; border-color: #1a1a1a; }
+
+/* V75.1 popup snooze menu — hover state on duration options.
+   !important is needed because the buttons carry inline styles (background/
+   color) baked into the popup HTML string, which beat normal CSS. */
+.popup-ns-menu button:hover {
+  color: #c4841a !important;
+  background: #f8f4ec !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   V75.2 — UI architecture: module nav, secondary bar, settings view
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Module nav (top-level buttons in header) ───────────────────────────── */
+.module-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  height: 34px;
+}
+
+.module-nav-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.module-nav-btn:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+.module-nav-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.module-nav-btn.active:hover {
+  background: var(--accent);
+  color: #fff;
+  opacity: 0.92;
+}
+
+/* ─── System Settings view ───────────────────────────────────────────────── */
+.settings-view {
+  display: none;
+  position: fixed;
+  inset: 56px 0 0 0;
+  background: var(--bg);
+  z-index: 1500;
+  flex-direction: column;
+  overflow: hidden;
+}
+.settings-view.visible { display: flex; }
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.settings-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-title-icon {
+  font-size: 18px;
+  color: var(--muted);
+}
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px;
+}
+.settings-placeholder {
+  max-width: 480px;
+  margin: 80px auto 0;
+  text-align: center;
+  color: var(--muted);
+}
+.settings-placeholder p:first-child {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.settings-placeholder-sub {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* ─── User menu: System Settings item styling ────────────────────────────── */
+.user-menu-settings {
+  border-bottom: 1px solid var(--border);
+}
+
+/* ─── Listings pins toggle (in sidebar header) ───────────────────────────── */
+.sidebar-listings-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  transition: border-color 0.12s, color 0.12s;
+}
+.sidebar-listings-toggle .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  display: inline-block;
+  transition: background 0.12s;
+}
+.sidebar-listings-toggle.active {
+  color: var(--text);
+  border-color: var(--green, #1a6b3a);
+}
+.sidebar-listings-toggle.active .dot {
+  background: var(--green, #1a6b3a);
+}
+.sidebar-listings-toggle:hover {
+  color: var(--text);
+}
+
+/* ─── Overlays button in basemap row ─────────────────────────────────────── */
+.basemap-btn-overlays {
+  /* sits alongside Map / Satellite / Topography at bottom-left */
+  padding-left: 10px;
+  padding-right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.basemap-btn-overlays .badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 8px;
+  min-width: 14px;
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* ─── Header layout for new module nav ───────────────────────────────────── */
+/* Order: logo | search | module-nav | user-menu.  Module nav right-aligned. */
+header {
+  justify-content: flex-start;
+}
+header .module-nav {
+  margin-left: auto;   /* push nav + user menu to the right */
+}
+header .user-menu-anchor {
+  margin-left: 8px;
+}
+header .address-search {
+  flex: 0 1 320px;     /* allow search to shrink if needed */
+  margin-left: 16px;
+}
+
+/* Narrower buttons on small screens */
+@media (max-width: 1100px) {
+  .module-nav-btn {
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+  header .address-search {
+    flex-basis: 220px;
+  }
+}
+
+/* V75.2 — Hide Leaflet map controls (zoom +/- buttons, basemap row, etc.)
+   when we're not on the Mapping route. The controls are `position: absolute`
+   inside #map; without this rule they remain visible even when the map is
+   completely covered by a full-viewport module view (CRM / Pipeline / Finance
+   / Settings), appearing as a floating "+" tab on the left of those screens. */
+body:not([data-route="mapping"]) .leaflet-control-container {
+  display: none;
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   V75.2c — SVG icon system
+   All icons use currentColor so they inherit text colour from context.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* Module nav button icon (small, inline with text) */
+.module-nav-btn .mn-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: inherit;  /* make currentColor inherit from button */
+}
+.module-nav-btn .mn-icon-chev {
+  width: 10px;
+  height: 10px;
+  margin-left: 2px;
+}
+
+/* Resting — muted grey */
+.module-nav-btn { color: var(--muted); }
+/* Hover — gold */
+.module-nav-btn:hover { color: var(--accent); background: var(--surface2); }
+/* Active — white on gold */
+.module-nav-btn.active,
+.module-nav-btn.active:hover {
+  color: #fff;
+  background: var(--accent);
+}
+
+/* Module header icon (larger, in kanban/finance/crm/settings header) */
+.module-header-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Menu item icon (smaller, for dropdown menu entries) */
+.menu-item-icon {
+  width: 13px;
+  height: 13px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: var(--accent);
+}
+
+/* User menu: give Settings item a bit more visual weight */
+.user-menu-settings {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ─── V75.7: Actions module ──────────────────────────────────────────────────
+   Styling for the "My Actions" Kanban wall + the Actions section inside the
+   deal modal. Reuses existing kb-col / kb-card scaffolding where possible;
+   action-specific classes below only tweak what differs.
+*/
+
+/* --- Actions toolbar (above cols on the Actions wall) ---------------------- */
+.kb-actions-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px 0 12px;
+  gap: 8px;
+}
+.kb-toolbar-btn-primary {
+  background: var(--accent, #c4841a);
+  color: #fff;
+  border-color: var(--accent, #c4841a);
+}
+.kb-toolbar-btn-primary:hover { filter: brightness(0.95); }
+
+.kb-actions-cols {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 12px;
+  align-items: flex-start;
+  flex: 1;
+}
+
+.kb-actions-loading,
+.kb-actions-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted, #64748b);
+}
+.kb-actions-empty-sub { font-size: 13px; margin-top: 8px; }
+
+/* --- Action card (My Actions board) --------------------------------------- */
+.kb-action-card {
+  /* Inherits all base .kb-card layout. Overrides below only. */
+  padding: 10px 12px;
+}
+.kb-action-card .kb-action-desc {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text, #1e293b);
+  line-height: 1.4;
+  margin-bottom: 8px;
+  /* 3-line clamp */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.kb-action-card .kb-action-meta,
+.kb-action-card .kb-action-meta-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted, #64748b);
+  margin-top: 4px;
+}
+.kb-action-card .kb-action-meta-sub {
+  padding-top: 4px;
+  border-top: 1px dashed var(--border, #e2e8f0);
+}
+.kb-action-card .kb-action-due.overdue {
+  color: #dc2626;
+  font-weight: 600;
+}
+.kb-action-card .kb-action-effort {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted, #64748b);
+  font-style: italic;
+}
+/* V76.4.5 — Vendor Terms & Offers history (read-only) in CRM property/parcel
+   modals. Reuses .kb-fin-pick-row styles so the visual matches the deal
+   modal's finance picker; just adds a wrapper with rounded corners + border. */
+.crm-vendor-history-list {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.crm-vendor-history-deal-link {
+  color: var(--accent, #c4841a);
+  text-decoration: none;
+  font-weight: 600;
+}
+.crm-vendor-history-deal-link:hover { text-decoration: underline; }
+
+/* V76.4.3 — Card "needs attention" indicator. 3px red left border applied
+   to any kanban card (action or deal) that has an item due or reminder due
+   and not yet resolved. Used everywhere the bell badge is also relevant,
+   so the visual language is consistent: red = needs attention today. */
+.kb-card-attention,
+.kb-action-card-overdue /* legacy alias, retained for back-compat */ {
+  border-left: 3px solid #dc2626;
+}
+
+/* --- Action modal --------------------------------------------------------- */
+.kb-action-modal {
+  max-width: 560px;
+  width: 92%;
+}
+.kb-action-modal .kb-modal-body {
+  padding: 16px 20px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.kb-action-field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 14px;
+}
+.kb-action-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted, #64748b);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.kb-action-field textarea,
+.kb-action-field input[type="text"],
+.kb-action-field input[type="number"],
+.kb-action-field input[type="date"],
+.kb-action-field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+  box-sizing: border-box;
+}
+.kb-action-field textarea { resize: vertical; min-height: 60px; }
+.kb-action-field textarea:focus,
+.kb-action-field input:focus,
+.kb-action-field select:focus {
+  outline: none;
+  border-color: var(--accent, #c4841a);
+  box-shadow: 0 0 0 2px rgba(196,132,26,0.15);
+}
+.kb-action-row {
+  display: flex;
+  gap: 12px;
+}
+.kb-action-row .kb-action-field { flex: 1; }
+.kb-action-deal-link {
+  padding: 8px 10px;
+  background: var(--surface2, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--muted, #64748b);
+}
+
+/* V76.2.1: deal picker in action modal — tag + search */
+.kb-action-deal-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(196,132,26,0.08);
+  border: 1px solid var(--accent, #c4841a);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--accent, #c4841a);
+}
+.kb-action-deal-label { flex: 1; font-weight: 500; }
+/* V76.4 — clickable deal label opens the deal modal */
+.kb-action-deal-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.kb-action-deal-link:hover { color: #8b6214; }
+.kb-action-deal-clear {
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--accent, #c4841a);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.kb-action-deal-clear:hover { color: #8b6214; }
+
+.kb-action-deal-results {
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.kb-action-deal-result {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-top: none;
+  cursor: pointer;
+  font-size: 13px;
+  background: #fff;
+}
+.kb-action-deal-result:first-child { border-top: 1px solid var(--border, #e2e8f0); }
+.kb-action-deal-result:hover { background: var(--surface2, #f8fafc); }
+.kb-action-deal-result strong { color: var(--text, #1e293b); font-weight: 500; }
+.kb-action-deal-result-id {
+  font-size: 11px;
+  color: var(--muted, #64748b);
+  font-family: monospace;
+}
+.kb-action-deal-none { color: var(--muted, #64748b); font-style: italic; cursor: default; }
+.kb-action-deal-none:hover { background: #fff; }
+
+.kb-modal-footer {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border, #e2e8f0);
+  background: var(--surface2, #f8fafc);
+  border-radius: 0 0 8px 8px;
+  align-items: center;
+}
+.kb-modal-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.kb-modal-btn:hover { background: var(--surface2, #f8fafc); }
+.kb-modal-btn-primary {
+  background: var(--accent, #c4841a);
+  color: #fff;
+  border-color: var(--accent, #c4841a);
+}
+.kb-modal-btn-primary:hover { filter: brightness(0.95); background: var(--accent, #c4841a); }
+.kb-modal-btn-danger {
+  color: #dc2626;
+  border-color: #fecaca;
+}
+.kb-modal-btn-danger:hover { background: #fef2f2; }
+
+/* --- Actions section inside deal modal ------------------------------------ */
+.kb-deal-actions-section {
+  background: var(--surface2, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  padding: 8px;
+  margin-top: 4px;
+}
+.kb-deal-actions-loading,
+.kb-deal-action-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--muted, #64748b);
+  font-size: 13px;
+}
+.kb-deal-actions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.kb-deal-action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #fff;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.kb-deal-action-row:hover { background: var(--surface2, #f8fafc); }
+.kb-deal-action-row.overdue { border-left: 3px solid #dc2626; }
+.kb-deal-action-main { flex: 1; min-width: 0; }
+.kb-deal-action-desc {
+  font-size: 13px;
+  color: var(--text, #1e293b);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kb-deal-action-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted, #64748b);
+  margin-top: 3px;
+}
+.kb-deal-action-due.overdue { color: #dc2626; font-weight: 600; }
+.kb-deal-action-status {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  border: 1px solid transparent;
+}
+.kb-deal-action-status-todo { border-color: #64748b; color: #64748b; background: rgba(100,116,139,0.08); }
+.kb-deal-action-status-wip  { border-color: #2563eb; color: #2563eb; background: rgba(37,99,235,0.08); }
+.kb-deal-action-status-due  { border-color: #dc2626; color: #dc2626; background: rgba(220,38,38,0.1); }
+.kb-deal-action-status-done { border-color: #16a34a; color: #16a34a; background: rgba(22,163,74,0.08); }
+.kb-deal-action-status-void { border-color: #94a3b8; color: #94a3b8; background: rgba(148,163,184,0.08); }
+
+.kb-deal-action-edit {
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--muted, #64748b);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.kb-deal-action-edit:hover { background: var(--surface2, #f8fafc); color: var(--accent, #c4841a); }
+
+.kb-deal-action-add {
+  width: 100%;
+  padding: 8px;
+  background: #fff;
+  border: 1px dashed var(--border, #e2e8f0);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--muted, #64748b);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.kb-deal-action-add:hover {
+  border-color: var(--accent, #c4841a);
+  color: var(--accent, #c4841a);
+  background: rgba(196,132,26,0.04);
+}
+
+/* ─── V76.3: Filter + CoreLogic listing styles ─────────────────────────── */
+
+/* Full-width select for CoreLogic property type */
+.filter-select-full {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+}
+.filter-select-full:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* CoreLogic listing card variant */
+.listing-card-corelogic .listing-price-tbd {
+  color: var(--muted);
+  font-weight: 500;
+  font-style: italic;
+  font-size: 13px;
+}
+.cl-tag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+.cl-tag-source {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+.cl-tag-cityscope {
+  background: #e0f2fe;
+  color: #0369a1;
+  border-color: #7dd3fc;
+}
+.cl-tag-pim {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+.cl-tag-strata {
+  background: #ede9fe;
+  color: #6d28d9;
+  border: 1px solid #c4b5fd;
+}
+.cl-tag-nocoords {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+  cursor: help;
+}
+.cl-agencies {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.cl-agency {
+  line-height: 1.35;
+}
+.cl-agency + .cl-agency {
+  margin-top: 2px;
+}
+.cl-listing-date {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* ─── V75.5 — System Settings sub-menu ─────────────────────────────────────── */
+.settings-submenu {
+  display: flex;
+  gap: 4px;
+  margin: -8px 0 24px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+.settings-submenu-item {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.settings-submenu-item:hover {
+  color: var(--text);
+}
+.settings-submenu-item.active {
+  color: var(--text);
+  border-bottom-color: var(--accent, #4f46e5);
+}
+
+/* ─── V75.5 — Settings sections / API Dashboard ─────────────────────────────── */
+.settings-section {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+.settings-section-header {
+  margin-bottom: 24px;
+}
+.settings-section-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 6px;
+}
+.settings-section-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.api-dashboard-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 20px;
+}
+.api-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.api-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.api-card-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+.api-card-status {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.api-card-status-ok {
+  background: rgba(34, 139, 34, 0.12);
+  color: #228B22;
+  border-color: rgba(34, 139, 34, 0.25);
+}
+.api-card-status-warn {
+  background: rgba(217, 119, 6, 0.12);
+  color: #D97706;
+  border-color: rgba(217, 119, 6, 0.25);
+}
+.api-card-status-bad {
+  background: rgba(220, 38, 38, 0.12);
+  color: #DC2626;
+  border-color: rgba(220, 38, 38, 0.25);
+}
+
+.api-card-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+}
+.api-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.api-stat-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.api-stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.api-stat-value-sm {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.api-stat-low {
+  color: #DC2626;
+}
+
+.api-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.api-card-btn {
+  flex: 1;
+  min-width: 140px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 9px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+  text-decoration: none;
+  text-align: center;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.api-card-btn:hover {
+  background: var(--surface);
+  border-color: var(--muted);
+}
+.api-card-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.api-card-btn-primary {
+  background: var(--accent, #4f46e5);
+  color: #fff;
+  border-color: var(--accent, #4f46e5);
+}
+.api-card-btn-primary:hover {
+  background: var(--accent, #4338ca);
+  color: #fff;
+}
+
+/* ─── V75.5 — Elevation quota banner (top of map) ──────────────────────────── */
+.elevation-quota-banner {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  background: #DC2626;
+  color: #fff;
+  padding: 10px 16px 10px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 40px);
+}
+.elevation-quota-banner-link {
+  color: #fff;
+  text-decoration: underline;
+  font-weight: 600;
+}
+.elevation-quota-banner-link:hover {
+  color: #fff;
+  opacity: 0.9;
+}
+.elevation-quota-banner-close {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  opacity: 0.85;
+}
+.elevation-quota-banner-close:hover {
+  opacity: 1;
+}
+
+/* ─── V75.7 — API Dashboard subscription model ──────────────────────────────── */
+
+/* Active toggle (replaces status badge) */
+.api-active-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.api-active-toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.api-active-toggle-track {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  background: var(--border);
+  border-radius: 999px;
+  transition: background 0.15s ease;
+}
+.api-active-toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+}
+.api-active-toggle input:checked + .api-active-toggle-track {
+  background: #16a34a;
+}
+.api-active-toggle input:checked + .api-active-toggle-track::after {
+  transform: translateX(16px);
+}
+.api-active-toggle input:disabled + .api-active-toggle-track {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.api-active-toggle-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Card visual when inactive */
+.api-card-inactive {
+  opacity: 0.7;
+}
+.api-card-inactive .api-stat-value {
+  color: var(--muted);
+}
+
+/* Subscription field rows (between header and stats) */
+.api-card-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  padding: 12px 14px;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.api-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.api-field-label {
+  color: var(--muted);
+  font-weight: 500;
+}
+.api-field-value {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Period sub-label (e.g. "(27 Apr → 27 May)") */
+.api-stat-period {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 4px;
+}
+
+/* Balance state — zero (red) */
+.api-stat-zero {
+  color: #DC2626;
+}
+
+/* ─── Edit subscription modal ──────────────────────────────────────────────── */
+.api-edit-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.api-edit-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+}
+.api-edit-modal-content {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: 95%;
+  max-width: 460px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+  display: flex;
+  flex-direction: column;
+}
+.api-edit-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.api-edit-modal-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.api-edit-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+.api-edit-modal-close:hover { color: var(--text); }
+.api-edit-modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.api-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.api-edit-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.api-edit-field input,
+.api-edit-field select {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+.api-edit-field input:focus,
+.api-edit-field select:focus {
+  outline: 2px solid var(--accent, #4f46e5);
+  outline-offset: -1px;
+}
+.api-edit-help {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+}
+.api-edit-error {
+  font-size: 12px;
+  color: #DC2626;
+  margin: 0;
+}
+.api-edit-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+}
+
+/* ─── Listings button — Domain API state ───────────────────────────────────── */
+.sidebar-listings-toggle.api-inactive {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+}
+.sidebar-listings-toggle.api-inactive .dot {
+  background: #9ca3af;  /* grey when API off */
+}
+
+/* ─── Overlay row — disabled because API is off ────────────────────────────── */
+.overlay-row.overlay-row-api-disabled {
+  opacity: 0.5;
+  pointer-events: auto;
+}
+.overlay-row.overlay-row-api-disabled .overlay-label::after {
+  content: ' (API off)';
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Parameters page (System Settings → Parameters)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.params-page {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.params-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+}
+.params-section-header {
+  margin-bottom: 12px;
+  position: relative;
+}
+.params-section-header h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.params-section-header .settings-section-sub {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.params-add-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.params-add-btn:hover {
+  filter: brightness(1.05);
+}
+.params-table-wrap {
+  overflow-x: auto;
+}
+.params-loading {
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.params-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.params-table .params-th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--border);
+  background: var(--surface2);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  user-select: none;
+}
+.params-table .params-th-sortable {
+  cursor: pointer;
+}
+.params-table .params-th-sortable:hover {
+  background: rgba(0,0,0,0.04);
+}
+.params-table .params-tr:hover {
+  background: var(--surface2);
+}
+.params-table .params-tr-edit {
+  background: rgba(196,132,26,0.06);  /* tint of --accent */
+}
+.params-table .params-td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text);
+}
+.params-table .params-td-mono {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.params-table .params-td-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+.params-table .params-td-hint {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 11px;
+}
+.params-system-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  background: rgba(0,0,0,0.06);
+  color: var(--muted);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.params-edit-btn,
+.params-delete-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  margin-left: 4px;
+  padding: 0;
+  line-height: 1;
+}
+.params-edit-btn:hover {
+  background: rgba(196,132,26,0.10);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.params-delete-btn:hover {
+  background: rgba(192,57,43,0.10);
+  color: var(--red);
+  border-color: var(--red);
+}
+.params-save-btn,
+.params-cancel-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-left: 4px;
+}
+.params-cancel-btn {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.params-save-btn:hover { filter: brightness(1.05); }
+.params-cancel-btn:hover { background: var(--border); }
+
+/* V78g — Boards parameters sub-section: per-board default-score editor */
+.params-board-score-input {
+  width: 70px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text);
+}
+.params-board-score-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.params-board-score-status {
+  margin-left: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.params-board-score-status.params-ok  { color: #15803d; }
+.params-board-score-status.params-err { color: var(--red); }
+
+/* V78g — Board picker dialog (shown by addToPipeline before creating a new card) */
+.kb-board-picker-help {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.kb-board-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kb-board-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--surface, #fff);
+}
+.kb-board-picker-row:hover { background: var(--surface2, #f8fafc); }
+.kb-board-picker-row input[type="radio"] { margin: 0; }
+.kb-board-picker-name {
+  flex: 1 1 auto;
+  font-weight: 500;
+  font-size: 14px;
+}
+.kb-board-picker-tag {
+  display: inline-block;
+  padding: 2px 6px;
+  background: rgba(0,0,0,0.06);
+  color: var(--muted);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.kb-board-picker-cancel-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.kb-board-picker-cancel-btn:hover { background: var(--surface2); }
+.kb-board-picker-confirm-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: auto;
+}
+.kb-board-picker-confirm-btn:hover { filter: brightness(1.05); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Note form (extended Type+Source dropdowns)
+   Added now even though note-form.js ships in 3.2 — having styles ready means
+   the form integrates cleanly without a CSS-deploy sequencing problem.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* V77.1 — Note form: Type select + Tag-a-contact share one row.
+   Both fields/chip locked to the same height (28px) so the row aligns. */
+.nf-top-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+  align-items: stretch;
+}
+.nf-type-select {
+  flex: 0 0 140px;
+  font-size: 12px;
+  height: 28px;
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+.nf-contact-wrap {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  height: 28px;
+}
+.nf-contact-search {
+  width: 100%;
+  height: 28px;
+  font-size: 12px;
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+.nf-contact-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #d4cdb8);
+  border-radius: 4px;
+  margin-top: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.nf-contact-result {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text);
+}
+.nf-contact-result:hover {
+  background: var(--surface2);
+}
+/* When picked, the chip replaces the input — same dimensions, same row */
+.nf-contact-tag {
+  background: rgba(196,132,26,0.10);
+  border: 1px solid rgba(196,132,26,0.40);
+  color: var(--accent);
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.nf-contact-tag-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+.nf-contact-clear {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.nf-contact-clear:hover {
+  color: var(--text);
+}
+.nf-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.nf-text-input {
+  flex: 1;
+}
+.nf-add-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  align-self: stretch;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Toast notification (used by InspectionsSection, AgencyAgreementsSection,
+   KanbanNewCard for action confirmations)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.v77-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--text);
+  color: var(--surface);
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  z-index: 10000;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+  max-width: 380px;
+}
+.v77-toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.v77-toast-success { background: var(--green); }
+.v77-toast-error   { background: var(--red); }
+.v77-toast-info    { background: var(--blue); }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Generic modal overlay (used by Inspection check-in, KanbanNewCard, etc.)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.v77-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.v77-modal {
+  background: var(--surface);
+  border-radius: 8px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  overflow: hidden;
+}
+.v77-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.v77-modal-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+.v77-modal-close {
+  background: transparent;
+  border: 0;
+  font-size: 18px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+}
+.v77-modal-close:hover { color: var(--text); }
+.v77-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+.v77-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--surface2);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Inspection Schedule + Attendances section
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.insp-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.insp-list { padding: 0; }
+.insp-loading,
+.insp-empty,
+.insp-error {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.insp-error { color: var(--red); }
+
+.insp-row {
+  border-bottom: 1px solid var(--border);
+}
+.insp-row:last-child { border-bottom: 0; }
+.insp-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.insp-row-header:hover { background: var(--surface2); }
+.insp-row-main {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  flex: 1;
+}
+.insp-row-date { font-weight: 600; font-size: 12px; }
+.insp-row-time { font-size: 12px; color: var(--text); }
+.insp-row-type {
+  font-size: 11px;
+  background: var(--surface2);
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--muted);
+}
+.insp-row-count { font-size: 11px; color: var(--muted); }
+.insp-row-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.insp-row-controls .insp-status-select {
+  font-size: 11px;
+  padding: 2px 6px;
+  width: auto;
+}
+.insp-row-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+  line-height: 1;
+}
+.insp-row-btn:hover { background: var(--surface2); color: var(--text); }
+.insp-row-chev {
+  font-size: 10px;
+  color: var(--muted);
+  margin-right: 8px;
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  transition: transform 0.15s;
+}
+.insp-row-expanded .insp-row-chev { transform: rotate(180deg); }
+
+.insp-attendances {
+  display: none;
+  background: var(--surface2);
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.insp-row-expanded .insp-attendances { display: block; }
+.insp-att-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+.insp-att-header {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.insp-att-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.insp-att-row:last-child { border-bottom: 0; }
+.insp-att-row-name { font-weight: 500; }
+.insp-att-row-checks {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.insp-att-row-checks label {
+  font-size: 11px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.insp-att-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  padding-right: 6px;
+}
+.insp-att-row-actions { white-space: nowrap; }
+
+.insp-att-add { margin-top: 8px; position: relative; }
+.insp-att-search {
+  width: 100%;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.insp-att-results {
+  position: fixed;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  z-index: 10000;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  display: none;
+}
+.insp-att-results.is-open { display: block; }
+.insp-att-result {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.insp-att-result:hover { background: var(--surface2); }
+.insp-att-result-name { font-weight: 600; }
+.insp-att-result-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+.insp-att-result-empty {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* V77.3 — "+ Create new contact" row at the bottom of the attendee
+   search results. Visually distinct from regular contact matches.
+   Sticky-bottom so it stays visible even when scrolling through many
+   matches inside the capped-height dropdown. */
+.insp-att-result-create {
+  background: var(--surface2);
+  border-top: 1px solid var(--border);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+.insp-att-result-create .insp-att-result-name {
+  color: var(--accent);
+}
+.insp-att-result-create:hover {
+  background: rgba(196,132,26,0.08);
+}
+
+.insp-add-row { padding: 10px 12px; border-top: 1px solid var(--border); }
+.insp-add-form { padding: 12px; background: var(--surface2); border-top: 1px solid var(--border); }
+.insp-form-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.insp-form-row input,
+.insp-form-row select { font-size: 12px; padding: 4px 8px; }
+.insp-form-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.insp-checkin-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.insp-checkin-checks label {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+/* V77.2d — Editable Contact fields in the inspection check-in dialog */
+.insp-checkin-help {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 4px 0 8px;
+}
+.insp-checkin-contact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+.insp-checkin-contact-grid .kb-field-wrap {
+  margin: 0;
+}
+@media (max-width: 540px) {
+  .insp-checkin-contact-grid { grid-template-columns: 1fr; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Agency Agreements section + report
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.aa-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.aa-loading,
+.aa-empty,
+.aa-error {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.aa-error { color: var(--red); }
+.aa-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.aa-row:last-child { border-bottom: 0; }
+.aa-row-main { flex: 1; }
+.aa-row-line1 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.aa-row-line2 {
+  display: flex;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.aa-row-sep { opacity: 0.5; }
+.aa-row-notes {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+.aa-row-actions { display: flex; gap: 4px; }
+
+.aa-type-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.aa-type-sale  { background: rgba(41,128,185,0.15); color: #2980b9; }
+.aa-type-lease { background: rgba(142,68,173,0.15); color: #8e44ad; }
+
+.aa-status-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+}
+.aa-status-pending    { background: rgba(196,132,26,0.15); color: var(--accent); }
+.aa-status-active     { background: rgba(39,174,96,0.15);  color: var(--green); }
+.aa-status-expired    { background: rgba(0,0,0,0.06);       color: var(--muted); }
+.aa-status-terminated { background: rgba(192,57,43,0.15);  color: var(--red); }
+
+.aa-row-company { font-weight: 500; }
+
+.aa-add-row { padding: 10px 12px; border-top: 1px solid var(--border); }
+.aa-add-form { padding: 12px; background: var(--surface2); border-top: 1px solid var(--border); }
+.aa-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.aa-form-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.aa-org-results {
+  position: absolute;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  z-index: 10;
+  max-height: 180px;
+  overflow-y: auto;
+  max-width: 100%;
+}
+.aa-org-result {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.aa-org-result:hover { background: var(--surface2); }
+.aa-org-result-empty {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* Settings → Agency Agreements report table */
+.aar-table { font-size: 12px; }
+.aar-empty,
+.aar-loading,
+.aar-error {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.aar-error { color: var(--red); }
+.aar-open-btn:hover {
+  background: rgba(196,132,26,0.10);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Kanban "+ New Card" button + flow dialog
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.knc-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  font-weight: 500;
+}
+.knc-btn:hover { filter: brightness(1.05); }
+
+.knc-loading {
+  padding: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.knc-step-summary {
+  background: var(--surface2);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.knc-step-label { color: var(--muted); margin-right: 4px; }
+.knc-step-back {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0 4px;
+}
+.knc-results {
+  margin-top: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.knc-results:empty { display: none; }
+.knc-result {
+  padding: 8px 10px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.knc-result:last-child { border-bottom: 0; }
+.knc-result:hover { background: var(--surface2); }
+.knc-result-selected {
+  background: rgba(196,132,26,0.10);
+  border-left: 3px solid var(--accent);
+  padding-left: 7px;
+}
+.knc-result-main { font-size: 13px; font-weight: 500; }
+.knc-result-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* V77.3 — "+ Create new contact" row at the bottom of the results list.
+   Visually distinct from regular search-match rows. Sticky-bottom so it
+   stays visible while scrolling through the capped-height dropdown. */
+.knc-result-create {
+  background: var(--surface2);
+  border-top: 1px solid var(--border);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+.knc-result-create .knc-result-main {
+  color: var(--accent);
+}
+.knc-result-create:hover {
+  background: rgba(196,132,26,0.08);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1b — Listing Summary section (Enquiry deal modals)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.ls-summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+.ls-loading,
+.ls-empty,
+.ls-error {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--surface2);
+  border-radius: 6px;
+}
+.ls-error { color: var(--red); }
+.ls-row {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed var(--border);
+}
+.ls-row:last-child { border-bottom: 0; }
+.ls-label {
+  width: 130px;
+  color: var(--muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.ls-value {
+  flex: 1;
+  color: var(--text);
+}
+.ls-value-prom {
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 14px;
+}
+.ls-status-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: 6px;
+}
+.ls-status-active   { background: rgba(39,174,96,0.15);  color: var(--green); }
+.ls-status-won      { background: rgba(39,174,96,0.15);  color: var(--green); }
+.ls-status-lost     { background: rgba(192,57,43,0.15);  color: var(--red); }
+.ls-status-archived { background: rgba(0,0,0,0.06);       color: var(--muted); }
+.ls-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+.knc-listing-stage {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  background: var(--surface2);
+  border-radius: 3px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Lease Terms section (Lease Listings only)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.kb-lease-terms {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.kb-lease-rent-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.kb-lease-period-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface2);
+  align-self: flex-end;
+  margin-bottom: 0;
+}
+.kb-lease-period-btn {
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 500;
+}
+.kb-lease-period-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
+.kb-lease-period-btn:not(.active):hover {
+  background: rgba(0,0,0,0.04);
+  color: var(--text);
+}
+.kb-lease-special {
+  resize: vertical;
+  min-height: 50px;
+  font-family: inherit;
+}
+
+/* V77.1 — Picked-existing-contact banner inside Add Contact form */
+.crm-pick-banner {
+  background: rgba(196,132,26,0.10);
+  border: 1px solid rgba(196,132,26,0.35);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.crm-pick-clear {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+/* V77.1 — Locked field appearance (when picking existing contact) */
+.kb-input-locked {
+  background: var(--surface2) !important;
+  color: var(--muted) !important;
+  cursor: not-allowed !important;
+}
+.kb-input-locked:focus {
+  outline: none !important;
+}
+
+/* V77.1 — Pick banner buttons */
+.crm-pick-banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.crm-pick-edit-master {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 3px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.crm-pick-edit-master:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* V77.1c — Domain duplicate dialog */
+.dom-dup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.dom-dup-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+}
+.dom-dup-row:hover { background: var(--surface2); }
+.dom-dup-row-main { flex: 1; min-width: 0; }
+.dom-dup-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dom-dup-use {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Validation section (Lease Enquiry deals)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.val-section .val-help {
+  font-size: 11px; color: var(--muted);
+  margin-top: 3px; margin-bottom: 6px;
+}
+.val-list {
+  display: flex; flex-direction: column; gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.val-item {
+  display: flex; gap: 8px; align-items: center;
+  font-size: 13px; color: var(--text);
+  cursor: pointer;
+  padding: 3px 0;
+}
+.val-item:hover { color: var(--accent); }
+.val-item input[type="checkbox"] {
+  margin: 0; cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Lease Offers Received (Lease Listing deals)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.lor-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.lor-loading, .lor-empty { color: var(--muted); font-size: 12px; padding: 6px 0; }
+
+.lor-row {
+  display: flex; gap: 10px; align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.lor-row:hover { background: var(--surface2); }
+.lor-row-main { flex: 1; min-width: 0; }
+.lor-row-headline {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  font-size: 13px;
+}
+.lor-enquirer { color: var(--text); }
+.lor-rent { font-weight: 600; color: var(--accent); }
+.lor-meta {
+  font-size: 11px; color: var(--muted); margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lor-status {
+  display: inline-block;
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 2px 6px; border-radius: 3px;
+  background: var(--surface2); color: var(--muted);
+  white-space: nowrap;
+}
+.lor-status-draft          { background: #ebe6dc; color: #7a7366; }
+.lor-status-submitted      { background: #d6e7f5; color: #2c5985; }
+.lor-status-offer-accepted { background: #d4ead4; color: #2d6e2d; }
+.lor-status-rejected       { background: #f3d7d4; color: #8b2a1f; }
+.lor-status-withdrawn      { background: #ebe6dc; color: #8a7a55; }
+.lor-status-leased         { background: #c8e0c8; color: #1d5a1d; }
+.lor-status-validated      { background: #cee7ea; color: #266872; }
+.lor-status-evidence-submitted { background: #e6dcec; color: #533879; }
+
+.lor-open-btn {
+  background: transparent; border: 1px solid var(--accent);
+  color: var(--accent); padding: 3px 8px; border-radius: 3px;
+  font-size: 11px; cursor: pointer; flex-shrink: 0;
+  font-weight: 500;
+}
+.lor-open-btn:hover { background: var(--accent); color: #fff; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Note display: type & source badges (kanban deal modal)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.kb-note-type-badge,
+.kb-note-source-badge {
+  display: inline-block;
+  font-size: 10px; font-weight: 500;
+  padding: 1px 6px; border-radius: 3px;
+  margin-left: 6px;
+  vertical-align: baseline;
+}
+.kb-note-type-badge {
+  background: #e8e2d6; color: #6b5f44;
+}
+.kb-note-source-badge {
+  background: rgba(196,132,26,0.12); color: var(--accent);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Per-Enquiry context capture in "+ New Card" Step 2
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.knc-enquiry-context { /* Already styled via inline border-top — reserved class hook */ }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Enquiry kanban card layout
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* V77.1 — Enquiry cards reuse .kb-card-type (small label, top) and .kb-card-price (big gold headline)
+   for visual consistency with Listing cards. The "price" slot displays the contact name on Enquiry boards. */
+
+/* V77.1 — Card-level interest slider replaced by a number badge (.kb-ind-interest) and the slider in the deal modal. */
+
+/* Enquiry-specific badge variants (extend .kb-ind base styling) */
+.kb-ind-enq                  { background: var(--surface2); color: var(--text); }
+.kb-ind-offer-submitted      { background: #d6e7f5 !important; color: #2c5985 !important; }
+.kb-ind-evidence             { background: #e6dcec !important; color: #533879 !important; }
+.kb-ind-rent                 { background: #d4ead4 !important; color: #2d6e2d !important; font-weight: 600; }
+.kb-ind-inspected            { background: #cee7ea !important; color: #266872 !important; }
+.kb-ind-contract             { background: #f5e7d6 !important; color: #855e2c !important; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.1 — Interest slider + Status select inside deal modal
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.kb-modal-interest {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.kb-interest-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.kb-modal-interest-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: var(--surface2);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  margin: 0;
+}
+.kb-modal-interest-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  cursor: grab;
+}
+.kb-modal-interest-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  cursor: grab;
+}
+.kb-modal-interest-value {
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--accent);
+  min-width: 32px;
+  text-align: right;
+}
+.kb-modal-interest-help {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+  text-align: center;
+}
+
+.kb-modal-status-select {
+  width: 100%;
+  font-size: 13px;
+}
+
+/* Interest badge on kanban card */
+.kb-ind-interest {
+  background: rgba(196,132,26,0.15) !important;
+  color: var(--accent) !important;
+  font-weight: 600;
+}
+
+/* V77.1 — Contacts section: static header (always expanded). Heading matches
+   other section labels; "+ Add" sits on the right. */
+.crm-static-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  margin-bottom: 4px;
+  gap: 8px;
+}
+.crm-static-header .crm-add-btn {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 3px 10px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.crm-static-header .crm-add-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.crm-count { color: var(--muted); font-weight: 400; font-size: 11px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2 — Notifications settings page
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.notif-page {
+  max-width: 720px;
+}
+
+.notif-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 22px;
+  margin-bottom: 18px;
+}
+
+.notif-section-placeholder {
+  background: var(--surface2);
+  border-style: dashed;
+  opacity: 0.75;
+}
+
+.notif-section-header h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.notif-section-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+
+.notif-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.notif-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notif-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.notif-input {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
+  font-size: 13px;
+}
+
+.notif-desc {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.notif-row-error {
+  color: #b91c1c;
+  font-size: 12px;
+  background: #fee2e2;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-top: 4px;
+}
+
+.notif-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.notif-save-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+
+/* ════════════════════════════════════════════════════════════════════════════
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2 — Lease Offer section (Lease Enquiry deals)
+   Heading uses kb-fin-pick-header pattern (right-aligned action button).
+   Each offer row is block-level: summary on top, body expands DOWNWARD beneath.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.lo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  margin-bottom: 12px;
+}
+
+.lo-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 0;
+}
+
+/* ── Row container (block-level, children stack vertically) ─────────── */
+.lo-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.lo-row-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.lo-row-summary:hover {
+  background: var(--surface2);
+}
+
+.lo-row-toggle {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--muted);
+  padding: 0;
+  width: 14px;
+  flex: 0 0 auto;
+}
+
+.lo-rent {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lo-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.lo-row-actions-inline {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.lo-delete-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.lo-delete-btn:hover {
+  background: rgba(192,57,43,0.08);
+  border-color: #c0392b;
+  color: #c0392b;
+}
+
+/* Status pill */
+.lo-status {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+.lo-status-draft               { background: #ebe6dc; color: #7a7366; }
+.lo-status-submitted           { background: #d6e7f5; color: #2c5985; }
+.lo-status-offer_accepted      { background: #d4ead4; color: #2d6e2d; }
+.lo-status-evidence_submitted  { background: #cde2f0; color: #1d4ed8; }
+.lo-status-validated           { background: #cee7ea; color: #266872; }
+.lo-status-leased              { background: #c8e0c8; color: #1d5a1d; }
+.lo-status-rejected            { background: #f3d7d4; color: #8b2a1f; }
+.lo-status-withdrawn           { background: #ebe6dc; color: #8a7a55; }
+
+/* ── Expanded body (sits below summary, full width of row) ─────────── */
+.lo-row-body {
+  border-top: 1px solid var(--border);
+  padding: 10px;
+  background: var(--surface2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Submitted-offer detail tables ─────────────────────────────────── */
+.lo-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lo-detail-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+}
+
+.lo-detail-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.lo-primary-tag {
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lo-detail-table {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+.lo-detail-table th {
+  text-align: left;
+  padding: 3px 8px 3px 0;
+  font-weight: 500;
+  color: var(--muted);
+  width: 150px;
+  vertical-align: top;
+}
+.lo-detail-table td {
+  padding: 3px 0;
+  color: var(--text);
+  word-break: break-word;
+}
+.lo-detail-table th.lo-subhead {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  padding-top: 6px;
+  width: auto;
+  border-top: 1px dashed var(--border);
+}
+
+/* ── Token block (Offer Form / Evidence Upload Form magic-link UI) ──── */
+.lo-token-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lo-token-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lo-token-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.lo-token-url-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.lo-token-url {
+  flex: 1;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Mono', 'Monaco', monospace;
+  font-size: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 6px;
+  color: var(--text);
+  min-width: 0;
+}
+
+.lo-token-action-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 4px 9px;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 500;
+}
+.lo-token-action-btn:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.lo-token-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lo-token-meta {
+  font-size: 10px;
+  color: var(--muted);
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.lo-token-email {
+  font-weight: 500;
+  color: var(--text);
+}
+.lo-token-sep {
+  color: var(--border);
+}
+.lo-token-state-pending  { color: #c4841a; }
+.lo-token-state-verified { color: #15803d; }
+.lo-token-state-done     { color: #15803d; font-weight: 600; }
+
+/* ── "Send link" empty-state row (same shape as a populated row) ───── */
+.lo-token-row-empty .lo-token-url-row {
+  /* Single-button row — let the button take available width but cap it */
+}
+.lo-token-row-empty .lo-issue-btn {
+  flex: 0 1 auto;
+}
+
+.lo-issue-btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lo-issue-btn:hover    { opacity: 0.9; }
+.lo-issue-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Decision row (Accept / Reject) ──────────────────────────────────── */
+.lo-decision-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.lo-accept-btn {
+  background: #15803d;
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-accept-btn:hover    { background: #166534; }
+.lo-accept-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.lo-reject-btn {
+  background: transparent;
+  color: #b91c1c;
+  border: 1px solid #b91c1c;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lo-reject-btn:hover    { background: rgba(185, 28, 28, 0.08); }
+.lo-reject-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2c — Retention Policy sub-page
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.notif-policy-box {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 12px 14px;
+  margin-top: 8px;
+}
+.notif-policy-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+.notif-policy-body {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.notif-policy-body code {
+  background: var(--surface);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.notif-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 14px;
+  background: var(--surface2);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.retention-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.retention-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
+.retention-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.retention-row-headline {
+  font-size: 13px;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.retention-row-property {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.retention-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.retention-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.retention-purge-btn {
+  font-size: 12px;
+  padding: 5px 12px;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V77.2d — Application & Evidence review block (inside expanded offer row)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.lo-review-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lo-review-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--accent);
+}
+
+.lo-review-consents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lo-consent-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+}
+.lo-consent-yes { background: #d4ead4; color: #1d5a1d; }
+.lo-consent-no  { background: #f3d7d4; color: #8b2a1f; }
+
+.lo-review-section {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 10px 12px;
+}
+
+.lo-review-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.lo-review-applicant,
+.lo-review-entry {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.lo-review-applicant:last-child,
+.lo-review-entry:last-child { margin-bottom: 0; }
+
+.lo-review-applicant-head,
+.lo-review-entry-head {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.lo-review-entry-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.lo-review-points {
+  font-weight: 600;
+  color: #15803d;
+}
+.lo-review-points-low {
+  color: #b91c1c;
+}
+
+.lo-review-files {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.lo-review-files li {
+  font-size: 12px;
+  padding: 3px 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.lo-review-file-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lo-review-file-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.lo-review-view-link {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 11px;
+  text-decoration: none;
+  font-weight: 600;
+  padding: 1px 7px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+}
+.lo-review-view-link:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.lo-review-empty {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.lo-review-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lo-review-check {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.lo-review-check input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+.lo-review-check input:disabled + * { cursor: default; }
+.lo-review-check input:disabled,
+.lo-review-check input:disabled ~ * {
+  opacity: 0.7;
+}
+
+.lo-review-notes-row {
+  margin-top: 6px;
+}
+
+.lo-review-notes {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+  box-sizing: border-box;
+}
+.lo-review-notes:disabled { opacity: 0.7; cursor: not-allowed; }
+
+.lo-review-meta {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* V81.4 — Lease document slot styles. Each slot row in the agent review
+   "Lease Documents" section: an entry-head with the slot label + "+ Upload"
+   button, a list of files each carrying an origin badge (applicant/agent)
+   and (for agent uploads) a Delete button. */
+.lo-review-doc-slot .lo-review-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lo-review-doc-upload-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-review-doc-upload-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+.lo-review-doc-upload-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.lo-review-doc-origin {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.lo-review-doc-origin-applicant {
+  background: rgba(196, 132, 26, 0.12);
+  color: #8a5a0e;
+}
+.lo-review-doc-origin-agent {
+  background: rgba(21, 128, 61, 0.12);
+  color: #15803d;
+}
+.lo-review-doc-delete-btn {
+  flex-shrink: 0;
+  background: transparent;
+  color: #b91c1c;
+  border: 1px solid #b91c1c;
+  border-radius: 3px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-review-doc-delete-btn:hover:not(:disabled) {
+  background: #b91c1c;
+  color: #fff;
+}
+.lo-review-doc-delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lo-review-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.lo-validate-btn {
+  background: #15803d;
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-validate-btn:hover:not(:disabled) { background: #166534; }
+.lo-validate-btn:disabled            { opacity: 0.5; cursor: not-allowed; }
+
+.lo-resubmit-btn {
+  background: transparent;
+  color: #c4841a;
+  border: 1px solid #c4841a;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lo-resubmit-btn:hover:not(:disabled) { background: rgba(196, 132, 26, 0.08); }
+.lo-resubmit-btn:disabled             { opacity: 0.5; cursor: not-allowed; }
+
+/* New status pill for resubmit_requested */
+.lo-status-evidence_resubmit_requested  { background: #fef3c7; color: #92400e; }
+
+/* V78 — Step 1 Request Offer Resubmit button (mirrors lo-resubmit-btn) */
+.lo-offer-resubmit-btn {
+  background: transparent;
+  color: #c4841a;
+  border: 1px solid #c4841a;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.lo-offer-resubmit-btn:hover:not(:disabled) { background: rgba(196, 132, 26, 0.08); }
+.lo-offer-resubmit-btn:disabled             { opacity: 0.5; cursor: not-allowed; }
+
+/* V78 — Status pill for offer_resubmit_requested */
+.lo-status-offer_resubmit_requested { background: #fef3c7; color: #92400e; }
+
+/* ────────────────────────────────────────────────────────────────────────────
+   V78b — Inline-edit Offer Terms (agent overrides after verbal negotiation)
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.lo-terms-edit-btn {
+  margin-left: 10px;
+  background: transparent;
+  color: var(--accent, #c4841a);
+  border: 1px solid var(--accent, #c4841a);
+  border-radius: 3px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.lo-terms-edit-btn:hover { background: rgba(196, 132, 26, 0.08); }
+
+.lo-terms-edit input.lo-terms-input,
+.lo-terms-edit textarea.lo-terms-input {
+  width: 110px;
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid #d4d4d4;
+  border-radius: 3px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.lo-terms-edit textarea.lo-terms-textarea {
+  width: 100%;
+  min-height: 38px;
+  resize: vertical;
+}
+.lo-terms-edit input[type="date"].lo-terms-input { width: 150px; }
+.lo-terms-suffix {
+  font-size: 12px;
+  color: #666;
+  margin-left: 6px;
+}
+.lo-terms-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.lo-terms-save-btn {
+  background: #15803d;
+  color: #fff;
+  border: 1px solid #15803d;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lo-terms-save-btn:hover:not(:disabled) { background: #166534; }
+.lo-terms-save-btn:disabled             { opacity: 0.5; cursor: not-allowed; }
+.lo-terms-cancel-btn {
+  background: transparent;
+  color: #666;
+  border: 1px solid #d4d4d4;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lo-terms-cancel-btn:hover { background: #f5f5f5; }
+
+.lo-terms-amended-line {
+  font-size: 11px;
+  color: #666;
+  font-style: italic;
+  margin-top: 6px;
+}
+
+/* V78c — Multi-enquirer contact picker dialog (shown from + New Offer when
+   an Enquiry deal has more than one linked Contact). */
+.lo-picker-help {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 12px;
+}
+.lo-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lo-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 4px;
+  cursor: pointer;
+  background: #fff;
+}
+.lo-picker-row:hover { background: #f8fafc; }
+.lo-picker-row input[type="radio"] { margin: 0; }
+.lo-picker-name {
+  flex: 0 0 auto;
+  font-weight: 600;
+  font-size: 13px;
+}
+.lo-picker-email {
+  flex: 1 1 auto;
+  color: #666;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lo-picker-cancel-btn {
+  background: transparent;
+  color: #666;
+  border: 1px solid #d4d4d4;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lo-picker-cancel-btn:hover { background: #f5f5f5; }
+.lo-picker-send-btn {
+  background: var(--accent, #c4841a);
+  color: #fff;
+  border: 1px solid var(--accent, #c4841a);
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: auto;
+}
+.lo-picker-send-btn:hover { background: #a86f15; }
+
+/* ────────────────────────────────────────────────────────────────────────────
+   V77.2g — Roles "Board Default" multi-select widget + chips
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.params-board-chip {
+  display: inline-block;
+  background: rgba(196, 132, 26, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(196, 132, 26, 0.3);
+  border-radius: 3px;
+  padding: 1px 7px;
+  font-size: 11px;
+  margin: 1px 3px 1px 0;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.params-empty-marker {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.params-multi-select {
+  position: relative;
+  min-width: 180px;
+}
+.params-multi-select-trigger {
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.params-multi-select-trigger:hover { border-color: var(--accent); }
+.params-multi-select-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.params-multi-select-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.16);
+  z-index: 100;
+  max-height: 240px;
+  overflow-y: auto;
+  min-width: 220px;
+}
+
+.params-board-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.params-board-opt:hover { background: var(--surface2); }
+.params-board-opt input { margin: 0; }
+
+/* V80 — Attendee row in a "pending changes" state (tickbox toggled but not
+   yet flushed; flush happens on deal-modal close). Subtle yellow tint so
+   the agent can see what's unsaved without being intrusive. */
+.insp-att-row-dirty {
+  background: #fffbeb;
+  border-left: 3px solid #f59e0b;
+  padding-left: 5px;
+}
+
+/* V80.2 — MoSCoW band labels under the Interest slider.
+   Labels positioned at 0%, 33%, 66%, 100% of the track, equally spaced
+   from far-left to far-right under the slider. The container is relative
+   so absolute-positioned labels use the slider's full width.
+   The slider has 12px of horizontal padding (slider-row gap to value);
+   we account for that by using calc() inside the position so labels align
+   with the underlying track ends, not the row container ends. */
+.kb-interest-moscow {
+  position: relative;
+  margin-top: 8px;
+  height: 14px;
+  /* The slider inside .kb-interest-row sits with 12px gap before the value
+     element; track therefore spans roughly from 0 to (100% - 32px - 12px).
+     For visual simplicity we align labels to the FULL row width since the
+     label text wraps slightly in either direction; small misalignment vs
+     the actual thumb position is acceptable. */
+  padding-right: 44px; /* matches the value indicator + gap on the right */
+}
+.kb-interest-moscow-label {
+  position: absolute;
+  top: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  /* translateX(-50%) on the middle two so they centre on their position;
+     the 0% label hugs left, the 100% label hugs right. */
+}
+.kb-interest-moscow-label[style*="left:0%"]   { transform: translateX(0%); }
+.kb-interest-moscow-label[style*="left:25%"]  { transform: translateX(-50%); }
+.kb-interest-moscow-label[style*="left:50%"]  { transform: translateX(-50%); }
+.kb-interest-moscow-label[style*="left:75%"]  { transform: translateX(-50%); }
+
+/* V80.2 — MoSCoW band tints on the Interest badge.
+   Subtle backgrounds keep cards readable while signalling priority at a glance. */
+.kb-ind-interest-wont   { background:#f1f5f9 !important; color:#64748b !important; }
+.kb-ind-interest-could  { background:#fef3c7 !important; color:#92400e !important; }
+.kb-ind-interest-should { background:#dbeafe !important; color:#1e40af !important; }
+.kb-ind-interest-must   { background:#fee2e2 !important; color:#991b1b !important; }
+
+/* V80.4 — Kanban sort-order picker. Matches the board-select chrome. */
+.kb-sort-select {
+  padding: 6px 28px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  transition: background 0.1s;
+  appearance: auto;
+  max-width: 200px;
+}
+.kb-sort-select:hover { background: var(--surface2); }
+
+.kb-sort-label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0 4px 0 8px;
+  align-self: center;
+  white-space: nowrap;
+}

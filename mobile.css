@@ -1,0 +1,1033 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   mobile.css — V78
+   iPhone/iPad responsive layer for PropMap.
+   Loaded after styles.css + crm-styles.css so it can override.
+   Scope: listing-agent inspection check-in workflow (per V78 build plan).
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ─── Upcoming Inspections panel (desktop + mobile) ───────────────────────
+   Triggered from user-menu → Upcoming Inspections. Full-screen overlay,
+   listing cards sorted by earliest upcoming inspection time.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.v78-upcoming-panel {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 9500;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.v78-upcoming-panel-header {
+  display: flex;
+  align-items: center;
+  padding: 14px 18px;
+  padding-top: calc(env(safe-area-inset-top) + 14px);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  gap: 12px;
+}
+.v78-upcoming-panel-back {
+  background: none;
+  border: none;
+  font-size: 22px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 4px 10px;
+  margin-left: -10px;
+  min-width: 40px;
+  min-height: 40px;
+}
+.v78-upcoming-panel-title {
+  font-family: 'DM Serif Display', serif;
+  font-size: 19px;
+  flex: 1;
+  color: var(--text);
+}
+.v78-upcoming-panel-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px 10px;
+  min-width: 40px;
+  min-height: 40px;
+}
+.v78-upcoming-panel-close:hover { color: var(--text); }
+
+.v78-upcoming-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 16px);
+  max-width: 800px;
+  width: 100%;
+  margin: 0 auto;
+}
+.v78-upcoming-panel-loading,
+.v78-upcoming-panel-empty {
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.v78-upcoming-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.v78-upcoming-card:hover {
+  background: var(--surface2);
+  border-color: var(--accent);
+}
+.v78-upcoming-card:active {
+  background: rgba(196,132,26,0.08);
+}
+.v78-upcoming-card-when {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.v78-upcoming-card-date {
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 13px;
+}
+.v78-upcoming-card-time {
+  color: var(--text);
+  font-weight: 500;
+}
+.v78-upcoming-card-type {
+  background: var(--surface2);
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.v78-upcoming-card-more {
+  background: rgba(196,132,26,0.12);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.v78-upcoming-card-addr {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+.v78-upcoming-card-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ─── Foundation — applies at all sizes ──────────────────────────────────── */
+
+/* Use dynamic viewport height so iOS Safari URL bar collapse doesn't
+   leave the body taller than the viewport. Fallback to vh on older
+   browsers (iOS 26+ supports dvh). */
+html, body {
+  height: 100dvh;
+}
+@supports not (height: 100dvh) {
+  html, body { height: 100vh; }
+}
+
+/* Safe-area inset reservation on the main app header so notch / status bar
+   doesn't cover content. Only kicks in on devices with safe-area; no-op on
+   desktop. */
+header {
+  padding-top: env(safe-area-inset-top);
+  height: calc(56px + env(safe-area-inset-top));
+}
+
+/* Touch-target minimum on all interactive controls — 44px per Apple HIG */
+@media (hover: none) and (pointer: coarse) {
+  button, .module-nav-btn, .panel-btn, .kb-toolbar-btn,
+  .crm-tab, .params-save-btn, .params-cancel-btn,
+  .crm-add-btn, .crm-search-item {
+    min-height: 44px;
+  }
+  /* Inputs that are interactive (not display-only) */
+  input[type="text"], input[type="email"], input[type="tel"],
+  input[type="search"], input[type="number"], input[type="date"],
+  input[type="time"], input[type="password"],
+  select, textarea {
+    min-height: 44px;
+    font-size: 16px;       /* Prevents iOS Safari auto-zoom on focus */
+  }
+  /* Smaller inputs that intentionally stay compact (table cells etc.)
+     opt out via .input-compact */
+  .input-compact, input.input-compact {
+    min-height: 32px !important;
+    font-size: 13px !important;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ─── MOBILE — ≤ 600px ────────────────────────────────────────────────────
+   ════════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 600px) {
+
+  /* ── App chrome ───────────────────────────────────────────────────────── */
+
+  body { font-size: 14px; }
+
+  header {
+    padding: 0 12px;
+    padding-top: env(safe-area-inset-top);
+    height: calc(48px + env(safe-area-inset-top));
+  }
+  .logo { font-size: 17px; }
+
+  /* Hide address-search box (Mapping module is desktop-only on phone) */
+  .address-search { display: none; }
+
+  /* Module nav → hamburger drawer */
+  .module-nav {
+    display: none;
+  }
+  .module-nav.mobile-drawer-open {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: calc(48px + env(safe-area-inset-top));
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    z-index: 2400;
+    padding: 8px 12px;
+    gap: 4px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+  }
+  .module-nav.mobile-drawer-open .module-nav-btn {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 12px 14px;
+    font-size: 15px;
+  }
+  .module-nav.mobile-drawer-open .tools-dropdown-anchor {
+    width: 100%;
+  }
+  .module-nav.mobile-drawer-open .tools-dropdown-anchor .module-nav-btn {
+    width: 100%;
+  }
+
+  /* Mobile hamburger button — injected via JS */
+  .v78-hamburger {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 0;
+    color: var(--text);
+  }
+  .v78-hamburger svg { width: 20px; height: 20px; }
+
+  /* Backdrop behind drawer */
+  .v78-mobile-drawer-backdrop {
+    position: fixed;
+    inset: calc(48px + env(safe-area-inset-top)) 0 0 0;
+    background: rgba(0,0,0,0.35);
+    z-index: 2399;
+  }
+
+  /* User-menu — collapse name, keep avatar visible only */
+  .user-menu-name { display: none !important; }
+  .user-menu-btn { padding: 6px 8px !important; min-height: 40px; }
+
+  /* ── Module views — push start below shorter mobile header ────────────── */
+  .kanban-view,
+  .crm-view,
+  .finance-view,
+  #crmView,
+  .lo-page-wrap {
+    inset: calc(48px + env(safe-area-inset-top)) 0 0 0 !important;
+  }
+
+  /* Sidebar (Mapping module) — desktop-only on mobile per scope */
+  .sidebar { display: none !important; }
+
+  /* ── Kanban view mobile shell ─────────────────────────────────────────── */
+
+  .kanban-header {
+    flex-direction: column;
+    align-items: stretch;
+    height: auto;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  .kanban-title {
+    font-size: 15px;
+    margin-bottom: 0;
+  }
+  .kanban-header-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+  }
+  .kanban-header-controls > * {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .kb-search-input {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: 1 1 100% !important;
+  }
+  .kb-board-select {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+  .kb-toolbar-btn {
+    font-size: 13px;
+    padding: 0 10px;
+  }
+  /* Hide secondary toolbar buttons on mobile to keep things tight */
+  .kb-editcols-toggle { display: none !important; }
+
+  /* Column picker (replaces horizontal scrolling columns) — injected via JS */
+  .v78-col-picker-wrap {
+    padding: 8px 12px 0;
+    background: var(--bg);
+    flex-shrink: 0;
+  }
+  .v78-col-picker {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text);
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23666' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    padding-right: 36px;
+  }
+
+  /* Kanban board — single-column on mobile */
+  .kb-board {
+    flex-direction: column !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding: 12px !important;
+    gap: 0 !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Hide all columns; JS will un-hide the active one */
+  .kb-col {
+    display: none !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+  .kb-col.v78-active-col {
+    display: flex !important;
+    flex: 1 1 auto !important;
+  }
+  .kb-col-header {
+    /* Header is shown by the column picker dropdown — hide native header */
+    display: none !important;
+  }
+  .kb-cards { padding: 0 !important; gap: 8px !important; }
+
+  /* Cards — bigger tap targets, larger price */
+  .kb-card {
+    padding: 12px !important;
+    border-radius: 8px;
+  }
+  .kb-card-price { font-size: 16px !important; }
+  .kb-card-addr { font-size: 13px !important; }
+  /* Remove drag affordance on mobile */
+  .kb-card { cursor: pointer !important; user-select: none; }
+  .kb-card[draggable] { -webkit-user-drag: none !important; }
+
+  /* ── Modal — full-screen sheet ────────────────────────────────────────── */
+
+  .kb-modal-overlay,
+  .crm-modal-overlay,
+  .v77-modal-overlay {
+    padding: 0 !important;
+    align-items: stretch !important;
+    justify-content: stretch !important;
+    background: var(--bg);
+    backdrop-filter: none;
+  }
+  .kb-modal,
+  .crm-modal,
+  .v77-modal {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  /* Sticky header inside the full-screen modal */
+  .kb-modal-header,
+  .crm-modal-header,
+  .v77-modal-header,
+  .crm-form-title,
+  .params-modal-header {
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    z-index: 10;
+    padding-top: calc(env(safe-area-inset-top) + 14px);
+  }
+  /* Sticky footer */
+  .kb-modal-footer,
+  .crm-modal-footer,
+  .v77-modal-footer,
+  .crm-form-actions,
+  .params-modal-footer {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    z-index: 10;
+    padding: 12px 16px;
+    padding-bottom: calc(env(safe-area-inset-bottom) + 12px);
+  }
+  /* Modal body scrolls; smooth on iOS */
+  .kb-modal-body,
+  .crm-modal-body,
+  .v77-modal-body {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;  /* Stop pull-to-refresh inside modal */
+    padding: 14px 16px !important;
+  }
+  /* Close button — bigger tap target on mobile */
+  .kb-modal-close,
+  .crm-modal-close,
+  .v77-modal-close {
+    min-width: 40px;
+    min-height: 40px;
+    font-size: 22px !important;
+  }
+
+  /* Form rows in modals stack vertically on mobile */
+  .crm-form-row,
+  .kb-form-row,
+  .v77-form-row {
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+
+  /* DD grid (17-row table) — single column on mobile */
+  .kb-modal .kb-dd {
+    grid-template-columns: 1fr !important;
+  }
+  .kb-modal .kb-dd-row {
+    border-right: none !important;
+    border-bottom: 1px solid var(--border) !important;
+  }
+
+  /* Notes / Actions sections — full width */
+  .kb-note-text { font-size: 14px; line-height: 1.5; }
+
+  /* ── Inspections section (the V78 headline) ───────────────────────────── */
+
+  .insp-row,
+  .v77-insp-row {
+    padding: 14px 12px !important;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .insp-row-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+  .insp-row-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .insp-row-actions button {
+    flex: 1 1 auto;
+    font-size: 13px;
+    padding: 10px 12px;
+  }
+
+  /* Attendee row — vertical stack */
+  .insp-att-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    padding: 12px !important;
+  }
+  .insp-att-row-actions {
+    white-space: normal !important;
+    display: flex !important;
+    gap: 6px !important;
+    flex-wrap: wrap !important;
+  }
+  /* Tickbox grids — vertical stack on mobile */
+  .insp-checkin-contact-grid,
+  .insp-tickbox-grid,
+  .v77-tickbox-grid {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
+  .insp-tickbox-row,
+  .v77-tickbox-row {
+    min-height: 44px;
+    padding: 8px 4px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+  .insp-tickbox-row input[type="checkbox"],
+  .v77-tickbox-row input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+  .insp-tickbox-divider,
+  .v77-tickbox-divider {
+    border-top: 1px solid var(--border);
+    margin: 8px 0;
+  }
+
+  /* Register Attendees sub-modal — full screen */
+  .insp-attendees-modal {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+  }
+
+  /* Search input + results inside Register Attendees */
+  .insp-att-search,
+  .insp-att-search-results {
+    width: 100% !important;
+  }
+  .insp-att-search-results .crm-search-item {
+    padding: 14px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* V78 — On mobile, the JS positioning math (which uses getBoundingClientRect
+     and the visual viewport) gets tangled by the iOS keyboard and full-screen
+     modal layout. Override `.insp-att-results` to flow as a normal inline
+     block below the search input — no fixed positioning, no flip-above logic.
+     The iOS keyboard then scrolls the input into view naturally and the
+     dropdown sits directly below where the agent expects it. */
+  .insp-att-results {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 320px !important;
+    margin-top: 6px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
+  }
+  /* Hide the .is-open requirement — show whenever populated */
+  .insp-att-results:not(:empty) {
+    display: block !important;
+  }
+  .insp-att-results:empty {
+    display: none !important;
+  }
+  .insp-att-result,
+  .insp-att-result-create {
+    padding: 14px 12px !important;
+    font-size: 14px !important;
+  }
+
+  /* ── + New Card two-step modal ────────────────────────────────────────── */
+
+  .knc-results,
+  .knc-contact-results {
+    max-height: 50dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .knc-enquiry-context {
+    padding-top: 14px;
+  }
+  .knc-enquiry-context > div[style*="display:flex"] {
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+
+  /* ── CRM views — basic mobile usability (per scope: not polished) ───── */
+  .crm-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+  }
+  .crm-tab {
+    flex-shrink: 0;
+    padding: 10px 14px !important;
+    font-size: 13px !important;
+  }
+  .crm-pane-toolbar {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .crm-view-search { width: 100% !important; }
+  .crm-contact-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ── Login page ───────────────────────────────────────────────────────── */
+  /* Login page has its own inline mobile styles (see login.html); nothing
+     needed here — mobile.css isn't even loaded by login.html. */
+
+  /* ── Settings sub-pages — kept usable, not polished ───────────────────── */
+  .settings-section { padding: 12px !important; }
+  .settings-section-header h2 { font-size: 17px !important; }
+  .settings-sub-menu {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* Disable accidental text-selection on tap-target rows */
+  .kb-card, .insp-row, .insp-att-row, .v78-upcoming-card,
+  .module-nav-btn, .kb-toolbar-btn {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Disable card drag entirely on mobile */
+  .kb-card[draggable="true"] { -webkit-user-drag: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ─── TABLET — 601–1024px (iPad portrait, small tablets) ──────────────────
+   ════════════════════════════════════════════════════════════════════════════ */
+
+@media (min-width: 601px) and (max-width: 1024px) {
+
+  header {
+    padding: 0 16px;
+  }
+
+  /* Module nav — keep horizontal, slightly tighter */
+  .module-nav-btn {
+    padding: 0 10px;
+    font-size: 13px;
+    min-height: 40px;
+  }
+
+  /* Kanban view */
+  .kanban-header {
+    padding: 0 16px;
+  }
+  .kb-search-input { min-width: 200px; }
+
+  /* Kanban columns — stay multi-column but narrower */
+  .kb-col {
+    min-width: 220px !important;
+    max-width: 280px !important;
+  }
+  .kb-card {
+    padding: 10px;
+  }
+
+  /* Modal — expand to 90vw / 90vh on tablet, still centred */
+  .kb-modal,
+  .crm-modal,
+  .v77-modal {
+    width: 90vw;
+    max-width: 720px;
+    max-height: 90dvh;
+  }
+
+  /* Form rows — keep horizontal but allow wrap */
+  .crm-form-row,
+  .kb-form-row,
+  .v77-form-row {
+    flex-wrap: wrap;
+  }
+  .crm-form-row > *,
+  .kb-form-row > *,
+  .v77-form-row > * {
+    min-width: 200px;
+    flex: 1 1 200px;
+  }
+
+  /* Inspections — multi-column tickbox grids stay 2 across on tablet */
+  .insp-checkin-contact-grid,
+  .insp-tickbox-grid,
+  .v77-tickbox-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* Touch targets */
+  button, .module-nav-btn, .kb-toolbar-btn {
+    min-height: 40px;
+  }
+  input, select, textarea {
+    min-height: 40px;
+    font-size: 16px;
+  }
+
+  /* Sidebar — narrower on tablet */
+  .sidebar { width: 280px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ─── Print / very large screens / etc. left untouched ───────────────────
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ─── V79 — Attendee Registration full-screen view ───────────────────────
+   Used on iPhone, iPad and desktop. Designed for the agent's device, with
+   attendees operating it directly. Large tap targets, clear typography,
+   safe-area-aware on notched iOS devices.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.areg-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 9700;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.areg-header {
+  display: flex;
+  align-items: flex-start;
+  padding: 16px 20px;
+  padding-top: calc(env(safe-area-inset-top) + 16px);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  gap: 12px;
+}
+.areg-header-text {
+  flex: 1;
+  min-width: 0;
+}
+.areg-title {
+  font-family: 'DM Serif Display', serif;
+  font-size: 22px;
+  color: var(--text);
+  line-height: 1.1;
+}
+.areg-subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+.areg-subtitle strong { color: var(--text); font-weight: 500; }
+.areg-close {
+  background: none;
+  border: none;
+  font-size: 22px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px 12px;
+  min-width: 44px;
+  min-height: 44px;
+  flex-shrink: 0;
+}
+.areg-close:hover { color: var(--text); }
+
+.areg-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 24px 20px;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 24px);
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.areg-prompt {
+  font-size: 16px;
+  color: var(--text);
+  margin-bottom: 16px;
+  text-align: center;
+}
+.areg-search-wrap {
+  position: relative;
+  width: 100%;
+}
+.areg-search {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  min-height: 50px;
+  box-sizing: border-box;
+}
+.areg-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.areg-search-results {
+  margin-top: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  max-height: 60vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: none;
+}
+.areg-search-results.areg-results-open { display: block; }
+.areg-result {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.areg-result:last-child { border-bottom: 0; }
+.areg-result:hover { background: var(--surface2); }
+.areg-result-name { font-size: 15px; font-weight: 500; color: var(--text); }
+.areg-result-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.areg-result-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 13px;
+}
+.areg-result-create {
+  background: var(--surface2);
+  border-top: 1px solid var(--border);
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+.areg-result-create .areg-result-name { color: var(--accent); }
+.areg-result-create:hover { background: rgba(196,132,26,0.08); }
+
+/* ── Form step ───────────────────────────────────────────────────────── */
+
+.areg-form-loading,
+.areg-error {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+.areg-error { color: #c0392b; }
+
+.areg-section { margin-bottom: 24px; }
+.areg-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.areg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .areg-grid { grid-template-columns: 1fr; }
+}
+.areg-field { display: flex; flex-direction: column; gap: 4px; }
+.areg-field label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.areg-input {
+  padding: 12px 14px;
+  font-size: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  min-height: 48px;
+  box-sizing: border-box;
+}
+.areg-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.areg-consent-text {
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+.areg-via-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 10px;
+  padding: 6px 0;
+}
+.areg-via-label {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.areg-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+  min-height: 36px;
+}
+.areg-check input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+}
+.areg-check input:disabled + * { opacity: 0.5; }
+.areg-stack-check {
+  display: flex;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.areg-stack-check:last-child { border-bottom: 0; }
+.areg-dns-row {
+  display: flex;
+  margin-top: 6px;
+  font-weight: 500;
+}
+
+.areg-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+.areg-btn {
+  padding: 12px 24px;
+  font-size: 15px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  min-height: 48px;
+  min-width: 110px;
+  border: 1px solid var(--border);
+}
+.areg-btn-cancel { background: var(--surface); color: var(--muted); }
+.areg-btn-cancel:hover { background: var(--surface2); }
+.areg-btn-save {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.areg-btn-save:hover { filter: brightness(1.05); }
+.areg-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.areg-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: areg-spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes areg-spin { to { transform: rotate(360deg); } }
+
+/* ── Thank you confirmation ─────────────────────────────────────────── */
+
+.areg-thanks {
+  text-align: center;
+  padding: 60px 20px;
+}
+.areg-thanks-tick {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 20px;
+  background: var(--accent);
+  color: white;
+  border-radius: 50%;
+  font-size: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+}
+.areg-thanks-headline {
+  font-family: 'DM Serif Display', serif;
+  font-size: 24px;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.areg-thanks-sub {
+  font-size: 16px;
+  color: var(--muted);
+}
+
+/* Mobile-specific tweaks */
+@media (max-width: 600px) {
+  .areg-title { font-size: 19px; }
+  .areg-subtitle { font-size: 12px; }
+  .areg-body { padding: 18px 16px; }
+  .areg-actions { flex-direction: column-reverse; gap: 10px; }
+  .areg-btn { width: 100%; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ─── V79 — Agent check-in modal preferences styling ─────────────────────
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.insp-checkin-prefs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.insp-pref-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+.insp-pref-row input[type="checkbox"]:disabled + * { opacity: 0.5; }

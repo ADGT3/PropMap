@@ -1,0 +1,1095 @@
+/* ─── CRM Contacts Section ────────────────────────────────────────────────── */
+
+.crm-section {
+  margin-bottom: 4px;
+}
+
+/* Collapsible header */
+.crm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.crm-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  color: inherit;
+  flex: 1;
+  text-align: left;
+}
+.crm-toggle:hover .kb-section-label { color: #1a6b3a; }
+
+.crm-toggle-icon {
+  font-size: 9px;
+  color: #aaa;
+  width: 10px;
+  display: inline-block;
+}
+
+.crm-count {
+  font-size: 11px;
+  color: #aaa;
+  font-weight: 400;
+  margin-left: 2px;
+}
+
+.crm-add-btn {
+  font-size: 11px;
+  padding: 2px 10px;
+  border: 1px solid #1a6b3a;
+  border-radius: 4px;
+  background: none;
+  color: #1a6b3a;
+  cursor: pointer;
+  font-weight: 600;
+}
+.crm-add-btn:hover { background: #1a6b3a; color: #fff; }
+
+/* Body */
+.crm-body {
+  padding-top: 4px;
+}
+
+.crm-loading,
+.crm-empty {
+  font-size: 12px;
+  color: #aaa;
+  padding: 4px 0;
+}
+
+.crm-form-divider {
+  font-size: 11px;
+  color: #bbb;
+  text-align: center;
+  margin: 8px 0;
+}
+
+/* Contact rows */
+.crm-contact-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 7px 0;
+  border-bottom: 1px solid #f0f0f0;
+  gap: 8px;
+}
+.crm-contact-row:last-child { border-bottom: none; }
+
+/* Domain agent row — slightly different bg */
+.crm-domain-agent {
+  background: #f8fcf9;
+  margin: 0 -2px;
+  padding: 7px 2px;
+  border-radius: 4px;
+  border-bottom: 1px solid #e8f0ea;
+}
+
+.crm-contact-info { flex: 1; min-width: 0; }
+
+.crm-contact-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #222;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.crm-contact-meta {
+  font-size: 11px;
+  color: #666;
+  margin-top: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.crm-link {
+  color: #1a6b3a;
+  text-decoration: none;
+}
+.crm-link:hover { text-decoration: underline; }
+
+.crm-contact-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.crm-edit-btn,
+.crm-unlink-btn,
+.crm-save-domain-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: #bbb;
+  padding: 2px 4px;
+  border-radius: 3px;
+  line-height: 1;
+}
+.crm-edit-btn:hover        { color: #333; background: #f0f0f0; }
+.crm-unlink-btn:hover      { color: #c0392b; background: #fdf0f0; }
+.crm-save-domain-btn:hover { color: #1a6b3a; background: #e8f5ee; }
+
+/* Role badges */
+.crm-role-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.crm-role-listing_agent { background: #e8f5ee; color: #1a6b3a; }
+.crm-role-referrer      { background: #e8f0fa; color: #1a4a8a; }
+.crm-role-buyer_agent   { background: #fdf3e8; color: #c4841a; }
+
+/* Domain source badge */
+.crm-domain-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: #e8f5ee;
+  color: #1ea765;
+}
+
+/* Form */
+.crm-form-inner {
+  background: #f9f9f9;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.crm-form-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #aaa;
+  margin-bottom: 10px;
+}
+
+.crm-form-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.crm-form-row .kb-field-wrap { flex: 1; }
+
+.crm-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.crm-save-btn {
+  padding: 6px 14px;
+  background: #1a6b3a;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.crm-save-btn:hover { background: #155c30; }
+
+.crm-cancel-btn {
+  padding: 6px 12px;
+  background: none;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  font-size: 12px;
+  color: #666;
+  cursor: pointer;
+}
+.crm-cancel-btn:hover { background: #f0f0f0; }
+
+.crm-delete-btn {
+  margin-left: auto;
+  padding: 6px 12px;
+  background: none;
+  border: 1px solid #e8b4b4;
+  border-radius: 5px;
+  font-size: 12px;
+  color: #c0392b;
+  cursor: pointer;
+}
+.crm-delete-btn:hover { background: #fdf0f0; }
+
+/* Existing contact search */
+.crm-search-results {
+  margin-top: 4px;
+  max-height: 130px;
+  overflow-y: auto;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  background: #fff;
+}
+.crm-search-results:empty { display: none; }
+
+.crm-search-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #f4f4f4;
+}
+.crm-search-item:last-child { border-bottom: none; }
+.crm-search-item:hover { background: #f0f7f3; }
+
+/* ─── Duplicate warning ──────────────────────────────────────────────────────── */
+.crm-duplicate-warning {
+  background: #fff8e6;
+  border: 1px solid #f0c040;
+  border-radius: 5px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.crm-dup-title {
+  font-weight: 600;
+  color: #9a6500;
+  margin-bottom: 5px;
+}
+.crm-dup-item {
+  padding: 4px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: #333;
+}
+.crm-dup-item:hover { background: #fdefc0; }
+
+/* ─── Contact notes panel ────────────────────────────────────────────────────── */
+.crm-notes-panel {
+  background: #f8f9fa;
+  border: 1px solid #e8e8e8;
+  border-radius: 5px;
+  padding: 10px 12px;
+  margin: 4px 0 8px 0;
+}
+.crm-notes-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #aaa;
+  margin-bottom: 8px;
+}
+.crm-notes-input-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.crm-notes-input-row .kb-input {
+  flex: 1;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.crm-note-add-btn {
+  padding: 5px 10px;
+  background: #1a6b3a;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.crm-note-add-btn:hover { background: #155c30; }
+.crm-note-entry {
+  padding: 5px 0;
+  border-bottom: 1px solid #efefef;
+  font-size: 12px;
+}
+.crm-note-entry:last-child { border-bottom: none; }
+.crm-note-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2px;
+}
+.crm-note-date {
+  font-size: 10px;
+  color: #aaa;
+}
+.crm-note-prop {
+  color: #1a6b3a;
+  font-style: normal;
+}
+.crm-note-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: #ccc;
+  padding: 0 2px;
+}
+.crm-note-delete:hover { color: #c0392b; }
+.crm-note-text { color: #333; line-height: 1.4; white-space: pre-wrap; }
+.crm-notes-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: #bbb;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+.crm-notes-btn:hover { color: #1a6b3a; background: #e8f5ee; }
+
+/* ─── Organisation typeahead ─────────────────────────────────────────────────── */
+.crm-org-create { color: #1a6b3a; font-style: italic; }
+.crm-org-results { max-height: 140px; }
+
+/* ─── Role badges — new roles ────────────────────────────────────────────────── */
+.crm-role-vendor       { background: #fdf3e8; color: #c4841a; }
+.crm-role-purchaser    { background: #e8f0fa; color: #1a4a8a; }
+.crm-role-agent        { background: #e8f5ee; color: #1a6b3a; }
+.crm-role-buyers_agent { background: #fdf3e8; color: #c4841a; }
+.crm-role-referrer     { background: #f0e8fa; color: #6c3483; }
+.crm-role-solicitor    { background: #fdf0f0; color: #c0392b; }
+/* ── CRM Standalone View ──────────────────────────────────────────────────── */
+
+#crmView {
+  /* V75.2 — promoted from right-side 960px drawer to full-viewport module.
+     Matches Kanban/Finance treatment since CRM is now a top-level module. */
+  position: fixed;
+  inset: 56px 0 0 0;
+  background: var(--bg);
+  z-index: 1500;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+#crmView.visible { display: flex; }
+
+.crm-view-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.crm-view-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 24px;
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+/* V75.2 — CRM title, same treatment as kanban/finance header titles */
+.crm-view-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.crm-view-title-icon {
+  font-size: 18px;
+  color: var(--muted);
+}
+/* Tabs pushed right-of-title */
+.crm-view-header .crm-view-tabs {
+  margin-left: 16px;
+}
+/* + New Contact goes to the far right */
+.crm-view-header .crm-view-add-btn {
+  margin-left: auto;
+}
+
+.crm-view-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.crm-tab {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  transition: background 0.1s;
+}
+.crm-tab.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.crm-tab:hover:not(.active) { background: var(--surface2); }
+
+.crm-view-add-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.crm-view-add-btn:hover { background: var(--accent); color: #fff; }
+
+.crm-view-body {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.crm-tab-pane {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.crm-tab-pane.active { display: flex; }
+
+.crm-pane-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.crm-pane-toolbar .kb-input { flex: 1; }
+.crm-page-size-select { flex: 0 0 auto; width: auto; min-width: 0; max-width: fit-content; }
+
+/* V77.2g — Level-3 "+ New ..." add button (inline right of toolbar search).
+   Visually identical to .crm-view-add-btn so the two stay consistent if any
+   pane keeps the level-2 button. */
+.crm-pane-add-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.crm-pane-add-btn:hover { background: var(--accent); color: #fff; }
+
+.crm-contact-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px;
+}
+
+.crm-contact-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.crm-contact-table th {
+  text-align: left;
+  padding: 10px 8px;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
+.crm-contact-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.crm-contact-tr { cursor: pointer; transition: background 0.1s; }
+.crm-contact-tr:hover { background: var(--surface2); }
+.crm-td-name { font-weight: 500; }
+.crm-td-actions { text-align: right; white-space: nowrap; }
+
+/* Properties table — fixed column widths so Address column doesn't reflow
+   when row contents change (e.g. toggling Show Not Suitable). Address takes
+   the remaining width; other columns are constrained to comfortably fit
+   their content (suburb names, lot/DP, Domain badge, deal stage badge). */
+.crm-contact-table--properties { table-layout: fixed; }
+.crm-contact-table--properties th:nth-child(2),
+.crm-contact-table--properties td:nth-child(2) { width: 140px; }
+.crm-contact-table--properties th:nth-child(3),
+.crm-contact-table--properties td:nth-child(3) { width: 120px; }
+.crm-contact-table--properties th:nth-child(4),
+.crm-contact-table--properties td:nth-child(4) { width: 100px; }
+.crm-contact-table--properties th:nth-child(5),
+.crm-contact-table--properties td:nth-child(5) { width: 110px; }
+.crm-contact-table--properties th:nth-child(6),
+.crm-contact-table--properties td:nth-child(6) { width: 50px; }
+.crm-contact-table--properties td:nth-child(1) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crm-view-edit-btn, .crm-view-delete-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  font-size: 14px;
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: opacity 0.1s;
+}
+.crm-view-edit-btn:hover, .crm-view-delete-btn:hover { opacity: 1; background: var(--surface2); }
+.crm-prop-count {
+  display: inline-block;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.crm-pane-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.crm-page-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: 'DM Sans', sans-serif;
+}
+.crm-page-btn:disabled { opacity: 0.4; cursor: default; }
+.crm-page-info { font-size: 12px; color: var(--text-secondary); flex: 1; text-align: center; }
+
+/* ── CRM Modal ───────────────────────────────────────────────────────────── */
+
+/* V75.2b — CRM modal reworked to match Kanban card modal pattern.
+   V75.3b — renamed "drawer" → "modal" to match actual visual treatment.
+   Centred modal, fixed positioning, blur backdrop. Property modal (V75.4)
+   will reuse these same classes for consistency. */
+.crm-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9000;        /* above everything except toast (9999) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(2px);
+}
+.crm-modal {
+  background: var(--surface);
+  border: none;          /* was border-left for drawer; centred modal needs none */
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  width: 100%;
+  max-width: 580px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: auto;          /* was 100% for drawer; let content determine */
+}
+.crm-modal-loading {
+  padding: 32px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.crm-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  flex-shrink: 0;
+}
+.crm-modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.crm-modal-subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.crm-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--text-secondary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.crm-modal-close:hover { background: var(--surface2); color: var(--text); }
+
+/* V75.5.2: header-level action buttons (Delete + Close cluster) */
+.crm-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.crm-modal-delete {
+  background: transparent;
+  border: 1px solid #c0392b;
+  color: #c0392b;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  transition: all 0.15s;
+}
+.crm-modal-delete:hover:not(:disabled) {
+  background: #c0392b;
+  color: #fff;
+}
+.crm-modal-delete:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+.crm-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+.crm-modal-section {
+  margin-bottom: 20px;
+}
+.crm-modal-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.crm-detail-grid {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 6px 12px;
+  font-size: 13px;
+}
+.crm-detail-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding-top: 1px;
+}
+.crm-prop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #efefef;
+  font-size: 13px;
+}
+.crm-prop-row:last-child { border-bottom: none; }
+.crm-prop-address { flex: 1; font-weight: 500; }
+.crm-prop-id-link {
+  font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: #7a7366;
+  text-decoration: none;
+  padding: 2px 6px;
+  border: 1px solid #e5e1d8;
+  border-radius: 4px;
+  background: #fafaf7;
+  flex-shrink: 0;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.crm-prop-id-link:hover {
+  color: #b8935f;
+  border-color: #d9c89f;
+  background: #fcf8ef;
+}
+.crm-modal-note-input { margin-bottom: 8px; }
+.crm-modal-note-text { width: 100%; resize: vertical; }
+.crm-modal-edit-btn { font-size: 12px; padding: 4px 10px; }
+
+/* ── Property row actions in contact detail ─────────────────────────────────── */
+.crm-prop-unlink-btn, .crm-org-contact-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: #ccc;
+  padding: 2px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.crm-prop-unlink-btn:hover, .crm-org-contact-remove:hover { color: #c0392b; background: #fdf0f0; }
+
+.crm-prop-role-sel {
+  font-size: 11px !important;
+  padding: 2px 4px !important;
+  height: auto !important;
+  width: auto !important;
+}
+
+/* ── Site Access (V74) ──────────────────────────────────────────────────────── */
+.crm-access-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.crm-access-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: #fafaf7;
+  border: 1px solid #eeeae0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.crm-access-row:hover:not(.disabled):not(.readonly) {
+  background: #f5f2ea;
+  border-color: #e1dcc9;
+}
+.crm-access-row.readonly,
+.crm-access-row.disabled {
+  cursor: default;
+}
+.crm-access-row.disabled {
+  opacity: 0.6;
+}
+.crm-access-row input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.crm-access-row.disabled input[type="checkbox"] {
+  cursor: not-allowed;
+}
+.crm-access-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #4a4539;
+  margin-bottom: 2px;
+}
+.crm-access-hint {
+  font-size: 11px;
+  color: #7a7366;
+  line-height: 1.4;
+}
+.crm-access-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.crm-access-status {
+  font-size: 11px;
+  color: #7a7366;
+  min-height: 14px;
+}
+.crm-access-pw-form {
+  padding: 12px;
+  background: #fafaf7;
+  border: 1px solid #eeeae0;
+  border-radius: 6px;
+}
+.crm-access-pw-form .crm-access-label {
+  display: block;
+  margin-bottom: 4px;
+  margin-top: 4px;
+}
+
+/* ── Organisation contacts list (V74.5) ─────────────────────────────────── */
+.crm-org-contact-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border, #eeeae0);
+}
+.crm-org-contact-row:last-child { border-bottom: none; }
+.crm-org-contact-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.crm-org-contact-name {
+  font-weight: 500;
+  color: #1a1a1a;
+  cursor: pointer;
+  transition: color 0.12s;
+}
+.crm-org-contact-name:hover {
+  color: #b8935f;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.crm-org-contact-meta {
+  font-size: 11px;
+  color: #7a7366;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   V75.2d — Collapsible sections + Deals section
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Collapsible header chev */
+.crm-section-chev {
+  display: inline-block;
+  width: 14px;
+  color: var(--muted);
+  font-size: 11px;
+  margin-right: 4px;
+  user-select: none;
+}
+.crm-section-header {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.crm-section-header:hover .crm-section-chev { color: var(--accent); }
+.crm-section-header-left {
+  display: inline-flex;
+  align-items: center;
+}
+.crm-section-count {
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin-left: 4px;
+}
+
+/* Deals section — row layout very similar to property rows but with badges */
+.crm-deal-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid #efefef;
+  flex-wrap: wrap;
+}
+.crm-deal-row:last-child { border-bottom: none; }
+
+.crm-deal-open,
+.crm-prop-open,
+.crm-org-contact-open {
+  flex: 1 1 160px;
+  min-width: 140px;
+  color: var(--accent);
+  font-weight: 500;
+  font-size: 13px;
+  text-decoration: none;
+}
+.crm-deal-open:hover,
+.crm-prop-open:hover,
+.crm-org-contact-open:hover { text-decoration: underline; }
+
+.crm-deal-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.crm-deal-badge-workflow {
+  background: var(--accent);
+  color: #fff;
+}
+.crm-deal-badge-stage {
+  background: var(--surface2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  text-transform: none;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   V75.3 — Note source badge
+   Small pill showing where a note lives (Deal — 35 Smith St, Property — ..., Contact)
+   Shown between the meta row and the note text in the contact modal's
+   aggregated notes feed.
+   ═══════════════════════════════════════════════════════════════════════ */
+.crm-note-source {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--accent);
+  border: 1px solid var(--border);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V79 — Marketing Preference status badge (read-only, in contact detail view)
+   ════════════════════════════════════════════════════════════════════════════ */
+.crm-mkt-status {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.crm-mkt-unset { background: var(--surface2); color: var(--muted); font-style: italic; }
+.crm-mkt-yes   { background: rgba(46,160,67,0.12); color: #2ea043; }
+.crm-mkt-dns   { background: rgba(207,93,93,0.12); color: #cf5d5d; }
+.crm-mkt-none  { background: var(--surface2); color: var(--text); }
+
+/* V82.b — Roles and categories labels in contacts table */
+.crm-roles-label,
+.crm-categories-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  display: inline-block;
+}
+
+/* V82.b — Categories display wrap in contact detail */
+.crm-categories-display-wrap { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.crm-muted { color: var(--muted); font-style: italic; font-size: 12px; }
+
+/* V82.b — Categories multi-select checkboxes */
+.crm-cat-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--surface);
+}
+
+/* V82.b — Buyer profile edit form inputs */
+.crm-bp-edit-form .crm-detail-grid input.kb-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 12px;
+}
+
+/* V82.b — Marketing preference edit form */
+.crm-mkt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.crm-mkt-toggle input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V80 — Pending Action Requests section in contact detail view
+   ════════════════════════════════════════════════════════════════════════════ */
+.crm-action-request-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.crm-action-request-row:last-child { border-bottom: 0; }
+.crm-action-request-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.crm-action-request-desc {
+  font-size: 13px;
+  color: var(--text);
+}
+.crm-action-request-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   V80 — "Add Contact" picked-contact preview row.
+   Styled to match the saved-contact rows above it for visual consistency.
+   ════════════════════════════════════════════════════════════════════════════ */
+.crm-pick-selected {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+.crm-pick-selected .crm-contact-info { flex: 1; min-width: 0; }
+.crm-pick-clear-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: #64748b;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+.crm-pick-clear-btn:hover { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }

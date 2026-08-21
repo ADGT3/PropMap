@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Lease Offer — Edan Property</title>
+  <link rel="stylesheet" href="/lease-offer/lease-offer-form.css">
+</head>
+<body>
+
+<div class="lof-shell">
+  <header class="lof-header">
+    <div class="lof-brand">EDAN PROPERTY</div>
+  </header>
+
+  <main class="lof-main">
+    <!-- Loading view (default until token is checked) -->
+    <section class="lof-view lof-view-loading" id="lofLoading">
+      <div class="lof-spinner"></div>
+      <p>Loading…</p>
+    </section>
+
+    <!-- Verify email view (shown when token is unverified) -->
+    <section class="lof-view" id="lofVerify" style="display:none">
+      <div class="lof-card">
+        <h1>Confirm it's you</h1>
+        <p>For security, please confirm the email address this link was sent to and enter your mobile number.</p>
+        <p class="lof-verify-email" id="lofVerifyEmail"></p>
+        <form id="lofVerifyForm">
+          <div class="lof-field" style="text-align:left;margin-top:12px">
+            <label for="lofVerifyMobile">Your mobile number</label>
+            <input type="tel" id="lofVerifyMobile" inputmode="tel" autocomplete="tel" placeholder="e.g. 0412 345 678" required>
+            <p class="lof-field-error" id="lofVerifyError" style="display:none"></p>
+          </div>
+          <button type="submit" class="lof-btn-primary" id="lofVerifyBtn">Continue</button>
+        </form>
+        <p class="lof-help">If you weren't expecting this link or the email address shown isn't yours, please ignore this message.</p>
+      </div>
+    </section>
+
+    <!-- Error view (token invalid / expired) -->
+    <section class="lof-view" id="lofError" style="display:none">
+      <div class="lof-card">
+        <h1>This link is no longer valid</h1>
+        <p id="lofErrorMessage">The link you used has expired or been deactivated. Please contact your agent for a new one.</p>
+      </div>
+    </section>
+
+    <!-- Form view -->
+    <section class="lof-view" id="lofForm" style="display:none">
+      <div class="lof-form-header">
+        <h1>Lease Offer</h1>
+        <p class="lof-property" id="lofProperty"></p>
+        <div class="lof-savestate" id="lofSaveState"></div>
+      </div>
+
+      <form id="lofFormEl" autocomplete="on" novalidate>
+        <!-- Applicants section -->
+        <fieldset class="lof-section">
+          <legend>Applicants</legend>
+          <p class="lof-section-help">Add anyone over 18 who will be on the lease. The first applicant should be the primary contact.</p>
+          <div class="lof-applicants" id="lofApplicants"></div>
+          <button type="button" class="lof-btn-secondary" id="lofAddApplicantBtn">+ Add another applicant</button>
+        </fieldset>
+
+        <!-- Offer Terms section -->
+        <fieldset class="lof-section">
+          <legend>Offer Terms</legend>
+          <div class="lof-listing-summary" id="lofListingSummary"></div>
+          <div class="lof-row">
+            <div class="lof-field">
+              <label for="lofRent">Rent offered ($/week) <span class="lof-req">*</span></label>
+              <input type="number" id="lofRent" min="1" step="1" inputmode="numeric" placeholder="e.g. 650">
+            </div>
+            <div class="lof-field">
+              <label for="lofBond">Bond (weeks) <span class="lof-req">*</span></label>
+              <input type="number" id="lofBond" min="4" max="52" step="1" value="4">
+              <p class="lof-field-help">Minimum 4 weeks</p>
+            </div>
+          </div>
+          <div class="lof-row">
+            <div class="lof-field">
+              <label for="lofTermMonths">Lease term (months)</label>
+              <input type="number" id="lofTermMonths" min="1" max="240" step="1" placeholder="e.g. 12">
+            </div>
+            <div class="lof-field">
+              <label for="lofStartDate">Preferred start date <span class="lof-req">*</span></label>
+              <input type="date" id="lofStartDate">
+            </div>
+          </div>
+          <div class="lof-field">
+            <label for="lofTerms">Special terms / requests</label>
+            <textarea id="lofTerms" rows="3" maxlength="2000"></textarea>
+          </div>
+        </fieldset>
+
+        <!-- Household section -->
+        <fieldset class="lof-section">
+          <legend>Household</legend>
+          <div class="lof-row">
+            <div class="lof-field">
+              <label for="lofOccupantsTotal">Total occupants <span class="lof-req">*</span></label>
+              <input type="number" id="lofOccupantsTotal" min="1" max="20" step="1">
+              <p class="lof-field-help">Including all applicants and any children</p>
+            </div>
+          </div>
+          <div class="lof-field">
+            <label for="lofOccupantsDetails">Details</label>
+            <textarea id="lofOccupantsDetails" rows="2" maxlength="500" placeholder="e.g. 2 adults + 2 children aged 6 and 9"></textarea>
+          </div>
+          <div class="lof-row">
+            <div class="lof-field lof-field-checkbox">
+              <input type="checkbox" id="lofHasPets">
+              <label for="lofHasPets">Will there be any pets at the property?</label>
+            </div>
+          </div>
+          <div class="lof-field" id="lofPetsDetailsWrap" style="display:none">
+            <label for="lofPetsDetails">Pet details</label>
+            <textarea id="lofPetsDetails" rows="2" maxlength="500" placeholder="e.g. 1 small dog (Beagle, 5 years), 1 indoor cat"></textarea>
+          </div>
+        </fieldset>
+
+        <!-- Finance section (per applicant) -->
+        <fieldset class="lof-section">
+          <legend>Finance</legend>
+          <p class="lof-section-help">Income and employment details for each applicant.</p>
+          <div class="lof-finance-blocks" id="lofFinanceBlocks"></div>
+        </fieldset>
+
+        <!-- Submit -->
+        <div class="lof-submit-row">
+          <div class="lof-validation-summary" id="lofValidationSummary" style="display:none"></div>
+          <button type="submit" class="lof-btn-primary lof-submit-btn" id="lofSubmitBtn">
+            Submit Offer
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Thanks view -->
+    <section class="lof-view" id="lofThanks" style="display:none">
+      <div class="lof-card lof-thanks-card">
+        <div class="lof-thanks-tick">✓</div>
+        <h1>Thanks — your offer has been submitted</h1>
+        <p>Your agent has been notified and will review your offer shortly.</p>
+        <p class="lof-thanks-next">If your offer is accepted, you'll receive a follow-up email with a link to upload supporting documents.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="lof-footer">
+    <p>© Edan Property · This page is private to you.</p>
+  </footer>
+</div>
+
+<script src="/lease-offer/lease-offer-form.js"></script>
+</body>
+</html>
