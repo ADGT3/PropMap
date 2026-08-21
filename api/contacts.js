@@ -52,7 +52,7 @@
  */
 
 import { neon } from '@neondatabase/serverless';
-import { requireSession } from '../lib/auth.js';
+import { requireSession, requireModule, requireAnyModule } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
 const sql = neon(getDatabaseUrl());
 
@@ -65,6 +65,8 @@ function legacyPipelineToEntity(pipelineId) {
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
   if (!session) return;
+  // CRM owns contacts; pipeline may list contacts linked to deals.
+  if (!requireAnyModule(session, res, ['crm', 'pipeline'])) return;
 
   try {
     switch (req.method) {
@@ -230,7 +232,7 @@ export default async function handler(req, res) {
                 '[]'::json
               ) AS links,
               COALESCE(
-                (SELECT json_agg(json_build_object('pipeline_id', ec.entity_id, 'role', ec.role_id))
+                (SELECT json_agg(json_build_object('pipeline_id', ec.entity_id, 'entity_type', 'deal', 'entity_id', ec.entity_id, 'role', ec.role_id))
                  FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal'),
                 '[]'::json
               ) AS properties
@@ -431,7 +433,7 @@ export default async function handler(req, res) {
           const rows = await sql`
             SELECT c.*, o.name AS org_name,
               COALESCE(
-                (SELECT json_agg(json_build_object('pipeline_id', ec.entity_id, 'role', ec.role_id))
+                (SELECT json_agg(json_build_object('pipeline_id', ec.entity_id, 'entity_type', 'deal', 'entity_id', ec.entity_id, 'role', ec.role_id))
                  FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal'),
                 '[]'::json
               ) AS properties
@@ -456,7 +458,7 @@ export default async function handler(req, res) {
         const rows = await sql`
           SELECT c.*, o.name AS org_name,
             COALESCE(
-              (SELECT json_agg(json_build_object('pipeline_id', ec.entity_id, 'role', ec.role_id))
+              (SELECT json_agg(json_build_object('pipeline_id', ec.entity_id, 'entity_type', 'deal', 'entity_id', ec.entity_id, 'role', ec.role_id))
                FROM entity_contacts ec WHERE ec.contact_id = c.id AND ec.entity_type = 'deal'),
               '[]'::json
             ) AS properties

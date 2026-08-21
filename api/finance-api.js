@@ -15,7 +15,7 @@
  */
 
 import { neon } from '@neondatabase/serverless';
-import { requireSession } from '../lib/auth.js';
+import { requireSession, requireModule } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
 
 function getDb() {
@@ -30,6 +30,7 @@ export default async function handler(req, res) {
 
   const session = await requireSession(req, res);
   if (!session) return;
+  if (!requireModule(session, res, 'finance')) return;
 
   let sql;
   try { sql = getDb(); }

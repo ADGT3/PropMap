@@ -47,7 +47,7 @@ export default async function handler(req, res) {
   }
 
   // ── POST — replace contact-level roles ───────────────────────────────────
-  // Saves roles as entity_type='contact_import' (contact-level, no entity link)
+  // Saves roles as entity_type contact_role_profile (preferred) / legacy contact_import (contact-level, no entity link)
   if (req.method === 'POST') {
     try {
       const { roles } = req.body ?? {};
@@ -55,11 +55,11 @@ export default async function handler(req, res) {
       // Delete existing contact-level roles, preserve entity-linked roles
       await sql`
         DELETE FROM entity_contacts
-        WHERE contact_id = ${contact_id} AND entity_type = 'contact_import'`;
+        WHERE contact_id = ${contact_id} AND entity_type IN ('contact_role_profile', 'contact_import')`;
       for (const role_id of roles) {
         await sql`
           INSERT INTO entity_contacts (contact_id, entity_type, entity_id, role_id)
-          VALUES (${contact_id}, 'contact_import', ${String(contact_id)}, ${role_id})
+          VALUES (${contact_id}, 'contact_role_profile', ${String(contact_id)}, ${role_id})
           ON CONFLICT (contact_id, entity_type, entity_id, role_id) DO NOTHING`;
       }
       const updated = await sql`

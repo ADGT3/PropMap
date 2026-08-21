@@ -19,7 +19,7 @@
  */
 
 import { neon } from '@neondatabase/serverless';
-import { requireSession } from '../lib/auth.js';
+import { requireSession, requireAnyModule } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
 const sql = neon(getDatabaseUrl());
 
@@ -32,6 +32,7 @@ function newPropertyId() {
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
   if (!session) return;
+  if (!requireAnyModule(session, res, ['mapping','pipeline'])) return;
 
   try {
     switch (req.method) {

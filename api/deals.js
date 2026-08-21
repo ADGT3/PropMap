@@ -1,5 +1,11 @@
 /**
  * api/deals.js
+ *
+ * V84.3 — deals.data JSONB is a compatibility bag for legacy fields
+ * (terms, offers, dd, note, interest_level, validation). New domain data
+ * MUST use dedicated tables/endpoints (actions, notes, applications,
+ * agency_agreements, inspections, finance) rather than growing this blob.
+
  * Deals CRUD — Kanban cards, workflow-scoped. New in V75.
  *
  * GET    /api/deals                                       -> all deals (lightweight)
@@ -21,7 +27,7 @@
  */
 
 import { neon } from '@neondatabase/serverless';
-import { requireSession } from '../lib/auth.js';
+import { requireSession, requireModule } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
 const sql = neon(getDatabaseUrl());
 
@@ -34,6 +40,7 @@ function newDealId() {
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
   if (!session) return;
+  if (!requireModule(session, res, 'pipeline')) return;
 
   try {
     switch (req.method) {

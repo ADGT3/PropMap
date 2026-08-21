@@ -46,7 +46,7 @@
  */
 
 import { neon } from '@neondatabase/serverless';
-import { requireSession } from '../lib/auth.js';
+import { requireSession, requireAnyModule } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
 import { titleForParcel } from '../lib/parcel-title.js';
 const sql = neon(getDatabaseUrl());
@@ -155,6 +155,7 @@ async function enrichNotes(rows) {
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
   if (!session) return;
+  if (!requireAnyModule(session, res, ['crm', 'pipeline'])) return;
 
   try {
     if (req.method === 'GET')    return await handleGet(req, res);

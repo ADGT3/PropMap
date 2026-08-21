@@ -35,13 +35,22 @@
  */
 
 import { neon } from '@neondatabase/serverless';
-import { requireSession, isAdmin } from '../lib/auth.js';
+import { requireSession, isAdmin, requireModule } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
+import { resolveBoardCapabilities, kindForBoardId } from '../lib/board-kinds.js';
 const sql = neon(getDatabaseUrl());
+
+/** Attach resolved kind + features (DB values or inferred defaults). */
+function enrichBoard(board) {
+  if (!board) return board;
+  const { kind, features } = resolveBoardCapabilities(board);
+  return { ...board, kind, features: [...features] };
+}
 
 export default async function handler(req, res) {
   const session = await requireSession(req, res);
   if (!session) return;
+  if (!requireModule(session, res, 'pipeline')) return;
   // V75.6: session.sub holds the contact id (string) — auth.js JWT payload shape.
   // 'fallback' means the env-var fallback admin; treat that as an "admin-no-contact"
   // case so admins can still manage system boards but user boards require a real user.
@@ -73,7 +82,7 @@ async function handleGet(req, res, userId, admin) {
     const board = rows[0];
     if (!canRead(board, userId, admin)) return res.status(403).json({ error: 'Forbidden' });
     const cols = await sql`SELECT * FROM board_columns WHERE board_id = ${id} ORDER BY sort_order`;
-    return res.status(200).json({ ...board, columns: cols });
+    return res.status(200).json({ ...enrichBoard(board), columns: cols });
   }
 
   // List: system boards always; own boards if userId present
@@ -94,14 +103,14 @@ async function handleGet(req, res, userId, admin) {
     SELECT * FROM board_columns WHERE board_id = ANY(${ids}) ORDER BY board_id, sort_order`;
   const byBoard = {};
   for (const c of cols) (byBoard[c.board_id] ||= []).push(c);
-  const out = boards.map(b => ({ ...b, columns: byBoard[b.id] || [] }));
+  const out = boards.map(b => ({ ...enrichBoard(b), columns: byBoard[b.id] || [] }));
   return res.status(200).json(out);
 }
 
 // ── POST (create) ───────────────────────────────────────────────────────────
 async function handlePost(req, res, userId, admin) {
   const body = req.body || {};
-  const { name, is_system = false, sort_order = 0, columns, board_type = 'deal' } = body;
+  const { name, is_system = false, sort_order = 0, columns, board_type = 'deal', kind: bodyKind, features: bodyFeatures } = body;
   if (!name?.trim()) return res.status(400).json({ error: 'name required' });
   if (!['deal','action'].includes(board_type)) {
     return res.status(400).json({ error: "board_type must be 'deal' or 'action'" });
@@ -117,6 +126,18 @@ async function handlePost(req, res, userId, admin) {
   await sql`
     INSERT INTO boards (id, name, owner_id, is_system, sort_order, board_type)
     VALUES (${id}, ${name.trim()}, ${is_system ? null : userId}, ${is_system}, ${sort_order}, ${board_type})`;
+
+  // V84.3 — kind / features (columns added by migrate-to-v84-3-modules)
+  const resolvedKind = bodyKind || (board_type === 'action' ? 'action' : (kindForBoardId(id) || 'custom'));
+  try {
+    if (Array.isArray(bodyFeatures)) {
+      await sql`UPDATE boards SET kind = ${resolvedKind}, features = ${bodyFeatures} WHERE id = ${id}`;
+    } else {
+      await sql`UPDATE boards SET kind = ${resolvedKind} WHERE id = ${id}`;
+    }
+  } catch (err) {
+    console.warn('[boards POST] kind/features columns may be missing — run migrate-to-v84-3-modules:', err.message);
+  }
 
   // V78g — Seed the per-board default-score setting so the new board appears
   // in the Parameters → Boards admin list and so addToPipeline() has a value
@@ -152,13 +173,13 @@ async function handlePost(req, res, userId, admin) {
 
   const newBoard = (await sql`SELECT * FROM boards WHERE id = ${id}`)[0];
   const newCols  = await sql`SELECT * FROM board_columns WHERE board_id = ${id} ORDER BY sort_order`;
-  return res.status(201).json({ ...newBoard, columns: newCols });
+  return res.status(201).json({ ...enrichBoard(newBoard), columns: newCols });
 }
 
 // ── PUT (update board + replace column set) ────────────────────────────────
 async function handlePut(req, res, userId, admin) {
   const body = req.body || {};
-  const { id, name, sort_order, columns } = body;
+  const { id, name, sort_order, columns, kind: putKind, features: putFeatures } = body;
   if (!id) return res.status(400).json({ error: 'id required' });
 
   const rows = await sql`SELECT * FROM boards WHERE id = ${id}`;
@@ -173,6 +194,21 @@ async function handlePut(req, res, userId, admin) {
         sort_order = COALESCE(${sort_order ?? null}, sort_order),
         updated_at = now()
       WHERE id = ${id}`;
+  }
+
+  // V84.3 — kind / features
+  if (putKind !== undefined || putFeatures !== undefined) {
+    try {
+      if (putKind !== undefined && putFeatures !== undefined) {
+        await sql`UPDATE boards SET kind = ${putKind}, features = ${putFeatures}, updated_at = now() WHERE id = ${id}`;
+      } else if (putKind !== undefined) {
+        await sql`UPDATE boards SET kind = ${putKind}, updated_at = now() WHERE id = ${id}`;
+      } else {
+        await sql`UPDATE boards SET features = ${putFeatures}, updated_at = now() WHERE id = ${id}`;
+      }
+    } catch (err) {
+      console.warn('[boards PUT] kind/features update failed:', err.message);
+    }
   }
 
   if (Array.isArray(columns)) {
@@ -219,7 +255,7 @@ async function handlePut(req, res, userId, admin) {
 
   const updated = (await sql`SELECT * FROM boards WHERE id = ${id}`)[0];
   const cols = await sql`SELECT * FROM board_columns WHERE board_id = ${id} ORDER BY sort_order`;
-  return res.status(200).json({ ...updated, columns: cols });
+  return res.status(200).json({ ...enrichBoard(updated), columns: cols });
 }
 
 // ── DELETE ──────────────────────────────────────────────────────────────────
