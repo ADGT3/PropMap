@@ -2330,9 +2330,11 @@ function renderListings() {
   Object.values(markers).forEach(m => map.removeLayer(m));
   markers = {};
 
-  // Use search-time bounds if available so listings aren't filtered out by
-  // viewport drift during the async Domain API round-trip (V82.b fix).
-  const bounds = (_lastSearchBounds || map.getBounds());
+  // Always filter the sidebar + markers to the *visible* map boundary so the
+  // right-hand pane matches what the user is looking at. Search still uses
+  // the viewport at request time; any listings that fall outside after a
+  // concurrent pan are simply hidden until the next viewport search.
+  const bounds = map.getBounds();
   // V76.3: CoreLogic listings may lack coordinates; keep those in the sidebar
   // but don't require them to be in the viewport.
   const filtered = listings.filter(l => {
@@ -3136,6 +3138,26 @@ function _setPipelineButtonState(state, message) {
 // Expose so the popup's inline onclick can call it
 window.addCurrentSelectionToPipeline = addCurrentSelectionToPipeline;
 
+// Focus the map on a lat/lng without arbitrarily changing zoom.
+// - If the point is already on-screen at a useful zoom, do nothing.
+// - If off-screen (or very zoomed out), pan/zoom to at least minZoom while
+//   never zooming *out* from the user's current level.
+function _focusMapOn(lat, lng, opts = {}) {
+  if (lat == null || lng == null || !isFinite(lat) || !isFinite(lng)) return;
+  const ll = L.latLng(lat, lng);
+  const currentZoom = map.getZoom();
+  const minZoom = opts.minZoom != null ? opts.minZoom : 14;
+  // Slightly inset so points near the edge still get a gentle re-centre
+  const inView = map.getBounds().pad(-0.08).contains(ll);
+  if (inView && currentZoom >= minZoom) return;
+  const targetZoom = Math.max(currentZoom, minZoom);
+  if (opts.animate) {
+    map.flyTo(ll, targetZoom, { animate: true, duration: opts.duration || 1.0 });
+  } else {
+    map.setView(ll, targetZoom, { animate: false });
+  }
+}
+
 function selectListing(id, clickLatLng = null) {
   clearParcelSelection();
   _activeListingId = id;
@@ -3155,7 +3177,9 @@ function selectListing(id, clickLatLng = null) {
   if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
 
   _suppressNextDomainSearch = true;
-  if (!clickLatLng) map.setView([listing.lat, listing.lng], 15, { animate: false });
+  // Sidebar click: only move the map if the listing is off-screen or too zoomed out.
+  // Marker clicks already have the map under the cursor — never force zoom 15.
+  if (!clickLatLng) _focusMapOn(listing.lat, listing.lng, { minZoom: 14 });
 
   // Use actual click coordinates for cadastre query if available (listing coords are
   // approximate dummy data — real coords arrive with the Domain API key).
@@ -3903,29 +3927,11 @@ renderOverlayPanel();
 // otherwise uses the current map viewport bounds.
 
 function buildDomainGeoWindow() {
-  // Priority 1: first selected parcel
-  if (_selectedParcels.length > 0) {
-    const p = _selectedParcels[0];
-    const delta = 0.05; // ~5km radius box around selection
-    return {
-      box: {
-        topLeft:     { lat: p.lat + delta, lon: p.lng - delta },
-        bottomRight: { lat: p.lat - delta, lon: p.lng + delta },
-      }
-    };
-  }
-  // Priority 2: single click marker
-  if (clickMarkerData) {
-    const { lat, lng } = clickMarkerData;
-    const delta = 0.05;
-    return {
-      box: {
-        topLeft:     { lat: lat + delta, lon: lng - delta },
-        bottomRight: { lat: lat - delta, lon: lng + delta },
-      }
-    };
-  }
-  // Priority 3: current map viewport
+  // Always search the *visible* map boundary so listings in the right-hand
+  // pane stay in sync with what the user is looking at. Parcel / click-marker
+  // centred boxes (fixed ~5km) previously caused the sidebar to show results
+  // outside the current viewport after a selection.
+  // Intentional point searches (address bar) still use runDomainSearchAt().
   const b = map.getBounds();
   return {
     box: {
@@ -4068,8 +4074,8 @@ async function runDomainSearch() {
     };
     // Stash so the Reveal Price handler can replay this search at price brackets
     _lastDomainSearchOptions = searchOptions;
-    // Build bounds from the actual geoWindow used — may be larger than viewport
-    // (e.g. parcel selection uses a 0.05 degree radius box around the parcel)
+    // Record search bounds for diagnostics / reveal-price replay. Sidebar
+    // filtering always uses live map.getBounds() so the pane tracks the view.
     const gw = geoWindow.box;
     _lastSearchBounds = L.latLngBounds(
       L.latLng(gw.bottomRight.lat, gw.topLeft.lon),
@@ -4220,21 +4226,9 @@ function mapCoreLogicListing(r, isLease) {
 // Uses the current map bounds (or selected parcel, if any). Ring must be
 // closed (first point == last point). CoreLogic expects [[ [lng,lat], ... ]].
 function buildCoreLogicPolygon() {
-  let n, s, e, w;
-  if (_selectedParcels.length > 0) {
-    const p = _selectedParcels[0];
-    const delta = 0.05;
-    n = p.lat + delta; s = p.lat - delta;
-    w = p.lng - delta; e = p.lng + delta;
-  } else if (clickMarkerData) {
-    const delta = 0.05;
-    n = clickMarkerData.lat + delta; s = clickMarkerData.lat - delta;
-    w = clickMarkerData.lng - delta; e = clickMarkerData.lng + delta;
-  } else {
-    const b = map.getBounds();
-    n = b.getNorth(); s = b.getSouth();
-    w = b.getWest();  e = b.getEast();
-  }
+  // Always use the visible map boundary (same rationale as buildDomainGeoWindow).
+  const b = map.getBounds();
+  const n = b.getNorth(), s = b.getSouth(), w = b.getWest(), e = b.getEast();
   return [[
     [w, n], [e, n], [e, s], [w, s], [w, n],
   ]];
@@ -4386,7 +4380,9 @@ runListingSearch();
     _activeListingId = null;
     _pendingAddressMatch = null;
     _suppressNextDomainSearch = true;
-    map.flyTo([lat, lng], 15, { animate: true, duration: 1.2 });
+    // Fly to the address without zooming *out* of the user's current level
+    const addrZoom = Math.max(map.getZoom(), 15);
+    map.flyTo([lat, lng], addrZoom, { animate: true, duration: 1.2 });
     await new Promise(resolve => map.once('moveend', resolve));
     const _street = label.split(',')[0].trim();
     const _suburb = label.split(',').slice(1).join(',').trim();
@@ -5039,7 +5035,8 @@ window.reSelectParcels = function(parcels, opts) {
 
   const avgLat = parcels.reduce((s, p) => s + p.lat, 0) / parcels.length;
   const avgLng = parcels.reduce((s, p) => s + p.lng, 0) / parcels.length;
-  map.setView([avgLat, avgLng], 15, { animate: false });
+  // Keep current zoom when possible; only zoom in if needed for parcel context
+  _focusMapOn(avgLat, avgLng, { minZoom: 15 });
 
   if (parcels.length === 1) {
     // Single parcel — plain select (green pin, normal popup)
