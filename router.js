@@ -147,6 +147,17 @@
   // _isBackNav (internal) is set when called from back() so we don't re-push
   // the route we're leaving and create an oscillation loop.
   function navigate(path, replace = false, _isBackNav = false) {
+    // V84.3 — module access gate (Mapping / Pipeline / CRM / Finance)
+    if (window.AppModules && typeof window.AppModules.canEnterPath === 'function') {
+      if (!window.AppModules.canEnterPath(path)) {
+        const fallback = window.AppModules.firstAllowedPath();
+        if (fallback && fallback !== path) {
+          return navigate(fallback, true, true);
+        }
+        console.warn('[Router] no module access for', path);
+        return;
+      }
+    }
     const route = parsePath(path);
     const url = buildUrl(route);
     if (replace) {
@@ -199,10 +210,16 @@
     render(route);
   });
 
-  // Initial render on page load
-  function init() {
-    const route = parsePath(location.pathname);
-    // Replace initial history entry so back button works naturally
+  // Initial render on page load — load module grants first so nav is correct
+  async function init() {
+    if (window.AppModules && typeof window.AppModules.initFromAuthMe === 'function') {
+      await window.AppModules.initFromAuthMe();
+    }
+    let path = location.pathname || '/';
+    if (window.AppModules && !window.AppModules.canEnterPath(path)) {
+      path = window.AppModules.firstAllowedPath() || '/';
+    }
+    const route = parsePath(path);
     history.replaceState({ route }, '', buildUrl(route));
     render(route);
   }
@@ -220,7 +237,7 @@
   // Auto-init once the page is interactive — after other scripts have defined
   // toggleKanban, toggleCRM, etc.
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', () => { init(); });
   } else {
     init();
   }

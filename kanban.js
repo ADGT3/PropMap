@@ -42,6 +42,43 @@ let userDealOrder  = {};           // { dealId: column_order } per-user, per cur
 let boardDefaultScores = {};       // { board_id: number 0-100 }
 const BOARD_DEFAULT_SCORE_FALLBACK = 40;
 
+// V84.3 — Board capabilities (kind + features). Prefer AppModules registry;
+// fall back to local inference so kanban works if registry loads late.
+function _boardById(boardId) {
+  return (boards || []).find(b => b.id === boardId) || { id: boardId };
+}
+function _boardCaps(boardId) {
+  const b = _boardById(boardId);
+  if (window.AppModules && typeof window.AppModules.resolveBoardCapabilities === 'function') {
+    return window.AppModules.resolveBoardCapabilities(b);
+  }
+  // Minimal offline mirror of lib/board-kinds.js
+  const ID_TO_KIND = {
+    sys_acquisition: 'acquisition', sys_sales_enquiry: 'sales_enquiry',
+    sys_lease_enquiry: 'lease_enquiry', sys_sales_listings: 'sales_listing',
+    sys_lease_listings: 'lease_listing',
+  };
+  const KIND_FEATURES = {
+    acquisition:   ['dd','finance','vendor_terms','map_highlight','full_property_card','pipeline_map_stages'],
+    sales_enquiry: ['enquiry_contacts','interest_level','enquiry_card'],
+    lease_enquiry: ['enquiry_contacts','interest_level','enquiry_card','lease_offer','validation'],
+    sales_listing: ['vendor_terms','listing_summary','agency_agreements','listing_card'],
+    lease_listing: ['lease_terms','listing_summary','agency_agreements','lease_offers_received','listing_card','rent_display'],
+    action:        ['actions_board'],
+    custom:        ['full_property_card'],
+  };
+  let kind = b.kind || ID_TO_KIND[b.id] || (b.board_type === 'action' ? 'action' : 'custom');
+  const features = (Array.isArray(b.features) && b.features.length) ? b.features : (KIND_FEATURES[kind] || KIND_FEATURES.custom);
+  return { kind, features };
+}
+function boardHasFeature(boardId, feature) {
+  return _boardCaps(boardId).features.includes(feature);
+}
+function boardKind(boardId) {
+  return _boardCaps(boardId).kind;
+}
+
+
 // V81.5 — Interest level shown/sorted as 25 ("Could") when not yet set, so
 // unset cards sit mid-column instead of dominating the top. Display/sort only;
 // no data is written (the stored value stays null until the user sets it).
@@ -59,14 +96,17 @@ function resolveInterestLevel(item) {
 // entries that still have `.stage` set to a string like 'shortlisted'.
 function resolveCurrentStages() {
   const b = boards.find(x => x.id === currentBoardId);
-  if (!b || !Array.isArray(b.columns) || !b.columns.length) return STAGES;
+  // V84.3 — No hard-coded Acquisition STAGES fallback. If boards failed to
+  // load or the current board has no columns, return empty so the UI shows
+  // an empty/error state rather than a false Acquisition workflow.
+  if (!b || !Array.isArray(b.columns) || !b.columns.length) return [];
   return b.columns.map(c => ({
-    id:           c.id,                 // column id (e.g. "sys_acquisition_shortlisted")
-    stage_slug:   c.stage_slug || c.id, // slug for legacy matching
+    id:           c.id,
     label:        c.name,
-    color:        c.color || '#95a5a6',
+    color:        c.color || '#7f8c8d',
     show_on_map:  !!c.show_on_map,
     is_terminal:  !!c.is_terminal,
+    stage_slug:   c.stage_slug || c.id,
   }));
 }
 
@@ -1092,7 +1132,7 @@ function pickBoardForNewDeal(listingAddress) {
     const eligible = boards.filter(b => {
       if (b.board_type === 'action') return false;
       // Exclude Enquiry boards (per above).
-      if (b.id === 'sys_sales_enquiry' || b.id === 'sys_lease_enquiry') return false;
+      if (boardHasFeature(b.id, 'enquiry_card')) return false;
       return true;
     });
 
@@ -1683,7 +1723,7 @@ function _renderBoardSelectorBar() {
     if (sortSelFast) {
       const ddOptFast = sortSelFast.querySelector('option[value="dd_risk"]');
       if (ddOptFast) {
-        const isAcquisition = currentBoardId === 'sys_acquisition';
+        const isAcquisition = boardHasFeature(currentBoardId, 'dd') || boardKind(currentBoardId) === 'acquisition';
         ddOptFast.hidden = !isAcquisition;
         if (!isAcquisition && sortSelFast.value === 'dd_risk') {
           sortSelFast.value = 'interest';
@@ -1793,7 +1833,7 @@ function _renderBoardSelectorBar() {
     // populate dd state). Hide it elsewhere.
     const ddOption = sortSel.querySelector('option[value="dd_risk"]');
     if (ddOption) {
-      const isAcquisition = currentBoardId === 'sys_acquisition';
+      const isAcquisition = boardHasFeature(currentBoardId, 'dd') || boardKind(currentBoardId) === 'acquisition';
       ddOption.hidden = !isAcquisition;
       // If user previously had dd_risk selected and switches to a non-Acq
       // board, fall back to the default (interest) so they don't see a
@@ -2636,7 +2676,7 @@ function renderStandardCard(card, id, item, p, stages, boardId) {
   // V77.1: Lease Listings show rent (per-week / per-month) in the headline,
   // not "Price Unavailable" from the sales price field. Other boards keep
   // the standard formatKbPrice behaviour.
-  const isLeaseListing = (boardId || item._boardId || currentBoardId) === 'sys_lease_listings';
+  const isLeaseListing = boardHasFeature((boardId || item._boardId || currentBoardId), 'rent_display');
   const headline = isLeaseListing ? formatKbRent(terms) : formatKbPrice(p.price, terms.price);
 
   // V80.2 — Interest level badge: shown on every card type now (was Enquiry-only).
@@ -2694,7 +2734,7 @@ function renderEnquiryCard(card, id, item, p, stages, boardId) {
   const interestLevel = resolveInterestLevel(item);
 
   const meta = item._enquiryMeta || {};
-  const isLease = boardId === 'sys_lease_enquiry';
+  const isLease = boardHasFeature(boardId, 'lease_offer');
   const contactName = meta.contact_name || '<span style="color:var(--muted);font-style:italic">Loading…</span>';
 
   // Build the per-board badge set
@@ -2745,7 +2785,7 @@ async function saveInterestLevel(dealId, level) {
 // Called after renderBoard() completes for Sales/Lease Enquiry boards.
 async function enrichEnquiryCardsAsync() {
   const boardForCheck = currentBoardId;
-  if (boardForCheck !== 'sys_sales_enquiry' && boardForCheck !== 'sys_lease_enquiry') return;
+  if (!boardHasFeature(boardForCheck, 'enquiry_card')) return;
   const dealIds = Object.keys(pipeline).filter(id => {
     const item = pipeline[id];
     return (item._boardId || currentBoardId) === boardForCheck;
@@ -2870,7 +2910,7 @@ function renderBoard() {
       //     Level. Meta enriched async via /api/enquiry-card-meta.
       //   - All other boards: legacy card layout.
       const boardForCard = item._boardId || currentBoardId;
-      const isEnquiryBoard = boardForCard === 'sys_sales_enquiry' || boardForCard === 'sys_lease_enquiry';
+      const isEnquiryBoard = boardHasFeature(boardForCard, 'enquiry_card');
 
       if (isEnquiryBoard) {
         renderEnquiryCard(card, id, item, p, stages, boardForCard);
@@ -3000,7 +3040,7 @@ function renderBoard() {
   });
 
   // V77.1 — async enrichment for Enquiry boards (contact name + offer/inspection meta)
-  if (currentBoardId === 'sys_sales_enquiry' || currentBoardId === 'sys_lease_enquiry') {
+  if (boardHasFeature(currentBoardId, 'enquiry_card')) {
     enrichEnquiryCardsAsync();
   }
 
@@ -3982,7 +4022,7 @@ ${rows.join('')}`;
         <div style="flex:1;min-width:0">
           ${(() => {
             const dealBoardForHeader = item._boardId || currentBoardId;
-            const isEnquiryBoard = dealBoardForHeader === 'sys_sales_enquiry' || dealBoardForHeader === 'sys_lease_enquiry';
+            const isEnquiryBoard = boardHasFeature(dealBoardForHeader, 'enquiry_card');
             if (isEnquiryBoard) {
               // V77.1: Enquiry modal headline = enquirer contact name. Falls back
               // to "Loading…" until populated by fetchEnquirerNameForModal() below.
@@ -3991,7 +4031,7 @@ ${rows.join('')}`;
             }
             // V77.1: Lease Listings show rent (per-week / per-month) — sales price field
             // doesn't apply.
-            if (dealBoardForHeader === 'sys_lease_listings') {
+            if (boardHasFeature(dealBoardForHeader, 'lease_terms')) {
               return `<div class="kb-modal-price">${formatKbRent(terms)}</div>`;
             }
             return `<div class="kb-modal-price">${formatKbPrice(p.price, terms.price)}</div>`;
@@ -4022,7 +4062,7 @@ ${rows.join('')}`;
           //     via the v77-status-mount above. Suppressed here.
           //   - All other boards: Status stays at top of modal (legacy V76.4 layout).
           const dealBoardId = item._boardId || currentBoardId;
-          if (dealBoardId === 'sys_sales_enquiry' || dealBoardId === 'sys_lease_enquiry') return '';
+          if (boardHasFeature(dealBoardId, 'enquiry_card')) return '';
           const dealBoard   = boards.find(b => b.id === dealBoardId);
           const cols        = (dealBoard?.columns || []).slice().sort((a,b) => a.sort_order - b.sort_order);
           if (!cols.length) return '';
@@ -4042,8 +4082,7 @@ ${rows.join('')}`;
         ${(() => {
           // V77.1: Vendor Terms — Sales Listings + Acquisition (price/settlement/deposits)
           const dealBoardForTerms = item._boardId || currentBoardId;
-          const showVendorTerms = dealBoardForTerms === 'sys_acquisition'
-                              || dealBoardForTerms === 'sys_sales_listings';
+          const showVendorTerms = boardHasFeature(dealBoardForTerms, 'vendor_terms');
           if (!showVendorTerms) return '';
           return `
         <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
@@ -4068,7 +4107,7 @@ ${rows.join('')}`;
         ${(() => {
           // V77.1: Finance Picker (purchase offers) — Acquisition only.
           const dealBoardForFinance = item._boardId || currentBoardId;
-          if (dealBoardForFinance !== 'sys_acquisition') return '';
+          if (!boardHasFeature(dealBoardForFinance, 'finance')) return '';
           return `
         <div class="kb-finance-picker" id="kb-finance-picker-${id}">${buildFinancePickerHtml(offers, terms, p)}</div>
           `;
@@ -4078,7 +4117,7 @@ ${rows.join('')}`;
           // V77.1: Lease Terms — Lease Listings only
           // Different shape from Sales: rent_amount, rent_period, bond, term_months, available_from, special_terms
           const dealBoardForLease = item._boardId || currentBoardId;
-          if (dealBoardForLease !== 'sys_lease_listings') return '';
+          if (!boardHasFeature(dealBoardForLease, 'lease_terms')) return '';
           const lt = terms || {};
           const rentAmt    = lt.rent_amount != null ? formatInputPrice(String(lt.rent_amount)) : '';
           const rentPeriod = lt.rent_period || 'weekly';
@@ -4141,7 +4180,7 @@ ${rows.join('')}`;
           // V77.1: Due Diligence section is Acquisition-workflow only.
           // Listings (Sales/Lease) and Enquiry (Sales/Lease) boards don't have DD.
           const dealBoardForDD = item._boardId || currentBoardId;
-          if (dealBoardForDD !== 'sys_acquisition') return '';
+          if (!boardHasFeature(dealBoardForDD, 'dd')) return '';
           return `
         <div class="kb-section-label" style="margin-top:16px">Due Diligence</div>
         <div style="display:flex;justify-content:flex-end;margin-bottom:4px">
@@ -4201,7 +4240,7 @@ ${rows.join('')}`;
   // when modal opens via openPipelineItem from outside the board, so we hit the
   // batch endpoint with this single deal id.
   const _hdrBoard = item._boardId || currentBoardId;
-  if (_hdrBoard === 'sys_sales_enquiry' || _hdrBoard === 'sys_lease_enquiry') {
+  if (boardHasFeature(_hdrBoard, 'enquiry_card')) {
     const headlineEl = modal.querySelector('.kb-modal-enquirer');
     if (headlineEl) {
       const cached = item._enquiryMeta?.contact_name;
@@ -4282,7 +4321,7 @@ ${rows.join('')}`;
 
   // V77.1: Deal Status select — Enquiry boards only. On non-Enquiry boards, the
   // legacy top-of-modal Status field handles this. Mirrors the kanban card's stage.
-  if (dealBoardForSections === 'sys_sales_enquiry' || dealBoardForSections === 'sys_lease_enquiry') {
+  if (boardHasFeature(dealBoardForSections, 'enquiry_card')) {
     const statusMount = modal.querySelector('.v77-status-mount');
     if (statusMount) {
       const stagesForDeal = resolveCurrentStages(); // current board's columns
@@ -4303,7 +4342,7 @@ ${rows.join('')}`;
   }
 
   // V77.1: Lease Enquiry sections — Lease Offer + Validation (only on sys_lease_enquiry)
-  if (dealBoardForSections === 'sys_lease_enquiry') {
+  if (boardHasFeature(dealBoardForSections, 'lease_offer')) {
     if (window.LeaseOfferSection) {
       const mount = modal.querySelector('.v77-lease-offer-mount');
       if (mount) LeaseOfferSection.mount(mount, id);
@@ -4311,7 +4350,7 @@ ${rows.join('')}`;
   }
 
   // V77.1: Lease Offers Received cross-reference (only on sys_lease_listings)
-  if (dealBoardForSections === 'sys_lease_listings') {
+  if (boardHasFeature(dealBoardForSections, 'lease_offers_received')) {
     if (window.LeaseOffersReceivedSection) {
       const mount = modal.querySelector('.v77-lease-offers-received-mount');
       if (mount) LeaseOffersReceivedSection.mount(mount, id);
@@ -5225,7 +5264,7 @@ function refreshCardIndicators(card, id) {
   // Update price (Lease-aware — Lease Listings show rent, not "Price Unavailable").
   const priceEl = card.querySelector('.kb-card-price');
   if (priceEl) {
-    const isLeaseListing = (item._boardId || currentBoardId) === 'sys_lease_listings';
+    const isLeaseListing = boardHasFeature((item._boardId || currentBoardId), 'rent_display');
     priceEl.innerHTML = isLeaseListing ? formatKbRent(terms) : formatKbPrice(p.price, terms.price);
   }
 

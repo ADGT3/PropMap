@@ -1406,8 +1406,12 @@ function renderCRMView(container) {
       const lastLogin     = c.last_login_at ? new Date(c.last_login_at).toLocaleString() : 'Never';
       const hasPassword   = !!c.password_hash;
       const accessModules = Array.isArray(c.access_modules) ? c.access_modules : [];
-      // PropMap access = allowed to log in AND has propmap (or wildcard) module
-      const hasPropMapAccess = c.can_login && (accessModules.includes('*') || accessModules.includes('propmap'));
+      // Expand legacy grants (* / propmap) to the four app modules
+      const _legacyFull = accessModules.includes('*') || accessModules.includes('propmap');
+      const _modIds = ['mapping', 'pipeline', 'crm', 'finance'];
+      const grantedMods = _legacyFull
+        ? _modIds.slice()
+        : _modIds.filter(m => accessModules.includes(m));
 
       // V75.2d — Split legacy "Linked Properties" into two sections based on
       // entity_type. The backend's contact_properties query returns both.
@@ -1431,6 +1435,23 @@ function renderCRMView(container) {
 
       // Site Access section — only rendered when viewer is admin OR viewing self.
       // V75.2d — now collapsible; defaults to COLLAPSED.
+      const _modLabels = { mapping: 'Mapping', pipeline: 'Pipeline', crm: 'CRM', finance: 'Finance' };
+      const _modHints  = {
+        mapping:  'Map, listings, overlays',
+        pipeline: 'Boards, deals, actions, inspections',
+        crm:      'Contacts, organisations, notes',
+        finance:  'Feasibility and financial models',
+      };
+      const modulesAccessHtml = ['mapping','pipeline','crm','finance'].map(mid => {
+        const checked = grantedMods.includes(mid);
+        const dis = !(canManage && hasPassword);
+        return '<label class="crm-access-row' + (dis ? ' disabled' : '') + '">'
+          + '<input type="checkbox" class="crm-access-module" data-module="' + mid + '"'
+          + (checked ? ' checked' : '') + (dis ? ' disabled' : '') + '>'
+          + '<div><div class="crm-access-label">' + _modLabels[mid] + '</div>'
+          + '<div class="crm-access-hint">' + _modHints[mid] + '</div></div></label>';
+      }).join('');
+
       const siteAccessHtml = (canManage || isSelf) ? `
         <div class="crm-modal-section crm-section-collapsible" data-section="site-access" data-collapsed="1">
           <div class="crm-modal-section-title crm-section-header">
@@ -1441,15 +1462,11 @@ function renderCRMView(container) {
           </div>
           <div class="crm-section-body" style="display:none">
             <div class="crm-access-grid">
-              <label class="crm-access-row ${canManage && hasPassword ? '' : 'disabled'}">
-                <input type="checkbox" class="crm-access-propmap"
-                       ${hasPropMapAccess ? 'checked' : ''}
-                       ${canManage && hasPassword ? '' : 'disabled'}>
-                <div>
-                  <div class="crm-access-label">PropMap Access</div>
-                  <div class="crm-access-hint">${hasPassword ? 'Allows sign-in and use of the property map. CRM and Finance modules will become separate toggles.' : 'Set a password first, then enable access.'}</div>
-                </div>
-              </label>
+              <div class="crm-access-modules" style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px">
+                <div class="crm-access-label">Module access</div>
+                <div class="crm-access-hint" style="margin-bottom:4px">${hasPassword ? 'Grant login and which product modules this contact may use.' : 'Set a password first, then enable modules.'}</div>
+                ${modulesAccessHtml}
+              </div>
               <label class="crm-access-row ${canManage ? '' : 'disabled'}">
                 <input type="checkbox" class="crm-access-is-admin"
                        ${c.is_admin ? 'checked' : ''}
@@ -2166,24 +2183,24 @@ function renderCRMView(container) {
         }
       }
 
-      const propmapEl = modal.querySelector(".crm-access-propmap");
       const isAdminEl = modal.querySelector(".crm-access-is-admin");
 
-      if (propmapEl) {
-        propmapEl.addEventListener('change', async (e) => {
-          const enabled = e.target.checked;
-          // PropMap access = can_login + 'propmap' in access_modules.
-          // Turning off: revoke login, clear modules. Password is preserved.
-          const payload = enabled
-            ? { can_login: true,  access_modules: ['propmap'] }
-            : { can_login: false, access_modules: [] };
+      // V84.3 — per-module toggles (mapping / pipeline / crm / finance)
+      modal.querySelectorAll('.crm-access-module').forEach(el => {
+        el.addEventListener('change', async (e) => {
+          const boxes = [...modal.querySelectorAll('.crm-access-module')];
+          const modules = boxes.filter(b => b.checked).map(b => b.dataset.module);
+          const payload = {
+            can_login: modules.length > 0,
+            access_modules: modules,
+          };
           try {
             await postAccessUpdate(payload);
           } catch {
-            e.target.checked = !e.target.checked; // revert
+            e.target.checked = !e.target.checked;
           }
         });
-      }
+      });
       if (isAdminEl) {
         isAdminEl.addEventListener('change', async (e) => {
           try {
