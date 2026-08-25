@@ -2060,17 +2060,38 @@ function buildZoneSelector() {
 
 // ─── Marker icon ──────────────────────────────────────────────────────────────
 
-function makeIcon(color) {
+// Domain brand green — matches the Domain badge avatar (#1ea765).
+// Used as the pin outline so Domain-sourced markers are visually distinct
+// from pipeline-only / other pins (which keep a white outline).
+const DOMAIN_PIN_OUTLINE = '#1ea765';
+const DEFAULT_PIN_OUTLINE = 'rgba(255,255,255,0.8)';
+
+/**
+ * Teardrop map pin.
+ * @param {string} color  fill colour
+ * @param {object} [opts]
+ * @param {boolean} [opts.domain=false]  true → green Domain outline
+ * @param {boolean} [opts.star=false]    true → ★ (pipeline)
+ * @param {string}  [opts.outline]      override outline colour
+ */
+function makeIcon(color, opts = {}) {
+  const domain  = !!opts.domain;
+  const star    = !!opts.star;
+  const outline = opts.outline || (domain ? DOMAIN_PIN_OUTLINE : DEFAULT_PIN_OUTLINE);
+  const inner   = star
+    ? `<span style="transform:rotate(45deg);line-height:1;color:#fff;font-size:12px">★</span>`
+    : '';
   return L.divIcon({
-    className: '',
+    className: domain ? 'map-pin map-pin-domain' : 'map-pin',
     html: `<div style="
       width:28px;height:28px;
       border-radius:50% 50% 50% 0;
       transform:rotate(-45deg);
       background:${color};
-      border:2px solid rgba(255,255,255,0.8);
+      border:2.5px solid ${outline};
       box-shadow:0 2px 8px rgba(0,0,0,0.5);
-    "></div>`,
+      display:flex;align-items:center;justify-content:center;
+    ">${inner}</div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 28],
     popupAnchor: [0, -30]
@@ -2359,8 +2380,10 @@ function renderListings() {
     // Skip marker for no-coord CoreLogic listings
     if (l._noCoords || l.lat == null || l.lng == null) return;
 
+    // Domain listings: green outline (matches Domain badge). CoreLogic: white.
+    const isDomainListing = l._source !== 'corelogic';
     const marker = L.marker([l.lat, l.lng], {
-      icon: makeIcon(MARKER_COLOR)
+      icon: makeIcon(MARKER_COLOR, { domain: isDomainListing })
     }).addTo(map);
 
     marker.on('click', (e) => {
@@ -4583,14 +4606,16 @@ window._renderPipelinePins = function () {
     const suburb  = p.suburb  || '';
     const stage   = stageLabel[item.stage] || item.stage;
 
-    // Same gold teardrop as standard listing pins, with a star to indicate pipeline property
-    const pinHtml = `<div style="width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${MARKER_COLOR};border:2px solid rgba(255,255,255,0.8);box-shadow:0 2px 8px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px"><span style="transform:rotate(45deg);line-height:1">★</span></div>`;
+    // Gold teardrop + ★ for pipeline. Green Domain outline when linked to a
+    // Domain listing — star + green ring = pipeline AND Domain; star + white
+    // ring = pipeline only.
+    const linkedToDomain = !!(
+      p.domain_id || p.domain_listing_id || p.listing_url || p._listingUrl
+    );
 
-    const icon = L.divIcon({
-      html:      pinHtml,
-      iconSize:  [28, 28],
-      iconAnchor:[14, 28],
-      className: 'pipeline-map-pin',
+    const icon = makeIcon(MARKER_COLOR, {
+      star: true,
+      domain: linkedToDomain,
     });
 
     const marker = L.marker([pinLat, pinLng], { icon, zIndexOffset: 1500, pane: 'pipelinePinPane' });
