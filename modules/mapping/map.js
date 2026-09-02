@@ -118,11 +118,16 @@ async function loadNotSuitable() {
       // Used by buildListingCard to display the property's address instead of
       // Domain's when a link exists.
       if (p.domain_listing_id) {
+        const plat = p.lat != null ? Number(p.lat) : (p.latitude != null ? Number(p.latitude) : null);
+        const plng = p.lng != null ? Number(p.lng) : (p.longitude != null ? Number(p.longitude) : null);
         _propertyByDomainId.set(String(p.domain_listing_id), {
           id:      p.id,
           address: p.address,
           suburb:  p.suburb,
+          state:   p.state || null,
           lot_dps: p.lot_dps,
+          lat:     Number.isFinite(plat) ? plat : null,
+          lng:     Number.isFinite(plng) ? plng : null,
         });
       }
       if (!p.not_suitable_until) return;
@@ -145,6 +150,33 @@ async function refreshListingsCacheAfterLinkChange() {
   await loadNotSuitable();
 }
 window.refreshListingsCacheAfterLinkChange = refreshListingsCacheAfterLinkChange;
+
+// V84.4 — When a Domain listing is linked to a CRM property, the property's
+// address + coordinates are the source of truth (Domain often drops a pin on
+// a suburb centroid). These helpers resolve that override for pins + popups.
+function getLinkedPropertyForListing(listingOrId) {
+  if (listingOrId == null) return null;
+  const id = (typeof listingOrId === 'object') ? listingOrId.id : listingOrId;
+  if (id == null || id === '') return null;
+  return _propertyByDomainId.get(String(id)) || null;
+}
+
+function listingDisplayCoords(listing) {
+  const linked = getLinkedPropertyForListing(listing);
+  const lat = (linked && linked.lat != null) ? linked.lat : listing?.lat;
+  const lng = (linked && linked.lng != null) ? linked.lng : listing?.lng;
+  return { lat, lng, linked };
+}
+
+function listingDisplayAddress(listing) {
+  const linked = getLinkedPropertyForListing(listing);
+  return {
+    address: (linked && linked.address) ? linked.address : (listing?.address || ''),
+    suburb:  (linked && linked.suburb)  ? linked.suburb  : (listing?.suburb  || ''),
+    state:   (linked && linked.state)   ? linked.state   : (listing?.state   || ''),
+    linked,
+  };
+}
 
 // Snooze options shown in the dropdown — value is sent as ISO string or 'permanent'
 const SNOOZE_OPTIONS = [
@@ -960,9 +992,11 @@ async function selectPropertyAtPoint(latlng, includeSrlup, includeZoning, includ
   // Stage 1 — if we have a known listing use its address directly; otherwise reverse geocode
   let label, lga, state;
   if (listing) {
-    label = `${listing.address}, ${listing.suburb}`;
+    const disp = listingDisplayAddress(listing);
+    const parts = [disp.address, disp.suburb].filter(Boolean);
+    label = parts.length ? parts.join(', ') : `${listing.address || ''}, ${listing.suburb || ''}`;
     lga   = '';
-    state = listing.state || '';
+    state = disp.state || listing.state || '';
   } else {
     const geo = await reverseGeocode(lat, lng);
     label = geo ? geo.label : `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
@@ -2297,6 +2331,9 @@ function makeListingCard(l, { pinToTop = false } = {}) {
         }
         await refreshListingsCacheAfterLinkChange();
         renderListings();
+        if (_activeListingId != null && String(_activeListingId) === String(l.id)) {
+          selectListing(l.id);
+        }
       } catch (err) {
         alert('Unlink failed: ' + err.message);
       }
@@ -2370,6 +2407,9 @@ function makeListingCard(l, { pinToTop = false } = {}) {
               linkPop.style.display = 'none';
               await refreshListingsCacheAfterLinkChange();
               renderListings();
+              if (_activeListingId != null && String(_activeListingId) === String(l.id)) {
+                selectListing(l.id);
+              }
             } catch (err) {
               alert('Link failed: ' + err.message);
             }
@@ -2407,7 +2447,9 @@ function renderListings() {
   // but don't require them to be in the viewport.
   const filtered = listings.filter(l => {
     if (l._noCoords) return true;
-    const inView   = bounds.contains(L.latLng(l.lat, l.lng));
+    const { lat: dLat, lng: dLng } = listingDisplayCoords(l);
+    if (dLat == null || dLng == null) return true;
+    const inView   = bounds.contains(L.latLng(dLat, dLng));
     // propertyTypes is Domain-only — skip this check for CoreLogic listings
     const typeMatch = (l._source === 'corelogic')
       || _activeFilters.propertyTypes.length === 0
@@ -2424,13 +2466,14 @@ function renderListings() {
       : makeListingCard(l);
     list.appendChild(card);
 
-    // Skip marker for no-coord CoreLogic listings
-    if (l._noCoords || l.lat == null || l.lng == null) return;
+    // Skip marker for no-coord CoreLogic listings. Linked CRM coords win over Domain.
+    const { lat: pinLat, lng: pinLng } = listingDisplayCoords(l);
+    if (l._noCoords || pinLat == null || pinLng == null) return;
 
     // Domain listings: green outline. Selected → green fill.
     const isDomainListing = l._source !== 'corelogic';
     const isSelected = _activeListingId != null && String(_activeListingId) === String(l.id);
-    const marker = L.marker([l.lat, l.lng], {
+    const marker = L.marker([pinLat, pinLng], {
       icon: makeIcon(null, { domain: isDomainListing, selected: isSelected })
     }).addTo(map);
 
@@ -3252,12 +3295,13 @@ function selectListing(id, clickLatLng = null) {
   _suppressNextDomainSearch = true;
   // Sidebar click: only move the map if the listing is off-screen or too zoomed out.
   // Marker clicks already have the map under the cursor — never force zoom 15.
-  if (!clickLatLng) _focusMapOn(listing.lat, listing.lng, { minZoom: 14 });
+  const { lat: dispLat, lng: dispLng } = listingDisplayCoords(listing);
+  if (!clickLatLng) _focusMapOn(dispLat, dispLng, { minZoom: 14 });
 
-  // Use actual click coordinates for cadastre query if available (listing coords are
-  // approximate dummy data — real coords arrive with the Domain API key).
-  // Fall back to listing coords when triggered from sidebar card click (no clickLatLng).
-  const queryLatLng = clickLatLng || { lat: listing.lat, lng: listing.lng };
+  // Prefer the click point (already on the pin). Otherwise use the linked
+  // property's coordinates when present — Domain listing coords are often a
+  // suburb centroid, which is why linking exists.
+  const queryLatLng = clickLatLng || { lat: dispLat, lng: dispLng };
 
   const srlupEntry   = overlayRegistry['nsw-srlup'];
   const zoningEntry  = overlayRegistry['nsw-land-zoning'];
