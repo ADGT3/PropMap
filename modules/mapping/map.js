@@ -118,17 +118,19 @@ async function loadNotSuitable() {
       // Used by buildListingCard to display the property's address instead of
       // Domain's when a link exists.
       if (p.domain_listing_id) {
-        const plat = p.lat != null ? Number(p.lat) : (p.latitude != null ? Number(p.latitude) : null);
-        const plng = p.lng != null ? Number(p.lng) : (p.longitude != null ? Number(p.longitude) : null);
-        _propertyByDomainId.set(String(p.domain_listing_id), {
+        const coords = _coordsFromPropertyRecord(p);
+        const entry = {
           id:      p.id,
           address: p.address,
           suburb:  p.suburb,
           state:   p.state || null,
           lot_dps: p.lot_dps,
-          lat:     Number.isFinite(plat) ? plat : null,
-          lng:     Number.isFinite(plng) ? plng : null,
-        });
+          listing_url: p.listing_url || null,
+          lat:     coords ? coords.lat : null,
+          lng:     coords ? coords.lng : null,
+        };
+        _indexLinkedProperty(p.domain_listing_id, entry);
+        if (p.listing_url) _indexLinkedProperty(p.listing_url, entry);
       }
       if (!p.not_suitable_until) return;
       const isPerm = p.not_suitable_until === 'infinity' || p.not_suitable_until === 'Infinity';
@@ -153,19 +155,135 @@ window.refreshListingsCacheAfterLinkChange = refreshListingsCacheAfterLinkChange
 
 // V84.4 — When a Domain listing is linked to a CRM property, the property's
 // address + coordinates are the source of truth (Domain often drops a pin on
-// a suburb centroid). These helpers resolve that override for pins + popups.
+// a suburb centroid). Pipeline pins already use parcels[].lat/lng; listing
+// pins must do the same or they stay on Domain's generic point.
+function _finiteNum(v) {
+  if (v == null || v === '') return null;
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function _pair(lat, lng) {
+  const a = _finiteNum(lat);
+  const b = _finiteNum(lng);
+  if (a == null || b == null) return null;
+  if (a === 0 && b === 0) return null;
+  return { lat: a, lng: b };
+}
+
+function _centroidFromRings(rings) {
+  if (!Array.isArray(rings) || !rings.length) return null;
+  const ring = rings[0];
+  if (!Array.isArray(ring) || !ring.length) return null;
+  let slat = 0, slng = 0, n = 0;
+  for (const pt of ring) {
+    if (!pt) continue;
+    // Stored as [lat,lng] (Leaflet) or [lng,lat] (Esri). Heuristic: NSW lats
+    // are negative and around -30; lngs are positive around 150.
+    let lat, lng;
+    if (Array.isArray(pt)) {
+      const x = _finiteNum(pt[0]);
+      const y = _finiteNum(pt[1]);
+      if (x == null || y == null) continue;
+      if (Math.abs(x) > 90 || (x > 0 && y < 0)) { lng = x; lat = y; }
+      else { lat = x; lng = y; }
+    } else {
+      lat = _finiteNum(pt.lat ?? pt.latitude);
+      lng = _finiteNum(pt.lng ?? pt.longitude);
+    }
+    if (lat == null || lng == null) continue;
+    slat += lat; slng += lng; n++;
+  }
+  return n ? { lat: slat / n, lng: slng / n } : null;
+}
+
+function _coordsFromPropertyRecord(p) {
+  if (!p) return null;
+  let parcels = p.parcels != null ? p.parcels : p._parcels;
+  if (typeof parcels === 'string') {
+    try { parcels = JSON.parse(parcels); } catch (_) { parcels = null; }
+  }
+  if (Array.isArray(parcels)) {
+    for (const par of parcels) {
+      if (!par || typeof par !== 'object') continue;
+      const c = _pair(par.lat ?? par.latitude, par.lng ?? par.longitude)
+             || _centroidFromRings(par.rings);
+      if (c) return c;
+    }
+  }
+  return _pair(p.lat ?? p.latitude, p.lng ?? p.longitude);
+}
+
+function _domainListingKeys(val) {
+  if (val == null || val === '') return [];
+  const s = String(val).trim();
+  const keys = [s];
+  const tail = s.match(/(\d{6,})(?:\D*)?$/);
+  if (tail) keys.push(tail[1]);
+  try {
+    if (/^https?:/i.test(s)) {
+      const path = new URL(s).pathname.replace(/\/+$/, '');
+      const last = path.split('/').pop();
+      if (last) keys.push(last);
+      const id = last && last.match(/(\d{6,})$/);
+      if (id) keys.push(id[1]);
+    }
+  } catch (_) {}
+  return [...new Set(keys)];
+}
+
+function _indexLinkedProperty(key, entry) {
+  _domainListingKeys(key).forEach(k => _propertyByDomainId.set(k, entry));
+}
+
 function getLinkedPropertyForListing(listingOrId) {
   if (listingOrId == null) return null;
-  const id = (typeof listingOrId === 'object') ? listingOrId.id : listingOrId;
-  if (id == null || id === '') return null;
-  return _propertyByDomainId.get(String(id)) || null;
+  const obj = (typeof listingOrId === 'object') ? listingOrId : null;
+  const rawId = obj ? obj.id : listingOrId;
+  const keys = [
+    ..._domainListingKeys(rawId),
+    ..._domainListingKeys(obj?.listingUrl || obj?.listing_url),
+    ..._domainListingKeys(obj?.domainId),
+  ];
+  for (const k of keys) {
+    const hit = _propertyByDomainId.get(k);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function _coordsFromPipeline(linked, listing) {
+  const data = (typeof window.getPipelineData === 'function') ? window.getPipelineData() : null;
+  if (!data) return null;
+  const listingKeys = new Set(_domainListingKeys(listing?.id));
+  _domainListingKeys(listing?.listingUrl || listing?.listing_url).forEach(k => listingKeys.add(k));
+  for (const item of Object.values(data)) {
+    const p = item?.property;
+    if (!p) continue;
+    const sameProp = linked?.id && String(p.id) === String(linked.id);
+    const domKeys = [
+      ..._domainListingKeys(p.domain_id),
+      ..._domainListingKeys(p.domain_listing_id),
+      ..._domainListingKeys(p._listingUrl || p.listing_url),
+    ];
+    const sameListing = domKeys.some(k => listingKeys.has(k));
+    if (!sameProp && !sameListing) continue;
+    const c = _coordsFromPropertyRecord(p);
+    if (c) return c;
+  }
+  return null;
 }
 
 function listingDisplayCoords(listing) {
   const linked = getLinkedPropertyForListing(listing);
-  const lat = (linked && linked.lat != null) ? linked.lat : listing?.lat;
-  const lng = (linked && linked.lng != null) ? linked.lng : listing?.lng;
-  return { lat, lng, linked };
+  const fromLinked = linked ? _pair(linked.lat, linked.lng) : null;
+  const fromPipe   = (!fromLinked) ? _coordsFromPipeline(linked, listing) : null;
+  const chosen = fromLinked || fromPipe;
+  if (chosen) {
+    if (linked) { linked.lat = chosen.lat; linked.lng = chosen.lng; }
+    return { lat: chosen.lat, lng: chosen.lng, linked };
+  }
+  return { lat: listing?.lat, lng: listing?.lng, linked };
 }
 
 function listingDisplayAddress(listing) {
@@ -176,6 +294,26 @@ function listingDisplayAddress(listing) {
     state:   (linked && linked.state)   ? linked.state   : (listing?.state   || ''),
     linked,
   };
+}
+
+// Stamp Domain listing objects with the linked property address + coords so
+// every pin / popup / fly-to path sees the corrected location.
+function applyLinkedOverridesToListing(l) {
+  if (!l) return l;
+  const disp = listingDisplayAddress(l);
+  const { lat, lng, linked } = listingDisplayCoords(l);
+  if (!linked) return l;
+  if (disp.address) l.address = disp.address;
+  if (disp.suburb)  l.suburb  = disp.suburb;
+  if (disp.state)   l.state   = disp.state;
+  if (lat != null && lng != null) {
+    if (l._domainLat == null && l.lat != null) l._domainLat = l.lat;
+    if (l._domainLng == null && l.lng != null) l._domainLng = l.lng;
+    l.lat = lat;
+    l.lng = lng;
+    l._noCoords = false;
+  }
+  return l;
 }
 
 // Snooze options shown in the dropdown — value is sent as ISO string or 'permanent'
@@ -2443,6 +2581,10 @@ function renderListings() {
   // the viewport at request time; any listings that fall outside after a
   // concurrent pan are simply hidden until the next viewport search.
   const bounds = map.getBounds();
+  // V84.4: rewrite Domain listing address/coords from the linked CRM property
+  // before filtering or dropping pins, otherwise a listing whose Domain pin
+  // is a suburb centroid disappears when the map is centred on the real lot.
+  listings.forEach(applyLinkedOverridesToListing);
   // V76.3: CoreLogic listings may lack coordinates; keep those in the sidebar
   // but don't require them to be in the viewport.
   const filtered = listings.filter(l => {
@@ -3288,6 +3430,7 @@ function selectListing(id, clickLatLng = null) {
   const listing = listings.find(l => String(l.id) === String(id));
   _syncListingMarkerIcons();
   if (!listing) return;
+  applyLinkedOverridesToListing(listing);
 
   if (parcelLayer)  { map.removeLayer(parcelLayer);  parcelLayer  = null; }
   if (clickMarker)  { map.removeLayer(clickMarker);  clickMarker  = null; }
