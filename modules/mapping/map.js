@@ -1,14 +1,14 @@
 /**
  * map.js
- * BUILD: V84.4.4-linked-pin 2026-09-03
+ * BUILD: V84.4.7-live-domain-id 2026-09-03
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
  * Depends on: overlays-meta.js, overlays-b64-*.js, domain-api.js, dd-risks.js
  *
- * If this header does not say V84.4.4-linked-pin, you are not on the patched file.
+ * If this header does not say V84.4.7-live-domain-id, you are not on the patched file.
  */
 
-window.MAP_JS_BUILD = 'V84.4.4-linked-pin-2026-09-03';
+window.MAP_JS_BUILD = 'V84.4.7-live-domain-id-2026-09-03';
 console.info('[map.js] ' + window.MAP_JS_BUILD);
 
 // Merge b64 image data from split overlay files into OVERLAYS
@@ -106,7 +106,6 @@ function isNotSuitable(listingOrLatLng) {
 // listing card display swap. Populated by loadNotSuitable().
 const _propertyByDomainId = new Map();
 const _linkedPropertyList = [];
-// listingId → { until, listing|null } — avoids repeat Domain hits while panning
 const _linkedActiveCache = new Map();
 const LINKED_ACTIVE_TTL_MS = 5 * 60 * 1000;
 
@@ -119,7 +118,7 @@ async function loadNotSuitable() {
     const res = await fetch('/api/properties');
     if (!res.ok) throw new Error('properties fetch failed');
     const raw = await res.json();
-    const rows = Array.isArray(raw) ? raw : (Array.isArray(raw?.properties) ? raw.properties : []);
+    const rows = Array.isArray(raw) ? raw : (Array.isArray(raw.properties) ? raw.properties : []);
     _notSuitable.byListingId.clear();
     _notSuitable.byLatLng.clear();
     _propertyByDomainId.clear();
@@ -342,11 +341,8 @@ function _allLinkedPropertyEntries() {
     if (!e) return;
     const domainId = e.domain_listing_id
       || (_domainListingKeys(mapKey).find(k => /^\d{6,}$/.test(k)))
-      || (_domainListingKeys(e.listing_url).find(k => /^\d{6,}$/.test(k)))
       || null;
-    const rec = Object.assign({}, e, {
-      domain_listing_id: domainId || e.domain_listing_id || null,
-    });
+    const rec = Object.assign({}, e, { domain_listing_id: domainId || e.domain_listing_id || null });
     const uniq = rec.id || domainId || mapKey;
     if (!byProp.has(uniq)) byProp.set(uniq, rec);
   });
@@ -366,93 +362,14 @@ function _linkedEntriesInView(bounds) {
   });
 }
 
-// One Domain round-trip for every in-view linked listing we don't already
-// know about. Geo search cannot see these (Domain stored them off-lot).
-// Fetch the real Domain listing objects for the given ids (one call).
-// These are the same records the sidebar already knows how to render.
-async function fetchDomainListingsByIds(ids) {
-  const unique = [...new Set((ids || []).map(id => String(id)).filter(Boolean))];
-  if (!unique.length) return [];
-
-  const listingType = (_activeFilters && _activeFilters.listingType) || 'Sale';
-  let found = [];
-
-  if (window.DomainAPI && typeof DomainAPI.search === 'function') {
-    try {
-      const results = await DomainAPI.search({
-        listingIds: unique,
-        listingTypes: [listingType],
-      });
-      if (Array.isArray(results)) found = results;
-    } catch (err) {
-      console.warn('[map] DomainAPI.search(listingIds) failed:', err);
-    }
+function _enrichedListingByAnyKey(keys) {
+  if (!window.DomainAPI || typeof DomainAPI.getEnrichedListing !== 'function') return null;
+  for (const k of keys) {
+    if (k == null || k === '') continue;
+    const hit = DomainAPI.getEnrichedListing(k);
+    if (hit && (hit.price || hit.photos || hit.listingUrl)) return hit;
   }
-
-  if (!found.length && window.DomainAPI && typeof DomainAPI.searchByIds === 'function') {
-    try {
-      const results = await DomainAPI.searchByIds(unique);
-      if (Array.isArray(results)) found = results;
-    } catch (_) {}
-  }
-
-  if (!found.length) {
-    try {
-      const r = await fetch('/api/domain-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingIds: unique, listingType }),
-      });
-      if (r.ok) {
-        const data = await r.json();
-        if (Array.isArray(data)) found = data;
-        else if (Array.isArray(data.listings)) found = data.listings;
-        else if (Array.isArray(data.results)) found = data.results;
-      }
-    } catch (_) {}
-  }
-
-  const wanted = new Set();
-  unique.forEach(id => _domainListingKeys(id).forEach(k => wanted.add(k)));
-  return found.filter(l => {
-    const keys = [
-      ..._domainListingKeys(l && l.id),
-      ..._domainListingKeys(l && (l.listingUrl || l.listing_url)),
-    ];
-    return keys.some(k => wanted.has(k));
-  });
-}
-
-async function confirmLinkedListingsActive(ids) {
-  const unique = [...new Set((ids || []).map(id => String(id)).filter(Boolean))];
-  const now = Date.now();
-  const need = unique.filter(id => {
-    const hit = _linkedActiveCache.get(id);
-    return !hit || hit.until < now;
-  });
-
-  if (need.length) {
-    const found = await fetchDomainListingsByIds(need);
-    const byId = new Map();
-    found.forEach(l => {
-      _domainListingKeys(l && l.id).forEach(k => byId.set(k, l));
-      _domainListingKeys(l && (l.listingUrl || l.listing_url)).forEach(k => byId.set(k, l));
-    });
-    need.forEach(id => {
-      const listing = byId.get(id)
-        || (window.DomainAPI && DomainAPI.getEnrichedListing && DomainAPI.getEnrichedListing(id))
-        || null;
-      _linkedActiveCache.set(id, {
-        until: now + LINKED_ACTIVE_TTL_MS,
-        listing,
-        unknown: !listing && !found.length,
-      });
-    });
-  }
-
-  return unique
-    .map(id => _linkedActiveCache.get(id)?.listing || null)
-    .filter(Boolean);
+  return null;
 }
 
 function mergeConfirmedLinkedIntoListings(confirmed) {
@@ -462,93 +379,73 @@ function mergeConfirmedLinkedIntoListings(confirmed) {
       ..._domainListingKeys(live && live.id),
       ..._domainListingKeys(live && (live.listingUrl || live.listing_url)),
     ];
+    const existing = listings.find(l => keys.some(k =>
+      _domainListingKeys(l.id).includes(k) || _domainListingKeys(l.listingUrl).includes(k)
+    ));
+    if (existing) {
+      Object.assign(existing, live, {
+        address: existing.address,
+        suburb: existing.suburb,
+        state: existing.state,
+        lat: existing.lat,
+        lng: existing.lng,
+        _linkedInjected: true,
+      });
+      return;
+    }
     if (keys.some(k => seen.has(k))) return;
     const linked = getLinkedPropertyForListing(live);
     listings.push(Object.assign({}, live, {
-      id:         live.id,
-      address:    (linked && linked.address) || live.address,
-      suburb:     (linked && linked.suburb)  || live.suburb,
-      state:      (linked && linked.state)   || live.state || 'NSW',
-      lat:        (linked && linked.lat)     || live.lat,
-      lng:        (linked && linked.lng)     || live.lng,
-      listingUrl: live.listingUrl || live.listing_url || (linked && linked.listing_url) || null,
+      address: (linked && linked.address) || live.address,
+      suburb:  (linked && linked.suburb)  || live.suburb,
+      state:   (linked && linked.state)   || live.state || 'NSW',
+      lat:     (linked && linked.lat)     || live.lat,
+      lng:     (linked && linked.lng)     || live.lng,
       _linkedInjected: true,
     }));
     keys.forEach(k => seen.add(k));
   });
 }
 
-function _enrichedListingByAnyKey(keys) {
-  if (!window.DomainAPI || typeof DomainAPI.getEnrichedListing !== 'function') return null;
-  for (const k of keys) {
-    if (k == null || k === '') continue;
-    const hit = DomainAPI.getEnrichedListing(k) || DomainAPI.getEnrichedListing(String(k));
-    if (hit && (hit.price || hit.photos || hit.listingUrl || hit.listing_url)) return hit;
-  }
-  return null;
-}
-
-function mergeLinkedStubsIntoListings(entries) {
-  const seen = _listingIdSetFromList(listings);
-  (entries || []).forEach(entry => {
-    const keys = [
-      ..._domainListingKeys(entry.domain_listing_id),
-      ..._domainListingKeys(entry.listing_url),
-    ];
-    if (keys.some(k => seen.has(k))) return;
-    const domainId = keys.find(k => /^\d{6,}$/.test(k)) || entry.domain_listing_id;
-    const enriched = _enrichedListingByAnyKey(keys.concat(domainId));
-    listings.push(Object.assign({}, enriched || {}, {
-      id:         domainId || entry.domain_listing_id || entry.id,
-      address:    entry.address,
-      suburb:     entry.suburb,
-      state:      entry.state || 'NSW',
-      lat:        entry.lat,
-      lng:        entry.lng,
-      listingUrl: entry.listing_url || (enriched && (enriched.listingUrl || enriched.listing_url)) || null,
-      price:      (enriched && enriched.price) || { display: '' },
-      photos:     (enriched && enriched.photos) || null,
-      daysOnMarket: (enriched && enriched.daysOnMarket) || null,
-      _linkedInjected: true,
-    }));
-    keys.forEach(k => seen.add(k));
-    if (domainId) seen.add(String(domainId));
-  });
-}
-
-function removeListingByDomainId(domainId) {
-  const keys = new Set(_domainListingKeys(domainId));
+function dropLinkedListingsNotAtDbPin(bounds) {
+  if (!bounds || typeof bounds.contains !== 'function') return;
   for (let i = listings.length - 1; i >= 0; i--) {
     const l = listings[i];
-    const hit = _domainListingKeys(l && l.id).some(k => keys.has(k))
-      || _domainListingKeys(l && (l.listingUrl || l.listing_url)).some(k => keys.has(k));
-    if (hit) listings.splice(i, 1);
+    if (l && l._source === 'corelogic') continue;
+    const linked = getLinkedPropertyForListing(l);
+    if (!linked || linked.lat == null || linked.lng == null) continue;
+    if (!bounds.contains(L.latLng(linked.lat, linked.lng))) {
+      listings.splice(i, 1);
+    }
   }
 }
 
-// After a viewport Domain search: DB-linked properties whose corrected pin
-// is in view are shown immediately (Domain geo-search will not return them).
-// Then one id-lookup confirms they are still live; off-market ones drop.
 async function hydrateLinkedListingsInView() {
   if (typeof map === 'undefined' || !map.getBounds) return;
   const bounds = map.getBounds();
-  const inView = _linkedEntriesInView(bounds);
-  if (!inView.length) return;
-  const already = _listingIdSetFromList(listings);
-  const missing = inView.filter(e => {
-    const keys = [
-      ..._domainListingKeys(e.domain_listing_id),
-      ..._domainListingKeys(e.listing_url),
-    ];
-    return !keys.some(k => already.has(k));
-  });
-  if (!missing.length) return;
-
-  mergeLinkedStubsIntoListings(missing);
-  const ids = missing.map(e => e.domain_listing_id).filter(Boolean);
-  const confirmed = await confirmLinkedListingsActive(ids);
-  mergeConfirmedLinkedIntoListings(confirmed);
   listings.forEach(applyLinkedOverridesToListing);
+  dropLinkedListingsNotAtDbPin(bounds);
+
+  const already = _listingIdSetFromList(listings);
+  const inView = _linkedEntriesInView(bounds);
+  const ids = [...new Set(inView.flatMap(e =>
+    [..._domainListingKeys(e.domain_listing_id), ..._domainListingKeys(e.listing_url)]
+      .filter(k => /^\d{6,}$/.test(k) && !already.has(k))
+  ))];
+  if (!ids.length || !window.DomainAPI) return;
+
+  try {
+    const live = (typeof DomainAPI.searchByIds === 'function')
+      ? await DomainAPI.searchByIds(ids)
+      : await DomainAPI.search({ listingIds: ids });
+    mergeConfirmedLinkedIntoListings(live || []);
+  } catch (err) {
+    console.warn('[map] Domain listing-id lookup failed:', err);
+  }
+  listings.forEach(applyLinkedOverridesToListing);
+  if (typeof DomainAPI.applyCachedEstimates === 'function') {
+    try { await DomainAPI.applyCachedEstimates(listings); } catch (_) {}
+  }
 }
 
 // Snooze options shown in the dropdown — value is sent as ISO string or 'permanent'
@@ -2595,6 +2492,8 @@ function makeListingCard(l, { pinToTop = false } = {}) {
   // badge / URL / photos / agent / price all stay sourced from Domain.
   const displayAddress = linkedProperty?.address || l.address;
   const displaySuburb  = linkedProperty?.suburb  || l.suburb;
+  const displayState   = (linkedProperty?.state || l.state || dl.state || 'NSW')
+    .replace(/new south wales/i, 'NSW');
   const linkedBadge = linkedProperty
     ? `<span class="listing-linked-badge" title="Linked to property ${linkedProperty.id}"
          style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--accent,#c4841a);color:#fff;font-weight:600;margin-left:6px">Linked</span>`
@@ -2653,7 +2552,7 @@ function makeListingCard(l, { pinToTop = false } = {}) {
       </div>
     </div>
     <div class="listing-address">${displayAddress}</div>
-    <div class="listing-suburb">${displaySuburb}${l.state ? ' ' + l.state : ''}</div>
+    <div class="listing-suburb">${displaySuburb}${displayState ? ' ' + displayState : ''}</div>
     ${nsBlock}
   `;
   card.addEventListener('click', (e) => {
@@ -2822,8 +2721,8 @@ function renderListings() {
   // the viewport at request time; any listings that fall outside after a
   // concurrent pan are simply hidden until the next viewport search.
   const bounds = map.getBounds();
-  mergeLinkedStubsIntoListings(_linkedEntriesInView(bounds));
   listings.forEach(applyLinkedOverridesToListing);
+  dropLinkedListingsNotAtDbPin(bounds);
   // V76.3: CoreLogic listings may lack coordinates; keep those in the sidebar
   // but don't require them to be in the viewport.
   const filtered = listings.filter(l => {
@@ -2831,8 +2730,8 @@ function renderListings() {
     const { lat: dLat, lng: dLng } = listingDisplayCoords(l);
     if (dLat == null || dLng == null) return true;
     const inView   = bounds.contains(L.latLng(dLat, dLng));
-    const linked = getLinkedPropertyForListing(l) || l._linkedInjected;
-    const typeMatch = linked || (l._source === 'corelogic')
+    // propertyTypes is Domain-only — skip this check for CoreLogic listings
+    const typeMatch = getLinkedPropertyForListing(l) || l._linkedInjected || (l._source === 'corelogic')
       || _activeFilters.propertyTypes.length === 0
       || _activeFilters.propertyTypes.some(t => l.type === t.toLowerCase());
     const suitabilityOk = _activeFilters.showSnoozed || !isNotSuitable(l);
@@ -5524,59 +5423,7 @@ function _highlightParcelChildren(parcelsArr, item) {
 window.matchListingByAddress = matchListingByAddress;
 window.runDomainSearchAt = runDomainSearchAt;
 window.getListings = () => listings;
-window.debugLinkedPins = function debugLinkedPins(needle) {
-  const q = String(needle || 'rickard').toLowerCase();
-  const bounds = (typeof map !== 'undefined' && map.getBounds) ? map.getBounds() : null;
-  const linked = [];
-  const seen = new Set();
-  (_propertyByDomainId || new Map()).forEach((e, k) => {
-    if (!e || seen.has(e.id)) return;
-    seen.add(e.id);
-    linked.push({
-      key: k,
-      propertyId: e.id,
-      domain_listing_id: e.domain_listing_id,
-      address: e.address,
-      lat: e.lat,
-      lng: e.lng,
-      inView: !!(bounds && e.lat != null && e.lng != null && bounds.contains(L.latLng(e.lat, e.lng))),
-    });
-  });
-  const matchLinked = linked.filter(e =>
-    String(e.address || '').toLowerCase().includes(q) ||
-    String(e.domain_listing_id || '').includes(q)
-  );
-  const listingHits = (listings || []).filter(l =>
-    String(l.address || '').toLowerCase().includes(q) ||
-    String(l.id || '').includes(q) ||
-    l._linkedInjected
-  );
-  const report = {
-    hasMerge: typeof mergeLinkedStubsIntoListings === 'function',
-    hasHydrate: typeof hydrateLinkedListingsInView === 'function',
-    linkedCacheSize: (_propertyByDomainId && _propertyByDomainId.size) || 0,
-    linkedListSize: (_linkedPropertyList && _linkedPropertyList.length) || 0,
-    listingsCount: (listings || []).length,
-    bounds: bounds ? {
-      south: bounds.getSouth(), west: bounds.getWest(),
-      north: bounds.getNorth(), east: bounds.getEast(),
-    } : null,
-    matchLinked,
-    listingHits: listingHits.map(l => ({
-      id: l.id,
-      address: l.address,
-      lat: l.lat,
-      lng: l.lng,
-      injected: !!l._linkedInjected,
-      domainLat: l._domainLat,
-      domainLng: l._domainLng,
-    })),
-  };
-  console.table(matchLinked);
-  console.table(report.listingHits);
-  console.log('[debugLinkedPins]', report);
-  return report;
-};
+window.MAP_JS_BUILD = window.MAP_JS_BUILD || 'V84.4.5-listing-ids-2026-09-03';
 window.fetchLotDP = fetchLotDP;
 
 window.reSelectParcels = function(parcels, opts) {

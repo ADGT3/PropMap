@@ -1,8 +1,10 @@
 /**
  * domain-api.js
+ * BUILD: V84.4.5-listing-ids 2026-09-03
  * Domain Developer API layer for the Sydney Property Map.
  *
  * Live mode:  calls /api/domain-search (server proxy → Domain API)
+ *             and /api/domain-listing for fetch-by-id
  * Mock mode:  returns enriched local listings from data.js (no network)
  *
  * Toggle: set DOMAIN_API_MOCK = false to go live.
@@ -146,6 +148,31 @@ async function liveSearch(options = {}) {
   // For listings WITH a real price → invalidate the cache (Domain has updated).
   await hydrateDerivedPrices(results);
 
+  return results;
+}
+
+// Fetch live Domain listings by id (not by map box). One proxy call for the batch.
+// Used when a linked CRM pin is in view but Domain's geo-search omitted the listing.
+async function fetchListingsByIds(ids) {
+  const unique = [...new Set((ids || []).map(id => String(id).trim()).filter(Boolean))];
+  if (!unique.length) return [];
+
+  const res = await fetch('/api/domain-listing?ids=' + encodeURIComponent(unique.join(',')), {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Domain listing lookup ${res.status}: ${err.error || res.statusText}`);
+  }
+  const data = await res.json();
+  const raw = Array.isArray(data) ? data : (data.listings || []);
+  const results = raw.map(normaliseLiveListing).filter(Boolean);
+  results.forEach(l => {
+    _enrichmentCache[String(l.id)] = l;
+    if (l.address) _addressCache[l.address.toLowerCase()] = l;
+  });
+  await hydrateDerivedPrices(results);
   return results;
 }
 
@@ -476,11 +503,22 @@ const DomainAPI = {
    */
   async search(options = {}) {
     try {
+      if (options.listingIds && options.listingIds.length && !options.geoWindow) {
+        return await fetchListingsByIds(options.listingIds);
+      }
       return await liveSearch(options);
     } catch (err) {
       console.error('[DomainAPI] search() failed:', err);
       throw err;
     }
+  },
+
+  async searchByIds(ids) {
+    return fetchListingsByIds(ids);
+  },
+
+  applyCachedEstimates(list) {
+    return hydrateDerivedPrices(list || []);
   },
 
   /** Synchronous cache lookup by listing id */
