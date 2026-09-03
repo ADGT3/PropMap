@@ -1,73 +1,89 @@
 /**
  * GET /api/domain-listing?ids=2018...,2019...
- * Looks up live Domain listings by id (GET /v1/listings/{id}).
- * Uses DOMAIN_API_KEY — same secret as /api/domain-search.
+ * Looks up live Domain listings by id.
+ * Keep this file next to api/domain-search.js.
  */
 const DOMAIN_LISTING_URL = 'https://api.domain.com.au/v1/listings/';
 
-async function fetchOne(id, apiKey) {
+function json(res, status, body) {
+  res.statusCode = status;
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(JSON.stringify(body));
+}
+
+function readIds(req) {
+  let raw = '';
+  if (req.query) raw = req.query.ids || req.query.id || '';
+  if (!raw && req.url) {
+    try {
+      const u = new URL(req.url, 'http://localhost');
+      raw = u.searchParams.get('ids') || u.searchParams.get('id') || '';
+    } catch (_) {}
+  }
+  if (!raw && req.body) {
+    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
+    const arr = body.listingIds || body.ids || [];
+    raw = Array.isArray(arr) ? arr.join(',') : String(arr || '');
+  }
+  return [...new Set(String(raw).split(',').map(s => s.trim()).filter(Boolean))].slice(0, 25);
+}
+
+function apiKey() {
+  return process.env.DOMAIN_API_KEY
+    || process.env.DOMAIN_APIKEY
+    || process.env.DOMAIN_CLIENT_SECRET
+    || '';
+}
+
+async function fetchOne(id, key) {
   const res = await fetch(DOMAIN_LISTING_URL + encodeURIComponent(id), {
     headers: {
       Accept: 'application/json',
-      'X-API-Key': apiKey,
-      Authorization: 'Bearer ' + apiKey,
+      'X-API-Key': key,
     },
   });
+  const text = await res.text();
   if (res.status === 404) return null;
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error('Domain GET listing ' + id + ' ' + res.status + ' ' + text.slice(0, 200));
+    throw new Error('Domain ' + res.status + ' ' + text.slice(0, 180));
   }
-  const data = await res.json();
+  let data;
+  try { data = JSON.parse(text); } catch (_) {
+    throw new Error('Domain non-JSON ' + text.slice(0, 180));
+  }
   if (data && data.listing) return data;
   return { type: 'PropertyListing', listing: data };
 }
 
 async function handle(req, res) {
-  if (req.method === 'OPTIONS') {
-    res.statusCode = 204;
-    res.end();
-    return;
-  }
-
-  const apiKey = process.env.DOMAIN_API_KEY;
-  if (!apiKey) {
-    res.statusCode = 500;
-    res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ error: 'DOMAIN_API_KEY is not configured' }));
-    return;
-  }
-
-  let ids = [];
-  if (req.method === 'GET') {
-    const q = (req.query && (req.query.ids || req.query.id)) || '';
-    ids = String(q).split(',').map(s => s.trim()).filter(Boolean);
-  } else if (req.method === 'POST') {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-    ids = (body.listingIds || body.ids || []).map(String);
-  } else {
-    res.statusCode = 405;
-    res.end(JSON.stringify({ error: 'GET or POST only' }));
-    return;
-  }
-
-  ids = [...new Set(ids)].slice(0, 25);
-  const listings = [];
-  const errors = [];
-  await Promise.all(ids.map(async (id) => {
-    try {
-      const row = await fetchOne(id, apiKey);
-      if (row) listings.push(row);
-    } catch (err) {
-      errors.push({ id, error: String(err.message || err) });
+  try {
+    if (req.method === 'OPTIONS') {
+      res.statusCode = 204;
+      res.end();
+      return;
     }
-  }));
-
-  res.statusCode = 200;
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Cache-Control', 'no-store');
-  res.end(JSON.stringify(listings));
+    const key = apiKey();
+    if (!key) {
+      json(res, 500, { error: 'DOMAIN_API_KEY is not set on the server' });
+      return;
+    }
+    const ids = readIds(req);
+    const listings = [];
+    const errors = [];
+    for (const id of ids) {
+      try {
+        const row = await fetchOne(id, key);
+        if (row) listings.push(row);
+      } catch (err) {
+        errors.push({ id, error: String(err.message || err) });
+      }
+    }
+    json(res, 200, listings);
+  } catch (err) {
+    json(res, 500, { error: String(err.message || err) });
+  }
 }
 
-export default handle;
 module.exports = handle;
+exports.default = handle;
