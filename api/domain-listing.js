@@ -18,7 +18,9 @@ async function fetchOne(id, apiKey) {
     const text = await res.text().catch(() => '');
     throw new Error('Domain GET listing ' + id + ' ' + res.status + ' ' + text.slice(0, 200));
   }
-  return res.json();
+  const data = await res.json();
+  if (data && data.listing) return data;
+  return { type: 'PropertyListing', listing: data };
 }
 
 async function handle(req, res) {
