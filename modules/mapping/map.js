@@ -1,14 +1,14 @@
 /**
  * map.js
- * BUILD: V84.4.7-live-domain-id 2026-09-03
+ * BUILD: V84.4.8-db-pin 2026-09-03
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
  * Depends on: overlays-meta.js, overlays-b64-*.js, domain-api.js, dd-risks.js
  *
- * If this header does not say V84.4.7-live-domain-id, you are not on the patched file.
+ * If this header does not say V84.4.8-db-pin, you are not on the patched file.
  */
 
-window.MAP_JS_BUILD = 'V84.4.7-live-domain-id-2026-09-03';
+window.MAP_JS_BUILD = 'V84.4.8-db-pin-2026-09-03';
 console.info('[map.js] ' + window.MAP_JS_BUILD);
 
 // Merge b64 image data from split overlay files into OVERLAYS
@@ -2762,6 +2762,25 @@ function renderListings() {
       selectListing(l.id, e.latlng);
     });
     markers[l.id] = marker;
+  });
+
+  _linkedEntriesInView(bounds).forEach(entry => {
+    if (entry.lat == null || entry.lng == null) return;
+    const already = Object.keys(markers).some(k => {
+      const keys = _domainListingKeys(k).concat(_domainListingKeys(entry.domain_listing_id));
+      return keys.includes(String(k)) && markers[k];
+    });
+    if (markers[entry.domain_listing_id] || markers['linked-' + entry.id]) return;
+    if (listings.some(l => String(l.id) === String(entry.domain_listing_id))) return;
+    const marker = L.marker([entry.lat, entry.lng], {
+      icon: makeIcon(null, { domain: true, selected: false })
+    }).addTo(map);
+    marker.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      const live = listings.find(l => String(l.id) === String(entry.domain_listing_id));
+      if (live) selectListing(live.id, e.latlng);
+    });
+    markers['linked-' + entry.id] = marker;
   });
 
   if (!showListings) Object.values(markers).forEach(m => map.removeLayer(m));

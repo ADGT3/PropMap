@@ -161,11 +161,16 @@ async function fetchListingsByIds(ids) {
     method: 'GET',
     headers: { 'Accept': 'application/json' },
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Domain listing lookup ${res.status}: ${err.error || res.statusText}`);
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch (_) {
+    console.warn('[DomainAPI] /api/domain-listing returned non-JSON', res.status, text.slice(0, 120));
+    return [];
   }
-  const data = await res.json();
+  if (!res.ok) {
+    console.warn('[DomainAPI] /api/domain-listing', res.status, data.error || text.slice(0, 120));
+    return [];
+  }
   const raw = Array.isArray(data) ? data : (data.listings || []);
   const results = raw.map(normaliseLiveListing).filter(Boolean);
   results.forEach(l => {
