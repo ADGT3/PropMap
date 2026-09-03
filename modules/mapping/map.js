@@ -1,14 +1,14 @@
 /**
  * map.js
- * BUILD: V84.4.3-domain-id-inject 2026-09-03
+ * BUILD: V84.4.4-linked-pin 2026-09-03
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
  * Depends on: overlays-meta.js, overlays-b64-*.js, domain-api.js, dd-risks.js
  *
- * If this header does not say V84.4.3-domain-id-inject, you are not on the patched file.
+ * If this header does not say V84.4.4-linked-pin, you are not on the patched file.
  */
 
-window.MAP_JS_BUILD = 'V84.4.3-domain-id-inject-2026-09-03';
+window.MAP_JS_BUILD = 'V84.4.4-linked-pin-2026-09-03';
 console.info('[map.js] ' + window.MAP_JS_BUILD);
 
 // Merge b64 image data from split overlay files into OVERLAYS
@@ -544,6 +544,7 @@ async function hydrateLinkedListingsInView() {
   });
   if (!missing.length) return;
 
+  mergeLinkedStubsIntoListings(missing);
   const ids = missing.map(e => e.domain_listing_id).filter(Boolean);
   const confirmed = await confirmLinkedListingsActive(ids);
   mergeConfirmedLinkedIntoListings(confirmed);
@@ -2821,6 +2822,7 @@ function renderListings() {
   // the viewport at request time; any listings that fall outside after a
   // concurrent pan are simply hidden until the next viewport search.
   const bounds = map.getBounds();
+  mergeLinkedStubsIntoListings(_linkedEntriesInView(bounds));
   listings.forEach(applyLinkedOverridesToListing);
   // V76.3: CoreLogic listings may lack coordinates; keep those in the sidebar
   // but don't require them to be in the viewport.
