@@ -1,9 +1,15 @@
 /**
  * map.js
+ * BUILD: V84.4.3-domain-id-inject 2026-09-03
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
  * Depends on: overlays-meta.js, overlays-b64-*.js, domain-api.js, dd-risks.js
+ *
+ * If this header does not say V84.4.3-domain-id-inject, you are not on the patched file.
  */
+
+window.MAP_JS_BUILD = 'V84.4.3-domain-id-inject-2026-09-03';
+console.info('[map.js] ' + window.MAP_JS_BUILD);
 
 // Merge b64 image data from split overlay files into OVERLAYS
 OVERLAYS.forEach(o => { if (window.OVERLAY_B64?.[o.id]) o.b64 = window.OVERLAY_B64[o.id]; });
@@ -362,6 +368,61 @@ function _linkedEntriesInView(bounds) {
 
 // One Domain round-trip for every in-view linked listing we don't already
 // know about. Geo search cannot see these (Domain stored them off-lot).
+// Fetch the real Domain listing objects for the given ids (one call).
+// These are the same records the sidebar already knows how to render.
+async function fetchDomainListingsByIds(ids) {
+  const unique = [...new Set((ids || []).map(id => String(id)).filter(Boolean))];
+  if (!unique.length) return [];
+
+  const listingType = (_activeFilters && _activeFilters.listingType) || 'Sale';
+  let found = [];
+
+  if (window.DomainAPI && typeof DomainAPI.search === 'function') {
+    try {
+      const results = await DomainAPI.search({
+        listingIds: unique,
+        listingTypes: [listingType],
+      });
+      if (Array.isArray(results)) found = results;
+    } catch (err) {
+      console.warn('[map] DomainAPI.search(listingIds) failed:', err);
+    }
+  }
+
+  if (!found.length && window.DomainAPI && typeof DomainAPI.searchByIds === 'function') {
+    try {
+      const results = await DomainAPI.searchByIds(unique);
+      if (Array.isArray(results)) found = results;
+    } catch (_) {}
+  }
+
+  if (!found.length) {
+    try {
+      const r = await fetch('/api/domain-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingIds: unique, listingType }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        if (Array.isArray(data)) found = data;
+        else if (Array.isArray(data.listings)) found = data.listings;
+        else if (Array.isArray(data.results)) found = data.results;
+      }
+    } catch (_) {}
+  }
+
+  const wanted = new Set();
+  unique.forEach(id => _domainListingKeys(id).forEach(k => wanted.add(k)));
+  return found.filter(l => {
+    const keys = [
+      ..._domainListingKeys(l && l.id),
+      ..._domainListingKeys(l && (l.listingUrl || l.listing_url)),
+    ];
+    return keys.some(k => wanted.has(k));
+  });
+}
+
 async function confirmLinkedListingsActive(ids) {
   const unique = [...new Set((ids || []).map(id => String(id)).filter(Boolean))];
   const now = Date.now();
@@ -371,91 +432,21 @@ async function confirmLinkedListingsActive(ids) {
   });
 
   if (need.length) {
-    let found = [];
-    const listingType = _activeFilters.listingType || 'Sale';
-
-    // One batch lookup by listing id — never a geo search.
-    if (window.DomainAPI && typeof DomainAPI.searchByIds === 'function') {
-      try {
-        const results = await DomainAPI.searchByIds(need);
-        if (Array.isArray(results) && results.length) found = results;
-      } catch (err) {
-        console.warn('[map] DomainAPI.searchByIds failed:', err);
-      }
-    }
-    if (!found.length && window.DomainAPI && typeof DomainAPI.getListings === 'function') {
-      try {
-        const results = await DomainAPI.getListings(need);
-        if (Array.isArray(results) && results.length) found = results;
-      } catch (err) {
-        console.warn('[map] DomainAPI.getListings failed:', err);
-      }
-    }
-
-    // Fallback: one proxy call with the full id list.
-    if (!found.length) {
-      try {
-        const r = await fetch('/api/domain-search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ listingIds: need, listingType }),
-        });
-        if (r.ok) {
-          const data = await r.json();
-          if (Array.isArray(data)) found = data;
-          else if (Array.isArray(data?.listings)) found = data.listings;
-          else if (Array.isArray(data?.results)) found = data.results;
-        }
-      } catch (err) {
-        console.warn('[map] /api/domain-search listingIds failed:', err);
-      }
-    }
-
+    const found = await fetchDomainListingsByIds(need);
     const byId = new Map();
     found.forEach(l => {
       _domainListingKeys(l && l.id).forEach(k => byId.set(k, l));
       _domainListingKeys(l && (l.listingUrl || l.listing_url)).forEach(k => byId.set(k, l));
     });
-
-    // Per-id lookup only for ids the batch did not resolve.
-    const stillNeed = need.filter(id => !byId.has(id));
-    if (stillNeed.length) {
-      const chunk = stillNeed.slice(0, 12);
-      const lookups = await Promise.all(chunk.map(async (id) => {
-        const urls = [
-          `/api/domain-search?id=${encodeURIComponent(id)}`,
-          `/api/domain-search?listingId=${encodeURIComponent(id)}`,
-        ];
-        for (const url of urls) {
-          try {
-            const r = await fetch(url);
-            if (!r.ok) continue;
-            const data = await r.json();
-            const row = Array.isArray(data) ? data[0] : (data?.listing || data);
-            if (row && (row.id || row.listingId || row.address)) return { id, listing: row };
-          } catch (_) { /* next url */ }
-        }
-        return { id, listing: null, unknown: true };
-      }));
-      lookups.forEach(({ id, listing, unknown }) => {
-        if (listing) byId.set(id, listing);
-        else if (unknown) byId.set(id, { __unknown: true });
-      });
-    }
-
     need.forEach(id => {
-      let listing = byId.get(id) || null;
-      if (listing && listing.__unknown) {
-        _linkedActiveCache.set(id, { until: now + LINKED_ACTIVE_TTL_MS, listing: null, unknown: true });
-        return;
-      }
-      if (!listing && window.DomainAPI && DomainAPI.getEnrichedListing) {
-        listing = DomainAPI.getEnrichedListing(id) || null;
-      }
-      // Batch/id endpoints that don't exist return nothing for every id.
-      // Treat that as unknown, not off-market — keep the DB pin.
-      const unknown = !listing && !found.length;
-      _linkedActiveCache.set(id, { until: now + LINKED_ACTIVE_TTL_MS, listing, unknown });
+      const listing = byId.get(id)
+        || (window.DomainAPI && DomainAPI.getEnrichedListing && DomainAPI.getEnrichedListing(id))
+        || null;
+      _linkedActiveCache.set(id, {
+        until: now + LINKED_ACTIVE_TTL_MS,
+        listing,
+        unknown: !listing && !found.length,
+      });
     });
   }
 
@@ -487,6 +478,16 @@ function mergeConfirmedLinkedIntoListings(confirmed) {
   });
 }
 
+function _enrichedListingByAnyKey(keys) {
+  if (!window.DomainAPI || typeof DomainAPI.getEnrichedListing !== 'function') return null;
+  for (const k of keys) {
+    if (k == null || k === '') continue;
+    const hit = DomainAPI.getEnrichedListing(k) || DomainAPI.getEnrichedListing(String(k));
+    if (hit && (hit.price || hit.photos || hit.listingUrl || hit.listing_url)) return hit;
+  }
+  return null;
+}
+
 function mergeLinkedStubsIntoListings(entries) {
   const seen = _listingIdSetFromList(listings);
   (entries || []).forEach(entry => {
@@ -495,20 +496,23 @@ function mergeLinkedStubsIntoListings(entries) {
       ..._domainListingKeys(entry.listing_url),
     ];
     if (keys.some(k => seen.has(k))) return;
-    const enriched = (window.DomainAPI && DomainAPI.getEnrichedListing)
-      ? DomainAPI.getEnrichedListing(entry.domain_listing_id)
-      : null;
+    const domainId = keys.find(k => /^\d{6,}$/.test(k)) || entry.domain_listing_id;
+    const enriched = _enrichedListingByAnyKey(keys.concat(domainId));
     listings.push(Object.assign({}, enriched || {}, {
-      id:         entry.domain_listing_id,
+      id:         domainId || entry.domain_listing_id || entry.id,
       address:    entry.address,
       suburb:     entry.suburb,
       state:      entry.state || 'NSW',
       lat:        entry.lat,
       lng:        entry.lng,
-      listingUrl: entry.listing_url || (enriched && enriched.listingUrl) || null,
+      listingUrl: entry.listing_url || (enriched && (enriched.listingUrl || enriched.listing_url)) || null,
+      price:      (enriched && enriched.price) || { display: '' },
+      photos:     (enriched && enriched.photos) || null,
+      daysOnMarket: (enriched && enriched.daysOnMarket) || null,
       _linkedInjected: true,
     }));
     keys.forEach(k => seen.add(k));
+    if (domainId) seen.add(String(domainId));
   });
 }
 
@@ -540,26 +544,10 @@ async function hydrateLinkedListingsInView() {
   });
   if (!missing.length) return;
 
-  mergeLinkedStubsIntoListings(missing);
-
-  const confirmed = await confirmLinkedListingsActive(missing.map(e => e.domain_listing_id));
-  const confirmedIds = new Set();
-  (confirmed || []).forEach(l => _domainListingKeys(l && l.id).forEach(k => confirmedIds.add(k)));
-
-  // Only drop a stub when Domain answered and that id was not live.
-  const domainAnswered = missing.some(e => _linkedActiveCache.has(String(e.domain_listing_id)));
-  if (!domainAnswered) return;
-  let removed = false;
-  missing.forEach(e => {
-    const cache = _linkedActiveCache.get(String(e.domain_listing_id));
-    if (!cache) return;
-    if (cache.listing) return;
-    if (cache.unknown) return;
-    removeListingByDomainId(e.domain_listing_id);
-    removed = true;
-  });
-  if (confirmed.length) mergeConfirmedLinkedIntoListings(confirmed);
-  if (removed || confirmed.length) { /* caller renders */ }
+  const ids = missing.map(e => e.domain_listing_id).filter(Boolean);
+  const confirmed = await confirmLinkedListingsActive(ids);
+  mergeConfirmedLinkedIntoListings(confirmed);
+  listings.forEach(applyLinkedOverridesToListing);
 }
 
 // Snooze options shown in the dropdown — value is sent as ISO string or 'permanent'
@@ -2567,10 +2555,17 @@ function _syncListingMarkerIcons() {
 // Used by both renderListings() and showSearchCard() so the card format is identical.
 
 function makeListingCard(l, { pinToTop = false } = {}) {
-  const dl = (window.DomainAPI && DomainAPI.getEnrichedListing ? DomainAPI.getEnrichedListing(l.id) : null) || l;
+  const linkedProperty = getLinkedPropertyForListing(l) || _propertyByDomainId.get(String(l.id)) || null;
+  const enrichKeys = [
+    l.id,
+    linkedProperty && linkedProperty.domain_listing_id,
+    l.listingUrl,
+    linkedProperty && linkedProperty.listing_url,
+  ];
+  const dl = _enrichedListingByAnyKey(enrichKeys) || l;
 
   const isMock = window.DomainAPI && DomainAPI.isMock && DomainAPI.isMock();
-  const listingUrl = l.listingUrl || dl.listingUrl || null;
+  const listingUrl = l.listingUrl || dl.listingUrl || dl.listing_url || (linkedProperty && linkedProperty.listing_url) || null;
   const daysOnMarket = l.daysOnMarket ?? dl.daysOnMarket ?? null;
 
   const domBadge = listingUrl
@@ -2580,7 +2575,7 @@ function makeListingCard(l, { pinToTop = false } = {}) {
        </a>`
     : '';
 
-  const thumbUrl = l.photos?.[0]?.url || null;
+  const thumbUrl = l.photos?.[0]?.url || dl.photos?.[0]?.url || null;
   const thumbHtml = thumbUrl
     ? `<div class="listing-thumb"><img src="${thumbUrl}" alt="" loading="lazy"></div>`
     : '';
@@ -2597,7 +2592,6 @@ function makeListingCard(l, { pinToTop = false } = {}) {
   // display the property's address (the source of truth) instead of Domain's
   // (which may be wrong — that's the whole reason linking exists). The Domain
   // badge / URL / photos / agent / price all stay sourced from Domain.
-  const linkedProperty = _propertyByDomainId.get(String(l.id)) || null;
   const displayAddress = linkedProperty?.address || l.address;
   const displaySuburb  = linkedProperty?.suburb  || l.suburb;
   const linkedBadge = linkedProperty
@@ -2651,7 +2645,7 @@ function makeListingCard(l, { pinToTop = false } = {}) {
     ${pinBadge}
     ${thumbHtml}
     <div class="listing-top">
-      <div class="listing-price">${priceCellHtml(l)}</div>
+      <div class="listing-price">${priceCellHtml({ ...l, id: dl.id || l.id, price: l.price || dl.price })}</div>
       <div style="display:flex;align-items:center;gap:6px">
         ${domBadge}
         ${linkedBadge}
@@ -2827,9 +2821,6 @@ function renderListings() {
   // the viewport at request time; any listings that fall outside after a
   // concurrent pan are simply hidden until the next viewport search.
   const bounds = map.getBounds();
-  // Pan/zoom Domain search only returns listings whose Domain point is in
-  // view. Linked CRM rows must still appear at their DB pin.
-  mergeLinkedStubsIntoListings(_linkedEntriesInView(bounds));
   listings.forEach(applyLinkedOverridesToListing);
   // V76.3: CoreLogic listings may lack coordinates; keep those in the sidebar
   // but don't require them to be in the viewport.
@@ -4507,7 +4498,6 @@ async function runDomainSearchAt(lat, lng, searchAddress, searchSuburb) {
     });
     listings.length = 0;
     domainListings.forEach(l => listings.push(l));
-    mergeLinkedStubsIntoListings(_linkedEntriesInView(map.getBounds()));
     await hydrateLinkedListingsInView();
     renderListings();
     if (window.backfillAgentFromCache) backfillAgentFromCache();
@@ -4594,7 +4584,6 @@ async function runDomainSearch() {
     domainListings.forEach(l => listings.push(l));
     console.log('[map] Domain API returned ' + listings.length + ' listings');
     if (loadingEl) loadingEl.style.display = 'none';
-    mergeLinkedStubsIntoListings(_linkedEntriesInView(map.getBounds()));
     await hydrateLinkedListingsInView();
     renderListings();
   } catch (err) {
