@@ -1,14 +1,14 @@
 /**
  * map.js
- * BUILD: V84.4.10-pin-click 2026-09-08
+ * BUILD: V84.4.11-listing-card 2026-09-08
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
  * Depends on: overlays-meta.js, overlays-b64-*.js, domain-api.js, dd-risks.js
  *
- * If this header does not say V84.4.10-pin-click, you are not on the patched file.
+ * If this header does not say V84.4.11-listing-card, you are not on the patched file.
  */
 
-window.MAP_JS_BUILD = 'V84.4.10-pin-click-2026-09-08';
+window.MAP_JS_BUILD = 'V84.4.11-listing-card-2026-09-08';
 console.info('[map.js] ' + window.MAP_JS_BUILD);
 
 // Merge b64 image data from split overlay files into OVERLAYS
@@ -2778,7 +2778,10 @@ function renderListings() {
   document.getElementById('listingCount').textContent = filtered.length;
 
   filtered.forEach(l => {
-    const showCard = l._source === 'corelogic' || listingHasDomainPayload(l);
+    const showCard = l._source === 'corelogic'
+      || listingHasDomainPayload(l)
+      || l._linkedInjected
+      || getLinkedPropertyForListing(l);
     if (showCard) {
       const card = (l._source === 'corelogic')
         ? makeCoreLogicListingCard(l)
