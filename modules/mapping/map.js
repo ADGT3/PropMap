@@ -1,14 +1,14 @@
 /**
  * map.js
- * BUILD: V84.4.11-listing-card 2026-09-08
+ * BUILD: V84.4.13-carto-key 2026-09-09
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
  * Depends on: overlays-meta.js, overlays-b64-*.js, domain-api.js, dd-risks.js
  *
- * If this header does not say V84.4.11-listing-card, you are not on the patched file.
+ * If this header does not say V84.4.13-carto-key, you are not on the patched file.
  */
 
-window.MAP_JS_BUILD = 'V84.4.11-listing-card-2026-09-08';
+window.MAP_JS_BUILD = 'V84.4.13-carto-key-2026-09-09';
 console.info('[map.js] ' + window.MAP_JS_BUILD);
 
 // Merge b64 image data from split overlay files into OVERLAYS
@@ -641,9 +641,10 @@ map.getPane('hillshade').style.zIndex = 150; // below tilePane (200) and MapLibr
 })();
 
 const baseLayers = {
-  map: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-    attribution: '© OpenStreetMap © CARTO',
-    maxZoom: 19
+  map: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_32sk_1_c246a40b74853b5c57f73bf4', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 20
   }),
   satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     attribution: '© Esri, Maxar, Earthstar Geographics',
