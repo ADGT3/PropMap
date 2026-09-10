@@ -21,6 +21,7 @@
 import { neon } from '@neondatabase/serverless';
 import { requireSession, requireAnyModule } from '../lib/auth.js';
 import { getDatabaseUrl } from '../lib/db.js';
+import { parsePropertyAddress } from '../lib/split-property-address.js';
 const sql = neon(getDatabaseUrl());
 
 // V76.5: id generator for properties. New format keeps property ids in their
@@ -73,7 +74,7 @@ export default async function handler(req, res) {
           // some legacy rows may not be uppercased.
           const rows = addressFilter
             ? await sql`
-                SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
+                SELECT id, address, suburb, state, postcode, lat, lng, lot_dps, area_sqm,
                        parcels, property_count, domain_listing_id, listing_url,
                        agent,
                        not_suitable_until::text AS not_suitable_until,
@@ -87,7 +88,7 @@ export default async function handler(req, res) {
                     AND UPPER(address) = ${addressFilter}
                 ORDER BY updated_at DESC LIMIT 1`
             : await sql`
-                SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
+                SELECT id, address, suburb, state, postcode, lat, lng, lot_dps, area_sqm,
                        parcels, property_count, domain_listing_id, listing_url,
                        agent,
                        not_suitable_until::text AS not_suitable_until,
@@ -113,7 +114,7 @@ export default async function handler(req, res) {
         // client checks for explicitly (map.js isNotSuitable, crm.js NS detect).
         if (by_domain_listing) {
           const rows = await sql`
-            SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
+            SELECT id, address, suburb, state, postcode, lat, lng, lot_dps, area_sqm,
                    parcels, property_count, domain_listing_id, listing_url,
                    agent,
                    not_suitable_until::text AS not_suitable_until,
@@ -144,7 +145,7 @@ export default async function handler(req, res) {
         // V76.5.6: cast not_suitable_until to text — see by_domain_listing note above.
         if (id) {
           const rows = await sql`
-            SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
+            SELECT id, address, suburb, state, postcode, lat, lng, lot_dps, area_sqm,
                    parcels, property_count, domain_listing_id, listing_url,
                    agent,
                    not_suitable_until::text AS not_suitable_until,
@@ -161,7 +162,7 @@ export default async function handler(req, res) {
         // V75.4c: state_prop_id (nullable) for NSW propid cross-reference
         // V76.5.6: cast not_suitable_until to text (see by_domain_listing note).
         const rows = await sql`
-          SELECT id, address, suburb, state, lat, lng, lot_dps, area_sqm,
+          SELECT id, address, suburb, state, postcode, lat, lng, lot_dps, area_sqm,
                  parcels, property_count, domain_listing_id, listing_url,
                  agent,
                  not_suitable_until::text AS not_suitable_until,
@@ -276,6 +277,11 @@ export default async function handler(req, res) {
           domain_listing_id = null, listing_url = null, agent = null,
         } = body;
 
+        const split = parsePropertyAddress(address, { suburb, state, postcode: body.postcode });
+        const addressOut = split.address || address;
+        const suburbOut = String(suburb || '').trim() || split.suburb;
+        const stateOut = String(state || '').trim() || split.state || 'NSW';
+
         // V77.1 georeference guard
         if (lat === null || lat === undefined || lat === ''
             || lng === null || lng === undefined || lng === '') {
@@ -301,7 +307,7 @@ export default async function handler(req, res) {
             id, address, suburb, state, lat, lng, lot_dps, area_sqm,
             parcels, property_count, domain_listing_id, listing_url, agent
           ) VALUES (
-            ${id}, ${address}, ${suburb}, ${state}, ${latNum}, ${lngNum},
+            ${id}, ${addressOut}, ${suburbOut}, ${stateOut}, ${latNum}, ${lngNum},
             ${String(lot_dps).toUpperCase()}, ${area_sqm},
             ${parcelsJson}::jsonb, ${property_count},
             ${domain_listing_id}, ${listing_url},
@@ -328,11 +334,22 @@ export default async function handler(req, res) {
         // V75.3: dd column dropped; DD updates go via /api/deals with data.dd
         const parcelsJson = body.parcels !== undefined ? JSON.stringify(body.parcels) : null;
 
+        let address = body.address ?? null;
+        let suburb = body.suburb ?? null;
+        let state = body.state ?? null;
+        if (address != null) {
+          const split = parsePropertyAddress(address, { suburb: suburb || '', state: state || '', postcode: body.postcode });
+          address = split.address || address;
+          if (suburb == null || String(suburb).trim() === '') suburb = split.suburb || suburb;
+          if (state == null || String(state).trim() === '') state = split.state || state;
+        }
+
         const rows = await sql`
           UPDATE properties SET
-            address            = COALESCE(${body.address        ?? null}, address),
-            suburb             = COALESCE(${body.suburb         ?? null}, suburb),
-            state              = COALESCE(${body.state          ?? null}, state),
+            address            = COALESCE(${address        ?? null}, address),
+            suburb             = COALESCE(${suburb         ?? null}, suburb),
+            state              = COALESCE(${state          ?? null}, state),
+            postcode           = COALESCE(${body.postcode  ?? null}, postcode),
             lat                = COALESCE(${body.lat            ?? null}, lat),
             lng                = COALESCE(${body.lng            ?? null}, lng),
             lot_dps            = COALESCE(${body.lot_dps ? String(body.lot_dps).toUpperCase() : null}, lot_dps),
