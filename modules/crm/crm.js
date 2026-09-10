@@ -4114,7 +4114,8 @@ function renderCRMView(container) {
                 boxZoom: false,
                 keyboard: false,
               });
-              L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+              L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=cb1_32sk_1_c246a40b74853b5c57f73bf4', {
+                attribution: '&copy; OpenStreetMap &copy; CARTO',
                 maxZoom: 19,
               }).addTo(miniMap);
 
