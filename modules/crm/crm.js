@@ -3331,6 +3331,7 @@ function renderCRMView(container) {
           <input type="checkbox" class="crm-prop-screened-cb" ${showScreenedOut ? 'checked' : ''}>
           Show Not Suitable
         </label>
+        <button type="button" class="kb-btn crm-prop-clean-addr" title="Split suburb, state and postcode out of the address field">Clean addresses</button>
       </div>
       <div class="crm-contact-table-wrap">
         <table class="crm-contact-table crm-contact-table--properties">
@@ -3353,6 +3354,32 @@ function renderCRMView(container) {
     pane.querySelector('.crm-prop-screened-cb').addEventListener('change', e => {
       showScreenedOut = e.target.checked;
       renderPropertyRows();
+    });
+    pane.querySelector('.crm-prop-clean-addr')?.addEventListener('click', async () => {
+      const btn = pane.querySelector('.crm-prop-clean-addr');
+      if (!confirm('Rewrite property rows in the database?\n\nSuburb, state and postcode will be stripped from Address and written into those fields only when they are empty.')) return;
+      btn.disabled = true;
+      btn.textContent = 'Cleaning…';
+      try {
+        const r = await fetch('/api/normalize-property-addresses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: true }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          alert(data.error || ('Clean failed: ' + r.status));
+          return;
+        }
+        _propertiesCache = null;
+        await renderPropertyRows();
+        alert(`Updated ${data.updated || 0} of ${data.total || 0} properties.`);
+      } catch (err) {
+        alert('Clean failed: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Clean addresses';
+      }
     });
 
     await renderPropertyRows();
@@ -3566,7 +3593,7 @@ function renderCRMView(container) {
         <div class="crm-modal-header">
           <div>
             <div class="crm-modal-title">${property.address || property.id}${property.suburb ? ', ' + property.suburb : ''}</div>
-            <div class="crm-modal-subtitle">${property.lot_dps || ''}${property.area_sqm ? ' · ' + Math.round(property.area_sqm).toLocaleString() + ' m²' : ''}</div>
+            <div class="crm-modal-subtitle">${/DP\d+/i.test(property.lot_dps || '') ? property.lot_dps : ''}${property.area_sqm ? ' · ' + Math.round(property.area_sqm).toLocaleString() + ' m²' : ''}</div>
           </div>
           <div class="crm-modal-header-actions">
             <button class="crm-prop-delete-btn crm-modal-delete"
@@ -3597,6 +3624,8 @@ function renderCRMView(container) {
                     ).join('')}
                   </select>
                 </div>
+                <div class="crm-detail-label">Postcode</div>
+                <div><input class="kb-input crm-prop-postcode-input" type="text" value="${(property.postcode || '').replace(/"/g,'"')}" style="width:100%;box-sizing:border-box;font-size:13px"></div>
                 <div class="crm-detail-label">Lot/DP</div>
                 <div><input class="kb-input crm-prop-lotdp-input" type="text" value="${(property.lot_dps || '').replace(/"/g,'&quot;')}" style="width:100%;box-sizing:border-box;font-size:13px"></div>
                 <div class="crm-detail-label">Area</div>
@@ -3759,33 +3788,38 @@ function renderCRMView(container) {
       const addrInput  = modal.querySelector('.crm-prop-address-input');
       const subInput   = modal.querySelector('.crm-prop-suburb-input');
       const stateInput = modal.querySelector('.crm-prop-state-input');
+      const pcInput    = modal.querySelector('.crm-prop-postcode-input');
       const lotInput   = modal.querySelector('.crm-prop-lotdp-input');
       const saveBtn    = modal.querySelector('.crm-prop-save-btn');
       const origAddr   = property.address || '';
       const origSub    = property.suburb || '';
       const origState  = property.state || 'NSW';
+      const origPc     = property.postcode || '';
       const origLot    = property.lot_dps || '';
       const toggleSave = () => {
         const dirty = addrInput.value.trim()  !== origAddr
                    || subInput.value.trim()   !== origSub
                    || stateInput.value        !== origState
+                   || (pcInput ? pcInput.value.trim() : '') !== origPc
                    || lotInput.value.trim()   !== origLot;
         saveBtn.style.display = dirty ? '' : 'none';
       };
       addrInput.addEventListener('input', toggleSave);
       subInput.addEventListener('input',  toggleSave);
       stateInput.addEventListener('change', toggleSave);
+      pcInput?.addEventListener('input', toggleSave);
       lotInput.addEventListener('input',  toggleSave);
       saveBtn.addEventListener('click', async () => {
         await fetch('/api/properties', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            id:      property.id,
-            address: addrInput.value.trim() || null,
-            suburb:  subInput.value.trim()  || null,
-            state:   stateInput.value       || null,
-            lot_dps: lotInput.value.trim()  || null,
+            id:       property.id,
+            address:  addrInput.value.trim() || null,
+            suburb:   subInput.value.trim()  || null,
+            state:    stateInput.value       || null,
+            postcode: pcInput ? (pcInput.value.trim() || null) : null,
+            lot_dps:  lotInput.value.trim()  || null,
           }),
         });
         // V76.7 — broadcast to pipeline / map so they refresh stale copies
