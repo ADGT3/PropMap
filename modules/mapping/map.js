@@ -1,14 +1,14 @@
 /**
  * map.js
- * BUILD: V84.4.13-carto-key 2026-09-09
+ * BUILD: V84.4.14-no-dup-pin 2026-09-09
  * Leaflet map, multi-overlay rendering, zone filtering, and GeoTIFF upload manager.
  * Self-contained GeoTIFF parser — no external library required. Works from file:// URLs.
  * Depends on: overlays-meta.js, overlays-b64-*.js, domain-api.js, dd-risks.js
  *
- * If this header does not say V84.4.13-carto-key, you are not on the patched file.
+ * If this header does not say V84.4.14-no-dup-pin, you are not on the patched file.
  */
 
-window.MAP_JS_BUILD = 'V84.4.13-carto-key-2026-09-09';
+window.MAP_JS_BUILD = 'V84.4.14-no-dup-pin-2026-09-09';
 console.info('[map.js] ' + window.MAP_JS_BUILD);
 
 // Merge b64 image data from split overlay files into OVERLAYS
@@ -298,12 +298,37 @@ function listingDisplayCoords(listing) {
 
 function listingDisplayAddress(listing) {
   const linked = getLinkedPropertyForListing(listing);
+  let address = (linked && linked.address) ? linked.address : (listing?.address || '');
+  const suburb  = (linked && linked.suburb)  ? linked.suburb  : (listing?.suburb  || '');
+  if (address && suburb) {
+    const re = new RegExp(',\\s*' + suburb.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&') + '\\s*$', 'i');
+    address = address.replace(re, '').trim();
+  }
   return {
-    address: (linked && linked.address) ? linked.address : (listing?.address || ''),
-    suburb:  (linked && linked.suburb)  ? linked.suburb  : (listing?.suburb  || ''),
+    address,
+    suburb,
     state:   (linked && linked.state)   ? linked.state   : (listing?.state   || ''),
     linked,
   };
+}
+
+function _pipelineCoversLatLng(lat, lng) {
+  if (lat == null || lng == null) return false;
+  if (typeof window.getPipelineData !== 'function') return false;
+  const data = window.getPipelineData();
+  if (!data) return false;
+  const tol = 0.0003;
+  return Object.values(data).some(item => {
+    const p = item && item.property;
+    if (!p) return false;
+    const pts = [];
+    if (p.lat != null && p.lng != null) pts.push([Number(p.lat), Number(p.lng)]);
+    const parcels = p._parcels || p.parcels || [];
+    parcels.forEach(c => {
+      if (c && c.lat != null && c.lng != null) pts.push([Number(c.lat), Number(c.lng)]);
+    });
+    return pts.some(([a, b]) => Math.abs(a - lat) < tol && Math.abs(b - lng) < tol);
+  });
 }
 
 // Stamp Domain listing objects with the linked property address + coords so
@@ -384,6 +409,8 @@ function listingHasDomainPayload(l) {
 }
 
 function mergeLinkedStubsIntoListings(entries) {
+  // Only inject a search pin when Domain has already confirmed a live payload.
+  // Linked-but-withdrawn listings must not appear as Domain search results.
   const seen = _listingIdSetFromList(listings);
   (entries || []).forEach(entry => {
     const keys = [
@@ -391,8 +418,10 @@ function mergeLinkedStubsIntoListings(entries) {
       ..._domainListingKeys(entry.listing_url),
     ];
     if (keys.some(k => seen.has(k))) return;
+    if (_pipelineCoversLatLng(entry.lat, entry.lng)) return;
     const domainId = keys.find(k => /^\d{6,}$/.test(k)) || entry.domain_listing_id;
     const enriched = _enrichedListingByAnyKey(keys.concat(domainId));
+    if (!listingHasDomainPayload(enriched)) return;
     listings.push(Object.assign({}, enriched || {}, {
       id:          domainId || entry.domain_listing_id || entry.id,
       address:     entry.address,
@@ -406,6 +435,16 @@ function mergeLinkedStubsIntoListings(entries) {
     keys.forEach(k => seen.add(k));
     if (domainId) seen.add(String(domainId));
   });
+}
+
+function dropUnconfirmedLinkedStubs() {
+  for (let i = listings.length - 1; i >= 0; i--) {
+    const l = listings[i];
+    if (!l || l._source === 'corelogic') continue;
+    if (!l._linkedInjected) continue;
+    if (listingHasDomainPayload(l)) continue;
+    listings.splice(i, 1);
+  }
 }
 
 function mergeConfirmedLinkedIntoListings(confirmed) {
@@ -462,23 +501,40 @@ async function hydrateLinkedListingsInView() {
   listings.forEach(applyLinkedOverridesToListing);
   dropLinkedListingsNotAtDbPin(bounds);
 
-  const already = _listingIdSetFromList(listings);
   const inView = _linkedEntriesInView(bounds);
   const ids = [...new Set(inView.flatMap(e =>
     [..._domainListingKeys(e.domain_listing_id), ..._domainListingKeys(e.listing_url)]
-      .filter(k => /^\d{6,}$/.test(k) && !already.has(k))
+      .filter(k => /^\d{6,}$/.test(k))
   ))];
-  if (!ids.length || !window.DomainAPI) return;
+  if (!ids.length || !window.DomainAPI) {
+    dropUnconfirmedLinkedStubs();
+    return;
+  }
 
+  let live = [];
   try {
-    const live = (typeof DomainAPI.searchByIds === 'function')
+    live = (typeof DomainAPI.searchByIds === 'function')
       ? await DomainAPI.searchByIds(ids)
       : await DomainAPI.search({ listingIds: ids });
-    mergeConfirmedLinkedIntoListings(live || []);
+    live = live || [];
   } catch (err) {
     console.warn('[map] Domain listing-id lookup failed:', err);
+    dropUnconfirmedLinkedStubs();
+    return;
   }
+  const liveKeys = _listingIdSetFromList(live);
+  for (let i = listings.length - 1; i >= 0; i--) {
+    const l = listings[i];
+    if (!l || !l._linkedInjected || l._source === 'corelogic') continue;
+    const keys = [
+      ..._domainListingKeys(l.id),
+      ..._domainListingKeys(l.listingUrl || l.listing_url),
+    ];
+    if (!keys.some(k => liveKeys.has(k))) listings.splice(i, 1);
+  }
+  mergeConfirmedLinkedIntoListings(live);
   listings.forEach(applyLinkedOverridesToListing);
+  dropUnconfirmedLinkedStubs();
   if (typeof DomainAPI.applyCachedEstimates === 'function') {
     try { await DomainAPI.applyCachedEstimates(listings); } catch (_) {}
   }
@@ -2759,6 +2815,12 @@ function renderListings() {
   // concurrent pan are simply hidden until the next viewport search.
   const bounds = map.getBounds();
   mergeLinkedStubsIntoListings(_linkedEntriesInView(bounds));
+  for (let i = listings.length - 1; i >= 0; i--) {
+    const l = listings[i];
+    if (!l || !l._linkedInjected) continue;
+    if (listingHasDomainPayload(l)) continue;
+    if (_pipelineCoversLatLng(l.lat, l.lng)) listings.splice(i, 1);
+  }
   listings.forEach(applyLinkedOverridesToListing);
   dropLinkedListingsNotAtDbPin(bounds);
   // V76.3: CoreLogic listings may lack coordinates; keep those in the sidebar
@@ -2780,9 +2842,7 @@ function renderListings() {
 
   filtered.forEach(l => {
     const showCard = l._source === 'corelogic'
-      || listingHasDomainPayload(l)
-      || l._linkedInjected
-      || getLinkedPropertyForListing(l);
+      || listingHasDomainPayload(l);
     if (showCard) {
       const card = (l._source === 'corelogic')
         ? makeCoreLogicListingCard(l)
