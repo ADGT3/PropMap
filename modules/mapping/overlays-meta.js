@@ -261,20 +261,30 @@ const OVERLAYS = [
     bounds: null,
     b64: null,
     vector: true,
-    vectorUrl: "/leppington_zoning_wgs84.geojson",
-    source: "Leppington Precinct - South West Growth Centre Land Zoning Map, SEPP (Sydney Region Growth Centres) 2006, NSW Planning & Environment",
+    vectorUrl: "/leppington_zoning_wgs84.geojson?v=20260915",
+    source: "NSW Planning EPI Land Zoning (official) — SEPP Precincts Western Parkland City / SW Growth Centre",
     vectorStyleProp: "zone",
     vectorStyleMap: {
+      "B1":  { color: "#5090C0", fillColor: "#90C9F2", fillOpacity: 0.70, weight: 1 },
       "B2":  { color: "#40d0d8", fillColor: "#62f0f5", fillOpacity: 0.70, weight: 1 },
       "B3":  { color: "#0090b8", fillColor: "#00c2ed", fillOpacity: 0.70, weight: 1 },
       "B4":  { color: "#7070a0", fillColor: "#959dc2", fillOpacity: 0.70, weight: 1 },
+      "B5":  { color: "#90a8b0", fillColor: "#bad6de", fillOpacity: 0.70, weight: 1 },
       "B7":  { color: "#90a8b0", fillColor: "#bad6de", fillOpacity: 0.70, weight: 1 },
+      "C2":  { color: "#145214", fillColor: "#228B22", fillOpacity: 0.70, weight: 1 },
+      "C4":  { color: "#c09040", fillColor: "#ffda96", fillOpacity: 0.70, weight: 1 },
       "E2":  { color: "#c07010", fillColor: "#f0ae3c", fillOpacity: 0.70, weight: 1 },
+      "E3":  { color: "#145214", fillColor: "#228B22", fillOpacity: 0.70, weight: 1 },
       "E4":  { color: "#c09040", fillColor: "#ffda96", fillOpacity: 0.70, weight: 1 },
+      "MU1": { color: "#7070a0", fillColor: "#959dc2", fillOpacity: 0.70, weight: 1 },
       "R2":  { color: "#C8BC7A", fillColor: "#ffa6a3", fillOpacity: 0.70, weight: 1 },
       "R3":  { color: "#C8B840", fillColor: "#ff776e", fillOpacity: 0.70, weight: 1 },
+      "R4":  { color: "#b84a3a", fillColor: "#e85d4c", fillOpacity: 0.70, weight: 1 },
       "RE1": { color: "#00aa00", fillColor: "#55ff00", fillOpacity: 0.70, weight: 1 },
-      "SP2": { color: "#c8c800", fillColor: "#ffff70", fillOpacity: 0.70, weight: 1 }
+      "RE2": { color: "#6aa300", fillColor: "#adff2f", fillOpacity: 0.70, weight: 1 },
+      "SP2": { color: "#c8c800", fillColor: "#ffff70", fillOpacity: 0.70, weight: 1 },
+      "RU2": { color: "#8a7a50", fillColor: "#c4b896", fillOpacity: 0.70, weight: 1 },
+      "RU4": { color: "#8a7048", fillColor: "#c4a574", fillOpacity: 0.70, weight: 1 }
     }
   },
 
