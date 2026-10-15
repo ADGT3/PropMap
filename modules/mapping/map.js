@@ -1136,9 +1136,11 @@ function findPipelineMatchForClick(listing) {
 
   console.log('[match] click context:', { clickLat, clickLng, clickLotDPs: [...clickLotDPs], clickMarkerData });
 
-  // 2. Lot/DP overlap
+  // 2. Lot/DP overlap — ignore parcel deals so a property can still be added
+  //    even when the parent parcel is already on the board.
   if (clickLotDPs.size) {
     for (const [id, item] of entries) {
+      if (item?._isParcel) continue; // parcel deal does not block a property add
       const itemLotDPs = (item?.property?._lotDPs || '')
         .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
       if (itemLotDPs.some(l => clickLotDPs.has(l))) {
@@ -1150,10 +1152,11 @@ function findPipelineMatchForClick(listing) {
       entries.slice(0, 3).map(([id, item]) => ({ id, lots: item?.property?._lotDPs })));
   }
 
-  // 3. Lat/lng proximity — ~25m tolerance
+  // 3. Lat/lng proximity — ~25m tolerance (also ignore parcel deals)
   if (clickLat != null && clickLng != null) {
     const tol = 0.00025;
     for (const [id, item] of entries) {
+      if (item?._isParcel) continue; // parcel deal does not block a property add
       const parcels = item?.property?._parcels || [];
       for (const pc of parcels) {
         if (Math.abs(pc.lat - clickLat) <= tol && Math.abs(pc.lng - clickLng) <= tol) {
