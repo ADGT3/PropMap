@@ -2541,6 +2541,63 @@ function getTerms(id) {
   return { price: '', settlement: '', ...t };
 }
 
+function getTermsHistory(id) {
+  return Array.isArray(pipeline[id]?.terms_history) ? pipeline[id].terms_history : [];
+}
+
+function captureTermsSnapshot(id, terms) {
+  if (!pipeline[id]) return;
+  if (!pipeline[id].terms_history) pipeline[id].terms_history = [];
+  const agent = pipeline[id].property?._agent || {};
+  const snapshot = {
+    id: Date.now(),
+    price: terms.price || null,
+    settlement: terms.settlement || null,
+    deposits: Array.isArray(terms.deposits) ? terms.deposits.map(d => ({ ...d })) : [],
+    captured_at: new Date().toISOString(),
+    agent_name: agent.name || window._sessionUserName || 'Unknown',
+    agent_agency: agent.agency || '',
+    captured_by: window._sessionUserName || null,
+  };
+  pipeline[id].terms_history.unshift(snapshot); // newest first
+  savePipeline(id);
+  return snapshot;
+}
+
+function renderTermsHistoryHtml(history) {
+  if (!history || !history.length) return '<div class="kb-terms-history-empty">No vendor terms captured yet.</div>';
+  return history.map(h => {
+    const date = formatOfferDate(h.captured_at);
+    const price = h.price ? formatInputPrice(String(h.price)) : '—';
+    const settle = h.settlement ? formatSettlement(String(h.settlement)) : '—';
+    const agent = h.agent_name || 'Unknown';
+    const agency = h.agent_agency ? ` · ${h.agent_agency}` : '';
+    return `
+      <div class="kb-terms-history-item">
+        <div class="kb-terms-history-meta">${date}</div>
+        <div class="kb-terms-history-agent">${agent}${agency}</div>
+        <div class="kb-terms-history-detail">${price} · ${settle}</div>
+      </div>`;
+  }).join('');
+}
+  if (!pipeline[id]) return;
+  if (!pipeline[id].terms_history) pipeline[id].terms_history = [];
+  const agent = pipeline[id].property?._agent || {};
+  const snapshot = {
+    id: Date.now(),
+    price: terms.price || null,
+    settlement: terms.settlement || null,
+    deposits: Array.isArray(terms.deposits) ? terms.deposits.map(d => ({ ...d })) : [],
+    captured_at: new Date().toISOString(),
+    agent_name: agent.name || window._sessionUserName || 'Unknown',
+    agent_agency: agent.agency || '',
+    captured_by: window._sessionUserName || null,
+  };
+  pipeline[id].terms_history.unshift(snapshot); // newest first
+  savePipeline(id);
+  return snapshot;
+}
+
 function addDeposit(id) {
   const terms = getTerms(id);
   terms.deposits.push({ amount: '', due: '', note: '' });
@@ -4120,6 +4177,7 @@ ${rows.join('')}`;
           return `
         <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
         <div class="kb-terms">
+          <div class="kb-terms-intro">Record the vendor’s current asking terms. Capture a snapshot to keep a dated history with the associated agent.</div>
           <div class="kb-terms-row">
             <div class="kb-field-wrap">
               <label class="kb-field-label">Price</label>
@@ -4133,6 +4191,9 @@ ${rows.join('')}`;
           <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
           <div class="kb-deposits">${buildDepositsHtml(terms.deposits, parseDepositAmountKanban(terms.price, null) || 0)}</div>
           <button class="kb-add-deposit">+ Add tranche</button>
+          <button type="button" class="kb-capture-terms">Capture these terms</button>
+          <div class="kb-terms-history-label">Term history</div>
+          <div class="kb-terms-history">${renderTermsHistoryHtml(getTermsHistory(id))}</div>
         </div>
           `;
         })()}
@@ -4705,6 +4766,24 @@ ${rows.join('')}`;
     addDeposit(id);
     modal.querySelector('.kb-deposits').innerHTML = buildDepositsHtml(getTerms(id).deposits);
   });
+
+  // Capture current vendor terms as a dated, agent-linked snapshot
+  const captureBtn = modal.querySelector('.kb-capture-terms');
+  if (captureBtn) {
+    captureBtn.addEventListener('click', () => {
+      syncTerms();
+      syncDeposits();
+      const t = getTerms(id);
+      if (!t.price && !t.settlement) {
+        alert('Enter a price or settlement before capturing.');
+        return;
+      }
+      captureTermsSnapshot(id, t);
+      const histEl = modal.querySelector('.kb-terms-history');
+      if (histEl) histEl.innerHTML = renderTermsHistoryHtml(getTermsHistory(id));
+      showKanbanToast('Vendor terms captured');
+    });
+  }
   } // end V77.1 Vendor Terms gate
 
   // V77.1: Lease Terms — wires only if section is rendered (Lease Listings only)
