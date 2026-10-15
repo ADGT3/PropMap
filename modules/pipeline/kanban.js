@@ -2541,6 +2541,74 @@ function getTerms(id) {
   return { price: '', settlement: '', ...t };
 }
 
+function getTermsHistory(id) {
+  return Array.isArray(pipeline[id]?.terms_history) ? pipeline[id].terms_history : [];
+}
+
+function captureTermsSnapshot(id, terms) {
+  if (!pipeline[id]) return;
+  if (!pipeline[id].terms_history) pipeline[id].terms_history = [];
+
+  // Prefer the listing agent shown in the CRM section above Vendor Terms.
+  let agentName = '';
+  let agentAgency = '';
+  const agentEl = document.querySelector('.crm-domain-agent .crm-contact-name');
+  if (agentEl) {
+    agentName = (agentEl.childNodes[0]?.textContent || '').trim();
+  }
+  const agencyEl = document.querySelector('.crm-domain-agent .crm-contact-meta span');
+  if (agencyEl) agentAgency = agencyEl.textContent.trim();
+
+  // Fall back to property._agent if the DOM row is not present.
+  if (!agentName) {
+    const agent = pipeline[id].property?._agent || {};
+    agentName = agent.name || '';
+    agentAgency = agent.agency || agentAgency;
+  }
+  if (!agentName) agentName = 'Unknown';
+
+  const snapshot = {
+    id: Date.now(),
+    price: terms.price || null,
+    settlement: terms.settlement || null,
+    deposits: Array.isArray(terms.deposits) ? terms.deposits.map(d => ({ ...d })) : [],
+    captured_at: new Date().toISOString(),
+    agent_name: agentName,
+    agent_agency: agentAgency,
+    captured_by: window._sessionUserName || null,
+  };
+  pipeline[id].terms_history.unshift(snapshot); // newest first
+  savePipeline(id);
+  return snapshot;
+}
+
+function renderTermsHistoryHtml(history) {
+  if (!history || !history.length) return '<div class="kb-terms-history-empty">No vendor terms captured yet.</div>';
+  return history.map(h => {
+    const date = formatOfferDate(h.captured_at);
+    const price = h.price ? formatInputPrice(String(h.price)) : '—';
+    const settle = h.settlement ? formatSettlement(String(h.settlement)) : '—';
+    const agent = h.agent_name || 'Unknown';
+    const agency = h.agent_agency ? ` · ${h.agent_agency}` : '';
+    const deposits = Array.isArray(h.deposits) ? h.deposits.filter(d => d.amount || d.due || d.note) : [];
+    const depHtml = deposits.length
+      ? deposits.map(d => {
+          const amt = d.amount ? formatDepositAmount(d.amount, parseDepositAmountKanban(h.price, null) || 0) : '';
+          const due = d.due != null && d.due !== '' ? formatSettlement(String(d.due)) : '';
+          const note = d.note || '';
+          return [amt, due, note].filter(Boolean).join(' · ');
+        }).join('<br>')
+      : '';
+    return `
+      <div class="kb-terms-history-item">
+        <div class="kb-terms-history-meta">${date}</div>
+        <div class="kb-terms-history-agent">${agent}${agency}</div>
+        <div class="kb-terms-history-detail">${price} · ${settle}</div>
+        ${depHtml ? `<div class="kb-terms-history-deps">${depHtml}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
 function addDeposit(id) {
   const terms = getTerms(id);
   terms.deposits.push({ amount: '', due: '', note: '' });
@@ -2561,14 +2629,38 @@ function getOffers(id) {
 }
 
 function addOffer(id, offer) {
-  if (!pipeline[id]) return;
+  if (!pipeline[id]) return null;
   if (!pipeline[id].offers) pipeline[id].offers = [];
-  pipeline[id].offers.unshift({ // newest first
+  const newOffer = {
     ...offer,
     date: new Date().toISOString(),
     id:   Date.now(),
-  });
+    status: offer.status || 'submitted',
+  };
+  pipeline[id].offers.unshift(newOffer); // newest first
   savePipeline(id);
+  return newOffer;
+}
+
+function updateOffer(propertyId, offerId, updates) {
+  if (!pipeline[propertyId]) return null;
+  const offers = pipeline[propertyId].offers || [];
+  const idx = offers.findIndex(o => String(o.id) === String(offerId));
+  if (idx === -1) return null;
+  // Preserve locked status: once submitted, do not allow reverting to draft via update
+  const current = offers[idx];
+  const nextStatus = updates.status || current.status || 'submitted';
+  if (current.status === 'submitted' && nextStatus === 'draft') {
+    return current; // locked
+  }
+  offers[idx] = {
+    ...current,
+    ...updates,
+    status: nextStatus,
+    updated_at: new Date().toISOString(),
+  };
+  savePipeline(propertyId);
+  return offers[idx];
 }
 
 function deleteOffer(propertyId, offerId) {
@@ -3833,7 +3925,7 @@ function buildOfferDepositsHtml(deps, offerPrice) {
       <div class="kb-deposit-fields">
         <input class="kb-input kb-odep-amount" type="text" placeholder="$ or % e.g. 5% or $50,000" value="${d.amount ? formatDepositAmount(d.amount, offerPrice) : ''}" data-idx="${i}">
         <input class="kb-input kb-odep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due != null && d.due !== '' ? formatSettlement(String(d.due)) : ''}" data-idx="${i}">
-        <input class="kb-input kb-odep-note kb-dep-note-inline" type="text" placeholder="Note" value="${d.note || ''}" data-idx="${i}">
+        <input class="kb-input kb-odep-note kb-dep-note-full" type="text" placeholder="Note" value="${d.note || ''}" data-idx="${i}">
         ${deps.length > 1 ? `<button class="kb-odep-remove" data-idx="${i}" title="Remove tranche">✕</button>` : ''}
       </div>
     </div>`).join('');
@@ -3912,7 +4004,7 @@ function openCardModal(id) {
         <div class="kb-fin-pick-row" data-price="${o.price}" data-offer-id="${o.id}">
           <div class="kb-fin-pick-main">
             <div class="kb-fin-pick-top">
-              <span class="kb-fin-pick-label">Offer ${offers.length - i}${i === 0 ? ' <span class="kb-fin-pick-latest">latest</span>' : ''}</span>
+              <span class="kb-fin-pick-label">Offer ${offers.length - i}${i === 0 ? ' <span class="kb-fin-pick-latest">latest</span>' : ''} <span class="kb-offer-status kb-offer-status-${o.status || 'submitted'}">${(o.status || 'submitted') === 'draft' ? 'Draft' : 'Submitted'}</span></span>
               <span class="kb-fin-pick-date">${formatOfferDate(o.date)}</span>
             </div>
             <div class="kb-fin-pick-detail">
@@ -3923,7 +4015,10 @@ function openCardModal(id) {
           </div>
           <div class="kb-fin-pick-actions">
             <button class="kb-fin-pick-btn">📊 Model</button>
-            <button class="kb-fin-pick-delete" data-offer-id="${o.id}" title="Delete offer">✕</button>
+            <div class="kb-fin-pick-icon-row">
+              ${(o.status || 'submitted') === 'draft' ? `<button class="kb-offer-edit" data-offer-id="${o.id}" title="Edit draft offer">✎</button>` : ''}
+              <button class="kb-fin-pick-delete" data-offer-id="${o.id}" title="Delete offer">✕</button>
+            </div>
           </div>
         </div>`);
     });
@@ -3980,8 +4075,9 @@ function openCardModal(id) {
     <div class="kb-offer-deposits">${buildOfferDepositsHtml([{ amount: '', due: '', note: '' }])}</div>
     <button class="kb-offer-add-deposit">+ Add tranche</button>
     <div class="kb-offer-actions">
-      <button class="kb-submit-offer">+ Submit Offer</button>
-      <button class="kb-offer-popup-cancel">Cancel</button>
+      <button class="kb-save-draft-offer" type="button">Save as Draft</button>
+      <button class="kb-submit-offer" type="button">Submit Offer</button>
+      <button class="kb-offer-popup-cancel" type="button">Cancel</button>
     </div>
   </div>
 </div>
@@ -3989,12 +4085,18 @@ ${rows.join('')}`;
   }
 
   function buildOffersHtml(offers) {
-    if (!offers || offers.length === 0) return '<div class="kb-offers-empty">No offers submitted yet</div>';
-    return offers.map(o => `
-      <div class="kb-offer-item" data-offer-id="${o.id}">
+    if (!offers || offers.length === 0) return '<div class="kb-offers-empty">No offers yet</div>';
+    return offers.map(o => {
+      const status = o.status || 'submitted'; // backward compatible
+      const isDraft = status === 'draft';
+      const statusBadge = `<span class="kb-offer-status kb-offer-status-${status}">${isDraft ? 'Draft' : 'Submitted'}</span>`;
+      return `
+      <div class="kb-offer-item ${isDraft ? 'kb-offer-draft' : 'kb-offer-locked'}" data-offer-id="${o.id}">
         <div class="kb-offer-header">
           <span class="kb-offer-date">${formatOfferDate(o.date)}</span>
-          <button class="kb-offer-delete" data-offer-id="${o.id}" title="Delete offer">✕</button>
+          ${statusBadge}
+          ${isDraft ? `<button class="kb-offer-edit" data-offer-id="${o.id}" title="Edit draft offer">✎</button>` : ''}
+          <button class="kb-offer-delete" data-offer-id="${o.id}" title="${isDraft ? 'Delete draft offer' : 'Delete submitted offer'}">✕</button>
         </div>
         <div class="kb-offer-fields">
           <span class="kb-offer-field"><span class="kb-offer-lbl">Price</span> ${o.price || '—'}</span>
@@ -4007,7 +4109,8 @@ ${rows.join('')}`;
             const amtDisplay = d.amount ? formatDepositAmount(d.amount, price) : '';
             return `<span class="kb-offer-dep">${[amtDisplay, d.due, d.note].filter(Boolean).join(' · ')}</span>`;
           }).join('')}</div>` : ''}
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   const dd = getDd(id);
@@ -4087,6 +4190,7 @@ ${rows.join('')}`;
           return `
         <div class="kb-section-label" style="margin-top:12px">Vendor Terms</div>
         <div class="kb-terms">
+          <div class="kb-terms-intro">Record the vendor’s current asking terms. Capture a snapshot to keep a dated history with the associated agent.</div>
           <div class="kb-terms-row">
             <div class="kb-field-wrap">
               <label class="kb-field-label">Price</label>
@@ -4100,6 +4204,9 @@ ${rows.join('')}`;
           <label class="kb-field-label" style="margin-top:8px;display:block">Deposit Structure</label>
           <div class="kb-deposits">${buildDepositsHtml(terms.deposits, parseDepositAmountKanban(terms.price, null) || 0)}</div>
           <button class="kb-add-deposit">+ Add tranche</button>
+          <button type="button" class="kb-capture-terms">Capture these terms</button>
+          <div class="kb-terms-history-label">Terms History</div>
+          <div class="kb-terms-history">${renderTermsHistoryHtml(getTermsHistory(id))}</div>
         </div>
           `;
         })()}
@@ -4672,6 +4779,88 @@ ${rows.join('')}`;
     addDeposit(id);
     modal.querySelector('.kb-deposits').innerHTML = buildDepositsHtml(getTerms(id).deposits);
   });
+
+  // Capture current vendor terms as a dated, agent-linked snapshot
+  const captureBtn = modal.querySelector('.kb-capture-terms');
+  if (captureBtn) {
+    captureBtn.addEventListener('click', async () => {
+      syncTerms();
+      syncDeposits();
+      const t = getTerms(id);
+      if (!t.price && !t.settlement) {
+        alert('Enter a price or settlement before capturing.');
+        return;
+      }
+
+      // Collect candidate agents/contacts from the CRM section above.
+      const candidates = [];
+      const domainRow = document.querySelector('.crm-domain-agent');
+      if (domainRow) {
+        const name = (domainRow.querySelector('.crm-contact-name')?.childNodes[0]?.textContent || '').trim();
+        const agency = (domainRow.querySelector('.crm-contact-meta span')?.textContent || '').trim();
+        if (name) candidates.push({ name, agency, source: 'Listing agent' });
+      }
+      document.querySelectorAll('.crm-contact-row:not(.crm-domain-agent)').forEach(row => {
+        const name = (row.querySelector('.crm-contact-name')?.textContent || '').replace(/\s+/g, ' ').trim();
+        const role = (row.querySelector('.crm-role-badge')?.textContent || '').trim();
+        if (name) candidates.push({ name, agency: '', source: role || 'Contact' });
+      });
+
+      let chosen = candidates[0] || null;
+      if (candidates.length === 0) {
+        chosen = { name: 'Unknown', agency: '', source: '' };
+      } else if (candidates.length > 1 || !domainRow) {
+        // Ask the user which person to associate with these terms.
+        chosen = await new Promise(resolve => {
+          const overlay = document.createElement('div');
+          overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:10000;display:flex;align-items:center;justify-content:center';
+          overlay.innerHTML = `
+            <div style="background:#fff;border-radius:8px;padding:16px;max-width:360px;width:90%;font-family:'DM Sans',sans-serif">
+              <div style="font-weight:600;margin-bottom:10px">Associate terms with</div>
+              <div style="font-size:12px;color:#666;margin-bottom:10px">Choose the agent or contact these vendor terms relate to.</div>
+              ${candidates.map((c, i) => `
+                <label style="display:block;padding:6px 0;font-size:13px;cursor:pointer">
+                  <input type="radio" name="vt-agent" value="${i}" ${i === 0 ? 'checked' : ''}>
+                  ${c.name}${c.agency ? ' · ' + c.agency : ''} <span style="color:#888">(${c.source})</span>
+                </label>`).join('')}
+              <div style="margin-top:12px;text-align:right">
+                <button type="button" class="vt-cancel" style="margin-right:8px;padding:6px 12px;border:1px solid #ccc;background:#f8f9fa;border-radius:4px;cursor:pointer">Cancel</button>
+                <button type="button" class="vt-ok" style="padding:6px 12px;background:#2980b9;color:#fff;border:none;border-radius:4px;cursor:pointer">Capture</button>
+              </div>
+            </div>`;
+          document.body.appendChild(overlay);
+          overlay.querySelector('.vt-cancel').onclick = () => { overlay.remove(); resolve(null); };
+          overlay.querySelector('.vt-ok').onclick = () => {
+            const sel = overlay.querySelector('input[name="vt-agent"]:checked');
+            const idx = sel ? parseInt(sel.value, 10) : 0;
+            overlay.remove();
+            resolve(candidates[idx]);
+          };
+        });
+        if (!chosen) return; // cancelled
+      }
+
+      // Temporarily override the agent used by captureTermsSnapshot via a one-off call.
+      // Call a modified capture that uses the chosen agent.
+      if (!pipeline[id].terms_history) pipeline[id].terms_history = [];
+      const snapshot = {
+        id: Date.now(),
+        price: t.price || null,
+        settlement: t.settlement || null,
+        deposits: Array.isArray(t.deposits) ? t.deposits.map(d => ({ ...d })) : [],
+        captured_at: new Date().toISOString(),
+        agent_name: chosen.name,
+        agent_agency: chosen.agency || '',
+        captured_by: window._sessionUserName || null,
+      };
+      pipeline[id].terms_history.unshift(snapshot);
+      savePipeline(id);
+
+      const histEl = modal.querySelector('.kb-terms-history');
+      if (histEl) histEl.innerHTML = renderTermsHistoryHtml(getTermsHistory(id));
+      showKanbanToast('Vendor terms captured');
+    });
+  }
   } // end V77.1 Vendor Terms gate
 
   // V77.1: Lease Terms — wires only if section is rendered (Lease Listings only)
@@ -4773,10 +4962,37 @@ ${rows.join('')}`;
     if (pickerEl) pickerEl.innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
   }
 
-  // Submit offer
-  overlay.addEventListener('click', e => {
-    if (!e.target.closest('.kb-submit-offer')) return;
-    // Force blur all inputs so any unblurred values are committed before we read them
+  // Offer form: Save as Draft or Submit (locks)
+  let editingOfferId = null;
+
+  function clearOfferForm() {
+    const _priceEl = overlay.querySelector('.kb-offer-price');
+    const _settleEl = overlay.querySelector('.kb-offer-settlement');
+    const _depsEl = overlay.querySelector('.kb-offer-deposits');
+    if (_priceEl) _priceEl.value = '';
+    if (_settleEl) _settleEl.value = '';
+    if (_depsEl) _depsEl.innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }], 0);
+    editingOfferId = null;
+    const popup = overlay.querySelector(`#kb-offer-popup-${id}`);
+    if (popup) popup.style.display = 'none';
+  }
+
+  function populateOfferForm(offer) {
+    const _priceEl = overlay.querySelector('.kb-offer-price');
+    const _settleEl = overlay.querySelector('.kb-offer-settlement');
+    const _depsEl = overlay.querySelector('.kb-offer-deposits');
+    if (_priceEl) _priceEl.value = offer.price || '';
+    if (_settleEl) _settleEl.value = offer.settlement != null ? formatSettlement(String(offer.settlement)) : '';
+    if (_depsEl) {
+      const deps = (offer.deposits && offer.deposits.length) ? offer.deposits : [{ amount: '', due: '', note: '' }];
+      _depsEl.innerHTML = buildOfferDepositsHtml(deps, parseDepositAmountKanban(offer.price, null) || 0);
+    }
+    editingOfferId = offer.id;
+    const popup = overlay.querySelector(`#kb-offer-popup-${id}`);
+    if (popup) popup.style.display = '';
+  }
+
+  function readOfferForm() {
     overlay.querySelectorAll('.kb-offer-price, .kb-offer-settlement, .kb-odep-amount, .kb-odep-due, .kb-odep-note').forEach(el => el.blur());
     const _offerPrice = parseDepositAmountKanban(overlay.querySelector('.kb-offer-price')?.value || '', null) || 0;
     const offerDeposits = Array.from(overlay.querySelectorAll('.kb-offer-dep-row')).map(row => ({
@@ -4784,32 +5000,76 @@ ${rows.join('')}`;
       due:    parseSettlementDays(row.querySelector('.kb-odep-due').value),
       note:   row.querySelector('.kb-odep-note').value,
     })).filter(d => d.amount || d.due);
-    const offer = {
+    return {
       price:      formatInputPrice(overlay.querySelector('.kb-offer-price')?.value.trim() || ''),
       settlement: parseSettlementDays(overlay.querySelector('.kb-offer-settlement')?.value.trim() || ''),
       deposits:   offerDeposits,
     };
-    if (!offer.price && !offer.settlement && !offerDeposits.length) return;
-    addOffer(id, offer);
-    const _priceEl = overlay.querySelector('.kb-offer-price');
-    const _settleEl = overlay.querySelector('.kb-offer-settlement');
-    const _depsEl = overlay.querySelector('.kb-offer-deposits');
-    if (_priceEl) _priceEl.value = '';
-    if (_settleEl) _settleEl.value = '';
-    if (_depsEl) _depsEl.innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }], 0);
+  }
+
+  overlay.addEventListener('click', e => {
+    const isDraft = !!e.target.closest('.kb-save-draft-offer');
+    const isSubmit = !!e.target.closest('.kb-submit-offer');
+    if (!isDraft && !isSubmit) return;
+
+    const offerData = readOfferForm();
+    if (!offerData.price && !offerData.settlement && !offerData.deposits.length) return;
+
+    const status = isSubmit ? 'submitted' : 'draft';
+    const payload = { ...offerData, status };
+
+    if (editingOfferId) {
+      updateOffer(id, editingOfferId, payload);
+      showKanbanToast(isSubmit ? 'Offer submitted and locked' : 'Draft updated');
+    } else {
+      addOffer(id, payload);
+      showKanbanToast(isSubmit ? 'Offer submitted and locked' : 'Draft saved');
+    }
+
+    clearOfferForm();
     refreshFinancePicker();
     refreshCardLive(id);
-    showKanbanToast('Offer recorded');
   });
 
-  // Delete offer — handled in finance picker (V77.1: Acquisition only)
+  // Edit draft offer
+  overlay.addEventListener('click', e => {
+    const btn = e.target.closest('.kb-offer-edit');
+    if (!btn) return;
+    const offerId = btn.dataset.offerId;
+    const offer = (getOffers(id) || []).find(o => String(o.id) === String(offerId));
+    if (!offer || (offer.status && offer.status !== 'draft')) return;
+    populateOfferForm(offer);
+  });
+
+  // Delete offer (confirm for submitted)
+  overlay.addEventListener('click', e => {
+    const btn = e.target.closest('.kb-offer-delete');
+    if (!btn) return;
+    const offerId = btn.dataset.offerId;
+    const offer = (getOffers(id) || []).find(o => String(o.id) === String(offerId));
+    if (!offer) return;
+    const isDraft = !offer.status || offer.status === 'draft';
+    if (!isDraft && !confirm('This offer is submitted and locked. Delete it anyway?')) return;
+    deleteOffer(id, offerId);
+    refreshFinancePicker();
+    refreshCardLive(id);
+    showKanbanToast(isDraft ? 'Draft deleted' : 'Offer deleted');
+  });
+
+  // Delete offer from finance picker
   if (modal.querySelector(`#kb-finance-picker-${id}`)) {
     modal.querySelector(`#kb-finance-picker-${id}`).addEventListener('click', e => {
       const btn = e.target.closest('.kb-fin-pick-delete');
       if (!btn) return;
-      deleteOffer(id, btn.dataset.offerId);
+      const offerId = btn.dataset.offerId;
+      const offer = (getOffers(id) || []).find(o => String(o.id) === String(offerId));
+      if (!offer) return;
+      const isDraft = !offer.status || offer.status === 'draft';
+      if (!isDraft && !confirm('This offer is submitted and locked. Delete it anyway?')) return;
+      deleteOffer(id, offerId);
       refreshFinancePicker();
       refreshCardLive(id);
+      showKanbanToast(isDraft ? 'Draft deleted' : 'Offer deleted');
     });
   }
 
