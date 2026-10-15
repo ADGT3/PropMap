@@ -2263,7 +2263,20 @@ header {
 .kb-terms-history-meta {
   color: var(--muted);
   font-size: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
+.kb-terms-history-delete {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.kb-terms-history-delete:hover { color: var(--red); }
 .kb-terms-history-agent {
   font-size: 12px;
   margin: 2px 0;
