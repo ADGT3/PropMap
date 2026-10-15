@@ -2580,23 +2580,6 @@ function renderTermsHistoryHtml(history) {
       </div>`;
   }).join('');
 }
-  if (!pipeline[id]) return;
-  if (!pipeline[id].terms_history) pipeline[id].terms_history = [];
-  const agent = pipeline[id].property?._agent || {};
-  const snapshot = {
-    id: Date.now(),
-    price: terms.price || null,
-    settlement: terms.settlement || null,
-    deposits: Array.isArray(terms.deposits) ? terms.deposits.map(d => ({ ...d })) : [],
-    captured_at: new Date().toISOString(),
-    agent_name: agent.name || window._sessionUserName || 'Unknown',
-    agent_agency: agent.agency || '',
-    captured_by: window._sessionUserName || null,
-  };
-  pipeline[id].terms_history.unshift(snapshot); // newest first
-  savePipeline(id);
-  return snapshot;
-}
 
 function addDeposit(id) {
   const terms = getTerms(id);
