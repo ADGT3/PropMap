@@ -637,6 +637,7 @@ function dealRowToInternal(row) {
     notes:   [],
     addedAt: dealData.addedAt || (row.opened_at ? Date.parse(row.opened_at) : Date.now()),
     terms:   dealData.terms   || null,
+    terms_history: Array.isArray(dealData.terms_history) ? dealData.terms_history : [],
     offers:  dealData.offers  || [],
     // V75.3: DD per-deal
     dd:      (typeof dealData.dd === 'object' && dealData.dd !== null) ? dealData.dd : {},
@@ -715,6 +716,7 @@ function internalToDealPayload(id, entry) {
       note:    entry.note    || '',
       addedAt: entry.addedAt || Date.now(),
       terms:   entry.terms   || null,
+      terms_history: entry.terms_history || [],
       offers:  entry.offers  || [],
       dd:      entry.dd      || {},
       price:       p.price,
@@ -2541,6 +2543,58 @@ function getTerms(id) {
   return { price: '', settlement: '', ...t };
 }
 
+const TERMS_API = '/api/vendor-terms';
+const OFFERS_API = '/api/offers';
+
+async function loadTermsForDeal(dealId) {
+  try {
+    const r = await fetch(`${TERMS_API}?deal_id=${encodeURIComponent(dealId)}`);
+    if (!r.ok) return [];
+    return await r.json();
+  } catch (_) { return []; }
+}
+
+async function loadOffersForDeal(dealId) {
+  try {
+    const r = await fetch(`${OFFERS_API}?deal_id=${encodeURIComponent(dealId)}`);
+    if (!r.ok) return [];
+    return await r.json();
+  } catch (_) { return []; }
+}
+
+async function saveTermsSnapshot(dealId, propertyId, snapshot) {
+  const r = await fetch(TERMS_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      deal_id: dealId,
+      property_id: propertyId || null,
+      price: snapshot.price,
+      settlement: snapshot.settlement,
+      deposits: snapshot.deposits || [],
+      agent_name: snapshot.agent_name,
+      agent_agency: snapshot.agent_agency,
+      captured_by: snapshot.captured_by,
+    }),
+  });
+  if (!r.ok) throw new Error('Failed to save terms');
+  return await r.json();
+}
+
+async function saveOfferToDb(dealId, offer) {
+  const method = offer.id && String(offer.id).length < 15 ? 'PUT' : 'POST';
+  const body = method === 'PUT'
+    ? { id: offer.id, price: offer.price, settlement: offer.settlement, deposits: offer.deposits, status: offer.status }
+    : { deal_id: dealId, price: offer.price, settlement: offer.settlement, deposits: offer.deposits, status: offer.status };
+  const r = await fetch(OFFERS_API, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error('Failed to save offer');
+  return await r.json();
+}
+
 function getTermsHistory(id) {
   return Array.isArray(pipeline[id]?.terms_history) ? pipeline[id].terms_history : [];
 }
@@ -3932,6 +3986,44 @@ function buildOfferDepositsHtml(deps, offerPrice) {
 }
 
 function openCardModal(id) {
+  // Hydrate terms and offers from dedicated tables
+  (async () => {
+    const [termsRows, offerRows] = await Promise.all([
+      loadTermsForDeal(id),
+      loadOffersForDeal(id),
+    ]);
+    if (pipeline[id]) {
+      if (termsRows.length) {
+        pipeline[id].terms_history = termsRows.map(r => ({
+          id: r.id,
+          price: r.price,
+          settlement: r.settlement,
+          deposits: r.deposits || [],
+          captured_at: r.captured_at,
+          agent_name: r.agent_name,
+          agent_agency: r.agent_agency,
+          captured_by: r.captured_by,
+        }));
+        // Current working terms = most recent snapshot
+        const latest = termsRows[0];
+        pipeline[id].terms = {
+          price: latest.price,
+          settlement: latest.settlement,
+          deposits: latest.deposits || [{ amount: '', due: '', note: '' }],
+        };
+      }
+      if (offerRows.length) {
+        pipeline[id].offers = offerRows.map(r => ({
+          id: r.id,
+          price: r.price,
+          settlement: r.settlement,
+          deposits: r.deposits || [],
+          status: r.status || 'submitted',
+          date: r.created_at,
+        }));
+      }
+    }
+  })();
   const item = pipeline[id];
   if (!item) return;
   const p = item.property;
@@ -4840,11 +4932,7 @@ ${rows.join('')}`;
         if (!chosen) return; // cancelled
       }
 
-      // Temporarily override the agent used by captureTermsSnapshot via a one-off call.
-      // Call a modified capture that uses the chosen agent.
-      if (!pipeline[id].terms_history) pipeline[id].terms_history = [];
       const snapshot = {
-        id: Date.now(),
         price: t.price || null,
         settlement: t.settlement || null,
         deposits: Array.isArray(t.deposits) ? t.deposits.map(d => ({ ...d })) : [],
@@ -4853,6 +4941,16 @@ ${rows.join('')}`;
         agent_agency: chosen.agency || '',
         captured_by: window._sessionUserName || null,
       };
+      // Persist to vendor_terms table (linked to deal + property)
+      const propertyId = pipeline[id]?.property?.id || null;
+      try {
+        const saved = await saveTermsSnapshot(id, propertyId, snapshot);
+        snapshot.id = saved.id; // use DB id
+      } catch (err) {
+        console.warn('[terms] DB save failed:', err);
+        showKanbanToast('Terms saved locally — DB write failed');
+      }
+      if (!pipeline[id].terms_history) pipeline[id].terms_history = [];
       pipeline[id].terms_history.unshift(snapshot);
       savePipeline(id);
 
@@ -5016,19 +5114,31 @@ ${rows.join('')}`;
     if (!offerData.price && !offerData.settlement && !offerData.deposits.length) return;
 
     const status = isSubmit ? 'submitted' : 'draft';
-    const payload = { ...offerData, status };
+    const payload = { ...offerData, status, deal_id: id };
 
-    if (editingOfferId) {
-      updateOffer(id, editingOfferId, payload);
-      showKanbanToast(isSubmit ? 'Offer submitted and locked' : 'Draft updated');
-    } else {
-      addOffer(id, payload);
-      showKanbanToast(isSubmit ? 'Offer submitted and locked' : 'Draft saved');
-    }
-
-    clearOfferForm();
-    refreshFinancePicker();
-    refreshCardLive(id);
+    (async () => {
+      try {
+        if (editingOfferId && String(editingOfferId).length < 15) {
+          payload.id = editingOfferId;
+          await saveOfferToDb(id, payload);
+          updateOffer(id, editingOfferId, payload);
+        } else {
+          const saved = await saveOfferToDb(id, payload);
+          payload.id = saved.id;
+          addOffer(id, payload);
+        }
+        showKanbanToast(isSubmit ? 'Offer submitted and locked' : 'Draft saved');
+      } catch (err) {
+        console.warn('[offers] DB save failed:', err);
+        // fall back to local
+        if (editingOfferId) updateOffer(id, editingOfferId, payload);
+        else addOffer(id, payload);
+        showKanbanToast('Offer saved locally — DB write failed');
+      }
+      clearOfferForm();
+      refreshFinancePicker();
+      refreshCardLive(id);
+    })();
   });
 
   // Edit draft offer
