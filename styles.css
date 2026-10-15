@@ -2215,7 +2215,62 @@ header {
 }
 .kb-modal-close:hover { background: var(--surface2); color: var(--text); }
 
-.kb-offer-actions {
+.kb-terms-intro {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+.kb-capture-terms {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  background: #2980b9;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: 'DM Sans', sans-serif;
+  text-align: center;
+}
+.kb-capture-terms:hover { background: #1f6799; }
+.kb-terms-history-label {
+  margin-top: 16px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+}
+.kb-terms-history {
+  margin-top: 6px;
+}
+.kb-terms-history-empty {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  padding: 8px 0;
+}
+.kb-terms-history-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.kb-terms-history-item:last-child { border-bottom: none; }
+.kb-terms-history-meta {
+  color: var(--muted);
+  font-size: 10px;
+}
+.kb-terms-history-agent {
+  font-size: 12px;
+  margin: 2px 0;
+}
+.kb-terms-history-detail {
+  font-weight: 600;
+}
   display: flex;
   gap: 8px;
   margin-top: 8px;
