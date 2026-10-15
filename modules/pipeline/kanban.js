@@ -2654,8 +2654,11 @@ function renderTermsHistoryHtml(history) {
         }).join('<br>')
       : '';
     return `
-      <div class="kb-terms-history-item">
-        <div class="kb-terms-history-meta">${date}</div>
+      <div class="kb-terms-history-item" data-term-id="${h.id || ''}">
+        <div class="kb-terms-history-meta">
+          ${date}
+          ${h.id ? `<button type="button" class="kb-terms-history-delete" data-term-id="${h.id}" title="Delete this snapshot">✕</button>` : ''}
+        </div>
         <div class="kb-terms-history-agent">${agent}${agency}</div>
         <div class="kb-terms-history-detail">${price} · ${settle}</div>
         ${depHtml ? `<div class="kb-terms-history-deps">${depHtml}</div>` : ''}
@@ -4957,6 +4960,29 @@ ${rows.join('')}`;
       const histEl = modal.querySelector('.kb-terms-history');
       if (histEl) histEl.innerHTML = renderTermsHistoryHtml(getTermsHistory(id));
       showKanbanToast('Vendor terms captured');
+    });
+  }
+
+  // Delete a terms history snapshot
+  const histContainer = modal.querySelector('.kb-terms-history');
+  if (histContainer) {
+    histContainer.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.kb-terms-history-delete');
+      if (!btn) return;
+      const termId = btn.dataset.termId;
+      if (!termId || !confirm('Delete this vendor terms snapshot?')) return;
+      try {
+        const r = await fetch(`/api/vendor-terms?id=${encodeURIComponent(termId)}`, { method: 'DELETE' });
+        if (!r.ok) throw new Error('Delete failed');
+        if (pipeline[id]?.terms_history) {
+          pipeline[id].terms_history = pipeline[id].terms_history.filter(h => String(h.id) !== String(termId));
+        }
+        histContainer.innerHTML = renderTermsHistoryHtml(getTermsHistory(id));
+        showKanbanToast('Terms snapshot deleted');
+      } catch (err) {
+        console.warn('[terms] delete failed:', err);
+        showKanbanToast('Could not delete terms snapshot');
+      }
     });
   }
   } // end V77.1 Vendor Terms gate
