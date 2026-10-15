@@ -4025,6 +4025,11 @@ function openCardModal(id) {
           date: r.created_at,
         }));
       }
+      // Refresh the history list if the modal is already open
+      const histEl = document.querySelector('.kb-terms-history');
+      if (histEl && termsRows.length) {
+        histEl.innerHTML = renderTermsHistoryHtml(pipeline[id].terms_history);
+      }
     }
   })();
   const item = pipeline[id];
@@ -4944,6 +4949,15 @@ ${rows.join('')}`;
         agent_agency: chosen.agency || '',
         captured_by: window._sessionUserName || null,
       };
+      // Skip if the latest snapshot is identical (prevents accidental duplicates)
+      const latest = (pipeline[id].terms_history || [])[0];
+      if (latest &&
+          String(latest.price) === String(snapshot.price) &&
+          String(latest.settlement) === String(snapshot.settlement) &&
+          latest.agent_name === snapshot.agent_name) {
+        showKanbanToast('These terms are already captured');
+        return;
+      }
       // Persist to vendor_terms table (linked to deal + property)
       const propertyId = pipeline[id]?.property?.id || null;
       try {
