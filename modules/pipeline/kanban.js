@@ -2590,11 +2590,21 @@ function renderTermsHistoryHtml(history) {
     const settle = h.settlement ? formatSettlement(String(h.settlement)) : '—';
     const agent = h.agent_name || 'Unknown';
     const agency = h.agent_agency ? ` · ${h.agent_agency}` : '';
+    const deposits = Array.isArray(h.deposits) ? h.deposits.filter(d => d.amount || d.due || d.note) : [];
+    const depHtml = deposits.length
+      ? deposits.map(d => {
+          const amt = d.amount ? formatDepositAmount(d.amount, parseDepositAmountKanban(h.price, null) || 0) : '';
+          const due = d.due != null && d.due !== '' ? formatSettlement(String(d.due)) : '';
+          const note = d.note || '';
+          return [amt, due, note].filter(Boolean).join(' · ');
+        }).join('<br>')
+      : '';
     return `
       <div class="kb-terms-history-item">
         <div class="kb-terms-history-meta">${date}</div>
         <div class="kb-terms-history-agent">${agent}${agency}</div>
         <div class="kb-terms-history-detail">${price} · ${settle}</div>
+        ${depHtml ? `<div class="kb-terms-history-deps">${depHtml}</div>` : ''}
       </div>`;
   }).join('');
 }
@@ -4005,8 +4015,10 @@ function openCardModal(id) {
           </div>
           <div class="kb-fin-pick-actions">
             <button class="kb-fin-pick-btn">📊 Model</button>
-            ${(o.status || 'submitted') === 'draft' ? `<button class="kb-offer-edit" data-offer-id="${o.id}" title="Edit draft offer">✎</button>` : ''}
-            <button class="kb-fin-pick-delete" data-offer-id="${o.id}" title="Delete offer">✕</button>
+            <div class="kb-fin-pick-icon-row">
+              ${(o.status || 'submitted') === 'draft' ? `<button class="kb-offer-edit" data-offer-id="${o.id}" title="Edit draft offer">✎</button>` : ''}
+              <button class="kb-fin-pick-delete" data-offer-id="${o.id}" title="Delete offer">✕</button>
+            </div>
           </div>
         </div>`);
     });
