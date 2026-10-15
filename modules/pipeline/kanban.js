@@ -2548,15 +2548,33 @@ function getTermsHistory(id) {
 function captureTermsSnapshot(id, terms) {
   if (!pipeline[id]) return;
   if (!pipeline[id].terms_history) pipeline[id].terms_history = [];
-  const agent = pipeline[id].property?._agent || {};
+
+  // Prefer the listing agent shown in the CRM section above Vendor Terms.
+  let agentName = '';
+  let agentAgency = '';
+  const agentEl = document.querySelector('.crm-domain-agent .crm-contact-name');
+  if (agentEl) {
+    agentName = (agentEl.childNodes[0]?.textContent || '').trim();
+  }
+  const agencyEl = document.querySelector('.crm-domain-agent .crm-contact-meta span');
+  if (agencyEl) agentAgency = agencyEl.textContent.trim();
+
+  // Fall back to property._agent if the DOM row is not present.
+  if (!agentName) {
+    const agent = pipeline[id].property?._agent || {};
+    agentName = agent.name || '';
+    agentAgency = agent.agency || agentAgency;
+  }
+  if (!agentName) agentName = 'Unknown';
+
   const snapshot = {
     id: Date.now(),
     price: terms.price || null,
     settlement: terms.settlement || null,
     deposits: Array.isArray(terms.deposits) ? terms.deposits.map(d => ({ ...d })) : [],
     captured_at: new Date().toISOString(),
-    agent_name: agent.name || window._sessionUserName || 'Unknown',
-    agent_agency: agent.agency || '',
+    agent_name: agentName,
+    agent_agency: agentAgency,
     captured_by: window._sessionUserName || null,
   };
   pipeline[id].terms_history.unshift(snapshot); // newest first
@@ -4175,7 +4193,7 @@ ${rows.join('')}`;
           <div class="kb-deposits">${buildDepositsHtml(terms.deposits, parseDepositAmountKanban(terms.price, null) || 0)}</div>
           <button class="kb-add-deposit">+ Add tranche</button>
           <button type="button" class="kb-capture-terms">Capture these terms</button>
-          <div class="kb-terms-history-label">Term history</div>
+          <div class="kb-terms-history-label">Terms History</div>
           <div class="kb-terms-history">${renderTermsHistoryHtml(getTermsHistory(id))}</div>
         </div>
           `;
@@ -4753,7 +4771,7 @@ ${rows.join('')}`;
   // Capture current vendor terms as a dated, agent-linked snapshot
   const captureBtn = modal.querySelector('.kb-capture-terms');
   if (captureBtn) {
-    captureBtn.addEventListener('click', () => {
+    captureBtn.addEventListener('click', async () => {
       syncTerms();
       syncDeposits();
       const t = getTerms(id);
@@ -4761,7 +4779,71 @@ ${rows.join('')}`;
         alert('Enter a price or settlement before capturing.');
         return;
       }
-      captureTermsSnapshot(id, t);
+
+      // Collect candidate agents/contacts from the CRM section above.
+      const candidates = [];
+      const domainRow = document.querySelector('.crm-domain-agent');
+      if (domainRow) {
+        const name = (domainRow.querySelector('.crm-contact-name')?.childNodes[0]?.textContent || '').trim();
+        const agency = (domainRow.querySelector('.crm-contact-meta span')?.textContent || '').trim();
+        if (name) candidates.push({ name, agency, source: 'Listing agent' });
+      }
+      document.querySelectorAll('.crm-contact-row:not(.crm-domain-agent)').forEach(row => {
+        const name = (row.querySelector('.crm-contact-name')?.textContent || '').replace(/\s+/g, ' ').trim();
+        const role = (row.querySelector('.crm-role-badge')?.textContent || '').trim();
+        if (name) candidates.push({ name, agency: '', source: role || 'Contact' });
+      });
+
+      let chosen = candidates[0] || null;
+      if (candidates.length === 0) {
+        chosen = { name: 'Unknown', agency: '', source: '' };
+      } else if (candidates.length > 1 || !domainRow) {
+        // Ask the user which person to associate with these terms.
+        chosen = await new Promise(resolve => {
+          const overlay = document.createElement('div');
+          overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.35);z-index:10000;display:flex;align-items:center;justify-content:center';
+          overlay.innerHTML = `
+            <div style="background:#fff;border-radius:8px;padding:16px;max-width:360px;width:90%;font-family:'DM Sans',sans-serif">
+              <div style="font-weight:600;margin-bottom:10px">Associate terms with</div>
+              <div style="font-size:12px;color:#666;margin-bottom:10px">Choose the agent or contact these vendor terms relate to.</div>
+              ${candidates.map((c, i) => `
+                <label style="display:block;padding:6px 0;font-size:13px;cursor:pointer">
+                  <input type="radio" name="vt-agent" value="${i}" ${i === 0 ? 'checked' : ''}>
+                  ${c.name}${c.agency ? ' · ' + c.agency : ''} <span style="color:#888">(${c.source})</span>
+                </label>`).join('')}
+              <div style="margin-top:12px;text-align:right">
+                <button type="button" class="vt-cancel" style="margin-right:8px;padding:6px 12px;border:1px solid #ccc;background:#f8f9fa;border-radius:4px;cursor:pointer">Cancel</button>
+                <button type="button" class="vt-ok" style="padding:6px 12px;background:#2980b9;color:#fff;border:none;border-radius:4px;cursor:pointer">Capture</button>
+              </div>
+            </div>`;
+          document.body.appendChild(overlay);
+          overlay.querySelector('.vt-cancel').onclick = () => { overlay.remove(); resolve(null); };
+          overlay.querySelector('.vt-ok').onclick = () => {
+            const sel = overlay.querySelector('input[name="vt-agent"]:checked');
+            const idx = sel ? parseInt(sel.value, 10) : 0;
+            overlay.remove();
+            resolve(candidates[idx]);
+          };
+        });
+        if (!chosen) return; // cancelled
+      }
+
+      // Temporarily override the agent used by captureTermsSnapshot via a one-off call.
+      // Call a modified capture that uses the chosen agent.
+      if (!pipeline[id].terms_history) pipeline[id].terms_history = [];
+      const snapshot = {
+        id: Date.now(),
+        price: t.price || null,
+        settlement: t.settlement || null,
+        deposits: Array.isArray(t.deposits) ? t.deposits.map(d => ({ ...d })) : [],
+        captured_at: new Date().toISOString(),
+        agent_name: chosen.name,
+        agent_agency: chosen.agency || '',
+        captured_by: window._sessionUserName || null,
+      };
+      pipeline[id].terms_history.unshift(snapshot);
+      savePipeline(id);
+
       const histEl = modal.querySelector('.kb-terms-history');
       if (histEl) histEl.innerHTML = renderTermsHistoryHtml(getTermsHistory(id));
       showKanbanToast('Vendor terms captured');
