@@ -2561,14 +2561,38 @@ function getOffers(id) {
 }
 
 function addOffer(id, offer) {
-  if (!pipeline[id]) return;
+  if (!pipeline[id]) return null;
   if (!pipeline[id].offers) pipeline[id].offers = [];
-  pipeline[id].offers.unshift({ // newest first
+  const newOffer = {
     ...offer,
     date: new Date().toISOString(),
     id:   Date.now(),
-  });
+    status: offer.status || 'submitted',
+  };
+  pipeline[id].offers.unshift(newOffer); // newest first
   savePipeline(id);
+  return newOffer;
+}
+
+function updateOffer(propertyId, offerId, updates) {
+  if (!pipeline[propertyId]) return null;
+  const offers = pipeline[propertyId].offers || [];
+  const idx = offers.findIndex(o => String(o.id) === String(offerId));
+  if (idx === -1) return null;
+  // Preserve locked status: once submitted, do not allow reverting to draft via update
+  const current = offers[idx];
+  const nextStatus = updates.status || current.status || 'submitted';
+  if (current.status === 'submitted' && nextStatus === 'draft') {
+    return current; // locked
+  }
+  offers[idx] = {
+    ...current,
+    ...updates,
+    status: nextStatus,
+    updated_at: new Date().toISOString(),
+  };
+  savePipeline(propertyId);
+  return offers[idx];
 }
 
 function deleteOffer(propertyId, offerId) {
@@ -3912,7 +3936,7 @@ function openCardModal(id) {
         <div class="kb-fin-pick-row" data-price="${o.price}" data-offer-id="${o.id}">
           <div class="kb-fin-pick-main">
             <div class="kb-fin-pick-top">
-              <span class="kb-fin-pick-label">Offer ${offers.length - i}${i === 0 ? ' <span class="kb-fin-pick-latest">latest</span>' : ''}</span>
+              <span class="kb-fin-pick-label">Offer ${offers.length - i}${i === 0 ? ' <span class="kb-fin-pick-latest">latest</span>' : ''} <span class="kb-offer-status kb-offer-status-${o.status || 'submitted'}">${(o.status || 'submitted') === 'draft' ? 'Draft' : 'Submitted'}</span></span>
               <span class="kb-fin-pick-date">${formatOfferDate(o.date)}</span>
             </div>
             <div class="kb-fin-pick-detail">
@@ -3980,8 +4004,9 @@ function openCardModal(id) {
     <div class="kb-offer-deposits">${buildOfferDepositsHtml([{ amount: '', due: '', note: '' }])}</div>
     <button class="kb-offer-add-deposit">+ Add tranche</button>
     <div class="kb-offer-actions">
-      <button class="kb-submit-offer">+ Submit Offer</button>
-      <button class="kb-offer-popup-cancel">Cancel</button>
+      <button class="kb-save-draft-offer" type="button">Save as Draft</button>
+      <button class="kb-submit-offer" type="button">Submit Offer</button>
+      <button class="kb-offer-popup-cancel" type="button">Cancel</button>
     </div>
   </div>
 </div>
@@ -3989,12 +4014,18 @@ ${rows.join('')}`;
   }
 
   function buildOffersHtml(offers) {
-    if (!offers || offers.length === 0) return '<div class="kb-offers-empty">No offers submitted yet</div>';
-    return offers.map(o => `
-      <div class="kb-offer-item" data-offer-id="${o.id}">
+    if (!offers || offers.length === 0) return '<div class="kb-offers-empty">No offers yet</div>';
+    return offers.map(o => {
+      const status = o.status || 'submitted'; // backward compatible
+      const isDraft = status === 'draft';
+      const statusBadge = `<span class="kb-offer-status kb-offer-status-${status}">${isDraft ? 'Draft' : 'Submitted'}</span>`;
+      return `
+      <div class="kb-offer-item ${isDraft ? 'kb-offer-draft' : 'kb-offer-locked'}" data-offer-id="${o.id}">
         <div class="kb-offer-header">
           <span class="kb-offer-date">${formatOfferDate(o.date)}</span>
-          <button class="kb-offer-delete" data-offer-id="${o.id}" title="Delete offer">✕</button>
+          ${statusBadge}
+          ${isDraft ? `<button class="kb-offer-edit" data-offer-id="${o.id}" title="Edit draft offer">✎</button>` : ''}
+          <button class="kb-offer-delete" data-offer-id="${o.id}" title="${isDraft ? 'Delete draft offer' : 'Delete submitted offer'}">✕</button>
         </div>
         <div class="kb-offer-fields">
           <span class="kb-offer-field"><span class="kb-offer-lbl">Price</span> ${o.price || '—'}</span>
@@ -4007,7 +4038,8 @@ ${rows.join('')}`;
             const amtDisplay = d.amount ? formatDepositAmount(d.amount, price) : '';
             return `<span class="kb-offer-dep">${[amtDisplay, d.due, d.note].filter(Boolean).join(' · ')}</span>`;
           }).join('')}</div>` : ''}
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   const dd = getDd(id);
@@ -4773,10 +4805,37 @@ ${rows.join('')}`;
     if (pickerEl) pickerEl.innerHTML = buildFinancePickerHtml(getOffers(id), getTerms(id), pipeline[id]?.property || {});
   }
 
-  // Submit offer
-  overlay.addEventListener('click', e => {
-    if (!e.target.closest('.kb-submit-offer')) return;
-    // Force blur all inputs so any unblurred values are committed before we read them
+  // Offer form: Save as Draft or Submit (locks)
+  let editingOfferId = null;
+
+  function clearOfferForm() {
+    const _priceEl = overlay.querySelector('.kb-offer-price');
+    const _settleEl = overlay.querySelector('.kb-offer-settlement');
+    const _depsEl = overlay.querySelector('.kb-offer-deposits');
+    if (_priceEl) _priceEl.value = '';
+    if (_settleEl) _settleEl.value = '';
+    if (_depsEl) _depsEl.innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }], 0);
+    editingOfferId = null;
+    const popup = overlay.querySelector(`#kb-offer-popup-${id}`);
+    if (popup) popup.style.display = 'none';
+  }
+
+  function populateOfferForm(offer) {
+    const _priceEl = overlay.querySelector('.kb-offer-price');
+    const _settleEl = overlay.querySelector('.kb-offer-settlement');
+    const _depsEl = overlay.querySelector('.kb-offer-deposits');
+    if (_priceEl) _priceEl.value = offer.price || '';
+    if (_settleEl) _settleEl.value = offer.settlement != null ? formatSettlement(String(offer.settlement)) : '';
+    if (_depsEl) {
+      const deps = (offer.deposits && offer.deposits.length) ? offer.deposits : [{ amount: '', due: '', note: '' }];
+      _depsEl.innerHTML = buildOfferDepositsHtml(deps, parseDepositAmountKanban(offer.price, null) || 0);
+    }
+    editingOfferId = offer.id;
+    const popup = overlay.querySelector(`#kb-offer-popup-${id}`);
+    if (popup) popup.style.display = '';
+  }
+
+  function readOfferForm() {
     overlay.querySelectorAll('.kb-offer-price, .kb-offer-settlement, .kb-odep-amount, .kb-odep-due, .kb-odep-note').forEach(el => el.blur());
     const _offerPrice = parseDepositAmountKanban(overlay.querySelector('.kb-offer-price')?.value || '', null) || 0;
     const offerDeposits = Array.from(overlay.querySelectorAll('.kb-offer-dep-row')).map(row => ({
@@ -4784,32 +4843,76 @@ ${rows.join('')}`;
       due:    parseSettlementDays(row.querySelector('.kb-odep-due').value),
       note:   row.querySelector('.kb-odep-note').value,
     })).filter(d => d.amount || d.due);
-    const offer = {
+    return {
       price:      formatInputPrice(overlay.querySelector('.kb-offer-price')?.value.trim() || ''),
       settlement: parseSettlementDays(overlay.querySelector('.kb-offer-settlement')?.value.trim() || ''),
       deposits:   offerDeposits,
     };
-    if (!offer.price && !offer.settlement && !offerDeposits.length) return;
-    addOffer(id, offer);
-    const _priceEl = overlay.querySelector('.kb-offer-price');
-    const _settleEl = overlay.querySelector('.kb-offer-settlement');
-    const _depsEl = overlay.querySelector('.kb-offer-deposits');
-    if (_priceEl) _priceEl.value = '';
-    if (_settleEl) _settleEl.value = '';
-    if (_depsEl) _depsEl.innerHTML = buildOfferDepositsHtml([{ amount: '', due: '', note: '' }], 0);
+  }
+
+  overlay.addEventListener('click', e => {
+    const isDraft = !!e.target.closest('.kb-save-draft-offer');
+    const isSubmit = !!e.target.closest('.kb-submit-offer');
+    if (!isDraft && !isSubmit) return;
+
+    const offerData = readOfferForm();
+    if (!offerData.price && !offerData.settlement && !offerData.deposits.length) return;
+
+    const status = isSubmit ? 'submitted' : 'draft';
+    const payload = { ...offerData, status };
+
+    if (editingOfferId) {
+      updateOffer(id, editingOfferId, payload);
+      showKanbanToast(isSubmit ? 'Offer submitted and locked' : 'Draft updated');
+    } else {
+      addOffer(id, payload);
+      showKanbanToast(isSubmit ? 'Offer submitted and locked' : 'Draft saved');
+    }
+
+    clearOfferForm();
     refreshFinancePicker();
     refreshCardLive(id);
-    showKanbanToast('Offer recorded');
   });
 
-  // Delete offer — handled in finance picker (V77.1: Acquisition only)
+  // Edit draft offer
+  overlay.addEventListener('click', e => {
+    const btn = e.target.closest('.kb-offer-edit');
+    if (!btn) return;
+    const offerId = btn.dataset.offerId;
+    const offer = (getOffers(id) || []).find(o => String(o.id) === String(offerId));
+    if (!offer || (offer.status && offer.status !== 'draft')) return;
+    populateOfferForm(offer);
+  });
+
+  // Delete offer (confirm for submitted)
+  overlay.addEventListener('click', e => {
+    const btn = e.target.closest('.kb-offer-delete');
+    if (!btn) return;
+    const offerId = btn.dataset.offerId;
+    const offer = (getOffers(id) || []).find(o => String(o.id) === String(offerId));
+    if (!offer) return;
+    const isDraft = !offer.status || offer.status === 'draft';
+    if (!isDraft && !confirm('This offer is submitted and locked. Delete it anyway?')) return;
+    deleteOffer(id, offerId);
+    refreshFinancePicker();
+    refreshCardLive(id);
+    showKanbanToast(isDraft ? 'Draft deleted' : 'Offer deleted');
+  });
+
+  // Delete offer from finance picker
   if (modal.querySelector(`#kb-finance-picker-${id}`)) {
     modal.querySelector(`#kb-finance-picker-${id}`).addEventListener('click', e => {
       const btn = e.target.closest('.kb-fin-pick-delete');
       if (!btn) return;
-      deleteOffer(id, btn.dataset.offerId);
+      const offerId = btn.dataset.offerId;
+      const offer = (getOffers(id) || []).find(o => String(o.id) === String(offerId));
+      if (!offer) return;
+      const isDraft = !offer.status || offer.status === 'draft';
+      if (!isDraft && !confirm('This offer is submitted and locked. Delete it anyway?')) return;
+      deleteOffer(id, offerId);
       refreshFinancePicker();
       refreshCardLive(id);
+      showKanbanToast(isDraft ? 'Draft deleted' : 'Offer deleted');
     });
   }
 
