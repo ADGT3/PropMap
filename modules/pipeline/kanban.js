@@ -3857,7 +3857,7 @@ function buildOfferDepositsHtml(deps, offerPrice) {
       <div class="kb-deposit-fields">
         <input class="kb-input kb-odep-amount" type="text" placeholder="$ or % e.g. 5% or $50,000" value="${d.amount ? formatDepositAmount(d.amount, offerPrice) : ''}" data-idx="${i}">
         <input class="kb-input kb-odep-due" type="text" placeholder="${i === 0 ? 'Days from contract e.g. 0' : 'Days since prev deposit e.g. 30'}" value="${d.due != null && d.due !== '' ? formatSettlement(String(d.due)) : ''}" data-idx="${i}">
-        <input class="kb-input kb-odep-note kb-dep-note-inline" type="text" placeholder="Note" value="${d.note || ''}" data-idx="${i}">
+        <input class="kb-input kb-odep-note kb-dep-note-full" type="text" placeholder="Note" value="${d.note || ''}" data-idx="${i}">
         ${deps.length > 1 ? `<button class="kb-odep-remove" data-idx="${i}" title="Remove tranche">✕</button>` : ''}
       </div>
     </div>`).join('');
@@ -3947,6 +3947,7 @@ function openCardModal(id) {
           </div>
           <div class="kb-fin-pick-actions">
             <button class="kb-fin-pick-btn">📊 Model</button>
+            ${(o.status || 'submitted') === 'draft' ? `<button class="kb-offer-edit" data-offer-id="${o.id}" title="Edit draft offer">✎</button>` : ''}
             <button class="kb-fin-pick-delete" data-offer-id="${o.id}" title="Delete offer">✕</button>
           </div>
         </div>`);
