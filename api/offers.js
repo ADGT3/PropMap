@@ -22,10 +22,13 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const { deal_id } = req.query;
       if (!deal_id) return res.status(400).json({ error: 'deal_id required' });
-      const rows = await sql`
-        SELECT * FROM offers
-        WHERE deal_id = ${deal_id}
-        ORDER BY created_at DESC`;
+      const rows = await sql`SELECT * FROM offers WHERE deal_id = ${deal_id} ORDER BY created_at DESC`;
+      for (const r of rows) {
+        const deps = await sql`
+          SELECT amount, due, note FROM offer_deposits
+          WHERE offer_id = ${r.id} ORDER BY sort_order`;
+        r.deposits = deps;
+      }
       return res.status(200).json(rows);
     }
 
@@ -33,16 +36,25 @@ export default async function handler(req, res) {
       const b = req.body || {};
       if (!b.deal_id) return res.status(400).json({ error: 'deal_id required' });
       const rows = await sql`
-        INSERT INTO offers (deal_id, price, settlement, deposits, status)
+        INSERT INTO offers (deal_id, price, settlement, status)
         VALUES (
           ${b.deal_id},
           ${b.price || null},
           ${b.settlement || null},
-          ${JSON.stringify(b.deposits || [])}::jsonb,
           ${b.status || 'submitted'}
         )
         RETURNING *`;
-      return res.status(201).json(rows[0]);
+      const offer = rows[0];
+      const deps = Array.isArray(b.deposits) ? b.deposits : [];
+      for (let i = 0; i < deps.length; i++) {
+        const d = deps[i];
+        if (d.amount == null && d.due == null && !d.note) continue;
+        await sql`
+          INSERT INTO offer_deposits (offer_id, amount, due, note, sort_order)
+          VALUES (${offer.id}, ${d.amount || null}, ${d.due || null}, ${d.note || null}, ${i})`;
+      }
+      offer.deposits = deps;
+      return res.status(201).json(offer);
     }
 
     if (req.method === 'PUT') {
