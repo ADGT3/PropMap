@@ -1805,6 +1805,17 @@ header {
   text-align: center;
 }
 .kb-submit-offer:hover { background: #1f6799; }
+.kb-save-draft-offer {
+  background: #f8f9fa;
+  color: #495057;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-right: 6px;
+}
+.kb-save-draft-offer:hover { background: #e9ecef; }
 
 .kb-offers-list {
   display: flex;
@@ -1852,6 +1863,35 @@ header {
   line-height: 1;
 }
 .kb-offer-delete:hover { color: var(--red); background: rgba(192,57,43,0.08); }
+
+.kb-offer-status {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.kb-offer-status-draft {
+  background: #fff3cd;
+  color: #856404;
+}
+.kb-offer-status-submitted {
+  background: #d4edda;
+  color: #155724;
+}
+.kb-offer-draft { border-left: 3px solid #ffc107; }
+.kb-offer-locked { border-left: 3px solid #28a745; }
+.kb-offer-edit {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.kb-offer-edit:hover { color: var(--accent); background: rgba(0,0,0,0.05); }
 
 .kb-offer-fields {
   display: flex;
